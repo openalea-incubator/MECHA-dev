@@ -22,8 +22,12 @@ import sys, os
 from functions import *
 
 # Define MECHA
-def MECHA_run(dir, Project, inputs, Gen, Geom, Hydr, BC, Horm, Cell_connec_max=50, Ncellperimeters=100, V_modifier=1.0, test_mass_balance=0, maxCell2ThickWalls=101, matrix_analysis=0):
-    
+def MECHA_run(dir, Project, 
+              inputs='in/', Gen='General.xml',Geom='Geometry.xml',
+              Hydr='Hydraulics.xml',BC='BC.xml',Horm='Hormones_Carriers.xml',
+              Cell_connec_max=50, Ncellperimeters=100, V_modifier=1.0, 
+              test_mass_balance=0, maxCell2ThickWalls=101, matrix_analysis=0):
+       
     t1 = time.perf_counter()
     # print(t1-t0, "seconds process time")
 
