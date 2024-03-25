@@ -1,11 +1,5 @@
-# Import data from MECHA
-# from MECHA import dir, Project, inputs, Gen, Geom, Hydr, BC, Horm, Cell_connec_max, Ncellperimeters, V_modifier, test_mass_balance, maxCell2ThickWalls, matrix_analysis
-
 #Libraries
-# print('Importing libraries')
 import time
-t0 = time.perf_counter()
-    
 import numpy as np 
 #import sympy as smp
 #import mpmath as mp
@@ -24,7 +18,12 @@ import networkx as nx
 from lxml import etree #Tree element analysis module
 import sys, os 
 
+# Import MECHA functions
+from functions import *
+
+# Define MECHA
 def MECHA_run(dir, Project, inputs, Gen, Geom, Hydr, BC, Horm, Cell_connec_max, Ncellperimeters, V_modifier, test_mass_balance, maxCell2ThickWalls, matrix_analysis):
+    
     t1 = time.perf_counter()
     # print(t1-t0, "seconds process time")
 
