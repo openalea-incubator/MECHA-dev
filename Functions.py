@@ -665,3 +665,200 @@ def create_network_connections(G, Nwalls, Ncells, Cell2Wall_loop, Walls_loop,
 
     return d_vec, dist_wall, G, Cell_connec, nCell_connec, Nmb, cellarea, cellperimeter
 # =======================
+def compute_AQP_axial_distribution(G,Ncells, Cell2Wall_loop, position, NwallsJun,
+                                   x_grav, y_grav, 
+                                   Ncellperimeters,
+                                   nCell_connec, Cell_connec, InterCid,
+                                   InterC_perim_search, 
+                                   listsieve, listxyl):
+    
+    Cell_rank=zeros((Ncells,1)) #Ranking of cells (1=Exodermis, 2=Epidermis, 3=Endodermis, 4*=Cortex, 5*=Stele, 11=Phloem sieve tube, 12=Companion cell, 13=Xylem, 16=Pericycle), stars are replaced by the ranking within cortical cells and stele cells
+    Layer_dist=zeros((62,1)) #Average cell layers distances from center of gravity, by cells ranking 
+    nLayer=zeros((62,1)) #Total number of cells in each rank (indices follow ranking numbers)
+    xyl_dist=[] #List of distances between xylem and cross-section centre
+    #angle_dist_endo_grav=array([-4,0]) #array of distances and angles between endo cells and grav. Initializing the array with values that will eventualy be deleted
+    #angle_dist_exo_grav=array([-4,0]) #array of distances and angles between exo cells and grav. Initializing the array with values that will eventualy be deleted
+    for w in Cell2Wall_loop: #Loop on cells. Cell2Wall_loop contains cell wall groups info (one group by cell)
+        cellnumber1 = int(w.getparent().get("id")) #Cell ID number
+        celltype=G.node[NwallsJun + cellnumber1]['cgroup'] #Cell type
+        if celltype==19 or celltype==20: #Proto- and Meta-xylem in new Cellset version
+            celltype=13
+        elif celltype==21: #Xylem pole pericycle in new Cellset version
+            celltype=16
+        elif celltype==23: #Phloem in new Cellset version
+            celltype=11
+        elif celltype==26 or celltype==24: #Companion cell in new Cellset version
+            celltype=12
+        Cell_rank[cellnumber1]=celltype #Later on, cell types 4 and 5 will be updated to account for their ranking within the cortex / stele
+        x_cell=position[NwallsJun + cellnumber1][0] #Cell position (micrometers)
+        y_cell=position[NwallsJun + cellnumber1][1]
+        dist=hypot(x_cell-x_grav,y_cell-y_grav) #(micrometers)
+        Layer_dist[celltype]+=dist
+        nLayer[celltype]+=1
+        if celltype==13:
+            xyl_dist.append([dist])
+    if len(xyl_dist)>0:
+        xyl80_dist=percentile(xyl_dist, 80)
+    else:
+        xyl80_dist=nan
+
+    if nLayer[16]==0: #If there is no labelled pericycle
+        stele_connec_rank=3 #Endodermis connected to stele cells
+    else:
+        stele_connec_rank=16 #Pericycle connected to stele cells
+    if nLayer[1]==0: #If there is no labelled exodermis
+        outercortex_connec_rank=2 #Cortex connected to epidermis cells
+    else:
+        outercortex_connec_rank=1 #Cortex connected to exodermis cells
+    if InterC_perim_search==1:
+        rank_cellperimeters_in=linspace(nan,nan,Ncellperimeters)
+        rank_cellperimeters_out=linspace(nan,nan,Ncellperimeters)
+    listprotosieve=[]
+    mincid=99999
+    Layer_dist[16]=0
+    nLayer[16]=0
+    for w in Cell2Wall_loop: #Loop on cells. Cell2Wall_loop contains cell wall groups info (one group by cell)
+        cellnumber1 = int(w.getparent().get("id")) #Cell ID number #celltype=G.node[NwallsJun + cellnumber1]['cgroup']
+        celltype=Cell_rank[cellnumber1] #Cell types 4 and 5 updated to account for their ranking within the cortex / stele
+        if celltype==16: #Pericycle
+            temp=Cell_rank[Cell_connec[cellnumber1][0:nCell_connec[cellnumber1][0]]]
+            if any(temp==5) or any(temp==11) or any(temp==12) or any(temp==13) or any(temp==50): #Cell to cell connection with endodermis
+                Cell_rank[cellnumber1]=16 #pericycle ranks now span 16 to 18 instead of 16
+                x_cell=position[NwallsJun + cellnumber1][0] #Cell position (micrometers)
+                y_cell=position[NwallsJun + cellnumber1][1]
+                dist=hypot(x_cell-x_grav,y_cell-y_grav) #(micrometers)
+                Layer_dist[16]+=dist
+                nLayer[16]+=1
+            elif any(temp==3): #Cell to cell connection with endodermis
+                Cell_rank[cellnumber1]=18 #pericycle ranks now span 16 to 18 instead of 16
+                x_cell=position[NwallsJun + cellnumber1][0] #Cell position (micrometers)
+                y_cell=position[NwallsJun + cellnumber1][1]
+                dist=hypot(x_cell-x_grav,y_cell-y_grav) #(micrometers)
+                Layer_dist[18]+=dist
+                nLayer[18]+=1
+            elif all(np.logical_or(np.logical_or(temp==16,temp==17),temp==18)):
+                Cell_rank[cellnumber1]=17 #pericycle ranks now span 16 to 18 instead of 16
+                x_cell=position[NwallsJun + cellnumber1][0] #Cell position (micrometers)
+                y_cell=position[NwallsJun + cellnumber1][1]
+                dist=hypot(x_cell-x_grav,y_cell-y_grav) #(micrometers)
+                Layer_dist[17]+=dist
+                nLayer[17]+=1
+            else:
+                error('Pericycle cell falls in no category')
+        elif celltype==4: #Cortex
+            if any(Cell_rank[Cell_connec[cellnumber1][0:nCell_connec[cellnumber1][0]]]==3): #Cell to cell connection with endodermis
+                Cell_rank[cellnumber1]=25 #Cortex ranks now span 25 to 49 instead of 40 to 49
+                x_cell=position[NwallsJun + cellnumber1][0] #Cell position (micrometers)
+                y_cell=position[NwallsJun + cellnumber1][1]
+                dist=hypot(x_cell-x_grav,y_cell-y_grav) #(micrometers)
+                Layer_dist[25]+=dist
+                nLayer[25]+=1
+                if InterC_perim_search==1:
+                    rank_cellperimeters_in[int(nLayer[25]-1)]=cellperimeter[cellnumber1]
+                    if cellperimeter[cellnumber1]<InterC_perim1:
+                        InterCid.append(cellnumber1) #Cell id starting at 0
+            elif any(Cell_rank[Cell_connec[cellnumber1][0:nCell_connec[cellnumber1][0]]]==outercortex_connec_rank): #Cell to cell connection with exodermis
+                Cell_rank[cellnumber1]=49
+                x_cell=position[NwallsJun + cellnumber1][0] #Cell position (micrometers)
+                y_cell=position[NwallsJun + cellnumber1][1]
+                dist=hypot(x_cell-x_grav,y_cell-y_grav) #(micrometers)
+                Layer_dist[49]+=dist
+                nLayer[49]+=1
+                if InterC_perim_search==1:
+                    rank_cellperimeters_out[int(nLayer[49]-1)]=cellperimeter[cellnumber1]
+                    if cellperimeter[cellnumber1]<InterC_perim5:
+                        InterCid.append(cellnumber1) #Cell id starting at 0
+        elif celltype==5 or celltype==11 or celltype==12 or celltype==13: #Stele
+            if any(Cell_rank[Cell_connec[cellnumber1][0:nCell_connec[cellnumber1][0]]]==stele_connec_rank): #Cell to cell connection with pericycle
+                Cell_rank[cellnumber1]=50
+                x_cell=position[NwallsJun + cellnumber1][0] #Cell position (micrometers)
+                y_cell=position[NwallsJun + cellnumber1][1]
+                dist=hypot(x_cell-x_grav,y_cell-y_grav) #(micrometers)
+                Layer_dist[50]+=dist
+                nLayer[50]+=1
+                if G.node[NwallsJun + cellnumber1]['cgroup']==11 or G.node[NwallsJun + cellnumber1]['cgroup']==23:
+                    listprotosieve.append(NwallsJun + cellnumber1)
+    Nsieve=len(listsieve)
+    Nprotosieve=len(listprotosieve)
+
+    if InterC_perim_search==1:
+        cortex_cellperimeters_in=rank_cellperimeters_in #Inner part of the cortex (close to endodermis)
+        cortex_cellperimeters_out=rank_cellperimeters_out #Outer part of cortex
+    for i in range(12):
+        if InterC_perim_search==1:
+            rank_cellperimeters_in=linspace(nan,nan,Ncellperimeters)
+            rank_cellperimeters_out=linspace(nan,nan,Ncellperimeters)
+        for w in Cell2Wall_loop: #Loop on cells. Cell2Wall_loop contains cell wall groups info (one group by cell)
+            cellnumber1 = int(w.getparent().get("id")) #Cell ID number
+            celltype=Cell_rank[cellnumber1] #Cell types 4 and 5 updated to account for their ranking within the cortex / stele
+            if celltype==4 and i<12: #Cortex # if i<12: #Within 12 layers of cortical sides
+                temp=Cell_connec[cellnumber1][0:nCell_connec[cellnumber1][0]]
+                AloneC=True
+                for i_connec in range(len(temp)):
+                    if not temp[i_connec] in InterCid:
+                        AloneC=False #Isolated cell only in contact with intercellular spaces
+                done=False
+                for i_connec in range(len(temp)):
+                    if Cell_rank[temp[i_connec]]==(25+i) and not done: #Cell to cell connection with endodermis
+                        if (not temp[i_connec] in InterCid) or AloneC:    
+                            Cell_rank[cellnumber1]=26+i
+                            x_cell=position[NwallsJun + cellnumber1][0] #Cell position (micrometers)
+                            y_cell=position[NwallsJun + cellnumber1][1]
+                            dist=hypot(x_cell-x_grav,y_cell-y_grav) #(micrometers)
+                            Layer_dist[26+i]+=dist
+                            nLayer[26+i]+=1
+                            done=True
+                            if InterC_perim_search==1:
+                                rank_cellperimeters_in[int(nLayer[26+i]-1)]=cellperimeter[cellnumber1]
+                                if i==0 and cellperimeter[cellnumber1]<InterC_perim2:
+                                    InterCid.append(cellnumber1)
+                                elif i==1 and cellperimeter[cellnumber1]<InterC_perim3:
+                                    InterCid.append(cellnumber1)
+                                elif i==2 and cellperimeter[cellnumber1]<InterC_perim4:
+                                    InterCid.append(cellnumber1)
+                                elif i>2 and cellperimeter[cellnumber1]<InterC_perim5:
+                                    InterCid.append(cellnumber1)
+                    elif Cell_rank[temp[i_connec]]==(49-i) and not done: #Cell to cell connection with exodermis
+                        if (not temp[i_connec] in InterCid) or AloneC:
+                            Cell_rank[cellnumber1]=48-i
+                            x_cell=position[NwallsJun + cellnumber1][0] #Cell position (micrometers)
+                            y_cell=position[NwallsJun + cellnumber1][1]
+                            dist=hypot(x_cell-x_grav,y_cell-y_grav) #(micrometers)
+                            Layer_dist[48-i]+=dist
+                            nLayer[48-i]+=1
+                            done=True
+                            if InterC_perim_search==1:
+                                rank_cellperimeters_out[int(nLayer[48-i]-1)]=cellperimeter[cellnumber1]
+                                if cellperimeter[cellnumber1]<InterC_perim5:
+                                    InterCid.append(cellnumber1)
+            elif celltype==5 or celltype==11 or celltype==12 or celltype==13: #Stele
+                if i<10:
+                    temp=Cell_connec[cellnumber1][0:nCell_connec[cellnumber1][0]]
+                    done=False
+                    for i_connec in range(len(temp)):
+                        if Cell_rank[temp[i_connec]]==(50+i) and not done:
+                            if (not temp[i_connec]+NwallsJun in listxyl):
+                                #if any(Cell_rank[temp]==(50+i)): #Cell to cell connection with pericycle
+                                Cell_rank[cellnumber1]=51+i
+                                x_cell=position[NwallsJun + cellnumber1][0] #Cell position (micrometers)
+                                y_cell=position[NwallsJun + cellnumber1][1]
+                                dist=hypot(x_cell-x_grav,y_cell-y_grav) #(micrometers)
+                                Layer_dist[51+i]+=dist
+                                nLayer[51+i]+=1
+                                done=True
+                else: #No more than 11 stele cell layers
+                    Cell_rank[cellnumber1]=61
+                    x_cell=position[NwallsJun + cellnumber1][0] #Cell position (micrometers)
+                    y_cell=position[NwallsJun + cellnumber1][1]
+                    dist=hypot(x_cell-x_grav,y_cell-y_grav) #(micrometers)
+                    Layer_dist[61]+=dist
+                    nLayer[61]+=1
+        if i<12:
+            if InterC_perim_search==1:
+                cortex_cellperimeters_in=vstack((cortex_cellperimeters_in,rank_cellperimeters_in))
+                cortex_cellperimeters_out=vstack((rank_cellperimeters_out,cortex_cellperimeters_out))
+    if InterC_perim_search==1:
+        cortex_cellperimeters=vstack((cortex_cellperimeters_in,cortex_cellperimeters_out))
+    #InterCid=InterCid[1:]
+        
+    return Cell_rank, Layer_dist, nLayer, xyl_dist, Layer_dist, nLayer, InterCid, Nsieve, Nprotosieve, listprotosieve, outercortex_connec_rank, xyl80_dist
