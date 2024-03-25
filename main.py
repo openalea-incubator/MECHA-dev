@@ -36,7 +36,7 @@ def MECHA_run(dir, Project,
     #Precision
     dp = np.dtype((np.float64))
     #Import General data
-    # print('Importing geometrical data')
+    print('Importing geometrical data')
     t0 = time.perf_counter()
     OS=etree.parse(dir + Project + inputs + Gen).getroot().xpath('OS')[0].get("value")
     Output_path=etree.parse(dir + Project + inputs + Gen).getroot().xpath('Output')[0].get("path")
@@ -57,6 +57,7 @@ def MECHA_run(dir, Project,
     sparseM=int(etree.parse(dir + Project + inputs + Gen).getroot().xpath('sparse')[0].get("value"))
 
     #Import Geometrical data
+    print("Importing geometrical data")
     Plant=etree.parse(dir + Project + inputs + Geom).getroot().xpath('Plant')[0].get("value")
     path_geom=etree.parse(dir + Project + inputs + Geom).getroot().xpath('path')[0].get("value")
     im_scale=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('im_scale')[0].get("value"))
@@ -134,14 +135,15 @@ def MECHA_run(dir, Project,
     # =========================================
     #Initializes network structure
     # =========================================
+    print("Initializing network")
     global position
     G, NwallsJun, Ncells, lengths, Junction2Wall, Nwalls, position, position_junctions, min_x_wall, max_x_wall, Ntot = initialize_network(points, Walls_loop, Walls_PD, Cells_loop, newpath, im_scale)
     # TO DO : define object G with all these attributes 
 
     # =========================================
     #Identifies soil-root interface walls
+    print("Identifying soil-root interface walls")
     # =========================================
-
     Borderlink, Borderjunction, Borderaerenchyma, Borderwall = identify_interfaces(NwallsJun, Walls_loop, Cell2Wall_loop, Junction2Wall, Nwalls, lengths)
     
     # =========================================
@@ -168,11 +170,12 @@ def MECHA_run(dir, Project,
 
     # =========================================
     #Get X and Y for Cell nodes and cell nodes
+    print("Getting X and Y cell nodes")
     Nxyl, position, listxyl, listsieve, Apo_w_Target, Apo_w_Immune = get_cell_nodes(G, Cell2Wall_loop, NwallsJun, Apo_Contagion, position)
    # =========================================
     
     t1 = time.perf_counter()
-    # print(t1-t0, "seconds process time")
+    print(t1-t0, "seconds process time")
 
     #add Edges
     # print('Creating network connections')
