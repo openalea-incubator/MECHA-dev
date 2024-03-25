@@ -133,7 +133,7 @@ def MECHA_run(dir, Project, inputs, Gen, Geom, Hydr, BC, Horm, Cell_connec_max=5
     # TO DO : define object G with all these attributes 
 
     #Identifies soil-root interface walls
-    
+    Borderlink, Borderjunction, Borderaerenchyma = identify_interfaces(NwallsJun, Walls_loop, Cell2Wall_loop, Junction2Wall, Nwalls)
     
     # STOP
     # =========================================================================================================================

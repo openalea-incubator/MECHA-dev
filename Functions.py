@@ -300,7 +300,7 @@ def initialize_network(points, Walls_loop, Walls_PD, Cells_loop, newpath, im_sca
 
     return G, NwallsJun, Ncells, lengths, Junction2Wall, Nwalls, position, position_junctions, min_x_wall, max_x_wall, Ntot
 
-def identify_interfaces(NwallsJun, Walls_loop, Cell2Wall_loop, Junction2Wall):
+def identify_interfaces(NwallsJun, Walls_loop, Cell2Wall_loop, Junction2Wall, Nwalls):
     Borderlink=2*ones((NwallsJun,1))
     Borderwall=[] #Soil-root interface wall
     Borderaerenchyma=[] #Wall at the surface of aerenchyma
