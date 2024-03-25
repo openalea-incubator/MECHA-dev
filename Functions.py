@@ -585,5 +585,83 @@ def get_cell_nodes(G, Cell2Wall_loop, NwallsJun, Apo_Contagion, position):
 
     Nxyl=len(listxyl)
     position=nx.get_node_attributes(G,'position') #Updates nodes XY positions (micrometers)
-    return (Nxyl, position, listxyl, listsieve, Apo_w_Target, Apo_w_Immune)
+    return Nxyl, position, listxyl, listsieve, Apo_w_Target, Apo_w_Immune
+# =======================
+def create_network_connections(G, Nwalls, Ncells, Cell2Wall_loop, Walls_loop, 
+                               position, NwallsJun, position_junctions,
+                               Cell_connec_max, lengths, Junction2Wall):
+    t0 = time.perf_counter()
+    lat_dists=zeros((Nwalls,1))
+    Nmb=0 #Total number of membranes
+    cellperimeter=np.linspace(0,0,Ncells)
+    cellarea=np.linspace(0,0,Ncells) #(micron^2)
+    CellWallsList=[] #Includes both walls & junctions ordered in a consecutive order
+    for w in Cell2Wall_loop: #Loop on cells. Cell2Wall_loop contains cell wall groups info (one group by cell)
+        cellnumber1 = int(w.getparent().get("id")) #Cell ID number
+        i=0
+        for r in w: #Loop for wall elements around the cell
+            wid= int(r.get("id")) #Cell wall ID
+            d_vec=array([position[wid][0]-position[NwallsJun+cellnumber1][0],position[wid][1]-position[NwallsJun+cellnumber1][1]])
+            dist_cell=hypot(d_vec[0],d_vec[1]) #distance between wall node and cell node (micrometers)
+            d_vec/=dist_cell
+            lat_dists[wid]+=dist_cell
+            if i==0:
+                wid0=wid
+                wid1=wid
+            else: #This algorithm only works if walls are ordered anti-clockwise around the cell center
+                wid2=wid #new wall id
+                #Find junction closest to wid1
+                dist1=hypot(position[wid1][0]-position_junctions[wid2][0],position[wid1][1]-position_junctions[wid2][1])
+                dist2=hypot(position[wid1][0]-position_junctions[wid2][2],position[wid1][1]-position_junctions[wid2][3])
+                if dist1<dist2:
+                    j=0
+                else:
+                    j=2
+                cellarea[cellnumber1] += (position[wid1][0]+position_junctions[wid2][0+j])*(position[wid1][1]-position_junctions[wid2][1+j]) #Cell area loop (micron^2)
+                cellarea[cellnumber1] += (position_junctions[wid2][0+j]+position[wid2][0])*(position_junctions[wid2][1+j]-position[wid2][1]) #Cell area loop (micron^2)
+                wid1=wid2
+            Nmb+=1
+            G.add_edge(NwallsJun + cellnumber1, wid, path='membrane', length=lengths[wid], dist=dist_cell, d_vec=d_vec) #, height=height #Adding all cell to wall connections (edges) #kaqp=kaqp, kw=kw, kmb=kmb, 
+            cellperimeter[cellnumber1]+=lengths[wid]
+            i+=1
+        dist1=hypot(position[wid1][0]-position_junctions[wid0][0],position[wid1][1]-position_junctions[wid0][1])
+        dist2=hypot(position[wid1][0]-position_junctions[wid0][2],position[wid1][1]-position_junctions[wid0][3])
+        if dist1<dist2:
+            j=0
+        else:
+            j=2
+        cellarea[cellnumber1] += (position[wid1][0]+position_junctions[wid0][0+j])*(position[wid1][1]-position_junctions[wid0][1+j]) #Back to the first node
+        cellarea[cellnumber1] += (position_junctions[wid0][0+j]+position[wid0][0])*(position_junctions[wid0][1+j]-position[wid0][1]) #Back to the first node
+        cellarea[cellnumber1] /= -2.0
+
+    Cell_connec=-ones((Ncells,Cell_connec_max),dtype=int) #Connected cells for further ranking
+    nCell_connec=zeros((Ncells,1),dtype=int) #Quantity of cell to cell connections
+    for i in range(0, len(Walls_loop)): #Loop on walls, by cell - wall association, hence a wall can be repeated if associated to two cells. Parent structure: Cell/Walls/Wall
+                r1 = Walls_loop[i] #Points to the current wall
+                cellid1 = r1.getparent().getparent().get("id") #Cell1 ID number
+                id1 = r1.get("id") #Wall1 ID number
+                for j in range(i + 1, len(Walls_loop) ): #Loop on cell-wall associations that are further down in the list
+                    r2 = Walls_loop[j] #Points to the further down wall in the list of cell-wall associations
+                    cellid2 = r2.getparent().getparent().get("id") #Cell2 ID number
+                    id2 = r2.get("id") #Wall2 ID number
+                    if id1 == id2: #If walls 1 and 2 are the same, then cells 1 and 2 are connected by plasmodesmata
+                        d_vec=array([position[NwallsJun+int(cellid2)][0]-position[NwallsJun+int(cellid1)][0],position[NwallsJun+int(cellid2)][1]-position[NwallsJun+int(cellid1)][1]])
+                        dist_cell=hypot(d_vec[0],d_vec[1]) #distance between wall node and cell node (micrometers)
+                        d_vec/=dist_cell
+                        G.add_edge(NwallsJun + int(cellid1), NwallsJun + int(cellid2), path='plasmodesmata', length=lengths[int(id1)], d_vec=d_vec) #, height=height #Adding all cell to cell connections (edges) #kpl=kpl, 
+                        Cell_connec[int(cellid1)][nCell_connec[int(cellid1)]]=int(cellid2)
+                        nCell_connec[int(cellid1)]+=1
+                        Cell_connec[int(cellid2)][nCell_connec[int(cellid2)]]=int(cellid1)
+                        nCell_connec[int(cellid2)]+=1
+
+    jid=0
+    for Junction, Walls in Junction2Wall.items(): #Loop on junctions between walls
+        for wid in Walls: #Walls is the list of cell walls ID meeting at the junction pos
+            d_vec=array([position[wid][0]-position[jid+Nwalls][0],position[wid][1]-position[jid+Nwalls][1]])
+            dist_wall=hypot(d_vec[0],d_vec[1]) #distance between wall node and cell node (micrometers)
+            d_vec/=dist_wall #As compared to lat_dist, dist_wall underestimates the actual path length between the wall and the junction. dist_wall is rather a straight distance.
+            G.add_edge(jid+Nwalls, int(wid), path='wall', length=lengths[int(wid)]/2, lat_dist=lat_dists[int(wid)][0], d_vec=d_vec, dist_wall=dist_wall) #Adding junction to wall connections (edges)
+        jid+=1
+
+    return d_vec, dist_wall, G, Cell_connec, nCell_connec, Nmb, cellarea, cellperimeter
 # =======================
