@@ -133,42 +133,10 @@ def MECHA_run(dir, Project, inputs, Gen, Geom, Hydr, BC, Horm, Cell_connec_max=5
     # TO DO : define object G with all these attributes 
 
     #Identifies soil-root interface walls
-    Borderlink=2*ones((NwallsJun,1))
-    Borderwall=[] #Soil-root interface wall
-    Borderaerenchyma=[] #Wall at the surface of aerenchyma
-    for w in Walls_loop: #Loop on walls, by cell - wall association, hence a wall can be repeated if associated to two cells
-        wid= int(w.get("id")) #Wall id number
-        Borderlink[wid]-=1
-    for w in Cell2Wall_loop: #Loop on cells. Cell2Wall_loop contains cell wall groups info (one group by cell)
-        cgroup=int(w.getparent().get("group")) #Cell type (1=Exodermis;2=epidermis;3=endodermis;4=cortex;5=stele;16=pericycle)
-        for r in w: #w points to the cell walls around the current cell
-            wid= int(r.get("id")) #Wall id number
-            if Borderlink[wid]==1 and cgroup==2: #Wall node at the interface with soil
-                if wid not in Borderwall:
-                    Borderwall.append(wid)
-            elif Borderlink[wid]==1:
-                if wid not in Borderaerenchyma:
-                    Borderaerenchyma.append(wid)
-    #for wid in range(Nwalls):
-        
-    Borderjunction=[]
-    jid=0
-    for Junction, Walls in Junction2Wall.items():
-        count=0
-        length=0
-        for wid in Walls:
-            if wid in Borderwall:
-                count+=1
-                length+=lengths[wid]/4.0
-        #if count>2: #Should not happen
-        #    print('What the count?')
-        if count==2:
-            Borderjunction.append(jid+Nwalls)
-            Borderlink[jid+Nwalls]=1 #Junction node at the interface with soil
-            lengths[jid+Nwalls]=length
-        else:
-            Borderlink[jid+Nwalls]=0
-        jid+=1
+    
+    
+    # STOP
+    # =========================================================================================================================
 
     Sym_target_range=etree.parse(dir + Project + inputs + Horm).getroot().xpath('Sym_Contagion/target_range/target')
     Sym_Target=[]

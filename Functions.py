@@ -194,6 +194,7 @@ def plot_partition(file):
     Macro_hydro_visu.graph_apo_symp(poly)
 
 def initialize_network(points, Walls_loop, Walls_PD, Cells_loop, newpath, im_scale):
+    
     G = nx.Graph() #Full network
 
     #Creates wall & junction nodes
@@ -298,3 +299,43 @@ def initialize_network(points, Walls_loop, Walls_PD, Cells_loop, newpath, im_sca
     #    cos_angle_wall[wid][1]=(position_junctions[wid][2]-position[wid][0])/(hypot(position_junctions[wid][2]-position[wid][0],position_junctions[wid][3]-position[wid][1])) #Vectors junction2-wall
 
     return G, NwallsJun, Ncells, lengths, Junction2Wall, Nwalls, position, position_junctions, min_x_wall, max_x_wall, Ntot
+
+def identify_interfaces(NwallsJun, Walls_loop, Cell2Wall_loop, Junction2Wall):
+    Borderlink=2*ones((NwallsJun,1))
+    Borderwall=[] #Soil-root interface wall
+    Borderaerenchyma=[] #Wall at the surface of aerenchyma
+    for w in Walls_loop: #Loop on walls, by cell - wall association, hence a wall can be repeated if associated to two cells
+        wid= int(w.get("id")) #Wall id number
+        Borderlink[wid]-=1
+    for w in Cell2Wall_loop: #Loop on cells. Cell2Wall_loop contains cell wall groups info (one group by cell)
+        cgroup=int(w.getparent().get("group")) #Cell type (1=Exodermis;2=epidermis;3=endodermis;4=cortex;5=stele;16=pericycle)
+        for r in w: #w points to the cell walls around the current cell
+            wid= int(r.get("id")) #Wall id number
+            if Borderlink[wid]==1 and cgroup==2: #Wall node at the interface with soil
+                if wid not in Borderwall:
+                    Borderwall.append(wid)
+            elif Borderlink[wid]==1:
+                if wid not in Borderaerenchyma:
+                    Borderaerenchyma.append(wid)
+    #for wid in range(Nwalls):
+        
+    Borderjunction=[]
+    jid=0
+    for Junction, Walls in Junction2Wall.items():
+        count=0
+        length=0
+        for wid in Walls:
+            if wid in Borderwall:
+                count+=1
+                length+=lengths[wid]/4.0
+        #if count>2: #Should not happen
+        #    print('What the count?')
+        if count==2:
+            Borderjunction.append(jid+Nwalls)
+            Borderlink[jid+Nwalls]=1 #Junction node at the interface with soil
+            lengths[jid+Nwalls]=length
+        else:
+            Borderlink[jid+Nwalls]=0
+        jid+=1
+
+    return(Borderlink, Borderjunction, Borderaerenchyma)
