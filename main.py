@@ -129,37 +129,41 @@ def MECHA_run(dir, Project,
     if not os.path.exists(newpath):
         os.makedirs(newpath)
 
-    # ================================================================================================================================
+    # =========================================
     #Initializes network structure
-    # ================================================================================================================================    
+    # =========================================
     
     G, NwallsJun, Ncells, lengths, Junction2Wall, Nwalls, position, position_junctions, min_x_wall, max_x_wall, Ntot = initialize_network(points, Walls_loop, Walls_PD, Cells_loop, newpath, im_scale)
     # TO DO : define object G with all these attributes 
 
+    # =========================================
     #Identifies soil-root interface walls
-    Borderlink, Borderjunction, Borderaerenchyma = identify_interfaces(NwallsJun, Walls_loop, Cell2Wall_loop, Junction2Wall, Nwalls)
-    
-    # STOP
-    # =========================================================================================================================
+    # =========================================
 
-    Sym_target_range=etree.parse(dir + Project + inputs + Horm).getroot().xpath('Sym_Contagion/target_range/target')
-    Sym_Target=[]
-    for target in Sym_target_range:
-        Sym_Target.append(int(target.get("id")))
-    Sym_immune_range=etree.parse(dir + Project + inputs + Horm).getroot().xpath('Sym_Contagion/immune_range/immune')
-    Sym_Immune=[]
-    for immune in Sym_immune_range:
-        Sym_Immune.append(int(immune.get("id")))
-    Apo_source_ini_range=etree.parse(dir + Project + inputs + Horm).getroot().xpath('Apo_Contagion/source_range/Steady-state/source')
-    Apo_source_transi_range=etree.parse(dir + Project + inputs + Horm).getroot().xpath('Apo_Contagion/source_range/Transient/source')
-    Apo_target_range=etree.parse(dir + Project + inputs + Horm).getroot().xpath('Apo_Contagion/target_range/target')
-    Apo_Target=[]
-    for target in Apo_target_range:
-        Apo_Target.append(int(target.get("id")))
-    Apo_immune_range=etree.parse(dir + Project + inputs + Horm).getroot().xpath('Apo_Contagion/immune_range/immune')
-    Apo_Immune=[]
-    for immune in Apo_immune_range:
-        Apo_Immune.append(int(immune.get("id")))
+    Borderlink, Borderjunction, Borderaerenchyma, Borderwall = identify_interfaces(NwallsJun, Walls_loop, Cell2Wall_loop, Junction2Wall, Nwalls, lengths)
+    
+    # =========================================
+    # Deprecated : compute advective symplastic fluxed toward target cell
+    # =========================================
+    # Sym_target_range=etree.parse(dir + Project + inputs + Horm).getroot().xpath('Sym_Contagion/target_range/target')
+    # Sym_Target=[]
+    # for target in Sym_target_range:
+    #     Sym_Target.append(int(target.get("id")))
+    # Sym_immune_range=etree.parse(dir + Project + inputs + Horm).getroot().xpath('Sym_Contagion/immune_range/immune')
+    # Sym_Immune=[]
+    # for immune in Sym_immune_range:
+    #     Sym_Immune.append(int(immune.get("id")))
+    # Apo_source_ini_range=etree.parse(dir + Project + inputs + Horm).getroot().xpath('Apo_Contagion/source_range/Steady-state/source')
+    # Apo_source_transi_range=etree.parse(dir + Project + inputs + Horm).getroot().xpath('Apo_Contagion/source_range/Transient/source')
+    # Apo_target_range=etree.parse(dir + Project + inputs + Horm).getroot().xpath('Apo_Contagion/target_range/target')
+    # Apo_Target=[]
+    # for target in Apo_target_range:
+    #     Apo_Target.append(int(target.get("id")))
+    # Apo_immune_range=etree.parse(dir + Project + inputs + Horm).getroot().xpath('Apo_Contagion/immune_range/immune')
+    # Apo_Immune=[]
+    # for immune in Apo_immune_range:
+    #     Apo_Immune.append(int(immune.get("id")))
+
 
     #Get X and Y for Cell nodes and cell nodes
     listsieve=[]
@@ -8573,119 +8577,124 @@ def MECHA_run(dir, Project,
             myfile.close()
             text_file.close()
         
-        if Sym_Contagion == 1: #write down results of the hydropatterning study
-            #iMaturity=-1
-            for iMaturity in range(Nmaturity_loop):
-                if PileUp==2:
-                    b=9
-                else:
-                    b=int(Maturityrange[iMaturity].get("Barrier"))
-                #iMaturity+=1
-                text_file = open(newpath+"Hydropatterning_"+str(b)+","+str(iMaturity)+".txt", "w")
-                with open(newpath+"Hydropatterning_"+str(b)+","+str(iMaturity)+".txt", "a") as myfile:
-                    myfile.write("Is there symplastic mass flow from source to target cells? Apoplastic barrier "+str(b)+","+str(iMaturity)+" \n")
-                    myfile.write("\n")
-                    myfile.write(str(Nscenarios-1)+" scenarios \n")
-                    myfile.write("\n")
-                    myfile.write("Template: "+path_geom+" \n")
-                    myfile.write("\n")
-                    myfile.write("Source cell: "+str(N_Dirichlet_ini)+" \n")
-                    myfile.write("\n")
-                    myfile.write("Target cells: "+str(Sym_Target)+" \n")
-                    myfile.write("\n")
-                    myfile.write("Immune cells: "+str(Sym_Immune)+" \n")
-                    myfile.write("\n")
-                    myfile.write("Stack height: "+str((Totheight)*1.0E-04)+" cm \n")
-                    myfile.write("\n")
-                    myfile.write("Cross-section perimeter: "+str(perimeter[0])+" cm \n")
-                    myfile.write("\n")
-                    myfile.write("Xcontact: "+str(Xcontact)+" microns \n")
-                    myfile.write("\n")
-                    myfile.write("kw: "+str(kw)+" cm^2/hPa/d \n")
-                    myfile.write("\n")
-                    myfile.write("Kpl: "+str(Kpl)+" cm^3/hPa/d \n")
-                    myfile.write("\n")
-                    myfile.write("kAQP: "+str(kaqp_cortex)+" cm/hPa/d \n")
-                    myfile.write("\n")
-                    if b==0:
-                        myfile.write("Cell elongation rate: "+str(Elong_cell)+" cm/d \n")
-                    else: #No elongation after formation of the Casparian strip
-                        myfile.write("Cell elongation rate: "+str(0.0)+" cm/d \n")
-                    myfile.write("\n")
-                    for i in range(1,Nscenarios):
-                        myfile.write("\n")
-                        myfile.write("\n")
-                        myfile.write("Scenario "+str(i)+" \n")
-                        myfile.write("\n")
-                        myfile.write("Expected hydropatterining response (1: Wet-side XPP; -1 to 0: Unclear; 2: Dry-side XPP) \n")
-                        myfile.write("Hydropat.: "+str(int(Hydropatterning[iMaturity][i]))+" \n")
-                        myfile.write("\n")
-                        myfile.write("h_x: "+str(Psi_xyl[1][iMaturity][i])+" hPa, h_s: "+str(Psi_soil[0][i])+" to "+str(Psi_soil[1][i])+" hPa, h_p: "+str(Psi_sieve[1][iMaturity][i])+" hPa \n")
-                        myfile.write("\n")
-                        myfile.write("O_x: "+str(Os_xyl[0][i])+" to "+str(Os_xyl[0][i])+" hPa, O_s: "+str(Os_soil[0][i])+" to "+str(Os_soil[1][i])+" hPa, O_p: "+str(Os_sieve[0][i])+" hPa \n")
-                        myfile.write("\n")
-                        myfile.write("Os_cortex: "+str(Os_cortex[0][count])+" hPa, Os_hetero: "+str(Os_hetero[0][count])+", s_hetero: "+str(s_hetero[0][count])+", s_factor: "+str(s_factor[0][count])+" \n")
-                        myfile.write("\n")
-                        myfile.write("q_tot: "+str(Q_tot[iMaturity][i]/(Totheight)/1.0E-04)+" cm^2/d \n")
-                        myfile.write("\n")
-                myfile.close()
-                text_file.close()
+        # ================================================
+        # Deprecated : compute advective symplastic fluxed toward target cell
+        # ================================================
+        # if Sym_Contagion == 1: #write down results of the hydropatterning study
+        #     #iMaturity=-1
+        #     for iMaturity in range(Nmaturity_loop):
+        #         if PileUp==2:
+        #             b=9
+        #         else:
+        #             b=int(Maturityrange[iMaturity].get("Barrier"))
+        #         #iMaturity+=1
+        #         text_file = open(newpath+"Hydropatterning_"+str(b)+","+str(iMaturity)+".txt", "w")
+        #         with open(newpath+"Hydropatterning_"+str(b)+","+str(iMaturity)+".txt", "a") as myfile:
+        #             myfile.write("Is there symplastic mass flow from source to target cells? Apoplastic barrier "+str(b)+","+str(iMaturity)+" \n")
+        #             myfile.write("\n")
+        #             myfile.write(str(Nscenarios-1)+" scenarios \n")
+        #             myfile.write("\n")
+        #             myfile.write("Template: "+path_geom+" \n")
+        #             myfile.write("\n")
+        #             myfile.write("Source cell: "+str(N_Dirichlet_ini)+" \n")
+        #             myfile.write("\n")
+        #             myfile.write("Target cells: "+str(Sym_Target)+" \n")
+        #             myfile.write("\n")
+        #             myfile.write("Immune cells: "+str(Sym_Immune)+" \n")
+        #             myfile.write("\n")
+        #             myfile.write("Stack height: "+str((Totheight)*1.0E-04)+" cm \n")
+        #             myfile.write("\n")
+        #             myfile.write("Cross-section perimeter: "+str(perimeter[0])+" cm \n")
+        #             myfile.write("\n")
+        #             myfile.write("Xcontact: "+str(Xcontact)+" microns \n")
+        #             myfile.write("\n")
+        #             myfile.write("kw: "+str(kw)+" cm^2/hPa/d \n")
+        #             myfile.write("\n")
+        #             myfile.write("Kpl: "+str(Kpl)+" cm^3/hPa/d \n")
+        #             myfile.write("\n")
+        #             myfile.write("kAQP: "+str(kaqp_cortex)+" cm/hPa/d \n")
+        #             myfile.write("\n")
+        #             if b==0:
+        #                 myfile.write("Cell elongation rate: "+str(Elong_cell)+" cm/d \n")
+        #             else: #No elongation after formation of the Casparian strip
+        #                 myfile.write("Cell elongation rate: "+str(0.0)+" cm/d \n")
+        #             myfile.write("\n")
+        #             for i in range(1,Nscenarios):
+        #                 myfile.write("\n")
+        #                 myfile.write("\n")
+        #                 myfile.write("Scenario "+str(i)+" \n")
+        #                 myfile.write("\n")
+        #                 myfile.write("Expected hydropatterining response (1: Wet-side XPP; -1 to 0: Unclear; 2: Dry-side XPP) \n")
+        #                 myfile.write("Hydropat.: "+str(int(Hydropatterning[iMaturity][i]))+" \n")
+        #                 myfile.write("\n")
+        #                 myfile.write("h_x: "+str(Psi_xyl[1][iMaturity][i])+" hPa, h_s: "+str(Psi_soil[0][i])+" to "+str(Psi_soil[1][i])+" hPa, h_p: "+str(Psi_sieve[1][iMaturity][i])+" hPa \n")
+        #                 myfile.write("\n")
+        #                 myfile.write("O_x: "+str(Os_xyl[0][i])+" to "+str(Os_xyl[0][i])+" hPa, O_s: "+str(Os_soil[0][i])+" to "+str(Os_soil[1][i])+" hPa, O_p: "+str(Os_sieve[0][i])+" hPa \n")
+        #                 myfile.write("\n")
+        #                 myfile.write("Os_cortex: "+str(Os_cortex[0][count])+" hPa, Os_hetero: "+str(Os_hetero[0][count])+", s_hetero: "+str(s_hetero[0][count])+", s_factor: "+str(s_factor[0][count])+" \n")
+        #                 myfile.write("\n")
+        #                 myfile.write("q_tot: "+str(Q_tot[iMaturity][i]/(Totheight)/1.0E-04)+" cm^2/d \n")
+        #                 myfile.write("\n")
+        #         myfile.close()
+        #         text_file.close()
         
-        if Apo_Contagion == 1: #write down results of the hydrotropism study
-            #iMaturity=-1
-            for iMaturity in range(Nmaturity_loop):
-                b=int(Maturityrange[iMaturity].get("Barrier"))
-                #iMaturity+=1
-                text_file = open(newpath+"Hydrotropism_"+str(b)+","+str(iMaturity)+".txt", "w")
-                with open(newpath+"Hydrotropism_"+str(b)+","+str(iMaturity)+".txt", "a") as myfile:
-                    myfile.write("Is there apoplastic mass flow from source to target cells? Apoplastic barrier "+str(b)+","+str(iMaturity)+" \n")
-                    myfile.write("\n")
-                    myfile.write(str(Nscenarios-1)+" scenarios \n")
-                    myfile.write("\n")
-                    myfile.write("Template: "+path_geom+" \n")
-                    myfile.write("\n")
-                    myfile.write("Source cell: "+str(N_Dirichlet_ini)+" \n")
-                    myfile.write("\n")
-                    myfile.write("Target cells: "+str(Apo_Target)+" \n")
-                    myfile.write("\n")
-                    myfile.write("Immune cells: "+str(Apo_Immune)+" \n")
-                    myfile.write("\n")
-                    myfile.write("Stack height: "+str((Totheight)*1.0E-04)+" cm \n")
-                    myfile.write("\n")
-                    myfile.write("Cross-section perimeter: "+str(perimeter[0])+" cm \n")
-                    myfile.write("\n")
-                    myfile.write("Xcontact: "+str(Xcontact)+" microns \n")
-                    myfile.write("\n")
-                    myfile.write("kw: "+str(kw)+" cm^2/hPa/d \n")
-                    myfile.write("\n")
-                    myfile.write("Kpl: "+str(Kpl)+" cm^3/hPa/d \n")
-                    myfile.write("\n")
-                    myfile.write("kAQP: "+str(kaqp_cortex)+" cm/hPa/d \n")
-                    myfile.write("\n")
-                    if b==0:
-                        myfile.write("Cell elongation rate: "+str(Elong_cell)+" cm/d \n")
-                    else: #No elongation after formation of the Casparian strip
-                        myfile.write("Cell elongation rate: "+str(0.0)+" cm/d \n")
-                    myfile.write("\n")
-                    for i in range(1,Nscenarios):
-                        myfile.write("\n")
-                        myfile.write("\n")
-                        myfile.write("Scenario "+str(i)+" \n")
-                        myfile.write("\n")
-                        myfile.write("Expected hydrotropism response (1: All cell walls reached by ABA; 0: No target walls reached by ABA) \n")
-                        myfile.write("Hydropat.: "+str(int(Hydrotropism[iMaturity][i]))+" \n")
-                        myfile.write("\n")
-                        myfile.write("h_x: "+str(Psi_xyl[1][iMaturity][i])+" hPa, h_s: "+str(Psi_soil[0][i])+" to "+str(Psi_soil[1][i])+" hPa, h_p: "+str(Psi_sieve[1][iMaturity][i])+" hPa \n")
-                        myfile.write("\n")
-                        myfile.write("O_x: "+str(Os_xyl[0][i])+" to "+str(Os_xyl[0][i])+" hPa, O_s: "+str(Os_soil[0][i])+" to "+str(Os_soil[1][i])+" hPa, O_p: "+str(Os_sieve[0][i])+" hPa \n")
-                        myfile.write("\n")
-                        myfile.write("Os_cortex: "+str(Os_cortex[0][count])+" hPa, Os_hetero: "+str(Os_hetero[0][count])+", s_hetero: "+str(s_hetero[0][count])+", s_factor: "+str(s_factor[0][count])+" \n")
-                        myfile.write("\n")
-                        myfile.write("q_tot: "+str(Q_tot[iMaturity][i]/(Totheight)/1.0E-04)+" cm^2/d \n")
-                        myfile.write("\n")
-                myfile.close()
-                text_file.close()
+        # if Apo_Contagion == 1: #write down results of the hydrotropism study
+        #     #iMaturity=-1
+        #     for iMaturity in range(Nmaturity_loop):
+        #         b=int(Maturityrange[iMaturity].get("Barrier"))
+        #         #iMaturity+=1
+        #         text_file = open(newpath+"Hydrotropism_"+str(b)+","+str(iMaturity)+".txt", "w")
+        #         with open(newpath+"Hydrotropism_"+str(b)+","+str(iMaturity)+".txt", "a") as myfile:
+        #             myfile.write("Is there apoplastic mass flow from source to target cells? Apoplastic barrier "+str(b)+","+str(iMaturity)+" \n")
+        #             myfile.write("\n")
+        #             myfile.write(str(Nscenarios-1)+" scenarios \n")
+        #             myfile.write("\n")
+        #             myfile.write("Template: "+path_geom+" \n")
+        #             myfile.write("\n")
+        #             myfile.write("Source cell: "+str(N_Dirichlet_ini)+" \n")
+        #             myfile.write("\n")
+        #             myfile.write("Target cells: "+str(Apo_Target)+" \n")
+        #             myfile.write("\n")
+        #             myfile.write("Immune cells: "+str(Apo_Immune)+" \n")
+        #             myfile.write("\n")
+        #             myfile.write("Stack height: "+str((Totheight)*1.0E-04)+" cm \n")
+        #             myfile.write("\n")
+        #             myfile.write("Cross-section perimeter: "+str(perimeter[0])+" cm \n")
+        #             myfile.write("\n")
+        #             myfile.write("Xcontact: "+str(Xcontact)+" microns \n")
+        #             myfile.write("\n")
+        #             myfile.write("kw: "+str(kw)+" cm^2/hPa/d \n")
+        #             myfile.write("\n")
+        #             myfile.write("Kpl: "+str(Kpl)+" cm^3/hPa/d \n")
+        #             myfile.write("\n")
+        #             myfile.write("kAQP: "+str(kaqp_cortex)+" cm/hPa/d \n")
+        #             myfile.write("\n")
+        #             if b==0:
+        #                 myfile.write("Cell elongation rate: "+str(Elong_cell)+" cm/d \n")
+        #             else: #No elongation after formation of the Casparian strip
+        #                 myfile.write("Cell elongation rate: "+str(0.0)+" cm/d \n")
+        #             myfile.write("\n")
+        #             for i in range(1,Nscenarios):
+        #                 myfile.write("\n")
+        #                 myfile.write("\n")
+        #                 myfile.write("Scenario "+str(i)+" \n")
+        #                 myfile.write("\n")
+        #                 myfile.write("Expected hydrotropism response (1: All cell walls reached by ABA; 0: No target walls reached by ABA) \n")
+        #                 myfile.write("Hydropat.: "+str(int(Hydrotropism[iMaturity][i]))+" \n")
+        #                 myfile.write("\n")
+        #                 myfile.write("h_x: "+str(Psi_xyl[1][iMaturity][i])+" hPa, h_s: "+str(Psi_soil[0][i])+" to "+str(Psi_soil[1][i])+" hPa, h_p: "+str(Psi_sieve[1][iMaturity][i])+" hPa \n")
+        #                 myfile.write("\n")
+        #                 myfile.write("O_x: "+str(Os_xyl[0][i])+" to "+str(Os_xyl[0][i])+" hPa, O_s: "+str(Os_soil[0][i])+" to "+str(Os_soil[1][i])+" hPa, O_p: "+str(Os_sieve[0][i])+" hPa \n")
+        #                 myfile.write("\n")
+        #                 myfile.write("Os_cortex: "+str(Os_cortex[0][count])+" hPa, Os_hetero: "+str(Os_hetero[0][count])+", s_hetero: "+str(s_hetero[0][count])+", s_factor: "+str(s_factor[0][count])+" \n")
+        #                 myfile.write("\n")
+        #                 myfile.write("q_tot: "+str(Q_tot[iMaturity][i]/(Totheight)/1.0E-04)+" cm^2/d \n")
+        #                 myfile.write("\n")
+        #         myfile.close()
+        #         text_file.close()
             
+        # Save cell perimeter
+        # TO DO : put it optionnal?
         if InterC_perim_search==1:
             text_file = open(newpath+"Cortical_cell_perimeters.txt", "w")
             with open(newpath+"Cortical_cell_perimeters.txt", "a") as myfile:
