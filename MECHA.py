@@ -4,7 +4,7 @@
 dir = './'
 
 #Project
-Project ='Projects/granar/' 
+Project ='Projects/test/' 
 
 #Inputs
 inputs='in/'
@@ -26,5 +26,5 @@ matrix_analysis=0
 # Run MECHA
 print("Launching MECHA")
 
-import main
-main.MECHA_run()
+from main import *
+MECHA_run(dir, Project, inputs, Gen, Geom, Hydr, BC, Horm, Cell_connec_max, Ncellperimeters, V_modifier, test_mass_balance, maxCell2ThickWalls, matrix_analysis)
