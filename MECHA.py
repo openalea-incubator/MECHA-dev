@@ -1,28 +1,26 @@
 # -*- coding: utf-8 -*-
 
 #Directory
-dir = './MECHA/'
+dir = './'
 
 #Project
 Project='Projects/granar/' #'PlantPhys/' #'Projects/Flavius/' #GRANAR/'#Yoan/'#Sixtine/'#BBSRC/'#'Projects/
 
 #Inputs
-
-if Project=='Projects/granar/':
-    inputs='in/'
-    Gen='Tomato_General.xml'
-    Geom='Tomato_Geometry.xml'
-    Hydr='Tomato_Hydraulics.xml'
-    BC='Tomato_BC.xml'#'Maize_BC_kr.xml'
-    Horm='Tomato_Hormones_Carriers.xml'
-    Cell_connec_max=50
-    Ncellperimeters=100
-    V_modifier=1.0
-    test_mass_balance=0
-    maxCell2ThickWalls=101
-    #DF_axial_factor=1.0
-    #K_axial_factor=1.0
-    matrix_analysis=0
+inputs='in/'
+Gen='General.xml'
+Geom='Geometry.xml'
+Hydr='Hydraulics.xml'
+BC='BC.xml'#'Maize_BC_kr.xml'
+Horm='Hormones_Carriers.xml'
+Cell_connec_max=50
+Ncellperimeters=100
+V_modifier=1.0
+test_mass_balance=0
+maxCell2ThickWalls=101
+#DF_axial_factor=1.0
+#K_axial_factor=1.0
+matrix_analysis=0
 
 #Libraries
 # print('Importing libraries')
