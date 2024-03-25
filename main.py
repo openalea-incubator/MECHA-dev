@@ -21,6 +21,8 @@ import sys, os
 # Import MECHA functions
 from functions import *
 
+# ===================================================================================================
+# ===================================================================================================
 # Define MECHA
 def MECHA_run(dir, Project, 
               inputs='in/', Gen='General.xml',Geom='Geometry.xml',
@@ -132,7 +134,7 @@ def MECHA_run(dir, Project,
     # =========================================
     #Initializes network structure
     # =========================================
-    
+    global position
     G, NwallsJun, Ncells, lengths, Junction2Wall, Nwalls, position, position_junctions, min_x_wall, max_x_wall, Ntot = initialize_network(points, Walls_loop, Walls_PD, Cells_loop, newpath, im_scale)
     # TO DO : define object G with all these attributes 
 
@@ -164,53 +166,11 @@ def MECHA_run(dir, Project,
     # for immune in Apo_immune_range:
     #     Apo_Immune.append(int(immune.get("id")))
 
-
+    # =========================================
     #Get X and Y for Cell nodes and cell nodes
-    listsieve=[]
-    listxyl=[]
-    listxylwalls=[]
-    Apo_w_Target=[]
-    Apo_w_Immune=[]
-    for w in Cell2Wall_loop: #Loop on cells. Cell2Wall_loop contains cell wall groups info (one group by cell)
-        totx=0.0 #Summing up cell walls X positions
-        toty=0.0 #Summing up cell walls Y positions
-        cellnumber1 = int(w.getparent().get("id")) #Cell ID number
-        cgroup=int(w.getparent().get("group")) #Cell type (1=Exodermis;2=epidermis;3=endodermis;4=cortex;5=stele;16=pericycle)
-        if cgroup==26:
-            error('Please use the label Columella2 for Companion cells in CellSet, MECHA update needed before using the official Companion cell label')
-            cgroup=24
-        div=float(len(w)) #Total number of walls around the current cell
-        for r in w: #w points to the cell walls around the current cell
-            wid= int(r.get("id")) #Wall ID number
-            totx += position[wid][0] #Contains the walls average X positions
-            toty += position[wid][1] #Contains the walls average Y positions
-        finalx=totx/div #Average cell X position (from the average position of its walls)
-        finaly=toty/div #Average cell Y position (from the average position of its walls)
-        G.add_node(NwallsJun + cellnumber1, indice=(NwallsJun) + cellnumber1, type="cell", position = (finalx,finaly), cgroup=cgroup) #Adding cell nodes  borderlink=0,
-        if cgroup==23: #Phloem sieve tube
-            error('Please use the label "Columella1" for Phloem in CellSet, MECHA update needed in order to use the official CellSet phloem label')
-        if cgroup==11 or cgroup==23: #Phloem sieve tube
-            listsieve.append(NwallsJun+cellnumber1)
-        elif cgroup==13 or cgroup==19 or cgroup==20: #Xylem vessel
-            listxyl.append(NwallsJun+cellnumber1)
-            for r in w: #w points to the cell walls around the current cell
-                wid= int(r.get("id")) #Wall ID number
-                listxylwalls.append(wid) #ghost walls crossing xylem vessels will appear twice
-        if Apo_Contagion==1:
-            if cellnumber1 in Apo_Target:
-                for r in w: #w points to the cell walls around the current cell
-                    wid= int(r.get("id")) #Wall ID number
-                    if wid not in Apo_w_Target:
-                        Apo_w_Target.append(wid)
-            if cellnumber1 in Apo_Immune:
-                for r in w: #w points to the cell walls around the current cell
-                    wid= int(r.get("id")) #Wall ID number
-                    if wid not in Apo_w_Immune:
-                        Apo_w_Immune.append(wid)
-
-    Nxyl=len(listxyl)
-    position=nx.get_node_attributes(G,'position') #Updates nodes XY positions (micrometers)
-
+    Nxyl, position, listxyl, listsieve, Apo_w_Target, Apo_w_Immune = get_cell_nodes(G, Cell2Wall_loop, NwallsJun, Apo_Contagion, position)
+   # =========================================
+    
     t1 = time.perf_counter()
     # print(t1-t0, "seconds process time")
 

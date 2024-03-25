@@ -19,6 +19,7 @@ from decimal import Decimal
 from lxml import etree #Tree element analysis module
 import sys, os 
 
+# =======================
 class Input:
     def __init__(self, filename):
         self.tree = ET.parse(filename)
@@ -44,7 +45,7 @@ class Input:
     
     def write_xml(self, file_name):
         self.tree.write(file_name)
-
+# =======================
 class Macro_hydro_visu:
     def __init__(self, file):
         f = file.split("\n")
@@ -176,7 +177,7 @@ class Macro_hydro_visu:
         for i in range(start,end,1):
             y.append(float(re.findall(r'[\d]*[.][\d]+',f[i])[0]))
         return y
-
+# =======================
 def plot_partition(file):
     Hydr = Macro_hydro_visu(file)
     
@@ -192,7 +193,7 @@ def plot_partition(file):
 
     poly = Macro_hydro_visu.poly_table(df)
     Macro_hydro_visu.graph_apo_symp(poly)
-
+# =======================
 def initialize_network(points, Walls_loop, Walls_PD, Cells_loop, newpath, im_scale):
     
     G = nx.Graph() #Full network
@@ -299,7 +300,7 @@ def initialize_network(points, Walls_loop, Walls_PD, Cells_loop, newpath, im_sca
     #    cos_angle_wall[wid][1]=(position_junctions[wid][2]-position[wid][0])/(hypot(position_junctions[wid][2]-position[wid][0],position_junctions[wid][3]-position[wid][1])) #Vectors junction2-wall
 
     return G, NwallsJun, Ncells, lengths, Junction2Wall, Nwalls, position, position_junctions, min_x_wall, max_x_wall, Ntot
-
+# =======================
 def identify_interfaces(NwallsJun, Walls_loop, Cell2Wall_loop, Junction2Wall, Nwalls, lengths):
 
     Borderlink=2*ones((NwallsJun,1))
@@ -340,7 +341,7 @@ def identify_interfaces(NwallsJun, Walls_loop, Cell2Wall_loop, Junction2Wall, Nw
         jid+=1
 
     return(Borderlink, Borderjunction, Borderaerenchyma, Borderwall)
-
+# =======================
 def write_macro(text_file, newpath, b, iMaturity, Nscenarios, Totheight, 
                 NWallLayer, PsiWallLayer,
                 Nlayers, PileUp, Barr, perimeter, K_xyl_spec, kr_tot,
@@ -538,3 +539,51 @@ def write_macro(text_file, newpath, b, iMaturity, Nscenarios, Totheight,
                 myfile.write(str(float(OsWallLayer[j][iMaturity][i]))+" \n")
         myfile.close()
         text_file.close()
+# =======================
+def get_cell_nodes(G, Cell2Wall_loop, NwallsJun, Apo_Contagion, position):
+    listsieve=[]
+    listxyl=[]
+    listxylwalls=[]
+    Apo_w_Target=[]
+    Apo_w_Immune=[]
+    for w in Cell2Wall_loop: #Loop on cells. Cell2Wall_loop contains cell wall groups info (one group by cell)
+        totx=0.0 #Summing up cell walls X positions
+        toty=0.0 #Summing up cell walls Y positions
+        cellnumber1 = int(w.getparent().get("id")) #Cell ID number
+        cgroup=int(w.getparent().get("group")) #Cell type (1=Exodermis;2=epidermis;3=endodermis;4=cortex;5=stele;16=pericycle)
+        if cgroup==26:
+            error('Please use the label Columella2 for Companion cells in CellSet, MECHA update needed before using the official Companion cell label')
+            cgroup=24
+        div=float(len(w)) #Total number of walls around the current cell
+        for r in w: #w points to the cell walls around the current cell
+            wid= int(r.get("id")) #Wall ID number
+            totx += position[wid][0] #Contains the walls average X positions
+            toty += position[wid][1] #Contains the walls average Y positions
+        finalx=totx/div #Average cell X position (from the average position of its walls)
+        finaly=toty/div #Average cell Y position (from the average position of its walls)
+        G.add_node(NwallsJun + cellnumber1, indice=(NwallsJun) + cellnumber1, type="cell", position = (finalx,finaly), cgroup=cgroup) #Adding cell nodes  borderlink=0,
+        if cgroup==23: #Phloem sieve tube
+            error('Please use the label "Columella1" for Phloem in CellSet, MECHA update needed in order to use the official CellSet phloem label')
+        if cgroup==11 or cgroup==23: #Phloem sieve tube
+            listsieve.append(NwallsJun+cellnumber1)
+        elif cgroup==13 or cgroup==19 or cgroup==20: #Xylem vessel
+            listxyl.append(NwallsJun+cellnumber1)
+            for r in w: #w points to the cell walls around the current cell
+                wid= int(r.get("id")) #Wall ID number
+                listxylwalls.append(wid) #ghost walls crossing xylem vessels will appear twice
+        if Apo_Contagion==1:
+            if cellnumber1 in Apo_Target:
+                for r in w: #w points to the cell walls around the current cell
+                    wid= int(r.get("id")) #Wall ID number
+                    if wid not in Apo_w_Target:
+                        Apo_w_Target.append(wid)
+            if cellnumber1 in Apo_Immune:
+                for r in w: #w points to the cell walls around the current cell
+                    wid= int(r.get("id")) #Wall ID number
+                    if wid not in Apo_w_Immune:
+                        Apo_w_Immune.append(wid)
+
+    Nxyl=len(listxyl)
+    position=nx.get_node_attributes(G,'position') #Updates nodes XY positions (micrometers)
+    return (Nxyl, position, listxyl, listsieve, Apo_w_Target, Apo_w_Immune)
+# =======================
