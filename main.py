@@ -1,3 +1,6 @@
+# Import data from MECHA
+from MECHA import dir, Project, inputs, Gen, Geom, Hydr, BC, Horm, Cell_connec_max, Ncellperimeters, V_modifier, test_mass_balance, maxCell2ThickWalls, matrix_analysis
+
 #Libraries
 # print('Importing libraries')
 import time
