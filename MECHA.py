@@ -27,4 +27,5 @@ matrix_analysis=0
 print("Launching MECHA")
 
 # Import MECHA
-from MECHA import *
+import subprocess
+subprocess.run("python main.py")
