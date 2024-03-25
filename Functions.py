@@ -340,3 +340,201 @@ def identify_interfaces(NwallsJun, Walls_loop, Cell2Wall_loop, Junction2Wall, Nw
         jid+=1
 
     return(Borderlink, Borderjunction, Borderaerenchyma, Borderwall)
+
+def write_macro(text_file, newpath, b, iMaturity, Nscenarios, Totheight, 
+                NWallLayer, PsiWallLayer,
+                Nlayers, PileUp, Barr, perimeter, K_xyl_spec, kr_tot,
+                Layer_dist2, AxialLayers, STFlayer_plus, TopLayer, STFlayer_minus,
+                Os_apo_eq, Os_sym_eq, Os_xyl, Os_soil, Os_sieve, Os_hetero, Os_cortex,
+                Xcontacts, Xcontact, 
+                Elong_cell, Elong_cell_side_diff, 
+                kw, Kpl, kaqp_cortex, s_hetero, s_factor, 
+                Q_tot, Q_xyl_layer, Q_sieve_layer, Q_elong_layer, 
+                PsiCellLayer, OsCellLayer, OsWallLayer, r_discret,
+                Psi_xyl, Psi_soil, Psi_sieve, 
+                count, 
+                UptakeLayer_plus, UptakeLayer_minus):
+    with open(newpath+"Macro_prop_"+str(b)+","+str(iMaturity)+".txt", "a") as myfile:
+        myfile.write("Macroscopic root radial hydraulic properties, apoplastic barrier "+str(b)+","+str(iMaturity)+" \n")
+        myfile.write("\n")
+        myfile.write(str(Nscenarios-1)+" scenarios \n")
+        myfile.write("\n")
+        myfile.write("Stack height: "+str((Totheight)*1.0E-04)+" cm \n")
+        myfile.write("\n")
+        myfile.write("Number of zones: "+str(len(Nlayers))+" \n")
+        myfile.write("\n")
+        temp=str(Nlayers)
+        #if len(Nlayers)>1:
+        myfile.write("Number of layers: "+temp[1:-1]+" \n")
+        #else:
+        #    myfile.write("Number of layers: "+temp+" \n")
+        myfile.write("\n")
+        if PileUp==2:
+            temp=str(Barr)
+            myfile.write("Type of layers: "+temp[1:-1]+" \n")
+        else:
+            myfile.write("Type of layers: "+str(b)+" \n")
+        myfile.write("\n")
+        myfile.write("Cross-section perimeter: "+str(perimeter[0])+" cm \n")
+        myfile.write("\n")
+        myfile.write("Xylem specific axial conductance: "+str(K_xyl_spec)+" cm^4/hPa/d \n")
+        myfile.write("\n")
+        myfile.write("Cross-section radial conductivity: "+str(kr_tot[iMaturity][0])+" cm/hPa/d \n")
+        myfile.write("\n")
+        myfile.write("Number of radial discretization boxes: \n")
+        r_discret_txt=' '.join(map(str, r_discret.T)) 
+        myfile.write(r_discret_txt[1:21]+" \n")
+        myfile.write("\n")
+        myfile.write("Radial distance from stele centre (microns): \n")
+        for j in Layer_dist2:
+            myfile.write(str(float(j))+" \n")
+        myfile.write("\n")
+        myfile.write("Standard Transmembrane uptake Fractions (%): \n")
+        for j in range(int(r_discret[0])):
+            if AxialLayers==1:
+                myfile.write(str(float(STFlayer_plus[j,TopLayer-AxialLayers:TopLayer]*100))+" \n")
+            else:
+                temp=str(list(STFlayer_plus[j,TopLayer-AxialLayers:TopLayer]*100))
+                myfile.write(temp[1:-1]+" \n")
+        myfile.write("\n")
+        myfile.write("Standard Transmembrane release Fractions (%): \n")
+        for j in range(int(r_discret[0])):
+            if AxialLayers==1:
+                myfile.write(str(float(STFlayer_minus[j,TopLayer-AxialLayers:TopLayer]*100))+" \n")
+            else:
+                temp=str(list(STFlayer_minus[j,TopLayer-AxialLayers:TopLayer]*100))
+                myfile.write(temp[1:-1]+" \n")
+        for i in range(1,Nscenarios):
+            myfile.write("\n")
+            myfile.write("\n")
+            myfile.write("Scenario "+str(i)+" \n")
+            myfile.write("\n")
+            myfile.write("h_x: "+str(Psi_xyl[1][iMaturity][i])+" hPa \n")
+            myfile.write("\n")
+            myfile.write("h_s: "+str(Psi_soil[0][i])+" to "+str(Psi_soil[1][i])+" hPa \n")
+            myfile.write("\n")
+            myfile.write("h_p: "+str(Psi_sieve[1][iMaturity][i])+" hPa \n")
+            myfile.write("\n")
+            #if AxialLayers>1:
+            #    temp=str(list(Os_apo_eq[:,1,i]))
+            #    myfile.write("O_apo_stele_eq: "+temp[1:-1]+" hPa \n")
+            #    temp=str(list(Os_sym_eq[:,1,i]))
+            #    myfile.write("O_sym_stele_eq: "+temp[1:-1]+" hPa \n")
+            #    temp=str(list(Os_apo_eq[:,0,i]))
+            #    myfile.write("O_apo_cortex_eq: "+temp[1:-1]+" hPa \n")
+            #    temp=str(list(Os_sym_eq[:,0,i]))
+            #    myfile.write("O_sym_cortex_eq: "+temp[1:-1]+" hPa \n")
+            #else:
+            myfile.write("O_apo_stele_eq: "+str(Os_apo_eq[iMaturity,1,i])+" hPa \n")
+            myfile.write("O_sym_stele_eq: "+str(Os_sym_eq[iMaturity,1,i])+" hPa \n")
+            myfile.write("O_apo_cortex_eq: "+str(Os_apo_eq[iMaturity,0,i])+" hPa \n")
+            myfile.write("O_sym_cortex_eq: "+str(Os_sym_eq[iMaturity,0,i])+" hPa \n")
+            myfile.write("\n")
+            myfile.write("O_x: "+str(Os_xyl[0][i])+" to "+str(Os_xyl[1][i])+" hPa \n")
+            myfile.write("\n")
+            myfile.write("O_s: "+str(Os_soil[0][i])+" to "+str(Os_soil[1][i])+" hPa \n")
+            myfile.write("\n")
+            myfile.write("O_p: "+str(Os_sieve[0][i])+" hPa \n")
+            myfile.write("\n")
+            if PileUp==2:
+                myfile.write("Xcontact: "+str(Xcontacts)+" microns \n")
+            else:
+                myfile.write("Xcontact: "+str(Xcontact)+" microns \n")
+            myfile.write("\n")
+            if b==0:
+                myfile.write("Elong_cell: "+str(Elong_cell[0][i])+" cm/d \n")
+                myfile.write("\n")
+                myfile.write("Elong_cell_side_diff: "+str(Elong_cell_side_diff[0][i])+" cm/d \n")
+                myfile.write("\n")
+            else:
+                myfile.write("Elong_cell: "+str(0.0)+" cm/d \n")
+                myfile.write("\n")
+                myfile.write("Elong_cell_side_diff: "+str(0.0)+" cm/d \n")
+                myfile.write("\n")
+            myfile.write("kw: "+str(kw)+" cm^2/hPa/d \n")
+            myfile.write("\n")
+            myfile.write("Kpl: "+str(Kpl)+" cm^3/hPa/d \n")
+            myfile.write("\n")
+            myfile.write("kAQP: "+str(kaqp_cortex)+" cm/hPa/d \n")
+            myfile.write("\n")
+            myfile.write("s_hetero: "+str(s_hetero[0][count])+" \n")
+            myfile.write("\n")
+            myfile.write("s_factor: "+str(s_factor[0][count])+" \n")
+            myfile.write("\n")
+            myfile.write("Os_hetero: "+str(Os_hetero[0][count])+" \n")
+            myfile.write("\n")
+            myfile.write("Os_cortex: "+str(Os_cortex[0][count])+" hPa \n")
+            myfile.write("\n")
+            myfile.write("q_tot: "+str(Q_tot[iMaturity][i]/(Totheight)/1.0E-04)+" cm^2/d \n")
+            myfile.write("\n")
+            myfile.write("Stele, cortex, and epidermis uptake distribution cm^3/d: \n")
+            for j in range(int(r_discret[0])):
+                if AxialLayers==1:
+                    myfile.write(str(float(UptakeLayer_plus[j,TopLayer-AxialLayers:TopLayer,i]))+" \n")
+                else:
+                    temp=str(list(UptakeLayer_plus[j,TopLayer-AxialLayers:TopLayer,i]))
+                    myfile.write(temp[1:-1]+" \n")
+            myfile.write("\n")
+            myfile.write("Stele, cortex, and epidermis release distribution cm^3/d: \n")
+            for j in range(int(r_discret[0])):
+                if AxialLayers==1:
+                    myfile.write(str(float(UptakeLayer_minus[j,TopLayer-AxialLayers:TopLayer,i]))+" \n")
+                else:
+                    temp=str(list(UptakeLayer_minus[j,TopLayer-AxialLayers:TopLayer,i]))
+                    myfile.write(temp[1:-1]+" \n")
+            myfile.write("\n")
+            myfile.write("Xylem uptake distribution cm^3/d: \n")
+            for j in range(int(r_discret[0])):
+                myfile.write(str(float(Q_xyl_layer[j][iMaturity][i]))+" \n")
+            myfile.write("\n")
+            myfile.write("Phloem uptake distribution cm^3/d: \n")
+            for j in range(int(r_discret[0])):
+                myfile.write(str(float(Q_sieve_layer[j][iMaturity][i]))+" \n")
+            myfile.write("\n")
+            myfile.write("Elongation flow convergence distribution cm^3/d: \n")
+            for j in range(int(r_discret[0])):
+                myfile.write(str(float(Q_elong_layer[j][iMaturity][i]))+" \n")
+            myfile.write("\n")
+            myfile.write("Cell layers pressure potentials: \n")
+            for j in range(int(r_discret[0])):
+                if AxialLayers==1:
+                    myfile.write(str(float(PsiCellLayer[j,TopLayer-AxialLayers:TopLayer,i]))+" \n")
+                else:
+                    temp=str(list(PsiCellLayer[j,TopLayer-AxialLayers:TopLayer,i]))
+                    myfile.write(temp[1:-1]+" \n")
+            myfile.write("\n")
+            myfile.write("Cell layers osmotic potentials: \n")
+            if PileUp==2:
+                for j in range(int(r_discret[0])):
+                    temp=str(list(OsCellLayer[j,:,i]))
+                    myfile.write(temp[1:-1]+" \n")
+            else:
+                for j in range(int(r_discret[0])):
+                    myfile.write(str(float(OsCellLayer[j][iMaturity][i]))+" \n")
+            myfile.write("\n")
+            myfile.write("Wall layers pressure potentials: \n")
+            for j in range(int(r_discret[0])):
+                if NWallLayer[j][iMaturity][i]>1:
+                    if AxialLayers>1:
+                        if NWallLayer[j,iMaturity,i]>0:
+                            temp=str(list(PsiWallLayer[j,TopLayer-AxialLayers:TopLayer,i]/NWallLayer[j,iMaturity,i]))
+                            myfile.write(temp[1:-1]+" \n")
+                        else:
+                            myfile.write("nan \n")
+                    else:
+                        if NWallLayer[j,iMaturity,i]>0:
+                            myfile.write(str(float(PsiWallLayer[j,TopLayer-AxialLayers:TopLayer,i]/NWallLayer[j,iMaturity,i]))+" \n")
+                        else:
+                            myfile.write("nan \n")
+                else:
+                    if AxialLayers>1:
+                        temp=str(list(PsiWallLayer[j,TopLayer-AxialLayers:TopLayer,i]))
+                        myfile.write(temp[1:-1]+" \n")
+                    else:
+                        myfile.write(str(float(PsiWallLayer[j,TopLayer-AxialLayers:TopLayer,i]))+" \n")
+            myfile.write("\n")
+            myfile.write("Wall layers osmotic potentials: \n")
+            for j in range(int(r_discret[0])):
+                myfile.write(str(float(OsWallLayer[j][iMaturity][i]))+" \n")
+        myfile.close()
+        text_file.close()
