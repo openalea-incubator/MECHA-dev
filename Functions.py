@@ -606,6 +606,28 @@ def write_macro(text_file, newpath, b, iMaturity, Nscenarios, Totheight,
         myfile.close()
         text_file.close()
 # =======================
+def sym_fluxes(dir, Project, inputs, Horm):
+    Sym_target_range=etree.parse(dir + Project + inputs + Horm).getroot().xpath('Sym_Contagion/target_range/target')
+    Sym_Target=[]
+    for target in Sym_target_range:
+        Sym_Target.append(int(target.get("id")))
+    Sym_immune_range=etree.parse(dir + Project + inputs + Horm).getroot().xpath('Sym_Contagion/immune_range/immune')
+    Sym_Immune=[]
+    for immune in Sym_immune_range:
+        Sym_Immune.append(int(immune.get("id")))
+    Apo_source_ini_range=etree.parse(dir + Project + inputs + Horm).getroot().xpath('Apo_Contagion/source_range/Steady-state/source')
+    Apo_source_transi_range=etree.parse(dir + Project + inputs + Horm).getroot().xpath('Apo_Contagion/source_range/Transient/source')
+    Apo_target_range=etree.parse(dir + Project + inputs + Horm).getroot().xpath('Apo_Contagion/target_range/target')
+    Apo_Target=[]
+    for target in Apo_target_range:
+        Apo_Target.append(int(target.get("id")))
+    Apo_immune_range=etree.parse(dir + Project + inputs + Horm).getroot().xpath('Apo_Contagion/immune_range/immune')
+    Apo_Immune=[]
+    for immune in Apo_immune_range:
+        Apo_Immune.append(int(immune.get("id")))
+
+    return(Sym_Target, Sym_Immune, Apo_Target, Apo_Immune)
+
 def get_cell_nodes(G, Cell2Wall_loop, NwallsJun, Apo_Contagion, position):
     listsieve=[]
     listxyl=[]
@@ -928,3 +950,57 @@ def compute_AQP_axial_distribution(G,Ncells, Cell2Wall_loop, position, NwallsJun
     #InterCid=InterCid[1:]
         
     return Cell_rank, Layer_dist, nLayer, xyl_dist, Layer_dist, nLayer, InterCid, Nsieve, Nprotosieve, listprotosieve, outercortex_connec_rank, xyl80_dist
+# =======================
+def compute_cell_surface1(G, NwallsJun, InterCid):
+    # Calculates cell surfaces and tissue interfaces
+    indice=nx.get_node_attributes(G,'indice') #Node indices (walls, junctions and cells)
+    PPP=list()
+    Length_outer_cortex_tot=0.0 #Total cross-section membrane length at the interface between exodermis and cortex
+    Length_cortex_cortex_tot=0.0 #Total cross-section membrane length at the interface between cortex and cortex
+    Length_cortex_endo_tot=0.0 #Total cross-section membrane length at the interface between cortex and endodermis
+    Length_outer_cortex_nospace=0.0 #Cross-section membrane length at the interface between exodermis and cortex not including interfaces with intercellular spaces
+    Length_cortex_cortex_nospace=0.0 #Cross-section membrane length at the interface between exodermis and cortex not including interfaces with intercellular spaces
+    Length_cortex_endo_nospace=0.0 #Cross-section membrane length at the interface between exodermis and cortex not including interfaces with intercellular spaces
+
+    for node, edges in G.adjacency_iter() :
+        i=indice[node] #Node ID number
+        if i>=NwallsJun: #Cell
+            if G.node[i]['cgroup']==16 or G.node[i]['cgroup']==21:
+                for neighbour, eattr in edges.items(): #Loop on connections (edges)
+                    if eattr['path'] == "plasmodesmata" and (G.node[indice[neighbour]]['cgroup']==11 or G.node[indice[neighbour]]['cgroup']==23): #Plasmodesmata connection  #eattr is the edge attribute (i.e. connection type)
+                        PPP.append(i-NwallsJun)
+            elif G.node[i]['cgroup']==outercortex_connec_rank or G.node[i]['cgroup']==4 or G.node[i]['cgroup']==3: #exodermis or cortex or endodermis (or epidermis if there is no exodermis)
+                if i-NwallsJun not in InterCid: #The loop focuses on exo, cortex and endodermis cells that are not intercellular spaces
+                    for neighbour, eattr in edges.items(): #Loop on connections (edges)
+                        if eattr['path'] == "plasmodesmata": #Plasmodesmata connection  #eattr is the edge attribute (i.e. connection type)
+                            j = (indice[neighbour]) #neighbouring node number
+                            l_membrane=eattr['length']
+                            if (G.node[i]['cgroup']==outercortex_connec_rank and G.node[j]['cgroup']==4) or (G.node[j]['cgroup']==outercortex_connec_rank and G.node[i]['cgroup']==4):#Exodermis to cortex cell or vice versa (epidermis if no exodermis exists)
+                                Length_outer_cortex_tot+=l_membrane
+                                if j-NwallsJun not in InterCid:
+                                    Length_outer_cortex_nospace+=l_membrane
+                            elif (G.node[i]['cgroup']==4 and G.node[j]['cgroup']==4):#Cortex to cortex cell
+                                Length_cortex_cortex_tot+=l_membrane
+                                if j-NwallsJun not in InterCid:
+                                    Length_cortex_cortex_nospace+=l_membrane
+                            elif (G.node[i]['cgroup']==3 and G.node[j]['cgroup']==4) or (G.node[j]['cgroup']==3 and G.node[i]['cgroup']==4):#Cortex to endodermis cell or vice versa
+                                Length_cortex_endo_tot+=l_membrane
+                                if j-NwallsJun not in InterCid:
+                                    Length_cortex_endo_nospace+=l_membrane
+
+    return(G, 
+           Length_outer_cortex_tot, 
+           Length_cortex_cortex_tot,
+           Length_cortex_endo_tot,
+           Length_outer_cortex_nospace,
+           Length_cortex_cortex_nospace,
+           Length_cortex_endo_nospace)
+
+
+
+
+
+
+
+
+
