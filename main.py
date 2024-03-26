@@ -79,10 +79,9 @@ def MECHA_run(dir, Project,
         if not int(aerenchyma.get("id"))>9E5 and not int(aerenchyma.get("id"))<0:
             InterCid.append(int(aerenchyma.get("id"))) #Cell id starting at 0
         else:
-            print('InterCid #'+str(int(aerenchyma.get("id")))+' excluded')
+            # print('InterCid #'+str(int(aerenchyma.get("id")))+' excluded')
     InterC_perim_search=int(etree.parse(dir + Project + inputs + Geom).getroot().xpath('InterC_perim_search')[0].get("value"))
     
-    print("InterC_perim_search = ", InterC_perim_search)
     if InterC_perim_search==1:
         InterC_perim1=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('InterC_perim1')[0].get("value"))
         InterC_perim2=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('InterC_perim2')[0].get("value"))
@@ -145,10 +144,7 @@ def MECHA_run(dir, Project,
 
     # ===================================
     t1 = time.perf_counter()
-    print(t1-t0, "seconds process time")
-
-    # Checks
-    print("InterCid ", InterCid)        
+    print(t1-t0, "seconds process time")        
 
     # =========================================
     # INITIALIZING NETWORK
@@ -245,42 +241,6 @@ def MECHA_run(dir, Project,
     # =========================================
 
     G, indice, PPP, Length_outer_cortex_tot, Length_cortex_cortex_tot,Length_cortex_endo_tot,Length_outer_cortex_nospace,Length_cortex_cortex_nospace,Length_cortex_endo_nospace = compute_cell_surface(G, NwallsJun, InterCid, outercortex_connec_rank)
-
-    # TATABOX
-    # indice=nx.get_node_attributes(G,'indice') #Node indices (walls, junctions and cells)
-    # PPP=list()
-    # Length_outer_cortex_tot=0.0 #Total cross-section membrane length at the interface between exodermis and cortex
-    # Length_cortex_cortex_tot=0.0 #Total cross-section membrane length at the interface between cortex and cortex
-    # Length_cortex_endo_tot=0.0 #Total cross-section membrane length at the interface between cortex and endodermis
-    # Length_outer_cortex_nospace=0.0 #Cross-section membrane length at the interface between exodermis and cortex not including interfaces with intercellular spaces
-    # Length_cortex_cortex_nospace=0.0 #Cross-section membrane length at the interface between exodermis and cortex not including interfaces with intercellular spaces
-    # Length_cortex_endo_nospace=0.0 #Cross-section membrane length at the interface between exodermis and cortex not including interfaces with intercellular spaces
-    # for node, edges in G.adjacency_iter() :
-    #     i=indice[node] #Node ID number
-    #     if i>=NwallsJun: #Cell
-    #         if G.node[i]['cgroup']==16 or G.node[i]['cgroup']==21:
-    #             for neighbour, eattr in edges.items(): #Loop on connections (edges)
-    #                 if eattr['path'] == "plasmodesmata" and (G.node[indice[neighbour]]['cgroup']==11 or G.node[indice[neighbour]]['cgroup']==23): #Plasmodesmata connection  #eattr is the edge attribute (i.e. connection type)
-    #                     PPP.append(i-NwallsJun)
-    #         elif G.node[i]['cgroup']==outercortex_connec_rank or G.node[i]['cgroup']==4 or G.node[i]['cgroup']==3: #exodermis or cortex or endodermis (or epidermis if there is no exodermis)
-    #             if i-NwallsJun not in InterCid: #The loop focuses on exo, cortex and endodermis cells that are not intercellular spaces
-    #                 for neighbour, eattr in edges.items(): #Loop on connections (edges)
-    #                     if eattr['path'] == "plasmodesmata": #Plasmodesmata connection  #eattr is the edge attribute (i.e. connection type)
-    #                         j = (indice[neighbour]) #neighbouring node number
-    #                         l_membrane=eattr['length']
-    #                         if (G.node[i]['cgroup']==outercortex_connec_rank and G.node[j]['cgroup']==4) or (G.node[j]['cgroup']==outercortex_connec_rank and G.node[i]['cgroup']==4):#Exodermis to cortex cell or vice versa (epidermis if no exodermis exists)
-    #                             Length_outer_cortex_tot+=l_membrane
-    #                             if j-NwallsJun not in InterCid:
-    #                                 Length_outer_cortex_nospace+=l_membrane
-    #                         elif (G.node[i]['cgroup']==4 and G.node[j]['cgroup']==4):#Cortex to cortex cell
-    #                             Length_cortex_cortex_tot+=l_membrane
-    #                             if j-NwallsJun not in InterCid:
-    #                                 Length_cortex_cortex_nospace+=l_membrane
-    #                         elif (G.node[i]['cgroup']==3 and G.node[j]['cgroup']==4) or (G.node[j]['cgroup']==3 and G.node[i]['cgroup']==4):#Cortex to endodermis cell or vice versa
-    #                             Length_cortex_endo_tot+=l_membrane
-    #                             if j-NwallsJun not in InterCid:
-    #                                 Length_cortex_endo_nospace+=l_membrane
-    # STOP
 
     # Finalize distance averaging
     for i in range(62): 
