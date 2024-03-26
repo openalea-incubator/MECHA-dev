@@ -79,7 +79,7 @@ def MECHA_run(dir, Project,
         if not int(aerenchyma.get("id"))>9E5 and not int(aerenchyma.get("id"))<0:
             InterCid.append(int(aerenchyma.get("id"))) #Cell id starting at 0
         else:
-            # print('InterCid #'+str(int(aerenchyma.get("id")))+' excluded')
+            print('InterCid #'+str(int(aerenchyma.get("id")))+' excluded')
     InterC_perim_search=int(etree.parse(dir + Project + inputs + Geom).getroot().xpath('InterC_perim_search')[0].get("value"))
     
     if InterC_perim_search==1:

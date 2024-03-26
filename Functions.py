@@ -44,9 +44,12 @@ class Input:
     def write_xml(self, file_name):
         self.tree.write(file_name)
 
+# =======================
 def load_general(InGen):
-    global OS, Output_path, Paraview, ParaviewWF, ParaviewMF, ParaviewPF, ParaviewWP, ParaviewCP, ParTrack, Sym_Contagion, Apo_Contagion, color_threshold, thickness_disp, thicknessJunction_disp, radiusPlasmodesm_disp, UniXwalls, sparseM
 
+    # Define Global
+    global OS, Output_path, Paraview, ParaviewWF, ParaviewMF, ParaviewPF, ParaviewWP, ParaviewCP, ParTrack, Sym_Contagion, Apo_Contagion, color_threshold, thickness_disp, thicknessJunction_disp, radiusPlasmodesm_disp, UniXwalls, sparseM
+    
     OS = InGen.get_parameter(name='OS')
     Output_path=InGen.get_parameter(name='Output', attribute='path')
     Paraview = InGen.get_parameter(name='Paraview', type='int')
@@ -64,73 +67,50 @@ def load_general(InGen):
     radiusPlasmodesm_disp = InGen.get_parameter(name='radiusPlasmodesm_disp', type='float')
     UniXwalls = InGen.get_parameter(name='UniXwalls', type='int')
     sparseM = InGen.get_parameter(name='sparse', type='int')
-
 # =======================
-# def load_general(InGen):
-#     global OS, Output_path, Paraview, ParaviewWF, ParaviewMF, ParaviewPF, ParaviewWP, ParaviewCP, ParTrack, Sym_Contagion, Apo_Contagion, color_threshold, thickness_disp, thicknessJunction_disp, radiusPlasmodesm_disp, UniXwalls, sparseM
-
-#     OS = InGen.get_parameter(name='OS')
-#     Output_path=InGen.get_parameter(name='Output', attribute='path')
-#     Paraview = InGen.get_parameter(name='Paraview', type='int')
-#     ParaviewWF = InGen.get_parameter(name='Paraview', attribute='WallFlux', type='int')
-#     ParaviewMF = InGen.get_parameter(name='Paraview', attribute='MembraneFlux', type='int')
-#     ParaviewPF = InGen.get_parameter(name='Paraview', attribute='PlasmodesmataFlux', type='int')
-#     ParaviewWP = InGen.get_parameter(name='Paraview', attribute='WallPot', type='int')
-#     ParaviewCP = InGen.get_parameter(name='Paraview', attribute='CellPot', type='int')
-#     ParTrack = InGen.get_parameter(name='ParTrack', type='int')
-#     Sym_Contagion = InGen.get_parameter(name='Sym_Contagion', type='int')
-#     Apo_Contagion = InGen.get_parameter(name='Apo_Contagion', type='int')
-#     color_threshold = InGen.get_parameter(name='color_threshold', type='float')
-#     thickness_disp = InGen.get_parameter(name='thickness_disp', type='float')
-#     thicknessJunction_disp = InGen.get_parameter(name='thicknessJunction_disp', type='float')
-#     radiusPlasmodesm_disp = InGen.get_parameter(name='radiusPlasmodesm_disp', type='float')
-#     UniXwalls = InGen.get_parameter(name='UniXwalls', type='int')
-#     sparseM = InGen.get_parameter(name='sparse', type='int')
-# # =======================
-# def load_geometry(InGeom):
-#     global Plant, path_geom, im_scale, Maturityrange, Printrange, Xwalls, PileUp, passage_cell_ID, InterCid, InterC_perim_search, InterC_perim1, InterC_perim2, InterC_perim3, InterC_perim4, InterC_perim5, kInterC, cell_per_layer, thickness, PD_section, Xylem_pieces
-
-#     Plant = InGeom.get_parameter(name='Plant')
-#     path_geom = InGeom.get_parameter(name='path')
-#     fpath = InGeom.get_parameter(name='path')
-#     im_scale = InGeom.get_parameter(name='im_scale', type='float')
-#     Maturityrange = InGeom.get_all(from_='Maturityrange', name='Maturity')
-#     Printrange = InGeom.get_all(from_='Printrange', name='Print_layer')
-#     Xwalls = InGeom.get_parameter(name='Xwalls', type='float')
-#     PileUp = InGeom.get_parameter(name='PileUp', type='int')
-#     passage_cell_range = InGeom.get_all(from_='passage_cell_range', name='passage_cell', attribute = "id")
-#     print(passage_cell_range)
-#     aerenchyma_range = InGeom.get_all(from_='aerenchyma_range', name='aerenchyma', attribute = "id")
-
-#     passage_cell_ID=[]
-#     # for passage_cell in passage_cell_range:
-#     #    passage_cell_ID.append(int(passage_cell.get("id")))
-#     InterCid=list() #Aerenchyma is classified as intercellular space
-#     # for aerenchyma in aerenchyma_range:
-#     #    if not int(aerenchyma.get("id"))>9E5 and not int(aerenchyma.get("id"))<0:
-#     #        InterCid.append(int(aerenchyma.get("id"))) #Cell id starting at 0
-#     #    else:
-#     #        print('InterCid #'+str(int(aerenchyma.get("id")))+' excluded')
-
-#     # InterC_perim <-- for cellSet data
-#     InterC_perim_search=InGeom.get_parameter(name='InterC_perim_search', type='int')
-#     if InterC_perim_search==1:
-#         InterC_perim1=InGeom.get_parameter(name='InterC_perim1', type='float')
-#         InterC_perim2=InGeom.get_parameter(name='InterC_perim2', type='float')
-#         InterC_perim3=InGeom.get_parameter(name='InterC_perim3', type='float')
-#         InterC_perim4=InGeom.get_parameter(name='InterC_perim4', type='float')
-#         InterC_perim5=InGeom.get_parameter(name='InterC_perim5', type='float')
-#     kInterC=InGeom.get_parameter(name='kInterC', type='float')
+def load_geometry(InGeom):
     
-#     cell_per_layer=zeros((2,1))
-#     cell_per_layer[0][0]=InGeom.get_parameter(name='cell_per_layer', attribute = "cortex", type='float')
-#     cell_per_layer[1][0]=InGeom.get_parameter(name='cell_per_layer', attribute = "stele", type='float')
-#     thickness=InGeom.get_parameter(name='thickness', type='float') #micron
-#     PD_section=InGeom.get_parameter(name='PD_section', type='float') #micron^2
-#     Xylem_pieces=False
-#     if InGeom.get_parameter(name='Xylem_pieces', attribute = 'flag', type='float')==1:
-#         Xylem_pieces=True
-# # =======================
+    # Define global
+    global Plant, path_geom, im_scale, Maturityrange, Printrange, Xwalls, PileUp, passage_cell_ID, InterCid, InterC_perim_search, InterC_perim1, InterC_perim2, InterC_perim3, InterC_perim4, InterC_perim5, kInterC, cell_per_layer, thickness, PD_section, Xylem_pieces
+    
+    Plant = InGeom.get_parameter(name='Plant')
+    path_geom = InGeom.get_parameter(name='path')
+    fpath = InGeom.get_parameter(name='path')
+    im_scale = InGeom.get_parameter(name='im_scale', type='float')
+    Maturityrange = InGeom.get_all(from_='Maturityrange', name='Maturity')
+    Printrange = InGeom.get_all(from_='Printrange', name='Print_layer')
+    Xwalls = InGeom.get_parameter(name='Xwalls', type='float')
+    PileUp = InGeom.get_parameter(name='PileUp', type='int')
+    passage_cell_range = InGeom.get_all(from_='passage_cell_range', name='passage_cell', attribute = "id")
+    print(passage_cell_range)
+    aerenchyma_range = InGeom.get_all(from_='aerenchyma_range', name='aerenchyma', attribute = "id")
+    passage_cell_ID=[]
+    # for passage_cell in passage_cell_range:
+    #    passage_cell_ID.append(int(passage_cell.get("id")))
+    InterCid=list() #Aerenchyma is classified as intercellular space
+    # for aerenchyma in aerenchyma_range:
+    #    if not int(aerenchyma.get("id"))>9E5 and not int(aerenchyma.get("id"))<0:
+    #        InterCid.append(int(aerenchyma.get("id"))) #Cell id starting at 0
+    #    else:
+    #        print('InterCid #'+str(int(aerenchyma.get("id")))+' excluded')
+    # InterC_perim <-- for cellSet data
+    InterC_perim_search=InGeom.get_parameter(name='InterC_perim_search', type='int')
+    if InterC_perim_search==1:
+        InterC_perim1=InGeom.get_parameter(name='InterC_perim1', type='float')
+        InterC_perim2=InGeom.get_parameter(name='InterC_perim2', type='float')
+        InterC_perim3=InGeom.get_parameter(name='InterC_perim3', type='float')
+        InterC_perim4=InGeom.get_parameter(name='InterC_perim4', type='float')
+        InterC_perim5=InGeom.get_parameter(name='InterC_perim5', type='float')
+    kInterC=InGeom.get_parameter(name='kInterC', type='float')
+    cell_per_layer=zeros((2,1))
+    cell_per_layer[0][0]=InGeom.get_parameter(name='cell_per_layer', attribute = "cortex", type='float')
+    cell_per_layer[1][0]=InGeom.get_parameter(name='cell_per_layer', attribute = "stele", type='float')
+    thickness=InGeom.get_parameter(name='thickness', type='float') #micron
+    PD_section=InGeom.get_parameter(name='PD_section', type='float') #micron^2
+    Xylem_pieces=False
+    if InGeom.get_parameter(name='Xylem_pieces', attribute = 'flag', type='float')==1:
+        Xylem_pieces=True
+# =======================
 class Macro_hydro_visu:
     def __init__(self, file):
         f = file.split("\n")
