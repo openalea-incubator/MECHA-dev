@@ -176,7 +176,7 @@ def MECHA_run(dir, Project,
     #Calculating cell surfaces at tissue interfaces (total and interfacing with a cell that is not an intercellular space)
     # =========================================
 
-    G, Length_outer_cortex_tot, Length_cortex_cortex_tot,Length_cortex_endo_tot,Length_outer_cortex_nospace,Length_cortex_cortex_nospace,Length_cortex_endo_nospace = compute_cell_surface1(G, NWallsJun, InterCid)
+    G, Length_outer_cortex_tot, Length_cortex_cortex_tot,Length_cortex_endo_tot,Length_outer_cortex_nospace,Length_cortex_cortex_nospace,Length_cortex_endo_nospace = compute_cell_surface(G, NWallsJun, InterCid)
 
     # TATABOX
     # indice=nx.get_node_attributes(G,'indice') #Node indices (walls, junctions and cells)
@@ -214,7 +214,8 @@ def MECHA_run(dir, Project,
     #                                 Length_cortex_endo_nospace+=l_membrane
     # STOP
 
-    for i in range(62): #Finalizing distance averaging
+    # Finalize distance averaging
+    for i in range(62): 
         if nLayer[i]>0:
             Layer_dist[i]=Layer_dist[i]/nLayer[i]
 
