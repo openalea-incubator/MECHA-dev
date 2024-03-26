@@ -44,6 +44,7 @@
     <!-- ID number of passage cells in the endodermis, ideally in front of early metaxylem vessels -->
   </passage_cell_range>
   <aerenchyma_range>
+    <aerenchyma id="-1"/>
   </aerenchyma_range>
   <InterC_perim_search value="0"/>
   <!-- 0: no search of intercellular spaces based on their perimeter; 1: search of intercellular spaces based on their perimeter -->
