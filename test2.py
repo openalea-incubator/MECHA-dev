@@ -1,5 +1,4 @@
-a = None
+# from test import a
 
-def my_fun():
-    global a
+def my_fun(): 
     a = "test"

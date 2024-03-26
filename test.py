@@ -1,5 +1,8 @@
-import test2 as t2
+from test2 import *
 
-print(t2.a)
-t2.my_fun()
-print(t2.a)
+global a
+a = None
+
+print(a)
+my_fun()
+print(a)
