@@ -36,63 +36,15 @@ def MECHA_run(dir, Project,
     #Precision
     dp = np.dtype((np.float64))
     #Import General data
-    print('Importing geometrical data')
-    t0 = time.perf_counter()
-    OS=etree.parse(dir + Project + inputs + Gen).getroot().xpath('OS')[0].get("value")
-    Output_path=etree.parse(dir + Project + inputs + Gen).getroot().xpath('Output')[0].get("path")
-    Paraview=int(etree.parse(dir + Project + inputs + Gen).getroot().xpath('Paraview')[0].get("value"))
-    ParaviewWF=int(etree.parse(dir + Project + inputs + Gen).getroot().xpath('Paraview')[0].get("WallFlux"))
-    ParaviewMF=int(etree.parse(dir + Project + inputs + Gen).getroot().xpath('Paraview')[0].get("MembraneFlux"))
-    ParaviewPF=int(etree.parse(dir + Project + inputs + Gen).getroot().xpath('Paraview')[0].get("PlasmodesmataFlux"))
-    ParaviewWP=int(etree.parse(dir + Project + inputs + Gen).getroot().xpath('Paraview')[0].get("WallPot"))
-    ParaviewCP=int(etree.parse(dir + Project + inputs + Gen).getroot().xpath('Paraview')[0].get("CellPot"))
-    ParTrack=int(etree.parse(dir + Project + inputs + Gen).getroot().xpath('ParTrack')[0].get("value"))
-    Sym_Contagion=int(etree.parse(dir + Project + inputs + Gen).getroot().xpath('Sym_Contagion')[0].get("value"))
-    Apo_Contagion=int(etree.parse(dir + Project + inputs + Gen).getroot().xpath('Apo_Contagion')[0].get("value"))
-    color_threshold=float(etree.parse(dir + Project + inputs + Gen).getroot().xpath('color_threshold')[0].get("value"))
-    thickness_disp=float(etree.parse(dir + Project + inputs + Gen).getroot().xpath('thickness_disp')[0].get("value"))
-    thicknessJunction_disp=float(etree.parse(dir + Project + inputs + Gen).getroot().xpath('thicknessJunction_disp')[0].get("value"))
-    radiusPlasmodesm_disp=float(etree.parse(dir + Project + inputs + Gen).getroot().xpath('radiusPlasmodesm_disp')[0].get("value"))
-    UniXwalls=int(etree.parse(dir + Project + inputs + Gen).getroot().xpath('UniXwalls')[0].get("value"))
-    sparseM=int(etree.parse(dir + Project + inputs + Gen).getroot().xpath('sparse')[0].get("value"))
 
+    InGen = Input(dir + Project + inputs + Gen)
+    load_general(InGen)
+    # print('Importing geometrical data')
+
+    t0 = time.perf_counter()
     #Import Geometrical data
-    print("Importing geometrical data")
-    Plant=etree.parse(dir + Project + inputs + Geom).getroot().xpath('Plant')[0].get("value")
-    path_geom=etree.parse(dir + Project + inputs + Geom).getroot().xpath('path')[0].get("value")
-    im_scale=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('im_scale')[0].get("value"))
-    Maturityrange=etree.parse(dir + Project + inputs + Geom).getroot().xpath('Maturityrange/Maturity')
-    Printrange=etree.parse(dir + Project + inputs + Geom).getroot().xpath('Printrange/Print_layer')
-    Xwalls=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('Xwalls')[0].get("value")) #Transverse walls or not
-    PileUp=int(etree.parse(dir + Project + inputs + Geom).getroot().xpath('PileUp')[0].get("value"))
-    passage_cell_range=etree.parse(dir + Project + inputs + Geom).getroot().xpath('passage_cell_range/passage_cell')
-    aerenchyma_range=etree.parse(dir + Project + inputs + Geom).getroot().xpath('aerenchyma_range/aerenchyma')
-    passage_cell_ID=[]
-    for passage_cell in passage_cell_range:
-        passage_cell_ID.append(int(passage_cell.get("id")))
-    PPP=list()
-    InterCid=list() #Aerenchyma is classified as intercellular space
-    for aerenchyma in aerenchyma_range:
-        if not int(aerenchyma.get("id"))>9E5 and not int(aerenchyma.get("id"))<0:
-            InterCid.append(int(aerenchyma.get("id"))) #Cell id starting at 0
-        else:
-            print('InterCid #'+str(int(aerenchyma.get("id")))+' excluded')
-    InterC_perim_search=int(etree.parse(dir + Project + inputs + Geom).getroot().xpath('InterC_perim_search')[0].get("value"))
-    if InterC_perim_search==1:
-        InterC_perim1=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('InterC_perim1')[0].get("value"))
-        InterC_perim2=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('InterC_perim2')[0].get("value"))
-        InterC_perim3=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('InterC_perim3')[0].get("value"))
-        InterC_perim4=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('InterC_perim4')[0].get("value"))
-        InterC_perim5=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('InterC_perim5')[0].get("value"))
-    kInterC=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('kInterC')[0].get("value"))
-    cell_per_layer=zeros((2,1))
-    cell_per_layer[0][0]=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('cell_per_layer')[0].get("cortex"))
-    cell_per_layer[1][0]=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('cell_per_layer')[0].get("stele"))
-    thickness=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('thickness')[0].get("value")) #micron
-    PD_section=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('PD_section')[0].get("value")) #micron^2
-    Xylem_pieces=False
-    if float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('Xylem_pieces')[0].get("flag"))==1:
-        Xylem_pieces=True
+    InGeom = Input(dir + Project + inputs + Geom)
+    load_geometry(InGeom)
     t1 = time.perf_counter()
     # print(t1-t0, "seconds process time")
 
@@ -225,6 +177,7 @@ def MECHA_run(dir, Project,
     # =========================================
 
     indice=nx.get_node_attributes(G,'indice') #Node indices (walls, junctions and cells)
+    PPP=list()
     Length_outer_cortex_tot=0.0 #Total cross-section membrane length at the interface between exodermis and cortex
     Length_cortex_cortex_tot=0.0 #Total cross-section membrane length at the interface between cortex and cortex
     Length_cortex_endo_tot=0.0 #Total cross-section membrane length at the interface between cortex and endodermis
