@@ -43,6 +43,28 @@ class Input:
     
     def write_xml(self, file_name):
         self.tree.write(file_name)
+
+def load_general(InGen):
+    global OS, Output_path, Paraview, ParaviewWF, ParaviewMF, ParaviewPF, ParaviewWP, ParaviewCP, ParTrack, Sym_Contagion, Apo_Contagion, color_threshold, thickness_disp, thicknessJunction_disp, radiusPlasmodesm_disp, UniXwalls, sparseM
+
+    OS = InGen.get_parameter(name='OS')
+    Output_path=InGen.get_parameter(name='Output', attribute='path')
+    Paraview = InGen.get_parameter(name='Paraview', type='int')
+    ParaviewWF = InGen.get_parameter(name='Paraview', attribute='WallFlux', type='int')
+    ParaviewMF = InGen.get_parameter(name='Paraview', attribute='MembraneFlux', type='int')
+    ParaviewPF = InGen.get_parameter(name='Paraview', attribute='PlasmodesmataFlux', type='int')
+    ParaviewWP = InGen.get_parameter(name='Paraview', attribute='WallPot', type='int')
+    ParaviewCP = InGen.get_parameter(name='Paraview', attribute='CellPot', type='int')
+    ParTrack = InGen.get_parameter(name='ParTrack', type='int')
+    Sym_Contagion = InGen.get_parameter(name='Sym_Contagion', type='int')
+    Apo_Contagion = InGen.get_parameter(name='Apo_Contagion', type='int')
+    color_threshold = InGen.get_parameter(name='color_threshold', type='float')
+    thickness_disp = InGen.get_parameter(name='thickness_disp', type='float')
+    thicknessJunction_disp = InGen.get_parameter(name='thicknessJunction_disp', type='float')
+    radiusPlasmodesm_disp = InGen.get_parameter(name='radiusPlasmodesm_disp', type='float')
+    UniXwalls = InGen.get_parameter(name='UniXwalls', type='int')
+    sparseM = InGen.get_parameter(name='sparse', type='int')
+
 # =======================
 # def load_general(InGen):
 #     global OS, Output_path, Paraview, ParaviewWF, ParaviewMF, ParaviewPF, ParaviewWP, ParaviewCP, ParTrack, Sym_Contagion, Apo_Contagion, color_threshold, thickness_disp, thicknessJunction_disp, radiusPlasmodesm_disp, UniXwalls, sparseM
