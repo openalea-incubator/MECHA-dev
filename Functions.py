@@ -84,14 +84,14 @@ def load_geometry(InGeom):
     aerenchyma_range = InGeom.get_all(from_='aerenchyma_range', name='aerenchyma', attribute = "id")
 
     passage_cell_ID=[]
-    # for passage_cell in passage_cell_range:
-    #    passage_cell_ID.append(int(passage_cell.get("id")))
+    for passage_cell in passage_cell_range:
+        passage_cell_ID.append(int(passage_cell.get("id")))
     InterCid=list() #Aerenchyma is classified as intercellular space
-    # for aerenchyma in aerenchyma_range:
-    #    if not int(aerenchyma.get("id"))>9E5 and not int(aerenchyma.get("id"))<0:
-    #        InterCid.append(int(aerenchyma.get("id"))) #Cell id starting at 0
-    #    else:
-    #        print('InterCid #'+str(int(aerenchyma.get("id")))+' excluded')
+    for aerenchyma in aerenchyma_range:
+        if not int(aerenchyma.get("id"))>9E5 and not int(aerenchyma.get("id"))<0:
+            InterCid.append(int(aerenchyma.get("id"))) #Cell id starting at 0
+        else:
+            print('InterCid #'+str(int(aerenchyma.get("id")))+' excluded')
 
     # InterC_perim <-- for cellSet data
     InterC_perim_search=InGeom.get_parameter(name='InterC_perim_search', type='int')
