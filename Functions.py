@@ -1,4 +1,3 @@
-
 import xml.etree.ElementTree as ET
 import numpy as np
 import re
@@ -18,7 +17,6 @@ from pylab import *  # for plotting
 from decimal import Decimal
 from lxml import etree #Tree element analysis module
 import sys, os 
-
 # =======================
 class Input:
     def __init__(self, filename):
@@ -46,7 +44,6 @@ class Input:
     def write_xml(self, file_name):
         self.tree.write(file_name)
 
-
 def load_general(InGen):
     global OS, Output_path, Paraview, ParaviewWF, ParaviewMF, ParaviewPF, ParaviewWP, ParaviewCP, ParTrack, Sym_Contagion, Apo_Contagion, color_threshold, thickness_disp, thicknessJunction_disp, radiusPlasmodesm_disp, UniXwalls, sparseM
 
@@ -68,53 +65,72 @@ def load_general(InGen):
     UniXwalls = InGen.get_parameter(name='UniXwalls', type='int')
     sparseM = InGen.get_parameter(name='sparse', type='int')
 
-
-def load_geometry(InGeom):
-    global Plant, path_geom, im_scale, Maturityrange, Printrange, Xwalls, PileUp, passage_cell_ID, InterCid, InterC_perim_search, InterC_perim1, InterC_perim2, InterC_perim3, InterC_perim4, InterC_perim5, kInterC, cell_per_layer, thickness, PD_section, Xylem_pieces
-
-    Plant = InGeom.get_parameter(name='Plant')
-    path_geom = InGeom.get_parameter(name='path')
-    im_scale = InGeom.get_parameter(name='im_scale', type='float')
-    Maturityrange = InGeom.get_all(from_='Maturityrange', name='Maturity')
-    Printrange = InGeom.get_all(from_='Printrange', name='Print_layer')
-    Xwalls = InGeom.get_parameter(name='Xwalls', type='float')
-    PileUp = InGeom.get_parameter(name='PileUp', type='int')
-    passage_cell_range = InGeom.get_all(from_='passage_cell_range', name='passage_cell', attribute = "id")
-    print(passage_cell_range)
-    aerenchyma_range = InGeom.get_all(from_='aerenchyma_range', name='aerenchyma', attribute = "id")
-
-    passage_cell_ID=[]
-    for passage_cell in passage_cell_range:
-        passage_cell_ID.append(int(passage_cell.get("id")))
-    InterCid=list() #Aerenchyma is classified as intercellular space
-    for aerenchyma in aerenchyma_range:
-        if not int(aerenchyma.get("id"))>9E5 and not int(aerenchyma.get("id"))<0:
-            InterCid.append(int(aerenchyma.get("id"))) #Cell id starting at 0
-        else:
-            print('InterCid #'+str(int(aerenchyma.get("id")))+' excluded')
-
-    # InterC_perim <-- for cellSet data
-    InterC_perim_search=InGeom.get_parameter(name='InterC_perim_search', type='int')
-    if InterC_perim_search==1:
-        InterC_perim1=InGeom.get_parameter(name='InterC_perim1', type='float')
-        InterC_perim2=InGeom.get_parameter(name='InterC_perim2', type='float')
-        InterC_perim3=InGeom.get_parameter(name='InterC_perim3', type='float')
-        InterC_perim4=InGeom.get_parameter(name='InterC_perim4', type='float')
-        InterC_perim5=InGeom.get_parameter(name='InterC_perim5', type='float')
-    kInterC=InGeom.get_parameter(name='kInterC', type='float')
-    
-    cell_per_layer=zeros((2,1))
-    cell_per_layer[0][0]=InGeom.get_parameter(name='cell_per_layer', attribute = "cortex", type='float')
-    cell_per_layer[1][0]=InGeom.get_parameter(name='cell_per_layer', attribute = "stele", type='float')
-    thickness=InGeom.get_parameter(name='thickness', type='float') #micron
-    PD_section=InGeom.get_parameter(name='PD_section', type='float') #micron^2
-    Xylem_pieces=False
-    if InGeom.get_parameter(name='Xylem_pieces', attribute = 'flag', type='float')==1:
-        Xylem_pieces=True
-
-
 # =======================
+# def load_general(InGen):
+#     global OS, Output_path, Paraview, ParaviewWF, ParaviewMF, ParaviewPF, ParaviewWP, ParaviewCP, ParTrack, Sym_Contagion, Apo_Contagion, color_threshold, thickness_disp, thicknessJunction_disp, radiusPlasmodesm_disp, UniXwalls, sparseM
 
+#     OS = InGen.get_parameter(name='OS')
+#     Output_path=InGen.get_parameter(name='Output', attribute='path')
+#     Paraview = InGen.get_parameter(name='Paraview', type='int')
+#     ParaviewWF = InGen.get_parameter(name='Paraview', attribute='WallFlux', type='int')
+#     ParaviewMF = InGen.get_parameter(name='Paraview', attribute='MembraneFlux', type='int')
+#     ParaviewPF = InGen.get_parameter(name='Paraview', attribute='PlasmodesmataFlux', type='int')
+#     ParaviewWP = InGen.get_parameter(name='Paraview', attribute='WallPot', type='int')
+#     ParaviewCP = InGen.get_parameter(name='Paraview', attribute='CellPot', type='int')
+#     ParTrack = InGen.get_parameter(name='ParTrack', type='int')
+#     Sym_Contagion = InGen.get_parameter(name='Sym_Contagion', type='int')
+#     Apo_Contagion = InGen.get_parameter(name='Apo_Contagion', type='int')
+#     color_threshold = InGen.get_parameter(name='color_threshold', type='float')
+#     thickness_disp = InGen.get_parameter(name='thickness_disp', type='float')
+#     thicknessJunction_disp = InGen.get_parameter(name='thicknessJunction_disp', type='float')
+#     radiusPlasmodesm_disp = InGen.get_parameter(name='radiusPlasmodesm_disp', type='float')
+#     UniXwalls = InGen.get_parameter(name='UniXwalls', type='int')
+#     sparseM = InGen.get_parameter(name='sparse', type='int')
+# # =======================
+# def load_geometry(InGeom):
+#     global Plant, path_geom, im_scale, Maturityrange, Printrange, Xwalls, PileUp, passage_cell_ID, InterCid, InterC_perim_search, InterC_perim1, InterC_perim2, InterC_perim3, InterC_perim4, InterC_perim5, kInterC, cell_per_layer, thickness, PD_section, Xylem_pieces
+
+#     Plant = InGeom.get_parameter(name='Plant')
+#     path_geom = InGeom.get_parameter(name='path')
+#     fpath = InGeom.get_parameter(name='path')
+#     im_scale = InGeom.get_parameter(name='im_scale', type='float')
+#     Maturityrange = InGeom.get_all(from_='Maturityrange', name='Maturity')
+#     Printrange = InGeom.get_all(from_='Printrange', name='Print_layer')
+#     Xwalls = InGeom.get_parameter(name='Xwalls', type='float')
+#     PileUp = InGeom.get_parameter(name='PileUp', type='int')
+#     passage_cell_range = InGeom.get_all(from_='passage_cell_range', name='passage_cell', attribute = "id")
+#     print(passage_cell_range)
+#     aerenchyma_range = InGeom.get_all(from_='aerenchyma_range', name='aerenchyma', attribute = "id")
+
+#     passage_cell_ID=[]
+#     # for passage_cell in passage_cell_range:
+#     #    passage_cell_ID.append(int(passage_cell.get("id")))
+#     InterCid=list() #Aerenchyma is classified as intercellular space
+#     # for aerenchyma in aerenchyma_range:
+#     #    if not int(aerenchyma.get("id"))>9E5 and not int(aerenchyma.get("id"))<0:
+#     #        InterCid.append(int(aerenchyma.get("id"))) #Cell id starting at 0
+#     #    else:
+#     #        print('InterCid #'+str(int(aerenchyma.get("id")))+' excluded')
+
+#     # InterC_perim <-- for cellSet data
+#     InterC_perim_search=InGeom.get_parameter(name='InterC_perim_search', type='int')
+#     if InterC_perim_search==1:
+#         InterC_perim1=InGeom.get_parameter(name='InterC_perim1', type='float')
+#         InterC_perim2=InGeom.get_parameter(name='InterC_perim2', type='float')
+#         InterC_perim3=InGeom.get_parameter(name='InterC_perim3', type='float')
+#         InterC_perim4=InGeom.get_parameter(name='InterC_perim4', type='float')
+#         InterC_perim5=InGeom.get_parameter(name='InterC_perim5', type='float')
+#     kInterC=InGeom.get_parameter(name='kInterC', type='float')
+    
+#     cell_per_layer=zeros((2,1))
+#     cell_per_layer[0][0]=InGeom.get_parameter(name='cell_per_layer', attribute = "cortex", type='float')
+#     cell_per_layer[1][0]=InGeom.get_parameter(name='cell_per_layer', attribute = "stele", type='float')
+#     thickness=InGeom.get_parameter(name='thickness', type='float') #micron
+#     PD_section=InGeom.get_parameter(name='PD_section', type='float') #micron^2
+#     Xylem_pieces=False
+#     if InGeom.get_parameter(name='Xylem_pieces', attribute = 'flag', type='float')==1:
+#         Xylem_pieces=True
+# # =======================
 class Macro_hydro_visu:
     def __init__(self, file):
         f = file.split("\n")
@@ -211,27 +227,30 @@ class Macro_hydro_visu:
         plt.fill(z, w, color = 'grey', alpha = 0.3)
         plt.fill(x, y, color = 'b')
         plt.show()
-
-
+# =======================
 def get_elm(strings, pattern):
     x = [pattern in i for i in strings]
     res = [i for i, val in enumerate(x) if val]
     return res
+# =======================
 def int_elm(f, pattern):
     idx = get_elm(f, pattern)
     tmp = str([f[i] for i in idx])
     temp = int(re.findall(r'\d+',tmp)[0])
     return temp
+# =======================
 def float_elm(f, pattern):
     idx = get_elm(f, pattern)
     tmp = str([f[i] for i in idx])
     temp = float(re.findall(r'[\d]*[.][\d]+',tmp)[0])
     return temp
+# =======================
 def array_elm(f, pattern):
     idx = get_elm(f, pattern)
     tmp = str([f[i+1] for i in idx])
     temp = [int(s) for s in re.findall(r'\b\d+\b', tmp)]
     return temp
+# =======================
 def row_elm(f, pattern1, pattern2):
     start = int(get_elm(f, pattern1)[0])+1
     if pattern2 == "Scenario 1":
@@ -242,7 +261,7 @@ def row_elm(f, pattern1, pattern2):
     for i in range(start,end,1):
         y.append(float(re.findall(r'[\d]*[.][\d]+',f[i])[0]))
     return y
-
+# =======================
 def plot_partition(fl):
     Hydr = Macro_hydro_visu(fl)
     
@@ -258,8 +277,7 @@ def plot_partition(fl):
 
     poly = Macro_hydro_visu.poly_table(df)
     Macro_hydro_visu.graph_apo_symp(poly)
-    
-# =======================
+# =======================    
 def initialize_network(points, Walls_loop, Walls_PD, Cells_loop, newpath, im_scale):
     
     G = nx.Graph() #Full network
@@ -627,7 +645,7 @@ def sym_fluxes(dir, Project, inputs, Horm):
         Apo_Immune.append(int(immune.get("id")))
 
     return(Sym_Target, Sym_Immune, Apo_Target, Apo_Immune)
-
+# =======================x
 def get_cell_nodes(G, Cell2Wall_loop, NwallsJun, Apo_Contagion, position):
     listsieve=[]
     listxyl=[]
@@ -760,6 +778,10 @@ def compute_AQP_axial_distribution(G,Ncells, Cell2Wall_loop, position, NwallsJun
                                    InterC_perim_search, 
                                    listsieve, listxyl):
     
+    # =============================================================================================
+    # TO DO : for now InterC_perim1 is not taken into account, because InterC_perim_search is always 0
+    # =============================================================================================
+    
     Cell_rank=zeros((Ncells,1)) #Ranking of cells (1=Exodermis, 2=Epidermis, 3=Endodermis, 4*=Cortex, 5*=Stele, 11=Phloem sieve tube, 12=Companion cell, 13=Xylem, 16=Pericycle), stars are replaced by the ranking within cortical cells and stele cells
     Layer_dist=zeros((62,1)) #Average cell layers distances from center of gravity, by cells ranking 
     nLayer=zeros((62,1)) #Total number of cells in each rank (indices follow ranking numbers)
@@ -841,7 +863,7 @@ def compute_AQP_axial_distribution(G,Ncells, Cell2Wall_loop, position, NwallsJun
                 dist=hypot(x_cell-x_grav,y_cell-y_grav) #(micrometers)
                 Layer_dist[25]+=dist
                 nLayer[25]+=1
-                if InterC_perim_search==1:
+                if InterC_perim_search==1: # NB : for now InterC_perim_search is 0 ?
                     rank_cellperimeters_in[int(nLayer[25]-1)]=cellperimeter[cellnumber1]
                     if cellperimeter[cellnumber1]<InterC_perim1:
                         InterCid.append(cellnumber1) #Cell id starting at 0
@@ -951,7 +973,7 @@ def compute_AQP_axial_distribution(G,Ncells, Cell2Wall_loop, position, NwallsJun
         
     return Cell_rank, Layer_dist, nLayer, xyl_dist, Layer_dist, nLayer, InterCid, Nsieve, Nprotosieve, listprotosieve, outercortex_connec_rank, xyl80_dist
 # =======================
-def compute_cell_surface1(G, NwallsJun, InterCid):
+def compute_cell_surface(G, NwallsJun, InterCid, outercortex_connec_rank):
     # Calculates cell surfaces and tissue interfaces
     indice=nx.get_node_attributes(G,'indice') #Node indices (walls, junctions and cells)
     PPP=list()
@@ -988,7 +1010,9 @@ def compute_cell_surface1(G, NwallsJun, InterCid):
                                 if j-NwallsJun not in InterCid:
                                     Length_cortex_endo_nospace+=l_membrane
 
-    return(G, 
+    return(G,
+           indice, 
+           PPP, 
            Length_outer_cortex_tot, 
            Length_cortex_cortex_tot,
            Length_cortex_endo_tot,

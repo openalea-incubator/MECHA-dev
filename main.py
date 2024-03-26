@@ -21,34 +21,88 @@ import sys, os
 # Import MECHA functions
 from functions import *
 
-# ===================================================================================================
-# ===================================================================================================
-# Define MECHA
+# =====================
+# MAIN MECHA FUNCTION #
+# =====================
+
 def MECHA_run(dir, Project, 
               inputs='in/', Gen='General.xml',Geom='Geometry.xml',
               Hydr='Hydraulics.xml',BC='BC.xml',Horm='Hormones_Carriers.xml',
               Cell_connec_max=50, Ncellperimeters=100, V_modifier=1.0, 
               test_mass_balance=0, maxCell2ThickWalls=101, matrix_analysis=0):
        
-    t1 = time.perf_counter()
-    # print(t1-t0, "seconds process time")
+    print("Importing Data")   
+    t0 = time.perf_counter()
 
     #Precision
     dp = np.dtype((np.float64))
-    #Import General data
 
-    InGen = Input(dir + Project + inputs + Gen)
-    load_general(InGen)
-    # print('Importing geometrical data')
+    # =====================================
+    # Define variables
+    # =====================================
+    OS=etree.parse(dir + Project + inputs + Gen).getroot().xpath('OS')[0].get("value")
+    Output_path=etree.parse(dir + Project + inputs + Gen).getroot().xpath('Output')[0].get("path")
+    Paraview=int(etree.parse(dir + Project + inputs + Gen).getroot().xpath('Paraview')[0].get("value"))
+    ParaviewWF=int(etree.parse(dir + Project + inputs + Gen).getroot().xpath('Paraview')[0].get("WallFlux"))
+    ParaviewMF=int(etree.parse(dir + Project + inputs + Gen).getroot().xpath('Paraview')[0].get("MembraneFlux"))
+    ParaviewPF=int(etree.parse(dir + Project + inputs + Gen).getroot().xpath('Paraview')[0].get("PlasmodesmataFlux"))
+    ParaviewWP=int(etree.parse(dir + Project + inputs + Gen).getroot().xpath('Paraview')[0].get("WallPot"))
+    ParaviewCP=int(etree.parse(dir + Project + inputs + Gen).getroot().xpath('Paraview')[0].get("CellPot"))
+    ParTrack=int(etree.parse(dir + Project + inputs + Gen).getroot().xpath('ParTrack')[0].get("value"))
+    Sym_Contagion=int(etree.parse(dir + Project + inputs + Gen).getroot().xpath('Sym_Contagion')[0].get("value"))
+    Apo_Contagion=int(etree.parse(dir + Project + inputs + Gen).getroot().xpath('Apo_Contagion')[0].get("value"))
+    color_threshold=float(etree.parse(dir + Project + inputs + Gen).getroot().xpath('color_threshold')[0].get("value"))
+    thickness_disp=float(etree.parse(dir + Project + inputs + Gen).getroot().xpath('thickness_disp')[0].get("value"))
+    thicknessJunction_disp=float(etree.parse(dir + Project + inputs + Gen).getroot().xpath('thicknessJunction_disp')[0].get("value"))
+    radiusPlasmodesm_disp=float(etree.parse(dir + Project + inputs + Gen).getroot().xpath('radiusPlasmodesm_disp')[0].get("value"))
+    UniXwalls=int(etree.parse(dir + Project + inputs + Gen).getroot().xpath('UniXwalls')[0].get("value"))
+    sparseM=int(etree.parse(dir + Project + inputs + Gen).getroot().xpath('sparse')[0].get("value"))
 
-    t0 = time.perf_counter()
+    # =====================================
     #Import Geometrical data
-    InGeom = Input(dir + Project + inputs + Geom)
-    load_geometry(InGeom)
+    # =====================================
+    Plant=etree.parse(dir + Project + inputs + Geom).getroot().xpath('Plant')[0].get("value")
+    path_geom=etree.parse(dir + Project + inputs + Geom).getroot().xpath('path')[0].get("value")
+    im_scale=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('im_scale')[0].get("value"))
+    Maturityrange=etree.parse(dir + Project + inputs + Geom).getroot().xpath('Maturityrange/Maturity')
+    Printrange=etree.parse(dir + Project + inputs + Geom).getroot().xpath('Printrange/Print_layer')
+    Xwalls=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('Xwalls')[0].get("value")) #Transverse walls or not
+    PileUp=int(etree.parse(dir + Project + inputs + Geom).getroot().xpath('PileUp')[0].get("value"))
+    passage_cell_range=etree.parse(dir + Project + inputs + Geom).getroot().xpath('passage_cell_range/passage_cell')
+    aerenchyma_range=etree.parse(dir + Project + inputs + Geom).getroot().xpath('aerenchyma_range/aerenchyma')
+    passage_cell_ID=[]
+    for passage_cell in passage_cell_range:
+        passage_cell_ID.append(int(passage_cell.get("id")))
+    PPP=list()
+    InterCid=list() #Aerenchyma is classified as intercellular space
+    for aerenchyma in aerenchyma_range:
+        if not int(aerenchyma.get("id"))>9E5 and not int(aerenchyma.get("id"))<0:
+            InterCid.append(int(aerenchyma.get("id"))) #Cell id starting at 0
+        else:
+            # print('InterCid #'+str(int(aerenchyma.get("id")))+' excluded')
+    InterC_perim_search=int(etree.parse(dir + Project + inputs + Geom).getroot().xpath('InterC_perim_search')[0].get("value"))
+    
+    if InterC_perim_search==1:
+        InterC_perim1=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('InterC_perim1')[0].get("value"))
+        InterC_perim2=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('InterC_perim2')[0].get("value"))
+        InterC_perim3=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('InterC_perim3')[0].get("value"))
+        InterC_perim4=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('InterC_perim4')[0].get("value"))
+        InterC_perim5=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('InterC_perim5')[0].get("value"))
+    kInterC=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('kInterC')[0].get("value"))
+    cell_per_layer=zeros((2,1))
+    cell_per_layer[0][0]=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('cell_per_layer')[0].get("cortex"))
+    cell_per_layer[1][0]=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('cell_per_layer')[0].get("stele"))
+    thickness=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('thickness')[0].get("value")) #micron
+    PD_section=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('PD_section')[0].get("value")) #micron^2
+    Xylem_pieces=False
+    if float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('Xylem_pieces')[0].get("flag"))==1:
+        Xylem_pieces=True
     t1 = time.perf_counter()
     # print(t1-t0, "seconds process time")
 
+    # =====================================
     #Import hormone properties
+    # =====================================
     Degrad1=float(etree.parse(dir + Project + inputs + Horm).getroot().xpath('Hormone_movement/Degradation_constant_H1')[0].get("value")) #Hormone 1 degradation constant (mol degraded / mol-day)
     K_MB1=float(etree.parse(dir + Project + inputs + Horm).getroot().xpath('Hormone_movement/MB_H1')[0].get("Partition_coef")) #(-)
     dx_MB1=float(etree.parse(dir + Project + inputs + Horm).getroot().xpath('Hormone_movement/MB_H1')[0].get("Thickness")) #(micron)
@@ -65,7 +119,9 @@ def MECHA_run(dir, Project,
     for contact in contact_range:
         Contact.append(int(contact.get("id")))
 
+    # ===================================
     #Import cellset data
+    # ===================================    
     import xml.etree.ElementTree as ET
     #import xml.dom.minidom as DOM
     #xml = xml.dom.minidom.parse(xml_fname) # or xml.dom.minidom.parseString(xml_string)
@@ -74,7 +130,9 @@ def MECHA_run(dir, Project,
     rootelt = tree.getroot()
     Cell2Wall_loop = rootelt.xpath('cells/cell/walls') #Cell2Wall_loop contains cell wall groups info (one group by cell), searched by xpath ("Smart" element identifier)
 
+    # ===================================
     #Set path
+    # ===================================
     points = rootelt.xpath('walls/wall/points') #points contains the wall elements attributes
     Walls_loop = rootelt.xpath('cells/cell/walls/wall') #Walls_loop contains the individual cell to wall associations
     Walls_PD = rootelt.xpath('walls/wall')
@@ -84,6 +142,10 @@ def MECHA_run(dir, Project,
     if not os.path.exists(newpath):
         os.makedirs(newpath)
 
+    # ===================================
+    t1 = time.perf_counter()
+    print(t1-t0, "seconds process time")        
+
     # =========================================
     # INITIALIZING NETWORK
     # =========================================
@@ -92,37 +154,39 @@ def MECHA_run(dir, Project,
     G, NwallsJun, Ncells, lengths, Junction2Wall, Nwalls, position, position_junctions, min_x_wall, max_x_wall, Ntot = initialize_network(points, Walls_loop, Walls_PD, Cells_loop, newpath, im_scale)
     # TO DO : define object G with all these attributes 
 
-    # =========================================
+    
     # =========================================
     # IDENTIFY SOIL-ROOT INTERFACE WALLS
+    # =========================================
     print("Identifying soil-root interface walls")
     Borderlink, Borderjunction, Borderaerenchyma, Borderwall = identify_interfaces(NwallsJun, Walls_loop, Cell2Wall_loop, Junction2Wall, Nwalls, lengths)
-    # =========================================
+
 
     # =========================================
-    # Deprecated : compute advective symplastic fluxed toward target cell
+    # (Deprecated : compute advective symplastic fluxed toward target cell)
     # =========================================
     # Sym_Target, Sym_Immune, Apo_Target, Apo_Immune = sym_fluxes(dir, Project, inputs, Horm)
     # =========================================
     
     # =========================================
     # GET COORDINATES OF CELL NODES
+    # =========================================
     print("Getting X and Y cell nodes")
     Nxyl, position, listxyl, listsieve, Apo_w_Target, Apo_w_Immune = get_cell_nodes(G, Cell2Wall_loop, NwallsJun, Apo_Contagion, position)
     t1 = time.perf_counter()
     print(t1-t0, "seconds process time")
-    # =========================================
     
     # =========================================
     # CREATE NETWORK CONNECTIONS
+    # =========================================
     print('Creating network connections')
     d_vec, dist_wall, G, Cell_connec, nCell_connec, Nmb, cellarea, cellperimeter = create_network_connections(G, Nwalls, Ncells, Cell2Wall_loop, Walls_loop, 
                                position, NwallsJun, position_junctions,
                                Cell_connec_max, lengths, Junction2Wall)
-    # =========================================
     
     # =========================================
     # CALCULATE ENDODERMIS CENTER OF GRAVITY
+    # =========================================
     x_grav=0.0 # (micrometers)
     y_grav=0.0 # (micrometers)
     n_cell_endo=0 #Counting the total number of cells in the endodermis
@@ -140,11 +204,10 @@ def MECHA_run(dir, Project,
         y_grav=nan
     t1 = time.perf_counter()
     print(t1-t0, "seconds process time")
-    # =========================================
 
-    # =========================================
+    # ========================================================
     # CALCULATION OF CORTEX AQP RADIAL DISTRIBUTION PARAMETERS
-    # =========================================
+    # ========================================================
     # print('Identifying cell layers')
     #<group id="2" name="epidermis" />      is epidermis
     #<group id="1" name="general" />        is exodermis
@@ -160,6 +223,7 @@ def MECHA_run(dir, Project,
     #<group id="21" name="XylemPolePericyle" /> is pericycle
     #<group id="23" name="Phloem" />        is phloem
     #<group id="26" name="CompanionCell" /> is companion cell changed to 24...
+    # ========================================================
 
     print("Computing cortex AQP parameters")
     t0 = time.perf_counter()
@@ -176,50 +240,16 @@ def MECHA_run(dir, Project,
     #Calculating cell surfaces at tissue interfaces (total and interfacing with a cell that is not an intercellular space)
     # =========================================
 
-    G, Length_outer_cortex_tot, Length_cortex_cortex_tot,Length_cortex_endo_tot,Length_outer_cortex_nospace,Length_cortex_cortex_nospace,Length_cortex_endo_nospace = compute_cell_surface(G, NWallsJun, InterCid)
-
-    # TATABOX
-    # indice=nx.get_node_attributes(G,'indice') #Node indices (walls, junctions and cells)
-    # PPP=list()
-    # Length_outer_cortex_tot=0.0 #Total cross-section membrane length at the interface between exodermis and cortex
-    # Length_cortex_cortex_tot=0.0 #Total cross-section membrane length at the interface between cortex and cortex
-    # Length_cortex_endo_tot=0.0 #Total cross-section membrane length at the interface between cortex and endodermis
-    # Length_outer_cortex_nospace=0.0 #Cross-section membrane length at the interface between exodermis and cortex not including interfaces with intercellular spaces
-    # Length_cortex_cortex_nospace=0.0 #Cross-section membrane length at the interface between exodermis and cortex not including interfaces with intercellular spaces
-    # Length_cortex_endo_nospace=0.0 #Cross-section membrane length at the interface between exodermis and cortex not including interfaces with intercellular spaces
-    # for node, edges in G.adjacency_iter() :
-    #     i=indice[node] #Node ID number
-    #     if i>=NwallsJun: #Cell
-    #         if G.node[i]['cgroup']==16 or G.node[i]['cgroup']==21:
-    #             for neighbour, eattr in edges.items(): #Loop on connections (edges)
-    #                 if eattr['path'] == "plasmodesmata" and (G.node[indice[neighbour]]['cgroup']==11 or G.node[indice[neighbour]]['cgroup']==23): #Plasmodesmata connection  #eattr is the edge attribute (i.e. connection type)
-    #                     PPP.append(i-NwallsJun)
-    #         elif G.node[i]['cgroup']==outercortex_connec_rank or G.node[i]['cgroup']==4 or G.node[i]['cgroup']==3: #exodermis or cortex or endodermis (or epidermis if there is no exodermis)
-    #             if i-NwallsJun not in InterCid: #The loop focuses on exo, cortex and endodermis cells that are not intercellular spaces
-    #                 for neighbour, eattr in edges.items(): #Loop on connections (edges)
-    #                     if eattr['path'] == "plasmodesmata": #Plasmodesmata connection  #eattr is the edge attribute (i.e. connection type)
-    #                         j = (indice[neighbour]) #neighbouring node number
-    #                         l_membrane=eattr['length']
-    #                         if (G.node[i]['cgroup']==outercortex_connec_rank and G.node[j]['cgroup']==4) or (G.node[j]['cgroup']==outercortex_connec_rank and G.node[i]['cgroup']==4):#Exodermis to cortex cell or vice versa (epidermis if no exodermis exists)
-    #                             Length_outer_cortex_tot+=l_membrane
-    #                             if j-NwallsJun not in InterCid:
-    #                                 Length_outer_cortex_nospace+=l_membrane
-    #                         elif (G.node[i]['cgroup']==4 and G.node[j]['cgroup']==4):#Cortex to cortex cell
-    #                             Length_cortex_cortex_tot+=l_membrane
-    #                             if j-NwallsJun not in InterCid:
-    #                                 Length_cortex_cortex_nospace+=l_membrane
-    #                         elif (G.node[i]['cgroup']==3 and G.node[j]['cgroup']==4) or (G.node[j]['cgroup']==3 and G.node[i]['cgroup']==4):#Cortex to endodermis cell or vice versa
-    #                             Length_cortex_endo_tot+=l_membrane
-    #                             if j-NwallsJun not in InterCid:
-    #                                 Length_cortex_endo_nospace+=l_membrane
-    # STOP
+    G, indice, PPP, Length_outer_cortex_tot, Length_cortex_cortex_tot,Length_cortex_endo_tot,Length_outer_cortex_nospace,Length_cortex_cortex_nospace,Length_cortex_endo_nospace = compute_cell_surface(G, NwallsJun, InterCid, outercortex_connec_rank)
 
     # Finalize distance averaging
     for i in range(62): 
         if nLayer[i]>0:
             Layer_dist[i]=Layer_dist[i]/nLayer[i]
 
+    # =========================================
     #Discretization based on effective cell layering
+    # =========================================
     r_discret=array([0])
     j=0 #Counts cell layers
     k=0 #Counts tissue types
@@ -8270,5 +8300,6 @@ def MECHA_run(dir, Project,
         #        myfile.write(str(cortex_cellperimeters[j][:])+" \n")
         #myfile.close()
         #text_file.close()
+    
     t1 = time.perf_counter()
     print(t1-t0, "seconds process time")
