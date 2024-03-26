@@ -150,24 +150,7 @@ def MECHA_run(dir, Project,
     # =========================================
     # Deprecated : compute advective symplastic fluxed toward target cell
     # =========================================
-    # Sym_target_range=etree.parse(dir + Project + inputs + Horm).getroot().xpath('Sym_Contagion/target_range/target')
-    # Sym_Target=[]
-    # for target in Sym_target_range:
-    #     Sym_Target.append(int(target.get("id")))
-    # Sym_immune_range=etree.parse(dir + Project + inputs + Horm).getroot().xpath('Sym_Contagion/immune_range/immune')
-    # Sym_Immune=[]
-    # for immune in Sym_immune_range:
-    #     Sym_Immune.append(int(immune.get("id")))
-    # Apo_source_ini_range=etree.parse(dir + Project + inputs + Horm).getroot().xpath('Apo_Contagion/source_range/Steady-state/source')
-    # Apo_source_transi_range=etree.parse(dir + Project + inputs + Horm).getroot().xpath('Apo_Contagion/source_range/Transient/source')
-    # Apo_target_range=etree.parse(dir + Project + inputs + Horm).getroot().xpath('Apo_Contagion/target_range/target')
-    # Apo_Target=[]
-    # for target in Apo_target_range:
-    #     Apo_Target.append(int(target.get("id")))
-    # Apo_immune_range=etree.parse(dir + Project + inputs + Horm).getroot().xpath('Apo_Contagion/immune_range/immune')
-    # Apo_Immune=[]
-    # for immune in Apo_immune_range:
-    #     Apo_Immune.append(int(immune.get("id")))
+    # Sym_Target, Sym_Immune, Apo_Target, Apo_Immune = sym_fluxes(dir, Project, inputs, Horm)
     # =========================================
     
     # =========================================
