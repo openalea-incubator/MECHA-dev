@@ -21,122 +21,6 @@ import sys, os
 # Import MECHA functions
 from functions import *
 
-
-# Define here variables that will be global
-
-global OS, Output_path, Paraview, ParaviewWF, ParaviewMF, ParaviewPF, ParaviewWP, ParaviewCP, ParTrack, Sym_Contagion, Apo_Contagion, color_threshold, thickness_disp, thicknessJunction_disp, radiusPlasmodesm_disp, UniXwalls, sparseM
-global Plant, path_geom, im_scale, Maturityrange, Printrange, Xwalls, PileUp, passage_cell_ID, InterCid, InterC_perim_search, InterC_perim1, InterC_perim2, InterC_perim3, InterC_perim4, InterC_perim5, kInterC, cell_per_layer, thickness, PD_section, Xylem_pieces
-
-OS = None
-Output_path = None
-Paraview = None
-ParaviewWF = None
-ParaviewMF = None
-ParaviewPF = None
-ParaviewWP = None
-ParaviewCP = None
-ParTrack = None
-Sym_Contagion = None
-Apo_Contagion = None
-color_threshold = None
-thickness_disp = None
-thicknessJunction_disp = None
-radiusPlasmodesm_disp = None
-UniXwalls = None
-sparseM = None
-
-Plant = None
-path_geom = None
-im_scale = None
-Maturityrange = None
-Printrange = None
-Xwalls = None
-PileUp = None
-passage_cell_ID = None
-InterCid = None
-InterC_perim_search = None
-InterC_perim1 = None
-InterC_perim2 = None
-InterC_perim3 = None
-InterC_perim4 = None
-InterC_perim5 = None
-kInterC = None
-cell_per_layer = None
-thickness = None
-PD_section = None
-Xylem_pieces = None
-
-
-# ================================================
-# DEFINE FUNCTIONS THAT WILL USE GLOBAL VARIABLES
-# ================================================
-
-def load_general(InGen):
-    # global OS, Output_path, Paraview, ParaviewWF, ParaviewMF, ParaviewPF, ParaviewWP, ParaviewCP, ParTrack, Sym_Contagion, Apo_Contagion, color_threshold, thickness_disp, thicknessJunction_disp, radiusPlasmodesm_disp, UniXwalls, sparseM
-
-    OS = InGen.get_parameter(name='OS')
-    Output_path=InGen.get_parameter(name='Output', attribute='path')
-    Paraview = InGen.get_parameter(name='Paraview', type='int')
-    ParaviewWF = InGen.get_parameter(name='Paraview', attribute='WallFlux', type='int')
-    ParaviewMF = InGen.get_parameter(name='Paraview', attribute='MembraneFlux', type='int')
-    ParaviewPF = InGen.get_parameter(name='Paraview', attribute='PlasmodesmataFlux', type='int')
-    ParaviewWP = InGen.get_parameter(name='Paraview', attribute='WallPot', type='int')
-    ParaviewCP = InGen.get_parameter(name='Paraview', attribute='CellPot', type='int')
-    ParTrack = InGen.get_parameter(name='ParTrack', type='int')
-    Sym_Contagion = InGen.get_parameter(name='Sym_Contagion', type='int')
-    Apo_Contagion = InGen.get_parameter(name='Apo_Contagion', type='int')
-    color_threshold = InGen.get_parameter(name='color_threshold', type='float')
-    thickness_disp = InGen.get_parameter(name='thickness_disp', type='float')
-    thicknessJunction_disp = InGen.get_parameter(name='thicknessJunction_disp', type='float')
-    radiusPlasmodesm_disp = InGen.get_parameter(name='radiusPlasmodesm_disp', type='float')
-    UniXwalls = InGen.get_parameter(name='UniXwalls', type='int')
-    sparseM = InGen.get_parameter(name='sparse', type='int')
-
-# =======================
-def load_geometry(InGeom):
-    # global Plant, path_geom, im_scale, Maturityrange, Printrange, Xwalls, PileUp, passage_cell_ID, InterCid, InterC_perim_search, InterC_perim1, InterC_perim2, InterC_perim3, InterC_perim4, InterC_perim5, kInterC, cell_per_layer, thickness, PD_section, Xylem_pieces
-
-    Plant = InGeom.get_parameter(name='Plant')
-    path_geom = InGeom.get_parameter(name='path')
-    im_scale = InGeom.get_parameter(name='im_scale', type='float')
-    Maturityrange = InGeom.get_all(from_='Maturityrange', name='Maturity')
-    Printrange = InGeom.get_all(from_='Printrange', name='Print_layer')
-    Xwalls = InGeom.get_parameter(name='Xwalls', type='float')
-    PileUp = InGeom.get_parameter(name='PileUp', type='int')
-    passage_cell_range = InGeom.get_all(from_='passage_cell_range', name='passage_cell', attribute = "id")
-    print(passage_cell_range)
-    aerenchyma_range = InGeom.get_all(from_='aerenchyma_range', name='aerenchyma', attribute = "id")
-
-    passage_cell_ID=[]
-    # for passage_cell in passage_cell_range:
-    #    passage_cell_ID.append(int(passage_cell.get("id")))
-    InterCid=list() #Aerenchyma is classified as intercellular space
-    # for aerenchyma in aerenchyma_range:
-    #    if not int(aerenchyma.get("id"))>9E5 and not int(aerenchyma.get("id"))<0:
-    #        InterCid.append(int(aerenchyma.get("id"))) #Cell id starting at 0
-    #    else:
-    #        print('InterCid #'+str(int(aerenchyma.get("id")))+' excluded')
-
-    # InterC_perim <-- for cellSet data
-    InterC_perim_search=InGeom.get_parameter(name='InterC_perim_search', type='int')
-    if InterC_perim_search==1:
-        InterC_perim1=InGeom.get_parameter(name='InterC_perim1', type='float')
-        InterC_perim2=InGeom.get_parameter(name='InterC_perim2', type='float')
-        InterC_perim3=InGeom.get_parameter(name='InterC_perim3', type='float')
-        InterC_perim4=InGeom.get_parameter(name='InterC_perim4', type='float')
-        InterC_perim5=InGeom.get_parameter(name='InterC_perim5', type='float')
-    kInterC=InGeom.get_parameter(name='kInterC', type='float')
-    
-    cell_per_layer=zeros((2,1))
-    cell_per_layer[0][0]=InGeom.get_parameter(name='cell_per_layer', attribute = "cortex", type='float')
-    cell_per_layer[1][0]=InGeom.get_parameter(name='cell_per_layer', attribute = "stele", type='float')
-    thickness=InGeom.get_parameter(name='thickness', type='float') #micron
-    PD_section=InGeom.get_parameter(name='PD_section', type='float') #micron^2
-    Xylem_pieces=False
-    if InGeom.get_parameter(name='Xylem_pieces', attribute = 'flag', type='float')==1:
-        Xylem_pieces=True
-# =======================
-
 # =====================
 # MAIN MECHA FUNCTION #
 # =====================
@@ -153,24 +37,73 @@ def MECHA_run(dir, Project,
     #Precision
     dp = np.dtype((np.float64))
 
-    # ===================================
-    # Import General data
-    # ===================================
-    # print('Importing geometrical data')
-    InGen = Input(dir + Project + inputs + Gen)
-    load_general(InGen)
-    print("Output_path :", Output_path)
-    
-    # ===================================
+    # =====================================
+    # Define variables
+    # =====================================
+    OS=etree.parse(dir + Project + inputs + Gen).getroot().xpath('OS')[0].get("value")
+    Output_path=etree.parse(dir + Project + inputs + Gen).getroot().xpath('Output')[0].get("path")
+    Paraview=int(etree.parse(dir + Project + inputs + Gen).getroot().xpath('Paraview')[0].get("value"))
+    ParaviewWF=int(etree.parse(dir + Project + inputs + Gen).getroot().xpath('Paraview')[0].get("WallFlux"))
+    ParaviewMF=int(etree.parse(dir + Project + inputs + Gen).getroot().xpath('Paraview')[0].get("MembraneFlux"))
+    ParaviewPF=int(etree.parse(dir + Project + inputs + Gen).getroot().xpath('Paraview')[0].get("PlasmodesmataFlux"))
+    ParaviewWP=int(etree.parse(dir + Project + inputs + Gen).getroot().xpath('Paraview')[0].get("WallPot"))
+    ParaviewCP=int(etree.parse(dir + Project + inputs + Gen).getroot().xpath('Paraview')[0].get("CellPot"))
+    ParTrack=int(etree.parse(dir + Project + inputs + Gen).getroot().xpath('ParTrack')[0].get("value"))
+    Sym_Contagion=int(etree.parse(dir + Project + inputs + Gen).getroot().xpath('Sym_Contagion')[0].get("value"))
+    Apo_Contagion=int(etree.parse(dir + Project + inputs + Gen).getroot().xpath('Apo_Contagion')[0].get("value"))
+    color_threshold=float(etree.parse(dir + Project + inputs + Gen).getroot().xpath('color_threshold')[0].get("value"))
+    thickness_disp=float(etree.parse(dir + Project + inputs + Gen).getroot().xpath('thickness_disp')[0].get("value"))
+    thicknessJunction_disp=float(etree.parse(dir + Project + inputs + Gen).getroot().xpath('thicknessJunction_disp')[0].get("value"))
+    radiusPlasmodesm_disp=float(etree.parse(dir + Project + inputs + Gen).getroot().xpath('radiusPlasmodesm_disp')[0].get("value"))
+    UniXwalls=int(etree.parse(dir + Project + inputs + Gen).getroot().xpath('UniXwalls')[0].get("value"))
+    sparseM=int(etree.parse(dir + Project + inputs + Gen).getroot().xpath('sparse')[0].get("value"))
+
+    # =====================================
     #Import Geometrical data
-    # ===================================
-    print("path_geom :", path_geom)
-    InGeom = Input(dir + Project + inputs + Geom)
-    load_geometry(InGeom)
-    print("path_geom :", path_geom)
-    # ===================================
+    # =====================================
+    Plant=etree.parse(dir + Project + inputs + Geom).getroot().xpath('Plant')[0].get("value")
+    path_geom=etree.parse(dir + Project + inputs + Geom).getroot().xpath('path')[0].get("value")
+    im_scale=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('im_scale')[0].get("value"))
+    Maturityrange=etree.parse(dir + Project + inputs + Geom).getroot().xpath('Maturityrange/Maturity')
+    Printrange=etree.parse(dir + Project + inputs + Geom).getroot().xpath('Printrange/Print_layer')
+    Xwalls=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('Xwalls')[0].get("value")) #Transverse walls or not
+    PileUp=int(etree.parse(dir + Project + inputs + Geom).getroot().xpath('PileUp')[0].get("value"))
+    passage_cell_range=etree.parse(dir + Project + inputs + Geom).getroot().xpath('passage_cell_range/passage_cell')
+    aerenchyma_range=etree.parse(dir + Project + inputs + Geom).getroot().xpath('aerenchyma_range/aerenchyma')
+    passage_cell_ID=[]
+    for passage_cell in passage_cell_range:
+        passage_cell_ID.append(int(passage_cell.get("id")))
+    PPP=list()
+    InterCid=list() #Aerenchyma is classified as intercellular space
+    for aerenchyma in aerenchyma_range:
+        if not int(aerenchyma.get("id"))>9E5 and not int(aerenchyma.get("id"))<0:
+            InterCid.append(int(aerenchyma.get("id"))) #Cell id starting at 0
+        else:
+            print('InterCid #'+str(int(aerenchyma.get("id")))+' excluded')
+    InterC_perim_search=int(etree.parse(dir + Project + inputs + Geom).getroot().xpath('InterC_perim_search')[0].get("value"))
+    
+    print("InterC_perim_search = ", InterC_perim_search)
+    if InterC_perim_search==1:
+        InterC_perim1=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('InterC_perim1')[0].get("value"))
+        InterC_perim2=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('InterC_perim2')[0].get("value"))
+        InterC_perim3=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('InterC_perim3')[0].get("value"))
+        InterC_perim4=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('InterC_perim4')[0].get("value"))
+        InterC_perim5=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('InterC_perim5')[0].get("value"))
+    kInterC=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('kInterC')[0].get("value"))
+    cell_per_layer=zeros((2,1))
+    cell_per_layer[0][0]=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('cell_per_layer')[0].get("cortex"))
+    cell_per_layer[1][0]=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('cell_per_layer')[0].get("stele"))
+    thickness=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('thickness')[0].get("value")) #micron
+    PD_section=float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('PD_section')[0].get("value")) #micron^2
+    Xylem_pieces=False
+    if float(etree.parse(dir + Project + inputs + Geom).getroot().xpath('Xylem_pieces')[0].get("flag"))==1:
+        Xylem_pieces=True
+    t1 = time.perf_counter()
+    # print(t1-t0, "seconds process time")
+
+    # =====================================
     #Import hormone properties
-    # ===================================
+    # =====================================
     Degrad1=float(etree.parse(dir + Project + inputs + Horm).getroot().xpath('Hormone_movement/Degradation_constant_H1')[0].get("value")) #Hormone 1 degradation constant (mol degraded / mol-day)
     K_MB1=float(etree.parse(dir + Project + inputs + Horm).getroot().xpath('Hormone_movement/MB_H1')[0].get("Partition_coef")) #(-)
     dx_MB1=float(etree.parse(dir + Project + inputs + Horm).getroot().xpath('Hormone_movement/MB_H1')[0].get("Thickness")) #(micron)
@@ -213,6 +146,9 @@ def MECHA_run(dir, Project,
     # ===================================
     t1 = time.perf_counter()
     print(t1-t0, "seconds process time")
+
+    # Checks
+    print("InterCid ", InterCid)        
 
     # =========================================
     # INITIALIZING NETWORK
@@ -273,9 +209,9 @@ def MECHA_run(dir, Project,
     t1 = time.perf_counter()
     print(t1-t0, "seconds process time")
 
-    # =========================================
+    # ========================================================
     # CALCULATION OF CORTEX AQP RADIAL DISTRIBUTION PARAMETERS
-    # =========================================
+    # ========================================================
     # print('Identifying cell layers')
     #<group id="2" name="epidermis" />      is epidermis
     #<group id="1" name="general" />        is exodermis
@@ -291,6 +227,7 @@ def MECHA_run(dir, Project,
     #<group id="21" name="XylemPolePericyle" /> is pericycle
     #<group id="23" name="Phloem" />        is phloem
     #<group id="26" name="CompanionCell" /> is companion cell changed to 24...
+    # ========================================================
 
     print("Computing cortex AQP parameters")
     t0 = time.perf_counter()
@@ -307,7 +244,7 @@ def MECHA_run(dir, Project,
     #Calculating cell surfaces at tissue interfaces (total and interfacing with a cell that is not an intercellular space)
     # =========================================
 
-    G, Length_outer_cortex_tot, Length_cortex_cortex_tot,Length_cortex_endo_tot,Length_outer_cortex_nospace,Length_cortex_cortex_nospace,Length_cortex_endo_nospace = compute_cell_surface(G, NWallsJun, InterCid)
+    G, indice, PPP, Length_outer_cortex_tot, Length_cortex_cortex_tot,Length_cortex_endo_tot,Length_outer_cortex_nospace,Length_cortex_cortex_nospace,Length_cortex_endo_nospace = compute_cell_surface(G, NwallsJun, InterCid, outercortex_connec_rank)
 
     # TATABOX
     # indice=nx.get_node_attributes(G,'indice') #Node indices (walls, junctions and cells)
@@ -8403,5 +8340,6 @@ def MECHA_run(dir, Project,
         #        myfile.write(str(cortex_cellperimeters[j][:])+" \n")
         #myfile.close()
         #text_file.close()
+    
     t1 = time.perf_counter()
     print(t1-t0, "seconds process time")

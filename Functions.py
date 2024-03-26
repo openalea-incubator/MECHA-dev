@@ -756,6 +756,10 @@ def compute_AQP_axial_distribution(G,Ncells, Cell2Wall_loop, position, NwallsJun
                                    InterC_perim_search, 
                                    listsieve, listxyl):
     
+    # =============================================================================================
+    # TO DO : for now InterC_perim1 is not taken into account, because InterC_perim_search is always 0
+    # =============================================================================================
+    
     Cell_rank=zeros((Ncells,1)) #Ranking of cells (1=Exodermis, 2=Epidermis, 3=Endodermis, 4*=Cortex, 5*=Stele, 11=Phloem sieve tube, 12=Companion cell, 13=Xylem, 16=Pericycle), stars are replaced by the ranking within cortical cells and stele cells
     Layer_dist=zeros((62,1)) #Average cell layers distances from center of gravity, by cells ranking 
     nLayer=zeros((62,1)) #Total number of cells in each rank (indices follow ranking numbers)
@@ -837,7 +841,7 @@ def compute_AQP_axial_distribution(G,Ncells, Cell2Wall_loop, position, NwallsJun
                 dist=hypot(x_cell-x_grav,y_cell-y_grav) #(micrometers)
                 Layer_dist[25]+=dist
                 nLayer[25]+=1
-                if InterC_perim_search==1:
+                if InterC_perim_search==1: # NB : for now InterC_perim_search is 0 ?
                     rank_cellperimeters_in[int(nLayer[25]-1)]=cellperimeter[cellnumber1]
                     if cellperimeter[cellnumber1]<InterC_perim1:
                         InterCid.append(cellnumber1) #Cell id starting at 0
@@ -947,7 +951,7 @@ def compute_AQP_axial_distribution(G,Ncells, Cell2Wall_loop, position, NwallsJun
         
     return Cell_rank, Layer_dist, nLayer, xyl_dist, Layer_dist, nLayer, InterCid, Nsieve, Nprotosieve, listprotosieve, outercortex_connec_rank, xyl80_dist
 # =======================
-def compute_cell_surface(G, NwallsJun, InterCid):
+def compute_cell_surface(G, NwallsJun, InterCid, outercortex_connec_rank):
     # Calculates cell surfaces and tissue interfaces
     indice=nx.get_node_attributes(G,'indice') #Node indices (walls, junctions and cells)
     PPP=list()
@@ -984,7 +988,9 @@ def compute_cell_surface(G, NwallsJun, InterCid):
                                 if j-NwallsJun not in InterCid:
                                     Length_cortex_endo_nospace+=l_membrane
 
-    return(G, 
+    return(G,
+           indice, 
+           PPP, 
            Length_outer_cortex_tot, 
            Length_cortex_cortex_tot,
            Length_cortex_endo_tot,
