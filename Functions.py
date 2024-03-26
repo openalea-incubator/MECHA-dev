@@ -19,6 +19,26 @@ from decimal import Decimal
 from lxml import etree #Tree element analysis module
 import sys, os 
 
+from main import *
+
+OS = None
+Output_path = None
+Paraview = None
+ParaviewWF = None
+ParaviewMF = None
+ParaviewPF = None
+ParaviewWP = None
+ParaviewCP = None
+ParTrack = None
+Sym_Contagion = None
+Apo_Contagion = None
+color_threshold = None
+thickness_disp = None
+thicknessJunction_disp = None
+radiusPlasmodesm_disp = None
+UniXwalls = None
+sparseM = None
+
 # =======================
 class Input:
     def __init__(self, filename):
@@ -45,8 +65,7 @@ class Input:
     
     def write_xml(self, file_name):
         self.tree.write(file_name)
-
-
+# =======================
 def load_general(InGen):
     global OS, Output_path, Paraview, ParaviewWF, ParaviewMF, ParaviewPF, ParaviewWP, ParaviewCP, ParTrack, Sym_Contagion, Apo_Contagion, color_threshold, thickness_disp, thicknessJunction_disp, radiusPlasmodesm_disp, UniXwalls, sparseM
 
@@ -67,8 +86,7 @@ def load_general(InGen):
     radiusPlasmodesm_disp = InGen.get_parameter(name='radiusPlasmodesm_disp', type='float')
     UniXwalls = InGen.get_parameter(name='UniXwalls', type='int')
     sparseM = InGen.get_parameter(name='sparse', type='int')
-
-
+# =======================
 def load_geometry(InGeom):
     global Plant, path_geom, im_scale, Maturityrange, Printrange, Xwalls, PileUp, passage_cell_ID, InterCid, InterC_perim_search, InterC_perim1, InterC_perim2, InterC_perim3, InterC_perim4, InterC_perim5, kInterC, cell_per_layer, thickness, PD_section, Xylem_pieces
 
@@ -111,10 +129,7 @@ def load_geometry(InGeom):
     Xylem_pieces=False
     if InGeom.get_parameter(name='Xylem_pieces', attribute = 'flag', type='float')==1:
         Xylem_pieces=True
-
-
 # =======================
-
 class Macro_hydro_visu:
     def __init__(self, file):
         f = file.split("\n")
@@ -211,27 +226,30 @@ class Macro_hydro_visu:
         plt.fill(z, w, color = 'grey', alpha = 0.3)
         plt.fill(x, y, color = 'b')
         plt.show()
-
-
+# =======================
 def get_elm(strings, pattern):
     x = [pattern in i for i in strings]
     res = [i for i, val in enumerate(x) if val]
     return res
+# =======================
 def int_elm(f, pattern):
     idx = get_elm(f, pattern)
     tmp = str([f[i] for i in idx])
     temp = int(re.findall(r'\d+',tmp)[0])
     return temp
+# =======================
 def float_elm(f, pattern):
     idx = get_elm(f, pattern)
     tmp = str([f[i] for i in idx])
     temp = float(re.findall(r'[\d]*[.][\d]+',tmp)[0])
     return temp
+# =======================
 def array_elm(f, pattern):
     idx = get_elm(f, pattern)
     tmp = str([f[i+1] for i in idx])
     temp = [int(s) for s in re.findall(r'\b\d+\b', tmp)]
     return temp
+# =======================
 def row_elm(f, pattern1, pattern2):
     start = int(get_elm(f, pattern1)[0])+1
     if pattern2 == "Scenario 1":
@@ -242,7 +260,7 @@ def row_elm(f, pattern1, pattern2):
     for i in range(start,end,1):
         y.append(float(re.findall(r'[\d]*[.][\d]+',f[i])[0]))
     return y
-
+# =======================
 def plot_partition(fl):
     Hydr = Macro_hydro_visu(fl)
     
@@ -258,8 +276,7 @@ def plot_partition(fl):
 
     poly = Macro_hydro_visu.poly_table(df)
     Macro_hydro_visu.graph_apo_symp(poly)
-    
-# =======================
+# =======================    
 def initialize_network(points, Walls_loop, Walls_PD, Cells_loop, newpath, im_scale):
     
     G = nx.Graph() #Full network
@@ -627,7 +644,7 @@ def sym_fluxes(dir, Project, inputs, Horm):
         Apo_Immune.append(int(immune.get("id")))
 
     return(Sym_Target, Sym_Immune, Apo_Target, Apo_Immune)
-
+# =======================x
 def get_cell_nodes(G, Cell2Wall_loop, NwallsJun, Apo_Contagion, position):
     listsieve=[]
     listxyl=[]
@@ -951,7 +968,7 @@ def compute_AQP_axial_distribution(G,Ncells, Cell2Wall_loop, position, NwallsJun
         
     return Cell_rank, Layer_dist, nLayer, xyl_dist, Layer_dist, nLayer, InterCid, Nsieve, Nprotosieve, listprotosieve, outercortex_connec_rank, xyl80_dist
 # =======================
-def compute_cell_surface1(G, NwallsJun, InterCid):
+def compute_cell_surface(G, NwallsJun, InterCid):
     # Calculates cell surfaces and tissue interfaces
     indice=nx.get_node_attributes(G,'indice') #Node indices (walls, junctions and cells)
     PPP=list()

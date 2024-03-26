@@ -30,25 +30,47 @@ def MECHA_run(dir, Project,
               Cell_connec_max=50, Ncellperimeters=100, V_modifier=1.0, 
               test_mass_balance=0, maxCell2ThickWalls=101, matrix_analysis=0):
        
-    t1 = time.perf_counter()
-    # print(t1-t0, "seconds process time")
+    print("Importing Data")   
+    t0 = time.perf_counter()
 
     #Precision
     dp = np.dtype((np.float64))
-    #Import General data
 
-    InGen = Input(dir + Project + inputs + Gen)
-    load_general(InGen)
+    # ===================================
+    # Import General data
+    # ===================================
     # print('Importing geometrical data')
+    InGen = Input(dir + Project + inputs + Gen)
+    # OS = None
+    # Output_path = None
+    # Paraview = None
+    # ParaviewWF = None
+    # ParaviewMF = None
+    # ParaviewPF = None
+    # ParaviewWP = None
+    # ParaviewCP = None
+    # ParTrack = None
+    # Sym_Contagion = None
+    # Apo_Contagion = None
+    # color_threshold = None
+    # thickness_disp = None
+    # thicknessJunction_disp = None
+    # radiusPlasmodesm_disp = None
+    # UniXwalls = None
+    # sparseM = None
 
-    t0 = time.perf_counter()
+    load_general(InGen)
+    print("Output_path :", Output_path)
+    
+    # ===================================
     #Import Geometrical data
+    # ===================================
     InGeom = Input(dir + Project + inputs + Geom)
     load_geometry(InGeom)
-    t1 = time.perf_counter()
-    # print(t1-t0, "seconds process time")
-
+    
+    # ===================================
     #Import hormone properties
+    # ===================================
     Degrad1=float(etree.parse(dir + Project + inputs + Horm).getroot().xpath('Hormone_movement/Degradation_constant_H1')[0].get("value")) #Hormone 1 degradation constant (mol degraded / mol-day)
     K_MB1=float(etree.parse(dir + Project + inputs + Horm).getroot().xpath('Hormone_movement/MB_H1')[0].get("Partition_coef")) #(-)
     dx_MB1=float(etree.parse(dir + Project + inputs + Horm).getroot().xpath('Hormone_movement/MB_H1')[0].get("Thickness")) #(micron)
@@ -65,7 +87,9 @@ def MECHA_run(dir, Project,
     for contact in contact_range:
         Contact.append(int(contact.get("id")))
 
+    # ===================================
     #Import cellset data
+    # ===================================    
     import xml.etree.ElementTree as ET
     #import xml.dom.minidom as DOM
     #xml = xml.dom.minidom.parse(xml_fname) # or xml.dom.minidom.parseString(xml_string)
@@ -74,7 +98,9 @@ def MECHA_run(dir, Project,
     rootelt = tree.getroot()
     Cell2Wall_loop = rootelt.xpath('cells/cell/walls') #Cell2Wall_loop contains cell wall groups info (one group by cell), searched by xpath ("Smart" element identifier)
 
+    # ===================================
     #Set path
+    # ===================================
     points = rootelt.xpath('walls/wall/points') #points contains the wall elements attributes
     Walls_loop = rootelt.xpath('cells/cell/walls/wall') #Walls_loop contains the individual cell to wall associations
     Walls_PD = rootelt.xpath('walls/wall')
@@ -84,6 +110,10 @@ def MECHA_run(dir, Project,
     if not os.path.exists(newpath):
         os.makedirs(newpath)
 
+    # ===================================
+    t1 = time.perf_counter()
+    print(t1-t0, "seconds process time")
+
     # =========================================
     # INITIALIZING NETWORK
     # =========================================
@@ -92,37 +122,39 @@ def MECHA_run(dir, Project,
     G, NwallsJun, Ncells, lengths, Junction2Wall, Nwalls, position, position_junctions, min_x_wall, max_x_wall, Ntot = initialize_network(points, Walls_loop, Walls_PD, Cells_loop, newpath, im_scale)
     # TO DO : define object G with all these attributes 
 
-    # =========================================
+    
     # =========================================
     # IDENTIFY SOIL-ROOT INTERFACE WALLS
+    # =========================================
     print("Identifying soil-root interface walls")
     Borderlink, Borderjunction, Borderaerenchyma, Borderwall = identify_interfaces(NwallsJun, Walls_loop, Cell2Wall_loop, Junction2Wall, Nwalls, lengths)
-    # =========================================
+
 
     # =========================================
-    # Deprecated : compute advective symplastic fluxed toward target cell
+    # (Deprecated : compute advective symplastic fluxed toward target cell)
     # =========================================
     # Sym_Target, Sym_Immune, Apo_Target, Apo_Immune = sym_fluxes(dir, Project, inputs, Horm)
     # =========================================
     
     # =========================================
     # GET COORDINATES OF CELL NODES
+    # =========================================
     print("Getting X and Y cell nodes")
     Nxyl, position, listxyl, listsieve, Apo_w_Target, Apo_w_Immune = get_cell_nodes(G, Cell2Wall_loop, NwallsJun, Apo_Contagion, position)
     t1 = time.perf_counter()
     print(t1-t0, "seconds process time")
-    # =========================================
     
     # =========================================
     # CREATE NETWORK CONNECTIONS
+    # =========================================
     print('Creating network connections')
     d_vec, dist_wall, G, Cell_connec, nCell_connec, Nmb, cellarea, cellperimeter = create_network_connections(G, Nwalls, Ncells, Cell2Wall_loop, Walls_loop, 
                                position, NwallsJun, position_junctions,
                                Cell_connec_max, lengths, Junction2Wall)
-    # =========================================
     
     # =========================================
     # CALCULATE ENDODERMIS CENTER OF GRAVITY
+    # =========================================
     x_grav=0.0 # (micrometers)
     y_grav=0.0 # (micrometers)
     n_cell_endo=0 #Counting the total number of cells in the endodermis
@@ -140,7 +172,6 @@ def MECHA_run(dir, Project,
         y_grav=nan
     t1 = time.perf_counter()
     print(t1-t0, "seconds process time")
-    # =========================================
 
     # =========================================
     # CALCULATION OF CORTEX AQP RADIAL DISTRIBUTION PARAMETERS
@@ -219,7 +250,9 @@ def MECHA_run(dir, Project,
         if nLayer[i]>0:
             Layer_dist[i]=Layer_dist[i]/nLayer[i]
 
+    # =========================================
     #Discretization based on effective cell layering
+    # =========================================
     r_discret=array([0])
     j=0 #Counts cell layers
     k=0 #Counts tissue types
