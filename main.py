@@ -183,7 +183,6 @@ def MECHA_run(dir, Project,
     d_vec, dist_wall, G, Cell_connec, nCell_connec, Nmb, cellarea, cellperimeter = create_network_connections(G, Nwalls, Ncells, Cell2Wall_loop, Walls_loop, 
                                position, NwallsJun, position_junctions,
                                Cell_connec_max, lengths, Junction2Wall)
-    
     # =========================================
     # CALCULATE ENDODERMIS CENTER OF GRAVITY
     # =========================================
