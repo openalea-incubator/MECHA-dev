@@ -234,7 +234,7 @@ def array_elm(f, pattern):
 def row_elm(f, pattern1, pattern2):
     start = int(get_elm(f, pattern1)[0])+1
     if pattern2 == "Scenario 1":
-        end = len(f)-1
+        end = int(get_elm(f, pattern2)[0])-2
     else:
         end = int(get_elm(f, pattern2)[0])-1
     y = []
