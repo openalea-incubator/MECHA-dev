@@ -1,0 +1,63 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<param>
+  
+  <path_hydraulics>
+    
+    <Output path="baseline/" />
+    
+  </path_hydraulics>
+  
+  <kwrange>
+    <kw value="0.00024" />
+    
+    
+    
+    
+    
+  </kwrange>
+  
+  <kw_barrier_range>
+    
+    <kw_barrier value="1.00E-16" />
+  </kw_barrier_range>
+  
+  <km value="3.0E-5" />
+  <kAQPrange>
+    <kAQP cortex_factor="1.0" endo_factor="1.0" epi_factor="1.0" exo_factor="1.0" stele_factor="1.0" value="0.000430" />
+    
+  </kAQPrange>
+  <ratio_cortex value="1.0" />
+  
+  
+  <Kplrange>
+    <Kpl PCC_factor="1.0" PPP_factor="1.0" cortex_factor="1.0" value="5.3E-12" />
+    
+  </Kplrange>
+  <Fplxheight value="8.0E5" />
+  
+  <Fplxheight_epi_exo value="1.08E6" />
+  <Fplxheight_outer_cortex value="2.28E6" />
+  <Fplxheight_cortex_cortex value="8.6E5" />
+  <Fplxheight_cortex_endo value="8.8E5" />
+  <Fplxheight_endo_endo value="6.4E5" />
+  <Fplxheight_endo_peri value="9.6E5" />
+  <Fplxheight_peri_peri value="7.0E5" />
+  <Fplxheight_peri_stele value="1.08E6" />
+  <Fplxheight_stele_stele value="6.4E5" />
+  <Fplxheight_stele_comp value="9.8E5" />
+  <Fplxheight_peri_comp value="7.0E5" />
+  <Fplxheight_comp_comp value="6.8E5" />
+  <Fplxheight_comp_sieve value="1.76E6" />
+  <Fplxheight_peri_sieve value="7.2E5" />
+  <Fplxheight_stele_sieve value="9.0E5" />
+  
+  <K_sieve value="1.0E-6" />
+  
+  <K_xyl value="1.0E-6" />
+  
+  
+  <Xcontactrange>
+    <Xcontact value="0" />
+    
+  </Xcontactrange>
+</param>

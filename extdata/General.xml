@@ -1,0 +1,13 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<properties>
+	<OS value="Windows" /> 
+	<Output path="out/" /> 
+	<Paraview CellPot="0" MembraneFlux="0" PlasmodesmataFlux="0" WallFlux="0" WallPot="0" value="0" /> 
+	<ParTrack value="0" /> 
+	<Sym_Contagion value="0" /> 
+	<Apo_Contagion value="0" /> 
+	<color_threshold value="1.0" /> 
+	<thickness_disp value="2.0" /> 
+	<thicknessJunction_disp value="2.5" /> 
+	<radiusPlasmodesm_disp value="4.0" /> 
+</properties>
