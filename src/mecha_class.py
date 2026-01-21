@@ -15,6 +15,7 @@ import argparse # for command-line argument parsing
 
 from src.utils.data_loader import *
 from src.utils.network_builder import *
+from src.utils.prepare_paraview import prepare_geometrical_properties
 
 class Mecha:
     """Main class of the library, encodes a hydraulic anatomy to solve.
@@ -49,15 +50,17 @@ class Mecha:
             self.cellset_data = None
 
         self.solution = None
+        self.hydraulic_conductivities = {}
         self.network = NetworkBuilder()
 
         if self.all_input is not None:
             self._build_anatomy()
+            self._count_surrounding_cells()
             self._set_hydraulics()
 
     
     @property
-    def _details(self):
+    def _details(self, verbose: bool = True):
         """Sums up the characteristics of the anatomy.
 
         Returns
@@ -70,419 +73,259 @@ class Mecha:
         description = "=== Mecha Configuration ===\n\n"
 
         if self.all_input is not None:
-            description += self.all_input.info()
-        else:
+            description += self.all_input.info(verbose = False)
 
-        return description
+        if verbose:
+            print(description)
+        else:
+            return description
 
     def _build_anatomy(self):
         """Build the anatomical network."""
         self.network.build_network(self.general, self.geometry, self.cellset_data)
         self.position=nx.get_node_attributes(self.network.graph,'position') #Updates nodes XY positions (micrometers)
         self.indice=nx.get_node_attributes(self.network.graph,'indice') #Node indices (walls, junctions and cells)
+        self.geo_props = prepare_geometrical_properties(self.general, self.network, self.hormones, self.position, self.indice)
+        if self.general.apo_contagion==2:
+            self._initialize_apo_j_zombies0()
         
     def _set_hydraulics(self) -> None:
         """Set up hydraulic properties and solution arrays."""
         # Initialize dimensions
         n_maturity = self.geometry.n_maturity
         n_scenarios = self.boundary.n_scenarios
-        pile_up = self.geometry.pile_up
         r_discret = self._get_r_discret()
 
         # Initialize solution arrays
-        self._initialize_xylem_arrays(n_maturity, n_scenarios)
-        self._initialize_phloem_arrays(n_maturity, n_scenarios)
-        self._initialize_osmotic_arrays(n_scenarios)
-
-        self._initialize_arrays(pile_up, r_discret, n_maturity, n_scenarios)
         
+        self._initialize_flow_arrays(n_maturity, n_scenarios) # Q_tot, kr_tot
+        self._initialize_tropism_arrays(n_maturity, n_scenarios) # hydrotropism, hydropatterning
+        self._initialize_osmotic_arrays(n_maturity, n_scenarios)# os, s, elong
+
         self._initialize_stf_arrays(r_discret, n_maturity)
+        self._initialize_layer_arrays(r_discret, n_maturity, n_scenarios)
         self._initialize_pressure_arrays(r_discret, n_maturity, n_scenarios)
-        self._initialize_flow_arrays(n_maturity, n_scenarios)
-        self._initialize_tropism_arrays(n_maturity, n_scenarios)
+        self.edge_flux_list = [[[] for _ in range(n_scenarios)] for _ in range(n_maturity)]
 
         # Set initial conditions for each maturity stage
         self._set_maturity_initial_conditions()
 
     def _get_r_discret(self) -> int:
         """Get the radial discretization value."""
-        if hasattr(self.network, 'r_discret') and self.network.r_discret:
+        if self.network.r_discret[0] is not None:
             return int(self.network.r_discret[0])
         return 10  # Default value
 
     def _initialize_xylem_arrays(self, n_maturity: int, n_scenarios: int) -> None:
         """Initialize xylem-related arrays."""
-        self.Psi_xyl = np.empty((n_maturity, n_scenarios))
-        self.Psi_xyl[:] = np.nan
+        self.psi_xyl = np.empty((2,n_maturity, n_scenarios))
+        self.psi_xyl[:] = np.nan
 
-        self.dPsi_xyl = np.empty((n_maturity, n_scenarios))
-        self.dPsi_xyl[:] = np.nan
+        self.dpsi_xyl = np.empty((n_maturity, n_scenarios))
+        self.dpsi_xyl[:] = np.nan
 
-        self.iEquil_xyl = np.nan  # Index of the equilibrium root xylem pressure scenario
+        self.i_equil_xyl = np.nan  # Index of the equilibrium root xylem pressure scenario
 
         # Initialize with one extra row for total flow
-        self.Flow_xyl = np.empty((len(self.network.xylem_cells) + 1, n_scenarios))
-        self.Flow_xyl[:] = np.nan
+        self.distributed_flow_xyl = np.empty((2, len(self.network.xylem_cells) + 1, n_scenarios))
+        self.distributed_flow_xyl[:] = np.nan
+        
+        for i in range(n_scenarios):
+            self.psi_xyl[1,:, i] = self.boundary.scenarios[i].get("pressure_xyl_prox")
+            self.psi_xyl[0,:, i] = self.boundary.scenarios[i].get("pressure_xyl_dist")
+            self.dpsi_xyl[:, i] = self.boundary.scenarios[i].get("delta_p_xyl")
 
-        # Set initial xylem flow rate if available
-        if self.boundary.bc_xyl_elems and len(self.boundary.bc_xyl_elems) > 0:
-            flowrate = self.boundary.bc_xyl_elems[0].get("flowrate")
-            if flowrate is not None:
-                self.Flow_xyl[0, 0] = float(flowrate)
+            # Set initial xylem flow rate if available
+            if self.boundary.scenarios[i].get('flowrate_prox'):
+                flowrate_prox = self.boundary.scenarios[i].get("flowrate_prox")
+                flowrate_dist = self.boundary.scenarios[i].get("flowrate_dist")
+                if flowrate_prox is not None:
+                    self.distributed_flow_xyl[1, 0, i] = float(flowrate_prox)
+                if flowrate_dist is not None:
+                    self.distributed_flow_xyl[0, 0, i] = float(flowrate_dist)
+
 
     def _initialize_phloem_arrays(self, n_maturity: int, n_scenarios: int) -> None:
         """Initialize phloem-related arrays."""
-        self.Psi_sieve = np.empty((n_maturity, n_scenarios))
-        self.Psi_sieve[:] = np.nan
+        self.psi_sieve = np.empty((2,n_maturity, n_scenarios))
+        self.psi_sieve[:] = np.nan
 
-        self.dPsi_sieve = np.empty((n_maturity, n_scenarios))
-        self.dPsi_sieve[:] = np.nan
+        self.dpsi_sieve = np.empty((n_maturity, n_scenarios))
+        self.dpsi_sieve[:] = np.nan
 
-        self.iEquil_sieve = np.nan  # Index of the equilibrium root phloem pressure scenario
+        self.i_equil_sieve = np.nan  # Index of the equilibrium root phloem pressure scenario
 
         # Initialize with one extra row for total flow
-        self.Flow_sieve = np.empty((self.network.n_sieve + 1, n_scenarios))
-        self.Flow_sieve[:] = np.nan
+        self.distributed_flow_sieve = np.empty((2, self.network.n_sieve + 1, n_scenarios))
+        self.distributed_flow_sieve[:] = np.nan
 
-        # Set initial phloem flow rate if available
-        if self.boundary.bc_sieve_elems and len(self.boundary.bc_sieve_elems) > 0:
-            flowrate = self.boundary.bc_sieve_elems[0].get("flowrate")
-            if flowrate is not None:
-                self.Flow_sieve[0, 0] = float(flowrate)
+        for i_scenario in range(n_scenarios):
+            self.psi_sieve[1, :, i_scenario] = self.boundary.scenarios[i_scenario].get("pressure_sieve_prox")
+            self.psi_sieve[0, :, i_scenario] = self.boundary.scenarios[i_scenario].get("pressure_sieve_dist")
+            self.dpsi_sieve[:, i_scenario] = self.boundary.scenarios[i_scenario].get("delta_p_sieve")
 
-    def _initialize_osmotic_arrays(self, n_scenarios: int) -> None:
+            # Set initial phloem flow rate if available
+            if self.boundary.scenarios[i_scenario].get('flowrate_prox'):
+                flowrate_prox = self.boundary.scenarios[i_scenario].get("flowrate_prox")
+                flowrate_dist = self.boundary.scenarios[i_scenario].get("flowrate_dist")
+                if flowrate_prox is not None:
+                    self.distributed_flow_sieve[1, 0, i_scenario] = float(flowrate_prox)
+                if flowrate_dist is not None:
+                    self.distributed_flow_sieve[0, 0, i_scenario] = float(flowrate_dist)
+
+    def _initialize_osmotic_arrays(self,n_maturity: int, n_scenarios: int) -> None:
         """Initialize osmotic-related arrays."""
-        self.Os_sieve = np.zeros((1, n_scenarios))
-        self.Os_cortex = np.zeros((1, n_scenarios))
-        self.Os_hetero = np.zeros((1, n_scenarios))
-        self.s_factor = np.zeros((1, n_scenarios))
-        self.s_hetero = np.zeros((1, n_scenarios))
-        self.Elong_cell = np.zeros((1, n_scenarios))
-        self.Elong_cell_side_diff = np.zeros((1, n_scenarios))
+        self.os_sieve = np.empty((n_maturity, n_scenarios))
+        self.os_cortex = np.empty((n_maturity, n_scenarios))
+        self.os_hetero = np.empty((n_maturity, n_scenarios))
+        self.s_factor = np.empty((n_maturity, n_scenarios))
+        self.s_hetero = np.empty((n_maturity, n_scenarios))
+        self.elong_cell = np.empty((n_maturity, n_scenarios))
+        self.elong_cell_side_diff = np.empty((n_maturity, n_scenarios))
+
+        self.boundary.get_osmotic_potentials()
+        self.boundary.get_reflection_coefficients()
 
     def _initialize_layer_arrays(self, r_discret: int, n_maturity: int, n_scenarios: int) -> None:
         """Initialize layer-based arrays."""
-        self.UptakeLayer_plus = np.zeros((r_discret, n_maturity, n_scenarios))
-        self.UptakeLayer_minus = np.zeros((r_discret, n_maturity, n_scenarios))
-        self.Q_xyl_layer = np.zeros((r_discret, n_maturity, n_scenarios))
-        self.Q_sieve_layer = np.zeros((r_discret, n_maturity, n_scenarios))
-        self.Q_elong_layer = np.zeros((r_discret, n_maturity, n_scenarios))
+        self.uptake_layer_plus = np.zeros((r_discret, n_maturity, n_scenarios))
+        self.uptake_layer_minus = np.zeros((r_discret, n_maturity, n_scenarios))
+        self.flow_xyl_layer = np.zeros((r_discret, n_maturity, n_scenarios))
+        self.flow_sieve_layer = np.zeros((r_discret, n_maturity, n_scenarios))
+        self.flow_elong_layer = np.zeros((r_discret, n_maturity, n_scenarios))
 
     def _initialize_stf_arrays(self, r_discret: int, n_maturity: int) -> None:
         """Initialize STF (Specific Tissue Function) arrays."""
-        self.STFmb = np.zeros((self.network.n_membrane, n_maturity))
-        self.STFcell_plus = np.zeros((self.network.n_cells, n_maturity))
-        self.STFcell_minus = np.zeros((self.network.n_cells, n_maturity))
-        self.STFlayer_plus = np.zeros((r_discret, n_maturity))
-        self.STFlayer_minus = np.zeros((r_discret, n_maturity))
+        self.stf_mb = np.zeros((self.network.n_membrane, n_maturity))
+        self.stf_cell_plus = np.zeros((self.network.n_cells, n_maturity))
+        self.stf_cell_minus = np.zeros((self.network.n_cells, n_maturity))
+        self.stf_layer_plus = np.zeros((r_discret, n_maturity))
+        self.stf_layer_minus = np.zeros((r_discret, n_maturity))
 
     def _initialize_pressure_arrays(self, r_discret: int, n_maturity: int, n_scenarios: int) -> None:
         """Initialize pressure and osmotic arrays."""
-        self.PsiCellLayer = np.zeros((r_discret, n_maturity, n_scenarios))
-        self.PsiWallLayer = np.zeros((r_discret, n_maturity, n_scenarios))
-        self.OsCellLayer = np.zeros((r_discret, n_maturity, n_scenarios))
-        self.nOsCellLayer = np.zeros((r_discret, n_maturity, n_scenarios))
-        self.OsWallLayer = np.zeros((r_discret, n_maturity, n_scenarios))
-        self.nOsWallLayer = np.zeros((r_discret, n_maturity, n_scenarios))
-        self.NWallLayer = np.zeros((r_discret, n_maturity, n_scenarios))
+        self.psi_cell_layer = np.zeros((r_discret, n_maturity, n_scenarios))
+        self.psi_wall_layer = np.zeros((r_discret, n_maturity, n_scenarios))
+        self.os_cell_layer = np.zeros((r_discret, n_maturity, n_scenarios))
+        self.n_os_cell_layer = np.zeros((r_discret, n_maturity, n_scenarios))
+        self.os_wall_layer = np.zeros((r_discret, n_maturity, n_scenarios))
+        self.n_os_wall_layer = np.zeros((r_discret, n_maturity, n_scenarios))
+        self.n_wall_layer = np.zeros((r_discret, n_maturity, n_scenarios))
 
     def _initialize_flow_arrays(self, n_maturity: int, n_scenarios: int) -> None:
         """Initialize flow and conductivity arrays."""
-        self.Q_tot = np.zeros((n_maturity, n_scenarios))
+        self.total_flow = np.zeros((n_maturity, n_scenarios))
         self.kr_tot = np.zeros((n_maturity, 1))
 
     def _initialize_tropism_arrays(self, n_maturity: int, n_scenarios: int) -> None:
         """Initialize tropism arrays."""
-        self.Hydropatterning = np.empty((n_maturity, n_scenarios))
-        self.Hydropatterning[:] = np.nan
-        self.Hydrotropism = np.empty((n_maturity, n_scenarios))
-        self.Hydrotropism[:] = np.nan
+        self.hydropatterning = np.empty((n_maturity, n_scenarios))
+        self.hydropatterning[:] = np.nan
+        self.hydrotropism = np.empty((n_maturity, n_scenarios))
+        self.hydrotropism[:] = np.nan
+
+    def _initialize_apo_j_zombies0(self, use_thick: bool = True) -> None:
+        """Initialize Apo_j_Zombies0 / Apo_j_cc arrays."""
+        if use_thick:
+            for j in range(self.network.n_walls, self.network.n_wall_junction):
+                j_idx = j - self.network.n_walls
+                for cid in self.network.junction_wall_cell[j_idx]:
+                    if isnan(cid):
+                        continue
+                    cell_index = int(cid - self.network.n_wall_junction)
+                    if cell_index in self.hormones.apo_zombie0:
+                        cc = self.hormones.apo_cc[self.hormones.apo_zombie0.index(cell_index)]
+                        if j not in self.network.apo_j_zombies0:
+                            self.network.apo_j_zombies0.append(j)
+                            self.network.apo_j_cc.append(cc)
 
     def _set_maturity_initial_conditions(self) -> None:
         """Set initial conditions for each maturity stage."""
-        iMaturity = 0
 
-        for Maturity in self.geometry.maturity_elems:
+        n_scenarios = len(self.boundary.scenarios)
+        n_maturity = len(self.geometry.maturity_stages)
+        self._initialize_xylem_arrays(n_maturity, n_scenarios) # psi_xyl, dpsi_xyl, flow_xyl
+        self._initialize_phloem_arrays(n_maturity, n_scenarios) # psi_sieve, dpsi_sieve, flow_sieve
 
-            # Set xylem initial conditions
-            self._set_xylem_initial_conditions(iMaturity)
+        for i_maturity, maturity in enumerate(self.geometry.maturity_stages):
 
-            # Set phloem initial conditions
-            self._set_phloem_initial_conditions(iMaturity)
+            barrier = int(maturity.get("barrier"))
+            height = float(maturity.get("height"))
+            self._set_hydraulic_conductivities(i_maturity, barrier, height)
+
+            if self.boundary.scenarios[0].get('flow_xyl_prox') is not None:
+                for i_scenario, _ in enumerate(self.boundary.scenarios):
+                    self._handle_xylem_flow_conditions(i_maturity, i_scenario)
+                    self._handle_phloem_flow_conditions(i_maturity, i_scenario)
             
-            # Set cell wall hydraulic conductivity and plasmodesmatal conductance
-            barrier = int(Maturity.get("Barrier"))
-            height = int(Maturity.get("height"))
-            self._set_hydraulic_conductivities(iMaturity, barrier, height)
 
-            self._fill_doussan_mx(barrier)
-
-            self._solve_doussan()
-
-            iMaturity += 1
-
-    def _set_xylem_initial_conditions(self, iMaturity: int) -> None:
-        """Set initial conditions for xylem."""
-        if not self.boundary.bc_xyl_elems:
-            return
-
-        # Set xylem pressure potential
-        pressure = self.boundary.bc_xyl_elems[0].get("pressure")
-        if pressure is not None:
-            self.Psi_xyl[iMaturity, 0] = float(pressure)
-
-        # Set xylem pressure potential change
-        deltaP = self.boundary.bc_xyl_elems[0].get("deltaP")
-        if deltaP is not None:
-            self.dPsi_xyl[iMaturity, 0] = float(deltaP)
-
-        # Handle xylem flow conditions
-        self._handle_xylem_flow_conditions(iMaturity)
-
-    def _handle_xylem_flow_conditions(self, iMaturity: int) -> None:
+    def _handle_xylem_flow_conditions(self, i_maturity: int, i_scenario: int) -> None:
         """Handle xylem flow conditions."""
-        if np.isnan(self.Flow_xyl[0, 0]):
+        if np.isnan(self.distributed_flow_xyl[1, 0, i_scenario]):
             return
 
-        if np.isnan(self.Psi_xyl[iMaturity, 0]) and np.isnan(self.dPsi_xyl[iMaturity, 0]):
+        if np.isnan(self.psi_xyl[1, i_maturity, i_scenario]) and np.isnan(self.dpsi_xyl[i_maturity, i_scenario]):
             self._distribute_xylem_flow()
-            if self.Flow_xyl[0, 0] == 0.0:
-                self.iEquil_xyl = 0
+            if self.distributed_flow_xyl[1, 0, i_scenario] == 0.0:
+                self.i_equil_xyl = 0
         else:
             print('Error: Cannot have both pressure and flow BC at xylem boundary')
 
     def _distribute_xylem_flow(self) -> None:
         """Distribute xylem flow proportionally to xylem cross-section area."""
-        tot_flow = self.Flow_xyl[0, 0]
-        sum_area = 0.0
+        flow = self.distributed_flow_xyl[1, 0, 0]
+        for i in range(self.network.n_xylem):
+            self.distributed_flow_xyl[1, i+1, 0] = flow * self.network.xylem_area_ratio[i]
 
-        # Calculate total area
-        for cid in self.network.xylem_cells:
-            area = self.network.cell_areas[cid - self.network.n_wall_junction]
-            sum_area += area
-
-        # Distribute flow
-        i = 1
-        for cid in self.network.xylem_cells:
-            area = self.network.cell_areas[cid - self.network.n_wall_junction]
-            self.Flow_xyl[i, 0] = tot_flow * (area / sum_area)
-            i += 1
-
-    def _set_phloem_initial_conditions(self, iMaturity: int) -> None:
-        """Set initial conditions for phloem."""
-        if not self.boundary.bc_sieve_elems:
-            return
-
-        # Set phloem pressure potential
-        pressure = self.boundary.bc_sieve_elems[0].get("pressure")
-        if pressure is not None:
-            self.Psi_sieve[iMaturity, 0] = float(pressure)
-
-        # Set phloem pressure potential change
-        deltaP = self.boundary.bc_sieve_elems[0].get("deltaP")
-        if deltaP is not None:
-            self.dPsi_sieve[iMaturity, 0] = float(deltaP)
-
-        # Handle phloem flow conditions
-        self._handle_phloem_flow_conditions(iMaturity)
-
-    def _handle_phloem_flow_conditions(self, iMaturity: int) -> None:
+    def _handle_phloem_flow_conditions(self, i_maturity: int, i_scenario: int) -> None:
         """Handle phloem flow conditions."""
-        if np.isnan(self.Flow_sieve[0, 0]):
+        if np.isnan(self.distributed_flow_sieve[1, 0, 0]):
             return
 
-        if np.isnan(self.Psi_sieve[iMaturity, 0]) and np.isnan(self.dPsi_sieve[iMaturity, 0]):
+        if np.isnan(self.psi_sieve[1, i_maturity, i_scenario]) and np.isnan(self.dpsi_sieve[i_maturity, i_scenario]):
             self._distribute_phloem_flow()
-            if self.Flow_sieve[0, 0] == 0.0:
-                self.iEquil_sieve = 0
+            if self.distributed_flow_sieve[1, 0, 0] == 0.0:
+                self.i_equil_sieve = 0
         else:
             print('Error: Cannot have both pressure and flow BC at phloem boundary')
 
     def _distribute_phloem_flow(self) -> None:
         """Distribute phloem flow proportionally to phloem cross-section area."""
-        tot_flow = self.Flow_sieve[0, 0]
-        sum_area = 0.0
-
-        # Calculate total area
-        for cid in self.network.protosieve_list:
-            area = self.network.cell_areas[cid - self.network.n_wall_junction]
-            sum_area += area
+        flow = self.distributed_flow_sieve[1, 0, 0]
 
         # Distribute flow
-        i = 1
-        for cid in self.network.protosieve_list:
-            area = self.network.cell_areas[cid - self.network.n_wall_junction]
-            self.Flow_sieve[i, 0] = tot_flow * (area / sum_area)
-            i += 1
+        for i in range(self.network.n_protosieve):
+            self.distributed_flow_sieve[1, i+1, 0] = flow * self.network.phloem_area_ratio[i]
 
-    def _set_hydraulic_conductivities(self, iMaturity: int, barrier: int, height: int) -> None:
+    def _set_hydraulic_conductivities(self, i_maturity: int, barrier: int, height: float) -> None:
         """Set cell wall hydraulic conductivity and plasmodesmatal conductance."""
         hydraulic = self.hydraulic
 
-        # Loop through hydraulic scenarios
+        # Loop through hydraulic scenarios (default is 1)
         for h in range(hydraulic.n_hydraulics):
             # Cell wall hydraulic conductivity
-            kw = self._get_kw_value(h, hydraulic)
-            kw_barrier_casp = self._get_kw_barrier_value(h, hydraulic, "Casp")
-            kw_barrier_sub = self._get_kw_barrier_value(h, hydraulic, "Sub")
+            kw =  hydraulic.get_kw_value(h)
+            kw_barrier_casp, kw_barrier_sub = hydraulic.get_kw_barrier_values(h)
 
             # Set wall conductivities based on barrier type
-            kw_endo_endo, kw_exo_exo, kw_cortex_cortex, kw_endo_peri, kw_endo_cortex, kw_passage = \
-                self._get_wall_conductivities(Barrier, kw, kw_barrier_casp, kw_barrier_sub)
+            kw_config = hydraulic.get_wall_conductivities(barrier, kw, kw_barrier_casp, kw_barrier_sub)
 
             # Plasmodesmatal hydraulic conductance
-            Kpl = self._get_plasmodesmatal_conductance(h, hydraulic)
+            kpl_config = hydraulic.get_plasmodesmatal_conductance(h)
 
             # Contribution of aquaporins to membrane hydraulic conductivity
-            kaqp, kaqp_stele, kaqp_endo, kaqp_exo, kaqp_epi, kaqp_cortex = \
-                self._get_aquaporin_contributions(h, hydraulic)
+            kaqp_config = hydraulic.get_aquaporin_contributions(h)
 
             # Calculate parameter a for cortex
-            a_cortex, b_cortex = self._calculate_cortex_parameters(height, kaqp_cortex, hydraulic)
+            a_cortex, b_cortex = self._calculate_cortex_parameters(height = height, kaqp_cortex = kaqp_config['kaqp_cortex'], hydraulic = hydraulic)
 
-            # Store or use these values as needed
-            # For example, you might want to store them in a dictionary or use them directly
-            # This part depends on how you plan to use these values in your calculations
-
-    def _get_kw_value(self, h: int, hydraulic: HydraulicData) -> float:
-        """Get the kw value based on the scenario index."""
-        if hydraulic.n_kw == hydraulic.n_hydraulics:
-            return float(hydraulic.kw_elems[h].get("value"))
-        elif hydraulic.n_kw == 1:
-            return float(hydraulic.kw_elems[0].get("value"))
-        else:
-            return float(hydraulic.kw_elems[int(h/(hydraulic.n_kaqp*hydraulic.n_kpl))%hydraulic.n_kw].get("value"))
-
-    def _get_kw_barrier_value(self, h: int, hydraulic: HydraulicData, type:str) -> float:
-        """Get the kw_barrier value based on the scenario index."""
-        if hydraulic.n_kw_barrier == hydraulic.n_hydraulics:
-            return float(hydraulic.kw_barrier_elems[h].get(type))
-        elif hydraulic.n_kw_barrier == 1:
-            return float(hydraulic.kw_barrier_elems[0].get(type))
-        else:
-            return float(hydraulic.kw_barrier_elems[int(h/(hydraulic.n_kaqp*hydraulic.n_kpl*hydraulic.n_kw))%hydraulic.n_kw_barrier].get(type))
-
-    def _get_wall_conductivities(self, barrier: int, kw: float, kw_barrier_casparian: float, kw_barrier_suberin: float) -> tuple:
-        """Get wall conductivities based on barrier type."""
-        if barrier == 0:  # No Casparian strip
-            kw_endo_endo = kw
-            kw_puncture = kw
-            kw_exo_exo = kw
-            kw_exo_epi=kw
-            kw_cortex_cortex = kw
-            kw_endo_peri = kw
-            kw_endo_cortex = kw
-            kw_passage = kw
-        elif barrier == 1:  # Endodermis radial walls
-            kw_endo_endo = kw_barrier_casparian
-            kw_exo_exo = kw
-            kw_exo_epi=kw
-            kw_cortex_cortex = kw
-            kw_endo_peri = kw
-            kw_endo_cortex = kw
-            kw_passage = kw
-        elif barrier == 2:  # Endodermis with passage cells
-            kw_endo_endo = kw_barrier_casparian
-            kw_exo_exo = kw
-            kw_cortex_cortex = kw
-            kw_endo_peri = kw_barrier_suberin
-            kw_endo_cortex = kw_barrier_suberin
-            kw_passage = kw
-        elif barrier == 3:  # Endodermis full
-            kw_endo_endo = kw_barrier_casparian
-            kw_exo_exo = kw
-            kw_cortex_cortex = kw
-            kw_endo_peri = kw_barrier_suberin
-            kw_endo_cortex = kw_barrier_suberin
-            kw_passage = kw_barrier_suberin
-        elif barrier == 4:  # Endodermis full and exodermis radial walls
-            kw_endo_endo = kw_barrier_casparian
-            kw_exo_exo = kw_barrier_casparian
-            kw_cortex_cortex = kw
-            kw_endo_peri = kw_barrier_suberin
-            kw_endo_cortex = kw_barrier_suberin
-            kw_passage = kw_barrier_suberin
-        elif Barrier==5: # Endodermal & exodermal Casparian strips
-            kw_endo_endo=kw_barrier_casparian
-            kw_exo_exo=kw_barrier_casparian #(cm^2/hPa/d) hydraulic conductivity of the suberised walls between exodermis cells
-            kw_exo_epi=kw
-            kw_exo_cortex=kw
-            kw_cortex_cortex=kw
-            kw_endo_peri=kw #(cm^2/hPa/d) hydraulic conductivity of the walls between endodermis and pericycle cells
-            kw_endo_cortex=kw #(cm^2/hPa/d) hydraulic conductivity of the walls between endodermis and pericycle cells
-            kw_passage=kw #(cm^2/hPa/d) hydraulic conductivity of passage cells tangential walls
-        elif Barrier==6: #Exodermis full and endodermis radial walls
-            kw_endo_endo=kw_barrier_casparian
-            kw_exo_exo=kw_barrier_casparian #(cm^2/hPa/d) hydraulic conductivity of the suberised walls between exodermis cells
-            kw_exo_epi=kw_barrier_suberin
-            kw_exo_cortex=kw_barrier_suberin
-            kw_cortex_cortex=kw
-            kw_endo_peri=kw #(cm^2/hPa/d) hydraulic conductivity of the walls between endodermis and pericycle cells
-            kw_endo_cortex=kw #(cm^2/hPa/d) hydraulic conductivity of the walls between endodermis and pericycle cells
-            kw_passage=kw #(cm^2/hPa/d) hydraulic conductivity of passage cells tangential walls
-        elif Barrier==7: #Exodermis radial walls
-            kw_endo_endo=kw
-            kw_exo_exo=kw_barrier_casparian #(cm^2/hPa/d) hydraulic conductivity of the suberised walls between exodermis cells
-            kw_exo_epi=kw
-            kw_exo_cortex=kw
-            kw_cortex_cortex=kw
-            kw_endo_peri=kw #(cm^2/hPa/d) hydraulic conductivity of the walls between endodermis and pericycle cells
-            kw_endo_cortex=kw #(cm^2/hPa/d) hydraulic conductivity of the walls between endodermis and pericycle cells
-            kw_passage=kw #(cm^2/hPa/d) hydraulic conductivity of passage cells tangential walls
-        elif Barrier==8: #Exodermis full suberized and endodermis full suberized
-            kw_endo_endo=kw_barrier_casparian
-            kw_exo_exo=kw_barrier_casparian #(cm^2/hPa/d) hydraulic conductivity of the suberised walls between exodermis cells
-            kw_exo_epi=kw_barrier_suberin
-            kw_exo_cortex=kw_barrier_suberin
-            kw_cortex_cortex=kw
-            kw_endo_peri=kw_barrier_suberin #(cm^2/hPa/d) hydraulic conductivity of the walls between endodermis and pericycle cells
-            kw_endo_cortex=kw_barrier_suberin #(cm^2/hPa/d) hydraulic conductivity of the walls between endodermis and pericycle cells
-            kw_passage=kw #(cm^2/hPa/d) hydraulic conductivity of passage cells tangential walls
-        elif Barrier==9: #Lignin Cap
-            kw_endo_endo=kw_barrier_casparian
-            kw_exo_exo=kw_barrier_casparian #(cm^2/hPa/d) hydraulic conductivity of the suberised walls between exodermis cells
-            kw_exo_epi=kw_barrier_suberin
-            kw_exo_cortex=kw
-            kw_cortex_cortex=kw
-            kw_endo_peri=kw #(cm^2/hPa/d) hydraulic conductivity of the walls between endodermis and pericycle cells
-            kw_endo_cortex=kw #(cm^2/hPa/d) hydraulic conductivity of the walls between endodermis and pericycle cells
-            kw_passage=kw #(cm^2/hPa/d) hydraulic conductivity of passage cells tangential walls
+            # Store values in a dictionary
+            self._set_hydraulic_conductivities_dict(h, i_maturity, barrier, height, kw_config, kpl_config, kaqp_config, a_cortex, b_cortex)
 
 
-        return kw_endo_endo, kw_exo_exo, kw_cortex_cortex, kw_endo_peri, kw_endo_cortex, kw_passage
-
-    def _get_plasmodesmatal_conductance(self, h: int, hydraulic: HydraulicData) -> float:
-        """Get plasmodesmatal hydraulic conductance."""
-        if hydraulic.n_kpl == hydraulic.n_hydraulics:
-            iPD = h
-        elif hydraulic.n_kpl == 1:
-            iPD = 0
-        else:
-            iPD = int(h/hydraulic.n_kaqp)%hydraulic.n_kpl
-
-        return float(hydraulic.kpl_elems[iPD].get("value"))
-
-    def _get_aquaporin_contributions(self, h: int, hydraulic: HydraulicData) -> tuple:
-        """Get aquaporin contributions to membrane hydraulic conductivity."""
-        if hydraulic.n_kaqp == hydraulic.n_hydraulics:
-            iAQP = h
-        elif hydraulic.n_kaqp == 1:
-            iAQP = 0
-        else:
-            iAQP = h%hydraulic.n_kaqp
-
-        kaqp = float(hydraulic.kaqp_elems[iAQP].get("value"))
-        kaqp_stele = kaqp * float(hydraulic.kaqp_elems[iAQP].get("stele_factor"))
-        kaqp_endo = kaqp * float(hydraulic.kaqp_elems[iAQP].get("endo_factor"))
-        kaqp_exo = kaqp * float(hydraulic.kaqp_elems[iAQP].get("exo_factor"))
-        kaqp_epi = kaqp * float(hydraulic.kaqp_elems[iAQP].get("epi_factor"))
-        kaqp_cortex = kaqp * float(hydraulic.kaqp_elems[iAQP].get("cortex_factor"))
-
-        return kaqp, kaqp_stele, kaqp_endo, kaqp_exo, kaqp_epi, kaqp_cortex
-
-    def _calculate_cortex_parameters(self, height: int, kaqp_cortex: float, hydraulic: HydraulicData) -> tuple:
+    def _calculate_cortex_parameters(self, height: float, kaqp_cortex: float, hydraulic: HydraulicData) -> tuple:
         """Calculate parameter a for cortex."""
-        if self.hydraulic.ratio_cortex == 1:  # Uniform AQP activity in all cortex membranes
+        if hydraulic.ratio_cortex == 1:  # Uniform AQP activity in all cortex membranes
             a_cortex = 0.0  # (1/hPa/d)
             b_cortex = kaqp_cortex  # (cm/hPa/d)
         else:
@@ -496,31 +339,1262 @@ class Mecha:
                     if self.network.graph.nodes[self.network.n_wall_junction + cell_id]['cgroup']==4: #Cortex
                         dist_cell=sqrt(square(self.position[wall_id][0]-self.position[self.network.n_wall_junction+cell_id][0])+square(self.position[wall_id][1]-self.position[self.network.n_wall_junction+cell_id][1])) #distance between wall node and cell node (micrometers)
                         surf=(height+dist_cell)*self.network.wall_lengths[wall_id]*1.0E-08 #(square centimeters)
-                        temp+=surf*1.0E-04*(self.network.distance_center_grav[wall_id]+(self.hydraulic.ratio_cortex*self.network.distance_max_cortex-self.network.distance_min_cortex)/(1-self.hydraulic.ratio_cortex))
+                        temp+=surf*1.0E-04*(self.network.distance_center_grav[wall_id]+(hydraulic.ratio_cortex*self.network.distance_max_cortex-self.network.distance_min_cortex)/(1-hydraulic.ratio_cortex))
                         tot_surf_cortex+=surf
             a_cortex=kaqp_cortex*tot_surf_cortex/temp  #(1/hPa/d)
-            b_cortex=a_cortex*1.0E-04*(self.hydraulic.ratio_cortex*self.network.distance_max_cortex-self.network.distance_min_cortex)/(1-self.hydraulic.ratio_cortex) #(cm/hPa/d)
+            b_cortex=a_cortex*1.0E-04*(hydraulic.ratio_cortex*self.network.distance_max_cortex-self.network.distance_min_cortex)/(1-hydraulic.ratio_cortex) #(cm/hPa/d)
 
         return a_cortex, b_cortex
 
-    def _solve_doussan(self):
+    def _set_hydraulic_conductivities_dict(self, h: int, i_maturity: int, barrier: int, height: float, kw_config: np.ndarray, kpl_config: np.ndarray, kaqp_config: np.ndarray, a_cortex: float, b_cortex: float) -> None:
+        """Set hydraulic conductivities in a dictionary."""
+        self.hydraulic_conductivities[h, i_maturity, barrier] = {
+            "kw": kw_config,
+            "kpl": kpl_config,
+            "kaqp": kaqp_config,
+            "a_cortex": a_cortex,
+            "b_cortex": b_cortex,
+            "height": height,
+        }
+
+    def _apply_apoplastic_decay_and_boundary(self, height: float) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Apply apoplastic decay and boundary conditions to the matrix and RHS.
+        
+        Parameters:
+        - height: height of the maturity stage
+        """
+        n_walls = self.network.n_walls
+        n_wall_junction = self.network.n_wall_junction
+        thickness = self.geometry.thickness
+        apo_j_zombies0 = self.network.apo_j_zombies0
+        apo_j_cc = self.network.apo_j_cc
+
+        matrix_C = np.zeros((n_wall_junction,n_wall_junction)) #Initializes the matrix of convection
+        rhs_C = np.zeros((n_wall_junction,1)) #Initializing the right-hand side matrix of solute apoplastic concentrations
+
+        for i in range(n_walls):
+            if i in apo_j_zombies0:
+                matrix_C[i][i]=1.0
+                rhs_C[i][0]=apo_j_cc[apo_j_zombies0.index(i)] #1 #Concentration in source wall i equals 1 by default
+            else: #Decomposition rate (mol decomp/mol-day * cm^3)
+                matrix_C[i][i]-=self.hormones.degrad1*1.0E-12*(self.network.distance_wall_cell[i][0]*thickness*self.network.wall_lengths[i]+height*thickness*self.network.wall_lengths[i]/2-square(thickness)*self.network.wall_lengths[i])
+        for j in range(n_walls,n_wall_junction):
+            if j in apo_j_zombies0:
+                matrix_C[j][j]=1.0
+                rhs_C[j][0]=apo_j_cc[apo_j_zombies0.index(j)] #1 #Concentration in source junction j equals 1 by default
+            else: #Decomposition rate (mol decomp/mol-day * cm^3)
+                matrix_C[j][j]-=self.hormones.degrad1*1.0E-12*height*thickness*self.network.wall_lengths[j]/2
+
+        return matrix_C, rhs_C
+
+    def _apply_symplastic_decay_and_boundary(self, height: float) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Apply symplastic decay and boundary conditions to the matrix and RHS.
+
+        Parameters:
+        - height: height of the maturity stage
+        """
+        n_cells = self.network.n_cells
+
+        matrix_C = np.zeros((n_cells,n_cells)) #Initializes the matrix of convection
+        rhs_C = np.zeros((n_cells,1)) #Initializing the right-hand side matrix of solute symplastic concentrations
+        for cell_id in range(n_cells):
+            if cell_id in self.hormones.sym_zombie0:
+                matrix_C[cell_id][cell_id]=1.0
+                rhs_C[cell_id][0]=self.hormones.sym_cc[self.hormones.sym_zombie0.index(cell_id)] #1 #Concentration in source protoplasts equals 1 by default
+            else: #Decomposition rate (mol decomp/mol-day * cm^3)
+                matrix_C[cell_id][cell_id]-=self.hormones.degrad1*1.0E-12*network.cell_areas[cell_id]*height
+
+        return matrix_C, rhs_C
+
+    def _apply_decay_and_boundary(self, height: float) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Apply decay and boundary conditions to the matrix and RHS.
+
+        Parameters:
+        - height: height of the maturity stage
+        """
+        n_cells = self.network.n_cells
+        n_walls = self.network.n_walls
+        n_wall_junction = self.network.n_wall_junction
+        thickness = self.geometry.thickness
+        apo_j_zombies0 = self.network.apo_j_zombies0
+        apo_j_cc = self.network.apo_j_cc
+        matrix_C = np.zeros((n_nodes,n_nodes)) #Initializes the matrix of convection
+        rhs_C = np.zeros((n_nodes,1)) #Initializing the right-hand side matrix of solute apoplastic concentrations
+
+        for i in range(n_walls):
+            if i in apo_j_zombies0:
+                matrix_C[i][i]=1.0
+                rhs_C[i][0]=apo_j_cc[apo_j_zombies0.index(i)] #Concentration in source wall i defined in geometry_config
+            else: #Decomposition rate (mol decomp/mol-day * cm^3)
+                matrix_C[i][i]-=self.hormones.degrad1*1.0E-12*(self.network.distance_wall_cell[i][0]*thickness*self.network.wall_lengths[i]+height*thickness*self.network.wall_lengths[i]/2-square(thickness)*self.network.wall_lengths[i])
+            
+        for j in range(n_walls,n_wall_junction):
+            if j in apo_j_zombies0:
+                matrix_C[j][j]=1.0
+                rhs_C[j][0]=apo_j_cc[apo_j_zombies0.index(j)] #Concentration in source junction j defined in geometry_config
+            else: #Decomposition rate (mol decomp/mol-day * cm^3)
+                matrix_C[j][j]-=self.hormones.degrad1*1.0E-12*height*thickness*self.network.wall_lengths[j]/2
+
+        for cell_id in range(n_cells):
+            if cell_id in self.hormones.sym_zombie0:
+                matrix_C[n_wall_junction+cell_id][n_wall_junction+cell_id]=1.0
+                rhs_C[n_wall_junction+cell_id][0]=self.hormones.sym_cc[self.hormones.sym_zombie0.index(cell_id)] #1.0 #Concentration in source protoplasts defined in geometry_config
+            else: #Decomposition rate (mol decomp/mol-day * cm^3)
+                matrix_C[n_wall_junction+cell_id][n_wall_junction+cell_id]-=self.hormones.degrad1*1.0E-12*self.network.cell_areas[cell_id]*height
+
+        return matrix_C, rhs_C
+
+    def calculate_axial_conductance(self, i_maturity: int) -> tuple[np.ndarray, float]:
+        """
+        Calculates the axial conductances for a specific hydraulic scenario and maturity stage.
+        
+        Parameters:
+        i_maturity: int, maturity stage index
+
+        Returns:
+        - K_axial: Array of axial conductances
+        - K_xyl_spec: Specific axial conductance
+        """
+
+        hydraulic = self.hydraulic
+        network = self.network
+
+        barrier = self.geometry.maturity_stages[i_maturity].get('barrier')
+        height = self.geometry.maturity_stages[i_maturity].get('height')
+
+
+        #Axial conductances
+        K_axial=np.zeros((network.n_cells + network.n_walls + network.n_junctions,1)) #Vector of apoplastic and plasmodesmatal axial conductances
+        if barrier>0: 
+            if hydraulic.axial_conductance_source==2:
+                for K_xyl in hydraulic.k_xyl_elems:
+                    cellnumber=int(K_xyl.get("id"))
+                    K_axial[cellnumber+network.n_wall_junction]=float(K_xyl.get("value"))
+                K_xyl_spec=sum(K_axial)*height/1.0E04
+                for K_sieve in hydraulic.k_sieve_elems:
+                    cellnumber=int(K_sieve.get("id"))
+                    K_axial[cellnumber+network.n_wall_junction]=float(K_sieve.get("value"))
+            else: #K_xyl_spec calculated from Poiseuille law (cm^3/hPa/d)
+                for cid in network.xylem_cells:
+                    K_axial[cid]=network.cell_areas[cid-network.n_wall_junction]**2/(8*3.141592*height*1.0E-05/3600/24)*1.0E-12 #(micron^4/micron)->(cm^3) & (1.0E-3 Pa.s)->(1.0E-05/3600/24 hPa.d) 
+                K_xyl_spec=sum(K_axial)*height/1.0E04
+                for cid in network.sieve_cells:
+                    K_axial[cid]=network.cell_areas[cid-network.n_wall_junction]**2/(8*3.141592*height*1.0E-05/3600/24)*1.0E-12 #(micron^4/micron)->(cm^3) & (1.0E-3 Pa.s)->(1.0E-05/3600/24 hPa.d) 
+        else: # barrier=0
+            if hydraulic.axial_conductance_source==2:
+                for K_sieve in hydraulic.k_sieve_elems:
+                    cellnumber=int(K_sieve.get("id"))
+                    if cellnumber+network.n_wall_junction in network.listprotosieve:
+                        K_axial[cellnumber+network.n_wall_junction]=float(K_sieve.get("value"))
+            else: #Calculated from Poiseuille law (cm^3/hPa/d)
+                for cid in network.listprotosieve:
+                    K_axial[cid]=network.cell_areas[cid-network.n_wall_junction]**2/(8*math.pi*height*1.0E-05/3600/24)*1.0E-12 #(micron^4/micron)->(cm^3) & (1.0E-3 Pa.s)->(1.0E-05/3600/24 hPa.d)
+
+        return K_axial, K_xyl_spec
+
+    def _count_surrounding_cells(self):
+        """
+        Count the number of surrounding cells of a given node.
+        """
+        n_walls = self.network.n_walls
+        n_wall_junction = self.network.n_wall_junction
+        passage_cell_ids = self.geometry.passage_cell_ids
+
+        for node, edges in self.network.graph.adjacency():
+            i = self.indice[node]
+            count_endo, count_stele_overall, count_exo = 0, 0, 0
+            count_epi, count_cortex, count_passage = 0, 0, 0
+            count_xyl = 0
+            count_interC = 0
+            if i < n_walls:
+                for neighboor, eattr in edges.items():
+                    if eattr['path'] == 'membrane':                       
+                        if any(np.array(self.geometry.intercellular_ids) == array((self.indice[neighboor] - n_wall_junction))):
+                            count_interC += 1
+                            if count_interC==2 and i not in self.list_ghostwalls:
+                                self.list_ghostwalls.append(i)
+                        elif self.network.graph.nodes[neighboor]['cgroup'] in [13, 19, 20]:
+                            count_xyl += 1
+                            if (count_xyl==2 and self.geometry.xylem_pieces) and i not in self.list_ghostwalls:
+                                self.list_ghostwalls.append(i)
+                        elif any(passage_cell_ids==array((self.indice[neighboor])-self.network.n_wall_junction)):
+                            count_passage+=1
+                        elif self.network.graph.nodes[neighboor]['cgroup']==3:#Endodermis
+                            count_endo+=1
+                        elif self.network.graph.nodes[neighboor]['cgroup']>4:#Pericycle or stele
+                            count_stele_overall+=1
+                        elif self.network.graph.nodes[neighboor]['cgroup']==4:#Cortex
+                            count_cortex+=1
+                        elif self.network.graph.nodes[neighboor]['cgroup']==1:#Exodermis
+                            count_exo+=1
+                        elif self.network.graph.nodes[neighboor]['cgroup']==2:#Epidermis
+                            count_epi+=1
+            # Store counts as node attributes
+            self.network.graph.nodes[node]['count_endo'] = count_endo
+            self.network.graph.nodes[node]['count_stele_overall'] = count_stele_overall
+            self.network.graph.nodes[node]['count_exo'] = count_exo
+            self.network.graph.nodes[node]['count_epi'] = count_epi
+            self.network.graph.nodes[node]['count_cortex'] = count_cortex
+            self.network.graph.nodes[node]['count_passage'] = count_passage
+            self.network.graph.nodes[node]['count_xyl'] = count_xyl
+            self.network.graph.nodes[node]['count_interC'] = count_interC
+    
+    def build_matrices(self, h, i_maturity):
+        """
+        Builds the Doussan matrix (matrix_W) and convection/diffusion matrices for a specific
+        hydraulic scenario (h) and maturity stage.
+        
+        Parameters:
+        - h: int, hydraulic scenario index
+        - i_maturity: int, maturity index
+        
+        Returns:
+        - matrix_W
+        - matrices for C/ApoC/SymC and their RHS vectors
+        """
+
+        # Unpack hydraulic properties for this scenario
+        maturity_stages = self.geometry.maturity_stages
+        hydraulic = self.hydraulic
+        barrier = int(maturity_stages[i_maturity].get("barrier"))
+        height = float(maturity_stages[i_maturity].get("height"))
+        x_contact = float(hydraulic.xcontactrange[h])        
+        
+        hyd_props = self.hydraulic_conductivities[h, i_maturity, barrier]
+        kw_config = hyd_props['kw']
+        kpl_config = hyd_props['kpl']
+        kaqp_config = hyd_props['kaqp']
+        a_cortex = hyd_props['a_cortex']
+        b_cortex = hyd_props['b_cortex']
+        
+        # Unpack individual conductivities
+        kw = hydraulic.get_kw_value(h) # Base kw value
+        kw_endo_endo = kw_config['kw_endo_endo']
+        kw_exo_exo = kw_config['kw_exo_exo']
+        kw_cortex_cortex = kw_config['kw_cortex_cortex']
+        kw_endo_peri = kw_config['kw_endo_peri']
+        kw_endo_cortex = kw_config['kw_endo_cortex']
+        kw_passage = kw_config['kw_passage']
+        
+        kpl = kpl_config['kpl']
+        
+        kaqp = kaqp_config['kaqp']
+        kaqp_stele = kaqp_config['kaqp_stele']
+        kaqp_endo = kaqp_config['kaqp_endo']
+        kaqp_exo = kaqp_config['kaqp_exo']
+        kaqp_epi = kaqp_config['kaqp_epi']
+        kaqp_cortex = kaqp_config['kaqp_cortex']
+
+        # Unpack network properties
+        network = self.network
+        n_cells = network.n_cells
+        n_nodes = network.graph.number_of_nodes()
+        n_wall_junction = network.n_wall_junction
+        n_walls = network.n_walls
+        n_junction_to_wall = network.n_junction_to_wall
+        position = self.position
+        thickness = self.geometry.thickness
+        
+        # Initialize matrices
+        matrix_W = np.zeros((n_nodes,n_nodes))
+        matrix_C = None
+        matrix_ApoC = None
+        matrix_SymC = None
+        matrix_p = None
+        matrix_x = None
+        matrix_s = None
+
+
+        #Adding matrix components at soil-wall and wall-xylem connections & rhs terms
+        rhs = np.zeros((n_nodes,1))
+        rhs_C = np.zeros((n_nodes,1))
+        rhs_ApoC = np.zeros((n_nodes,1))
+        rhs_SymC = np.zeros((n_nodes,1))
+        rhs_s = np.zeros((n_nodes,1)) #Initializing the right-hand side matrix of soil pressure potentials
+        rhs_x = np.zeros((n_nodes,1)) #Initializing the right-hand side matrix of xylem pressure potentials
+        rhs_p = np.zeros((n_nodes,1)) #Initializing the right-hand side matrix of hydrostatic potentials for phloem BC
+
+
+        # Initialize elements
+        Kmb=np.zeros((network.n_membrane,1)) #Stores membranes conductances for the second K loop
+        jmb=0 #Index of membrane in Kmb
+        
+        # Helper for passage_cell_ID (assuming empty if not defined elsewhere)
+        passage_cell_ID = []
+        if hasattr(self.geometry, 'passage_cell_ids'):
+             passage_cell_ID = np.array(self.geometry.passage_cell_ids)
+
+        ######################
+        ##Filling the matrix##
+        ######################
+        
+        if self.general.apo_contagion==2 and self.general.sym_contagion==2:
+            matrix_C, rhs_C = self._apply_decay_and_boundary(height)
+        elif self.general.apo_contagion==2:
+            matrix_ApoC, rhs_ApoC = self._apply_apoplastic_decay_and_boundary(height)
+        elif self.general.sym_contagion==2:
+            matrix_SymC, rhs_SymC = self._apply_symplastic_decay_and_boundary(height)
+        
+        
+        #Adding matrix components at cell-cell, cell-wall, and wall-junction connections
+        for node, edges in network.graph.adjacency() : #adjacency_iter returns an iterator of (node, adjacency dict) tuples for all nodes. This is the fastest way to look at every edge. For directed graphs, only outgoing adjacencies are included.
+            i=self.indice[node] #Node ID number
+            # self.network.graph.nodes[node]['count_endo']
+            for neighboor, eattr in edges.items(): #Loop on connections (edges)
+                j = (self.indice[neighboor]) #neighbouring node number
+                if j > i: #Only treating the information one way to save time
+                    path = eattr['path'] #eattr is the edge attribute (i.e. connection type)
+                    if path == 'wall': #Wall connection
+                        #K = eattr['kw']*1.0E-04*((eattr['lateral_distance']+height)*eattr['geometry.thickness']-square(eattr['geometry.thickness']))/eattr['length'] #Junction-Wall conductance (cm^3/hPa/d)
+                        temp=1.0E-04*((eattr['lateral_distance']+height)*thickness-square(thickness))/eattr['length'] #Wall section to length ratio (cm)
+                        if (network.graph.nodes[node]['count_interC']>=2 and barrier>0) or (network.graph.nodes[node]['count_xyl']==2 and self.geometry.xylem_pieces): #"Fake wall" splitting an intercellular space or a xylem cell in two
+                            K = 1.0E-16 #Non conductive
+                            if j not in network.list_ghostjunctions:
+                                fakeJ=True
+                                for ind in range(int(network.n_junction_to_wall[j-n_walls])):
+                                    if junction_to_wall[j-n_walls][ind] not in network.list_ghostwalls:
+                                        fakeJ=False #If any of the surrounding walls is real, the junction is real
+                                if fakeJ:
+                                    network.list_ghostjunctions.append(j)
+                                    network.n_ghost_junction2wall+=int(network.n_junction_to_wall[j-n_walls])+2 #The first and second thick junction nodes each appear twice in the text file for general.paraview
+                        elif network.graph.nodes[node]['count_cortex']>=2: #wall between two cortical cells
+                            K = kw_cortex_cortex*temp #Junction-Wall conductance (cm^3/hPa/d)
+                        elif network.graph.nodes[node]['count_endo']>=2: #wall between two endodermis cells
+                            K = kw_endo_endo*temp #Junction-Wall conductance (cm^3/hPa/d)  #(height*eattr['geometry.thickness'])/eattr['length']#
+                        elif network.graph.nodes[node]['count_stele_overall']>0 and network.graph.nodes[node]['count_endo']>0: #wall between endodermis and pericycle
+                            if network.graph.nodes[node]['count_passage']>0:
+                                K = kw_passage*temp #(height*eattr['geometry.thickness'])/eattr['length']#
+                            else:
+                                K = kw_endo_peri*temp #Junction-Wall conductance (cm^3/hPa/d) #(height*eattr['geometry.thickness'])/eattr['length']#
+                        elif network.graph.nodes[node]['count_stele_overall']==0 and network.graph.nodes[node]['count_endo']==1: #wall between endodermis and cortex
+                            if network.graph.nodes[node]['count_passage']>0:
+                                K = kw_passage*temp  #(height*eattr['geometry.thickness'])/eattr['length']#
+                            else:
+                                K = kw_endo_cortex*temp #Junction-Wall conductance (cm^3/hPa/d)  #(height*eattr['geometry.thickness'])/eattr['length']#
+                        elif network.graph.nodes[node]['count_exo']>=2: #wall between two exodermis cells
+                            K = kw_exo_exo*temp #Junction-Wall conductance (cm^3/hPa/d)  #(height*eattr['geometry.thickness'])/eattr['length']#
+                        else: #other walls
+                            K = kw*temp #Junction-Wall conductance (cm^3/hPa/d)  #(height*eattr['geometry.thickness'])/eattr['length']#
+                        ########Solute fluxes (diffusion across walls and junctions)
+                        if self.general.apo_contagion==2:
+                            temp_factor=1.0 #Factor for reduced diffusion across impermeable walls
+                            if (network.graph.nodes[node]['count_interC']>=2 and barrier>0) or (network.graph.nodes[node]['count_xyl']==2 and self.geometry.xylem_pieces): #"fake wall" splitting an intercellular space or a xylem cell in two
+                                temp_factor=1.0E-16 #Correction
+                            elif network.graph.nodes[node]['count_endo']>=2:
+                                temp_factor=kw_endo_endo/kw
+                            elif network.graph.nodes[node]['count_stele_overall']>0 and network.graph.nodes[node]['count_endo']>0: #wall between endodermis and pericycle
+                                if network.graph.nodes[node]['count_passage']>0:
+                                    temp_factor=kw_passage/kw #(height*eattr['geometry.thickness'])/eattr['length']#
+                                else:
+                                    temp_factor=kw_endo_peri/kw #Junction-Wall conductance (cm^3/hPa/d) #(height*eattr['geometry.thickness'])/eattr['length']#
+                            elif network.graph.nodes[node]['count_stele_overall']==0 and network.graph.nodes[node]['count_endo']==1: #wall between endodermis and cortex
+                                if network.graph.nodes[node]['count_passage']>0:
+                                    temp_factor=kw_passage/kw  #(height*eattr['geometry.thickness'])/eattr['length']#
+                                else:
+                                    temp_factor=kw_endo_cortex/kw #Junction-Wall conductance (cm^3/hPa/d)  #(height*eattr['geometry.thickness'])/eattr['length']#
+                            elif network.graph.nodes[node]['count_exo']>=2: #wall between two exodermis cells
+                                temp_factor=kw_exo_exo/kw #Junction-Wall conductance (cm^3/hPa/d)  #(height*eattr['geometry.thickness'])/eattr['length']#
+                            DF=temp*temp_factor*self.hormones.diff1_pw1 #"Diffusive flux" (cm^3/d) temp is the section to length ratio of the wall to junction path
+                            if self.general.sym_contagion==2: #Sym & Apo contagion
+                                if i not in self.network.apo_wall_zombies0:
+                                    matrix_C[i][i] -= DF
+                                    matrix_C[i][j] += DF #Convection will be dealt with further down
+                                if j not in self.network.apo_j_zombies0:
+                                    matrix_C[j][j] -= DF #temp_factor is the factor for reduced diffusion across impermeable walls
+                                    matrix_C[j][i] += DF
+                            else: #Only Apo contagion
+                                if i not in self.network.apo_wall_zombies0:
+                                    matrix_ApoC[i][i] -= DF
+                                    matrix_ApoC[i][j] += DF
+                                if j not in self.network.apo_j_zombies0:
+                                    matrix_ApoC[j][j] -= DF #Convection will be dealt with further down
+                                    matrix_ApoC[j][i] += DF
+                    elif path == "membrane": #Membrane connection
+                        #K = (eattr['hydraulic.kmb']+eattr['kaqp'])*1.0E-08*(height+eattr['dist'])*eattr['length']
+                        if self.general.apo_contagion==2 and self.general.sym_contagion==2:
+                            for carrier in self.hormones.carrier_elems:
+                                if int(carrier.get("tissue"))==self.network.graph.nodes[j]['cgroup']:
+                                    #Condition is that the protoplast (j) is an actual protoplast with membranes
+                                    if j-self.network.n_wall_junction not in self.geometry.intercellular_ids and not (barrier>0 and (self.network.graph.nodes[j]['cgroup']==13 or self.network.graph.nodes[j]['cgroup']==19 or self.network.graph.nodes[j]['cgroup']==20)):
+                                        temp=float(carrier.get("constant"))*(height+eattr['dist'])*eattr['length'] #Linear transport constant (Vmax/KM) [liter/day^-1/micron^-2] * membrane surface [micron²]
+                                        if int(carrier.get("direction"))==1: #Influx transporter
+                                            if j-self.network.n_wall_junction not in self.hormones.sym_zombie0: #Concentration not affected if set as boundary condition
+                                                matrix_C[j][i] += temp #Increase of concentration in protoplast (j) depends on concentration in cell wall (i)
+                                            if i not in self.network.apo_wall_zombies0: #Concentration not affected if set as boundary condition
+                                                matrix_C[i][i] -= temp #Decrease of concentration in apoplast (i) depends on concentration in apoplast (i)
+                                        elif int(carrier.get("direction"))==int(-1): #Efflux transporter
+                                            if j-self.network.n_wall_junction not in self.hormones.sym_zombie0: #Concentration not affected if set as boundary condition
+                                                matrix_C[j][j] -= temp #Increase of concentration in protoplast (j) depends on concentration in protoplast (j)
+                                            if i not in self.network.apo_wall_zombies0: #Concentration not affected if set as boundary condition
+                                                matrix_C[i][j] += temp #Decrease of concentration in apoplast (i) depends on concentration in protoplast (j)
+                                        else:
+                                            # Using print instead of error for now, or raise Exception
+                                            print('Error, carrier direction is either 1 (influx) or -1 (efflux), please correct in *_Hormones_Carriers_*.xml')
+                        if self.network.graph.nodes[j]['cgroup']==1: #Exodermis
+                            kaqp_curr=kaqp_exo
+                        elif self.network.graph.nodes[j]['cgroup']==2: #Epidermis
+                            kaqp_curr=kaqp_epi
+                        elif self.network.graph.nodes[j]['cgroup']==3: #Endodermis
+                            kaqp_curr=kaqp_endo
+                        elif self.network.graph.nodes[j]['cgroup'] in [13,19,20]: #xylem cell or vessel
+                            if barrier>0: #Xylem vessel
+                                kaqp_curr=kaqp_stele*10000 #No membrane resistance because no membrane
+                                if self.general.apo_contagion==2 and self.general.sym_contagion==2:
+                                    #Diffusion between mature xylem vessels and their walls
+                                    temp=1.0E-04*(self.network.wall_lengths[i]*height)/thickness #Section to length ratio (cm) for the xylem wall
+                                    if i not in self.network.apo_wall_zombies0:
+                                        matrix_C[i][i] -= temp*self.hormones.diff1_pw1
+                                        matrix_C[i][j] += temp*self.hormones.diff1_pw1
+                                    if j-self.network.n_wall_junction not in self.hormones.sym_zombie0: #Mature xylem vessels are referred to as cells, so they are on the Sym side even though they are part of the apoplast
+                                        matrix_C[j][j] -= temp*self.hormones.diff1_pw1
+                                        matrix_C[j][i] += temp*self.hormones.diff1_pw1
+                            else:
+                                kaqp_curr=kaqp_stele
+                        elif self.network.graph.nodes[j]['cgroup']>4: #Stele and pericycle but not xylem
+                            kaqp_curr=kaqp_stele
+                        elif (j-self.network.n_wall_junction in self.geometry.intercellular_ids) and barrier>0: #the neighbour is an intercellular space "cell". Between j and i connected by a membrane, only j can be cell because j>i
+                            kaqp_curr=self.geometry.k_interc
+                            #No carrier
+                        elif self.network.graph.nodes[j]['cgroup']==4: #Cortex
+                            kaqp_curr=float(a_cortex*self.network.distance_center_grav[i][0]*1.0E-04+b_cortex) #AQP activity (cm/hPa/d)
+                            if kaqp_curr < 0:
+                                print('Error, negative kaqp in cortical cell, adjust Paqp_cortex')
+                        #Calculating each conductance
+                        if network.graph.nodes[node]['count_endo']>=2: #wall between two endodermis cells, in this case the suberized wall can limit the transfer of water between cell and wall
+                            if kw_endo_endo==0.00:
+                                K=0.00
+                            else:
+                                K = 1/(1/(kw_endo_endo/(thickness/2*1.0E-04))+1/(hydraulic.kmb+kaqp_curr))*1.0E-08*(height+eattr['dist'])*eattr['length']
+                        elif network.graph.nodes[node]['count_exo']>=2: #wall between two exodermis cells, in this case the suberized wall can limit the transfer of water between cell and wall
+                            if kw_exo_exo==0.00:
+                                K=0.00
+                            else:
+                                K = 1/(1/(kw_exo_exo/(thickness/2*1.0E-04))+1/(hydraulic.kmb+kaqp_curr))*1.0E-08*(height+eattr['dist'])*eattr['length']
+                        elif network.graph.nodes[node]['count_stele_overall']>0 and network.graph.nodes[node]['count_endo']>0: #wall between endodermis and pericycle, in this case the suberized wall can limit the transfer of water between cell and wall
+                            if network.graph.nodes[node]['count_passage']>0:
+                                K = 1/(1/(kw_passage/(thickness/2*1.0E-04))+1/(hydraulic.kmb+kaqp_curr))*1.0E-08*(height+eattr['dist'])*eattr['length']
+                            else:
+                                if kw_endo_peri==0.00:
+                                    K=0.00
+                                else:
+                                    K = 1/(1/(kw_endo_peri/(thickness/2*1.0E-04))+1/(hydraulic.kmb+kaqp_curr))*1.0E-08*(height+eattr['dist'])*eattr['length']
+                        elif network.graph.nodes[node]['count_stele_overall']==0 and network.graph.nodes[node]['count_endo']==1: #wall between cortex and endodermis, in this case the suberized wall can limit the transfer of water between cell and wall
+                            if kaqp_curr==0.0:
+                                K=1.00E-16
+                            else:
+                                if network.graph.nodes[node]['count_passage']>0:
+                                    K = 1/(1/(kw_passage/(thickness/2*1.0E-04))+1/(hydraulic.kmb+kaqp_curr))*1.0E-08*(height+eattr['dist'])*eattr['length']
+                                else:
+                                    if kw_endo_cortex==0.00:
+                                        K=0.00
+                                    else:
+                                        K = 1/(1/(kw_endo_cortex/(thickness/2*1.0E-04))+1/(hydraulic.kmb+kaqp_curr))*1.0E-08*(height+eattr['dist'])*eattr['length']
+                        else:
+                            if kaqp_curr==0.0:
+                                K=1.00E-16
+                            else:
+                                K = 1/(1/(kw/(thickness/2*1.0E-04))+1/(hydraulic.kmb+kaqp_curr))*1.0E-08*(height+eattr['dist'])*eattr['length']
+                        Kmb[jmb]=K
+                        jmb+=1
+                    elif path == "plasmodesmata": #Plasmodesmata connection
+                        cgroupi=network.graph.nodes[i]['cgroup']
+                        cgroupj=network.graph.nodes[j]['cgroup']
+                        if cgroupi in [19,20]:  #Xylem in new Cellset version
+                            cgroupi=13
+                        elif cgroupi==21: #Xylem Pole Pericyle in new Cellset version
+                            cgroupi=16
+                        elif cgroupi==23: #Phloem in new Cellset version
+                            cgroupi==11
+                        elif cgroupi==26: #Companion Cell in new Cellset version
+                            cgroupi==12
+                        if cgroupj in [19,20]:  #Xylem in new Cellset version
+                            cgroupj=13
+                        elif cgroupj==21: #Xylem Pole Pericyle in new Cellset version
+                            cgroupj=16
+                        elif cgroupj==23: #Phloem in new Cellset version
+                            cgroupj==11
+                        elif cgroupj==26: #Companion Cell in new Cellset version
+                            cgroupj==12
+                        temp_factor=1.0 #Quantity of plasmodesmata (adjusted by relative aperture)
+                        if ((j-self.network.n_wall_junction in self.geometry.intercellular_ids) or (i-network.n_wall_junction in self.geometry.intercellular_ids)) and barrier>0: #one of the connected cells is an intercellular space "cell".
+                            temp_factor=0.0
+                        elif cgroupj==13 and cgroupi==13: #Fake wall splitting a xylem cell or vessel, high conductance in order to ensure homogeneous pressure within the splitted cell
+                            temp_factor=10000*hydraulic.fplxheight*1.0E-04*eattr['length'] #Quantity of PD
+                        elif barrier>0 and (cgroupj==13 or cgroupi==13): #Mature xylem vessels, so no plasmodesmata with surrounding cells
+                            temp_factor=0.0 #If barrier==0, this case is treated like xylem is a stelar parenchyma cell
+                        elif (cgroupi==2 and cgroupj==1) or (cgroupj==2 and cgroupi==1):#Epidermis to exodermis cell or vice versa
+                            temp_factor=hydraulic.fplxheight_epi_exo*1.0E-04*eattr['length'] #Will not be used in case there is no exodermal layer
+                        elif (cgroupi==network.outercortex_connec_rank and cgroupj==4) or (cgroupj==network.outercortex_connec_rank and cgroupi==4):#Exodermis to cortex cell or vice versa
+                            temp=float(kpl_config['cortex_factor']) #Correction for specific cell-type PD aperture
+                            if barrier>0:
+                                temp_factor=2*temp/(temp+1)*hydraulic.fplxheight_outer_cortex*1.0E-04*eattr['length']*network.len_outer_cortex /network.cross_section_outer_cortex
+                            else: #No aerenchyma
+                                temp_factor=2*temp/(temp+1)*hydraulic.fplxheight_outer_cortex*1.0E-04*eattr['length']
+                        elif (cgroupi==4 and cgroupj==4):#Cortex to cortex cell
+                            temp=float(kpl_config['cortex_factor']) #Correction for specific cell-type PD aperture
+                            if barrier>0:
+                                temp_factor=temp*hydraulic.fplxheight_cortex_cortex*1.0E-04*eattr['length']*network.len_cortex_cortex /network.cross_section_cortex_cortex
+                            else: #No aerenchyma
+                                temp_factor=temp*hydraulic.fplxheight_cortex_cortex*1.0E-04*eattr['length']
+                        elif (cgroupi==3 and cgroupj==4) or (cgroupj==3 and cgroupi==4):#Cortex to endodermis cell or vice versa
+                            temp=float(kpl_config['cortex_factor']) #Correction for specific cell-type PD aperture
+                            if barrier>0:
+                                temp_factor=2*temp/(temp+1)*hydraulic.fplxheight_cortex_endo*1.0E-04*eattr['length']*network.len_cortex_endo /network.cross_section_cortex_endo
+                            else: #No aerenchyma
+                                temp_factor=2*temp/(temp+1)*hydraulic.fplxheight_cortex_endo*1.0E-04*eattr['length']
+                        elif (cgroupi==3 and cgroupj==3):#Endodermis to endodermis cell
+                            temp_factor=hydraulic.fplxheight_endo_endo*1.0E-04*eattr['length']
+                        elif (cgroupi==3 and cgroupj==16) or (cgroupj==3 and cgroupi==16):#Pericycle to endodermis cell or vice versa
+                            if (i-n_wall_junction in network.plasmodesmata_indice) or (j-n_wall_junction in network.plasmodesmata_indice):
+                                temp=float(kpl_config['phloem_pericycle_pole_factor']) #Correction for specific cell-type PD aperture
+                            else:
+                                temp=1
+                            temp_factor=2*temp/(temp+1)*hydraulic.fplxheight_endo_peri*1.0E-04*eattr['length']
+                        elif (cgroupi==16 and (cgroupj==5 or cgroupj==13)) or (cgroupj==16 and (cgroupi==5 or cgroupi==13)):#Pericycle to stele cell or vice versa
+                            if (i-network.n_wall_junction in network.plasmodesmata_indice) or (j-network.n_wall_junction in network.plasmodesmata_indice):
+                                temp=float(kpl_config['phloem_pericycle_pole_factor']) #Correction for specific cell-type PD aperture
+                            else:
+                                temp=1
+                            temp_factor=2*temp/(temp+1)*hydraulic.fplxheight_peri_stele*1.0E-04*eattr['length']
+                        elif ((cgroupi==5 or cgroupi==13) and cgroupj==12) or (cgroupi==12 and (cgroupj==5 or cgroupj==13)):#Stele to companion cell
+                            temp=float(kpl_config['phloem_companion_cell_factor']) #Correction for specific cell-type PD aperture
+                            temp_factor=2*temp/(temp+1)*hydraulic.fplxheight_stele_comp*1.0E-04*eattr['length']
+                        elif (cgroupi==16 and cgroupj==12) or (cgroupi==12 and cgroupj==16):#Pericycle to companion cell
+                            temp1=float(kpl_config['phloem_companion_cell_factor'])
+                            if (i-network.n_wall_junction in network.plasmodesmata_indice) or (j-network.n_wall_junction in network.plasmodesmata_indice):
+                                temp2=float(kpl_config['phloem_pericycle_pole_factor']) #Correction for specific cell-type PD aperture
+                            else:
+                                temp2=1
+                            temp_factor=2*temp1*temp2/(temp1+temp2)*hydraulic.fplxheight_peri_comp*1.0E-04*eattr['length']
+                        elif (cgroupi==12 and cgroupj==12):#Companion to companion cell
+                            temp=float(kpl_config['phloem_companion_cell_factor'])
+                            temp_factor=temp*hydraulic.fplxheight_comp_comp*1.0E-04*eattr['length']
+                        elif (cgroupi==12 and cgroupj==11) or (cgroupi==11 and cgroupj==12):#Companion to phloem sieve tube cell
+                            temp=float(kpl_config['phloem_companion_cell_factor'])
+                            temp_factor=2*temp/(temp+1)*hydraulic.fplxheight_comp_sieve*1.0E-04*eattr['length']
+                        elif (cgroupi==16 and cgroupj==11) or (cgroupi==11 and cgroupj==16):#Pericycle to phloem sieve tube cell
+                            if (i-network.n_wall_junction in network.plasmodesmata_indice) or (j-network.n_wall_junction in network.plasmodesmata_indice):
+                                temp=float(kpl_config['phloem_pericycle_pole_factor']) #Correction for specific cell-type PD aperture
+                            else:
+                                temp=1
+                            temp_factor=2*temp/(temp+1)*hydraulic.fplxheight_peri_sieve*1.0E-04*eattr['length']
+                        elif ((cgroupi==5 or cgroupi==13) and cgroupj==11) or (cgroupi==11 and (cgroupj==5 or cgroupj==13)):#Stele to phloem sieve tube cell
+                            temp_factor=hydraulic.fplxheight_stele_sieve*1.0E-04*eattr['length']
+                        #elif cgroupi==13 and cgroupj==13: #Fake wall splitting a xylem cell or vessel, high conductance in order to ensure homogeneous pressure within the splitted cell
+                        #    temp_factor=10000*hydraulic.fplxheight*1.0E-04*eattr['length']
+                        elif ((cgroupi==5 or cgroupi==13) and (cgroupj==5 or cgroupj==13)):#Stele to stele cell
+                            temp_factor=hydraulic.fplxheight_stele_stele*1.0E-04*eattr['length']
+                        else: #Default plasmodesmatal frequency
+                            temp_factor=hydraulic.fplxheight*1.0E-04*eattr['length'] #eattr['kpl']
+                        K = kpl*temp_factor
+
+                        ########Solute fluxes (diffusion across plasmodesmata)
+                        if self.general.sym_contagion==2:
+                            DF=self.geometry.pd_section*temp_factor/thickness*1.0E-04*self.hormones.diff1_pd1 #"Diffusive flux": Total PD cross-section area (micron^2) per unit PD length (micron) (tunred into cm) multiplied by solute diffusivity (cm^2/d) (yields cm^3/d)
+                            if self.general.apo_contagion==2: #Sym & Apo contagion
+                                if i-network.n_wall_junction not in self.hormones.sym_zombie0:
+                                    matrix_C[i][i] -= DF
+                                    matrix_C[i][j] += DF #Convection will be dealt with further down
+                                if j-network.n_wall_junction not in self.hormones.sym_zombie0:
+                                    matrix_C[j][j] -= DF
+                                    matrix_C[j][i] += DF
+                            else: #Only Sym contagion
+                                if i-network.n_wall_junction not in self.hormones.sym_zombie0:
+                                    matrix_SymC[i-network.n_wall_junction][i-network.n_wall_junction] -= DF
+                                    matrix_SymC[i-network.n_wall_junction][j-network.n_wall_junction] += DF
+                                if j-network.n_wall_junction not in hormones.sym_zombie0:
+                                    matrix_SymC[j-network.n_wall_junction][j-network.n_wall_junction] -= DF #Convection will be dealt with further down
+                                    matrix_SymC[j-network.n_wall_junction][i-network.n_wall_junction] += DF
+                    matrix_W[i][i] -= K #Filling the Doussan matrix (symmetric)
+                    matrix_W[i][j] += K
+                    matrix_W[j][i] += K
+                    matrix_W[j][j] -= K
+
+        
+        
+        #Adding matrix components at soil-wall connections
+        for wall_id in network.border_walls:
+            if (position[wall_id][0]>=x_contact) or (wall_to_cell[wall_id][0]-network.n_wall_junction in hormones.contact): #Wall (not including junctions) connected to soil
+                temp=1.0E-04*(network.wall_lengths[wall_id]/2*height)/(thickness/2)
+                K=kw*temp #Half the wall length is used here as the other half is attributed to the junction (Only for connection to soil)
+                matrix_W[wall_id][wall_id] -= K #Doussan matrix
+                rhs_s[wall_id][0] = -K    #Right-hand side vector, could become Psi_soil[idwall], which could be a function of the horizontal position
+                #if boundary.c_flag:
+                #    #Diffusion
+                #    matrix_C[wall_id][wall_id] -= temp*Diff1
+                #    rhs_C[wall_id][0] -= temp*Diff1*Os_soil[0][0]
+                    
+        #Adding matrix components at soil-junction connections
+        for network.n_junctions in network.border_junction:
+            if (position[network.n_junctions][0]>=x_contact) or (junction_wall_cell[network.n_junctions-network.n_walls][0]-network.n_wall_junction in hormones.contact) or (junction_wall_cell[network.n_junctions-network.n_walls][1]-network.n_wall_junction in hormones.contact) or (junction_wall_cell[network.n_junctions-network.n_walls][2]-network.n_wall_junction in hormones.contact): #Junction connected to soil
+                temp=1.0E-04*(network.wall_lengths[network.n_junctions]*height)/(thickness/2)
+                K=kw*temp
+                matrix_W[network.n_junctions][network.n_junctions] -= K #Doussan matrix
+                rhs_s[network.n_junctions][0] = -K    #Right-hand side vector, could become Psi_soil[idwall], which could be a function of the horizontal position
+        
+        #Creating connections to xylem & phloem BC elements for kr calculation (either xylem or phloem flow occurs depending on whether the segment is in the differentiation or elongation zone)
+        if barrier>0:
+            if not isnan(self.psi_xyl[1][i_maturity][0]): #Pressure xylem BC proximal
+                for cid in network.xylem_cells:
+                    rhs_x[cid][0] = -hydraulic.k_xyl  #Axial conductance of xylem vessels
+                    matrix_W[cid][cid] -= hydraulic.k_xyl
+                rhs = rhs_s*self.boundary.scenarios[0]['psi_soil_left'] + rhs_x*self.psi_xyl[1][i_maturity][0] #multiplication of rhs components delayed till this point so that rhs_s & rhs_x can be re-used to calculate Q
+                
+                if not isnan(self.psi_xyl[0][i_maturity][0]):
+                    print('Distal xylem pressure BC not accounted for in kr estimation')
+
+            elif not isnan(self.distributed_flow_xyl[1][1][0]):
+                for i, cid in enumerate(network.xylem_cells):
+                    rhs_x[cid][0] = self.distributed_flow_xyl[1][i+1][0]
+
+                rhs = rhs_s*self.boundary.scenarios[0]['psi_soil_left'] + rhs_x #multiplication of rhs components delayed till this point so that rhs_s & rhs_x can be re-used to calculate Q
+            else:
+                rhs = rhs_s*self.boundary.scenarios[0]['psi_soil_left']
+        elif barrier==0:
+            if not isnan(self.psi_sieve[1][i_maturity][0]):
+                for cid in network.protosieve_list:
+                    rhs_p[cid][0] = -hydraulic.k_sieve  #Axial conductance of phloem sieve tube
+                    matrix_W[cid][cid] -= hydraulic.k_sieve
+                rhs = rhs_s*self.boundary.scenarios[0]['psi_soil_left'] + rhs_p*self.psi_sieve[1][i_maturity][0] #multiplication of rhs components delayed till this point so that rhs_s & rhs_x can be re-used to calculate Q
+            elif not isnan(self.distributed_flow_sieve[1][1][0]):
+                for i, cid in enumerate(network.protosieve_list):
+                    rhs_p[cid][0] = self.distributed_flow_sieve[1][i+1][0]
+                rhs = rhs_s*self.boundary.scenarios[0]['psi_soil_left'] + rhs_p #multiplication of rhs components delayed till this point so that rhs_s & rhs_x can be re-used to calculate Q
+            else:
+                rhs = rhs_s*self.boundary.scenarios[0]['psi_soil_left']
+
+        return matrix_W, matrix_C, matrix_ApoC, matrix_SymC, rhs_C, rhs_ApoC, rhs_SymC, rhs_p, rhs_x, rhs_s, rhs, Kmb
+
+    @staticmethod
+    def solve(matrix: np.ndarray, rhs: np.ndarray, sparse_matrix: int) -> tuple: 
+        """Solve the system.
+
+        Solve the system based on the provided configurations and network.
+        """
+
+        print("Solving system")
+        t00 = time.perf_counter()  #Lasts about 35 sec in the 24mm root
+
+        if sparse_matrix==1:
+            matrix=matrix.tocsr()
+            solution = spsolve(matrix,rhs)
+            verification_1=np.allclose(np.dot(matrix,solution),rhs)
+        else:
+            solution = np.linalg.solve(matrix,rhs) #Solving the equation to get potentials inside the network
+            verification_1=np.allclose(np.dot(matrix,solution),rhs)
+        
+        t01 = time.perf_counter()
+        print(t01-t00, "seconds process time to solve system")
+        return solution, verification_1
+
+    def solve_all_W(self, h: int=0) -> tuple: 
+        """Solve the hydraulic system for all maturity stages."""
+
+        for i_maturity in range(self.geometry.n_maturity):
+            self.solve_W(h = h, i_maturity = i_maturity)
+
+    def compute_conductivities(self, h: int=0) -> tuple: 
+        """Compute conductivities for all maturity stages."""
+
+        self.root_hydraulic_properties = self.hydraulic.conductivities
+        self.solve_all_W(h = h)
+        for i_maturity, maturity_stage in enumerate(self.geometry.maturity_stages):
+            _, kx = self.calculate_axial_conductance(i_maturity = i_maturity)
+            self.root_hydraulic_properties.append({'barrier': int(maturity_stage['barrier']), 
+                            'height': float(maturity_stage['height']),
+                            'kr': float(self.kr_tot[i_maturity]),
+                            'Kx': float(kx)})
+
+    def elongation_BC(self, i_scenario: int, i_maturity: int) -> np.ndarray:
+        """Calculate elongation boundary condition vector."""
+        rhs_e = np.zeros((self.network.graph.number_of_nodes(), 1))
+        
+        # Unpack needed properties
+        elong_cell = self.elong_cell[i_maturity][i_scenario]
+        elong_side = self.elong_cell_side_diff[i_maturity][i_scenario]
+        thickness = self.geometry.thickness
+        x_rel = self.geo_props['x_rel']
+        
+        barrier = int(self.geometry.maturity_stages[i_maturity].get("barrier"))
+
+        if barrier == 0:  # No elongation from the Casparian strip on
+            for wall_id in range(self.network.n_walls):
+                rhs_e[wall_id][0] = self.network.wall_lengths[wall_id] * thickness/2 * 1.0E-08 * \
+                                    (elong_cell + (x_rel[wall_id] - 0.5) * elong_side) * \
+                                    self.boundary.water_fraction_apo
+            
+            for cid in range(self.network.n_cells):
+                node_idx = self.network.n_wall_junction + cid
+                if self.network.cell_areas[cid] > self.network.cell_perimeters[cid] * thickness/2:
+                    rhs_e[node_idx][0] = (self.network.cell_areas[cid] - self.network.cell_perimeters[cid] * thickness/2) * \
+                                         1.0E-8 * (elong_cell + (x_rel[node_idx] - 0.5) * elong_side) * \
+                                         self.boundary.water_fraction_sym
+                else:
+                    rhs_e[node_idx][0] = 0.0
+                    
+        return rhs_e
+        
+    def initialize_scenarios(self, i_scenario: int, i_maturity: int, Kmb: np.ndarray) -> tuple:
+        """Initialize vectors and matrices for a specific scenario."""
+        
+        # Initialize vectors
+        n_nodes = self.network.graph.number_of_nodes()
+        rhs = np.zeros((n_nodes, 1))
+        rhs_x = np.zeros((n_nodes, 1))
+        rhs_p = np.zeros((n_nodes, 1))
+        rhs_o = np.zeros((n_nodes, 1))
+        
+        # Osmotic potentials and reflection coefficients
+        os_membranes = np.zeros((self.network.n_membrane, 2))
+        s_membranes = np.zeros((self.network.n_membrane, 1))
+        os_walls = np.zeros((self.network.n_walls, 1))
+        os_cells = np.zeros((self.network.n_cells, 1))
+        
+        # Scenario parameters
+        s_hetero = int(self.boundary.scenarios[i_scenario].get("s_hetero"))
+        s_factor = float(self.boundary.scenarios[i_scenario].get("s_factor"))
+        self.s_hetero[i_maturity][i_scenario] = s_hetero
+        self.s_factor[i_maturity][i_scenario] = s_factor
+        
+        # Elongation parameters
+        self.elong_cell[i_maturity][i_scenario] = float(self.boundary.scenarios[i_scenario].get("elongation_midpoint_rate"))
+        self.elong_cell_side_diff[i_maturity][i_scenario] = float(self.boundary.scenarios[i_scenario].get("elongation_side_rate_difference"))
+        
+        # Reflection coefficients setup
+        if s_hetero == 0:
+            s_vals = {k: s_factor * 1.0 for k in ['epi', 'exo_epi', 'exo_cortex', 'cortex', 'endo_cortex', 
+                                                 'endo_peri', 'peri', 'stele', 'comp', 'sieve']}
+        elif s_hetero == 1:
+            s_vals = {k: s_factor * 1.0 for k in ['epi', 'exo_epi', 'exo_cortex', 'cortex', 'endo_cortex']}
+            s_vals.update({k: s_factor * 0.5 for k in ['endo_peri', 'peri', 'stele', 'comp', 'sieve']})
+        elif s_hetero == 2:
+            s_vals = {k: s_factor * 0.5 for k in ['epi', 'exo_epi', 'exo_cortex', 'cortex', 'endo_cortex']}
+            s_vals.update({k: s_factor * 1.0 for k in ['endo_peri', 'peri', 'stele', 'comp', 'sieve']})
+            
+        # Osmotic potentials setup
+        os_hetero = int(self.boundary.scenarios[i_scenario].get("os_hetero"))
+        os_cortex = float(self.boundary.scenarios[i_scenario].get("os_cortex"))
+        os_sieve = float(self.boundary.scenarios[i_scenario].get("osmotic_sieve"))
+        self.os_hetero[i_maturity][i_scenario] = os_hetero
+        self.os_cortex[i_maturity][i_scenario] = os_cortex
+        self.os_sieve[i_maturity][i_scenario] = os_sieve
+        
+        # Determine specific osmotic values based on os_hetero
+
+        vals = {}
+        if os_hetero == 0:
+            base = os_cortex
+            vals = {k: base for k in ['epi', 'exo', 'endo', 'peri', 'stele'] + [f'c{i}' for i in range(1,9)]}
+            vals['comp'] = (os_sieve + os_cortex)/2
+        elif os_hetero == 1:
+             vals = {'epi': -5000, 'exo': -5700, 'endo': -6200, 'peri': -5000, 'stele': -7400}
+             vals.update({f'c{i}': v for i, v in enumerate([-6400, -7100, -7800, -8500, -9000, -9300, -9000, -8500], 1)})
+             vals['comp'] = (os_sieve - 7400)/2
+        elif os_hetero == 2:
+             vals = {'epi': -11200, 'exo': -11500, 'endo': -10500, 'peri': -9200, 'stele': -12100}
+             vals.update({f'c{i}': v for i, v in enumerate([-11800, -12100, -12400, -12700, -12850, -12950, -12850, -12700], 1)})
+             vals['comp'] = (os_sieve - 12100)/2
+        elif os_hetero == 3:
+             base = os_cortex
+             vals = {k: base for k in ['epi', 'exo'] + [f'c{i}' for i in range(1,9)]}
+             vals.update({'endo': (base - 5000.0)/2.0, 'peri': -5000.0, 'stele': -5000.0})
+             vals['comp'] = (os_sieve - 5000.0)/2
+             
+        # Extract props
+        x_rel = self.geo_props['x_rel']
+        r_rel = self.geo_props['r_rel']
+        L_diff = self.geo_props['L_diff']
+        passage_cell_ids = np.array(self.geometry.passage_cell_ids)
+        
+        # Calculate local soil/xyl osmotic potentials
+        # Note: we calculate them during loop or pre-calculate? loop is easier for node dependence
+        
+        jmb = 0
+        barrier = int(self.geometry.maturity_stages[i_maturity].get("barrier"))
+        
+        # Loop over network to fill Os_membranes and s_membranes and rhs_o
+        # First calculate u (velocity) if c_flag
+        u = np.zeros((2, 1))
+        # Note: c_flag iterative optimization handles updating u and Os_membranes.
+        # Here we just do the basic initialization/one-pass logic.
+        
+        scenario_data = self.boundary.scenarios[i_scenario]
+        
+        for node, edges in self.network.graph.adjacency():
+            i = self.indice[node]
+            if i < self.network.n_walls:
+                # Calculate Os_soil_local and Os_xyl_local
+                os_soil_local = 0.0
+                os_xyl_local = 0.0
+                
+                if scenario_data['osmotic_symmetry_soil'] == 2:
+                     if scenario_data['osmotic_diffusivity_soil'] == 0:
+                         os_soil_local=float(scenario_data['osmotic_left_soil']+(scenario_data['osmotic_right_soil']-scenario_data['osmotic_left_soil'])*abs(r_rel[i])**scenario_data['osmotic_shape_soil'])
+                     else:
+                         if r_rel[i]>=0:
+                             os_soil_local=scenario_data['osmotic_left_soil']*np.exp(u[0][0]*abs(r_rel[i])*L_diff[0]/scenario_data['osmotic_diffusivity_soil'])
+                elif scenario_data['osmotic_symmetry_soil'] == 1:
+                     os_soil_local=float(scenario_data['osmotic_left_soil']*(1-x_rel[i])+scenario_data['osmotic_right_soil']*x_rel[i])
+                     
+                if scenario_data['osmotic_symmetry_xyl'] == 2:
+                     if scenario_data['osmotic_diffusivity_xyl'] == 0:
+                         os_xyl_local=float(scenario_data['osmotic_endo']+(scenario_data['osmotic_xyl']-scenario_data['osmotic_endo'])*(1-abs(r_rel[i]))**scenario_data['osmotic_shape_xyl'])
+                     else:
+                         if r_rel[i]<0:
+                             os_xyl_local=scenario_data['osmotic_xyl']*np.exp(-u[1][0]*abs(r_rel[i])*L_diff[1]/scenario_data['osmotic_diffusivity_xyl'])
+                elif scenario_data['osmotic_symmetry_xyl'] == 1:
+                     os_xyl_local=float((scenario_data['osmotic_xyl']+scenario_data['osmotic_endo'])/2)
+
+                # unpack count neighbors
+                count_epi = self.network.graph.nodes[node]['count_epi']
+                count_endo = self.network.graph.nodes[node]['count_endo']
+                count_stele_overall = self.network.graph.nodes[node]['count_stele_overall']
+                count_passage = self.network.graph.nodes[node]['count_passage']
+                count_cortex = self.network.graph.nodes[node]['count_cortex']
+
+                # Second loop for membrane connections
+                for neighboor, eattr in edges.items():
+                    j = self.indice[neighboor]
+                    if j > i and eattr['path'] == "membrane":
+                        rank = int(self.network.cell_ranks[int(j - self.network.n_wall_junction)])
+                        row = int(self.network.rank_to_row[rank])
+                        
+                        # Determine os_membranes and s_membranes
+                       
+                        cell_os = 0.0
+                        wall_os = os_soil_local
+                        sig = 0.0
+                        
+                        cgroup = self.network.graph.nodes[neighboor]['cgroup']
+                        
+                        if rank == 1: # Exodermis
+                            cell_os = vals['exo']
+                            sig = s_vals['exo_epi'] if count_epi == 1 else s_vals['exo_cortex']
+                            wall_os = os_soil_local
+                        elif rank == 2: # Epidermis
+                            cell_os = vals['epi']
+                            sig = s_vals['epi']
+                            wall_os = os_soil_local
+                        elif rank == 3: # Endodermis
+                            cell_os = vals['endo']
+                            sig = s_vals['endo_cortex']
+                            if count_stele_overall > 0 and count_endo > 0:
+                                sig = s_vals['endo_peri']
+                                wall_os = os_xyl_local if barrier > 0 else os_soil_local
+                            elif count_stele_overall == 0 and count_cortex > 0:
+                                wall_os = os_soil_local
+                            else: # Between endodermal cells
+                                wall_os = os_xyl_local if barrier > 0 else os_soil_local
+                                sig = s_vals['endo_peri']
+                        elif 40 <= rank < 50: # Cortex
+                            if int(j - self.network.n_wall_junction) in self.geometry.intercellular_ids:
+                                cell_os = os_soil_local
+                                wall_os = os_soil_local
+                                sig = 0
+                            else:
+                                # Row mapping for cortex layers
+                                c_idx = row - (self.network.row_outer_cortex - 8) # simplistic mapping
+                                # Using explicit row check from main.py is safer but simplified here
+                                c_key = f'c{max(1, min(8, 8 - (self.network.row_outer_cortex - row)))}'
+                                cell_os = vals.get(c_key, vals.get('c1', 1))
+                                sig = s_vals['cortex']
+                                wall_os = os_soil_local
+                        elif cgroup == 5: # Stele
+                            cell_os = vals['stele']
+                            sig = s_vals['stele']
+                            wall_os = os_xyl_local if barrier > 0 else os_soil_local
+                        elif rank == 16: # Pericycle
+                            cell_os = vals['peri']
+                            sig = s_vals['peri']
+                            wall_os = os_xyl_local if barrier > 0 else os_soil_local
+                        elif cgroup in [11, 23]: # Phloem
+                            cell_os = os_sieve if not np.isnan(os_sieve) else vals['stele']
+                            sig = s_vals['sieve']
+                            wall_os = os_xyl_local if barrier > 0 else os_soil_local
+                        elif cgroup in [12, 26]: # Companion
+                            cell_os = vals['comp']
+                            sig = s_vals['comp']
+                            wall_os = os_xyl_local if barrier > 0 else os_soil_local
+                        elif cgroup in [13, 19, 20]: # Xylem
+                            if barrier == 0:
+                                cell_os = vals['stele']
+                                sig = s_vals['stele']
+                                wall_os = os_soil_local
+                            else:
+                                cell_os = os_xyl_local
+                                sig = 0.0
+                                wall_os = os_xyl_local
+                        
+                        os_membranes[jmb][0] = wall_os
+                        os_membranes[jmb][1] = cell_os
+                        s_membranes[jmb] = sig
+                        os_walls[i] = wall_os
+                        os_cells[int(j - self.network.n_wall_junction)] = cell_os
+                        
+                        K = Kmb[jmb][0]
+                        rhs_o[i] += K * sig * (wall_os - cell_os)
+                        rhs_o[j] += K * sig * (cell_os - wall_os)
+                        
+                        jmb += 1
+
+        # Calculate rhs_x (Xylem BC)
+        if barrier > 0:
+            psi_x = self.psi_xyl[1][i_maturity][i_scenario]
+            flow_x = self.distributed_flow_xyl[1][0][i_scenario] if not np.isnan(self.distributed_flow_xyl[1][0][i_scenario]) else np.nan
+            
+            if not np.isnan(psi_x):
+                for cid in self.network.xylem_cells:
+                    rhs_x[cid][0] = -self.hydraulic.k_xyl
+            elif not np.isnan(flow_x):
+                 for i, cid in enumerate(self.network.xylem_cells):
+                     rhs_x[cid][0] = self.distributed_flow_xyl[1][i+1][i_scenario]
+
+        # Calculate rhs_p (Phloem BC)
+        psi_p = self.psi_sieve[1][i_maturity][i_scenario]
+        flow_p = self.distributed_flow_sieve[1][0][i_scenario] if not np.isnan(self.distributed_flow_sieve[1][0][i_scenario]) else np.nan
+        
+        target_sieve = self.network.protosieve_list if barrier == 0 else self.network.sieve_cells
+        k_sieve = self.hydraulic.k_sieve
+        
+        if not np.isnan(psi_p):
+            for cid in target_sieve:
+                rhs_p[cid][0] = -k_sieve
+        elif not np.isnan(flow_p):
+            for i, cid in enumerate(target_sieve):
+                 rhs_p[cid][0] = self.distributed_flow_sieve[1][i+1][i_scenario]
+
+        return rhs, rhs_x, rhs_p, rhs_o
+
+    def water_flux(self, h: int=0) -> tuple: 
+        """Solve the hydraulic system for all maturity stages."""
+
+        for i_maturity in range(self.geometry.n_maturity):
+            solution, _, matrix_W, Kmb, rhs_s = self.solve_W(h = h, i_maturity = i_maturity)
+            # Calculate standard transmembrane fractions
+            self.standard_transmembrane_fractions(solution, i_maturity, Kmb)
+
+            barrier = int(self.geometry.maturity_stages[i_maturity].get("barrier"))
+            height_val = float(self.geometry.maturity_stages[i_maturity].get("height"))
+            
+            x_rel = self.geo_props['x_rel']
+
+            for i_scenario in range(1,self.boundary.n_scenarios):
+                rhs, rhs_x, rhs_p, rhs_o = self.initialize_scenarios(i_scenario, i_maturity, Kmb) # set and reset matrices for each scenario
+                 
+                # Elongation BC
+                rhs_e = np.zeros_like(rhs)
+                if barrier==0:
+                    rhs_e = self.elongation_BC(i_scenario, i_maturity)
+                    
+                # Adding up all BCs
+                rhs += rhs_e
+                rhs += rhs_o
+                
+                # Soil BC
+                # boundary.scenarios[count]['psi_soil_left']*(1-x_rel)+boundary.scenarios[count]['psi_soil_right']*x_rel
+                psi_soil_left = self.boundary.scenarios[i_scenario].get('psi_soil_left', 0.0)
+                psi_soil_right = self.boundary.scenarios[i_scenario].get('psi_soil_right', 0.0)
+                
+                psi_soil_profile = psi_soil_left * (1 - x_rel) + psi_soil_right * x_rel
+                
+                # Note: x_rel has size (nodes, 1) or similar. rhs_s has size (nodes, 1).
+                # Ensure dimensions match.
+                # In main.py: rhs += np.multiply(rhs_s, ...)
+                # rhs_s corresponds to -K_soil_interface.
+                rhs += rhs_s * psi_soil_profile[:len(rhs_s)] # psi_soil_profile might encompass all nodes, rhs_s is zeros for internal nodes
+
+                # Xylem BC
+                psi_xyl_val = self.psi_xyl[1][i_maturity][i_scenario]
+                flow_xyl_val = self.distributed_flow_xyl[1][0][i_scenario]
+
+                if barrier > 0:
+                     if not np.isnan(psi_xyl_val): # Pressure BC
+                         for cid in self.network.xylem_cells:
+                             matrix_W[cid][cid] -= self.hydraulic.k_xyl
+                         rhs += rhs_x * psi_xyl_val
+                     elif not np.isnan(flow_xyl_val): # Flow BC
+                         rhs += rhs_x
+
+                # Phloem BC
+                psi_sieve_val = self.psi_sieve[1][i_maturity][i_scenario]
+                flow_sieve_val = self.distributed_flow_sieve[1][0][i_scenario]
+                
+                if barrier == 0:
+                    if not np.isnan(psi_sieve_val):
+                         for cid in self.network.protosieve_list:
+                             matrix_W[cid][cid] -= self.hydraulic.k_sieve
+                         rhs += rhs_p * psi_sieve_val
+                    elif not np.isnan(flow_sieve_val):
+                         rhs += rhs_p
+                elif barrier > 0:
+                    if not np.isnan(psi_sieve_val):
+                         for cid in self.network.sieve_cells:
+                             matrix_W[cid][cid] -= self.hydraulic.k_sieve
+                         rhs += rhs_p * psi_sieve_val
+                    elif not np.isnan(flow_sieve_val):
+                         rhs += rhs_p
+
+                # Solve Doussan equation, results in soln matrix 
+                solution, _ = self.solve(matrix=matrix_W, rhs=rhs, sparse_matrix=self.general.sparse_matrix)
+
+                # Removing Xylem and phloem BC terms
+                self.remove_xyl_phloem_BC(matrix_W, i_maturity, i_scenario)
+
+                # Calculate interface fluxes 
+                self._calculate_interface_flows(i_maturity, solution, rhs, rhs_s, i_scenario)
+
+                # Calcul of fluxes between nodes and creation of the edge_flux_list
+                self._calculate_edge_fluxes(i_maturity, i_scenario, matrix_W, solution)
+
+
+    def standard_solute_flux(self, h: int=0, i_maturity: int=0, i_scenario: int=0) -> tuple: 
+        """Calculate standard solute flux."""
+
+    
+                # Resets matrix_C and rhs_C to geometrical factor values
+
+                # build C matricies and rhs_C
+
+                # solve system
+
+                # calculate solute flux
+
+
+
+
+    def solve_W(self, h: int=0, i_maturity: int=0) -> tuple: 
         """Solve the hydraulic system.
 
         Solve the hydraulic system based on the provided configurations and network.
         """
-        self.solution_W = np.linalg.solve(self.matrix_W, self.rhs) #Solving the equation to get potentials inside the network
+        # Unpack hydraulic properties for this scenario
+        maturity_stages = self.geometry.maturity_stages
+        barrier = int(maturity_stages[i_maturity].get("barrier"))
+        height = float(maturity_stages[i_maturity].get("height"))
 
-        self.verification_1 = np.allclose(np.dot(self.matrix_W,self.solution_W),self.rhs) #Verification that computation was correct
+        # Build matrices
+        matrix_W, matrix_C, matrix_ApoC, matrix_SymC, rhs_C, rhs_ApoC, rhs_SymC, rhs_p, rhs_x, rhs_s, rhs, Kmb =\
+            self.build_matrices(h = h, i_maturity = i_maturity)
+        # Solve system
+        solution, verification_1 = self.solve(matrix = matrix_W, rhs = rhs, sparse_matrix = self.general.sparse_matrix)
+
+        # Calculate standard water flow
+        if barrier==0:
+            self.standard_water_flow(matrix_W, rhs_s, rhs_p, solution, height, i_maturity)
+        else:
+            self.standard_water_flow(matrix_W, rhs_s, rhs_x, solution, height, i_maturity)
+        return solution, verification_1, matrix_W, Kmb, rhs_s
+
     
+    def remove_xyl_phloem_BC(self, matrix_W: np.ndarray, i_maturity: int, i_scenario: int = 0) -> np.ndarray :
 
-    def info(self):
-        """Prints the descrition of the problem.
+        barrier = int(self.geometry.maturity_stages[i_maturity].get("barrier"))
+        #Removing xylem and phloem BC terms
+        if barrier==0:
+            if not isnan(self.psi_sieve[1][i_maturity][i_scenario]):
+                for cid in self.network.protosieve_list:
+                    matrix_W[cid][cid] += self.hydraulic.k_sieve
+        else:
+            if not isnan(self.psi_xyl[1][i_maturity][i_scenario]): #Pressure xylem BC
+                for cid in self.network.xylem_cells:
+                    matrix_W[cid][cid] += self.hydraulic.k_xyl
+            else:
+                pass
+        return matrix_W
+
+    def _calculate_interface_flows(self, i_maturity: int, solution: np.ndarray, rhs: np.ndarray, rhs_s: np.ndarray, i_scenario: int = 0) -> tuple:
+        """
+        Calculate flow rates for soil, xylem or phloem interfaces.
+        """
+        q_xyl = []
+        q_sieve = []
+        q_soil=[]
+
+        barrier = int(self.geometry.maturity_stages[i_maturity].get("barrier"))
+
+        for ind in self.network.border_walls:
+            q_soil.append(rhs_s[ind]*(solution[ind]-self.boundary.scenarios[i_scenario]['psi_soil_left'])) #(cm^3/d) Positive for water flowing into the root
+        for ind in self.network.border_junction:
+            q_soil.append(rhs_s[ind]*(solution[ind]-self.boundary.scenarios[i_scenario]['psi_soil_left'])) #(cm^3/d) Positive for water flowing into the root
+
+        if barrier > 0:
+            if not np.isnan(self.psi_xyl[1][i_maturity][i_scenario]):
+                for cid in self.network.xylem_cells:
+                    Q = rhs[cid][0] * (solution[cid][0] - self.psi_xyl[1][i_maturity][i_scenario])
+                    q_xyl.append(Q)
+                    rank = int(self.network.cell_ranks[cid - self.network.n_wall_junction])
+                    row = int(self.network.rank_to_row[rank])
+                    self.flow_xyl_layer[row][i_maturity][i_scenario] += Q
+            elif not np.isnan(self.distributed_flow_xyl[1][0][i_scenario]):
+                 for cid in self.network.xylem_cells:
+                    Q = -rhs[cid][0]
+                    q_xyl.append(Q)
+                    rank = int(self.network.cell_ranks[cid - self.network.n_wall_junction])
+                    row = int(self.network.rank_to_row[rank])
+                    self.flow_xyl_layer[row][i_maturity][i_scenario] += Q
+            else:
+                 print("Error: Scenario >0 should have xylem pressure boundary conditions, or flow xylem should be defined")
+
+        elif barrier == 0:
+            if not np.isnan(self.psi_sieve[1][i_maturity][i_scenario]):
+                for cid in self.network.protosieve_list:
+                    Q = rhs[cid][0] * (solution[cid][0] - self.psi_sieve[1][i_maturity][i_scenario])
+                    q_sieve.append(Q)
+                    rank = int(self.network.cell_ranks[cid - self.network.n_wall_junction])
+                    row = int(self.network.rank_to_row[rank])
+                    self.flow_sieve_layer[row][i_maturity][i_scenario] += Q
+            elif not np.isnan(self.distributed_flow_sieve[1][0][i_scenario]):
+                for cid in self.network.protosieve_list:
+                     Q = -rhs[cid][0]
+                     q_sieve.append(Q)
+                     rank = int(self.network.cell_ranks[cid - self.network.n_wall_junction])
+                     row = int(self.network.rank_to_row[rank])
+                     self.flow_sieve_layer[row][i_maturity][i_scenario] += Q
+            else:
+                 print("Error: Scenario >0 should have phloem pressure boundary conditions, or flow phloem should be defined")
+
+        return q_soil, q_xyl, q_sieve
+
+    def _calculate_edge_fluxes(self, i_maturity: int, i_scenario: int, matrix_W: np.ndarray, solution: np.ndarray) -> None:
+        """Calculate fluxes between nodes and store in edge_flux_list."""
+        
+        fluxes = []
+        # Iterate over non-zero elements of matrix_W
+        # matrix_W[i, j] is -EquivConductance[i, j] for i != j
+        
+        # If matrix is sparse:
+        if hasattr(matrix_W, "tocoo"):
+             cx = matrix_W.tocoo()
+             for i, j, v in zip(cx.row, cx.col, cx.data):
+                 if i < j: # One way
+                     k_e = -v 
+                     if k_e > 0: 
+                         f = k_e * (solution[i][0] - solution[j][0])
+                         fluxes.append({'source': i, 'target': j, 'flux': f})
+        else:
+             # Dense matrix
+             rows, cols = matrix_W.shape
+             for i in range(rows):
+                 for j in range(i+1, cols):
+                     v = matrix_W[i, j]
+                     if v != 0:
+                         k_e = -v
+                         if k_e > 0:
+                             f = k_e * (solution[i][0] - solution[j][0])
+                             fluxes.append({'source': i, 'target': j, 'flux': f})
+
+        self.edge_flux_list[i_maturity][i_scenario] = fluxes
+
+    def standard_water_flow(self, matrix_W: np.ndarray, rhs_s: np.ndarray, rhs: np.ndarray, solution: np.ndarray, height: float, i_maturity: int) -> None:
+        """
+        Calculate the flow rates at interfaces.
+
+        rhs is iether for xylem or phloem
+        xylem is triggered by barrier>0
+        phloem is triggered by barrier==0
+        """
+        barrier = int(self.geometry.maturity_stages[i_maturity].get("barrier"))
+        matrix_W = self.remove_xyl_phloem_BC(matrix_W, i_maturity)
+        q_soil, q_xyl, q_sieve = self._calculate_interface_flows(i_maturity, solution, rhs, rhs_s)
+            
+        self.total_flow[i_maturity][0]=sum(q_soil) #Total flow rate at root surface
+        if barrier>0:
+            if not isnan(self.psi_xyl[1][i_maturity][0]):
+                self.kr_tot[i_maturity][0]=self.total_flow[i_maturity][0]/(self.boundary.scenarios[0]['psi_soil_left']-self.psi_xyl[1][i_maturity][0])/self.network.perimeter/height/1.0E-04
+            else:
+                print('Error: Scenario 0 should have xylem pressure boundary conditions, except for the elongation zone')
+        elif barrier==0:
+            if not isnan(self.psi_sieve[1][i_maturity][0]):
+                self.kr_tot[i_maturity][0]=self.total_flow[i_maturity][0]/(self.boundary.scenarios[0]['psi_soil_left']-self.psi_sieve[1][i_maturity][0])/self.network.perimeter/height/1.0E-04
+            else:
+                print('Error: Scenario 0 should have phloem pressure boundary conditions in the elongation zone')
+
+        if barrier>0 and isnan(self.psi_xyl[1][i_maturity][0]):
+            self.psi_xyl[1][i_maturity][0]=0.0
+            for cid in self.network.xylem_cells:
+                self.psi_xyl[1][i_maturity][0]+=solution[cid][0]/len(self.network.xylem_cells) #Average of xylem water pressures
+        elif barrier==0 and isnan(self.psi_sieve[1][i_maturity][0]):
+            self.psi_sieve[1][i_maturity][0]=0.0
+            for cid in self.network.protosieve_list:
+                self.psi_sieve[1][i_maturity][0]+=solution[cid][0]/self.network.n_protosieve #Average of protophloem water pressures
+
+    #Calculation of standard transmembrane fractions
+    def standard_transmembrane_fractions(self, solution, i_maturity, Kmb):
+        """
+        Calculates the standard transmembrane fractions for a given maturity stage.
+
+        Parameters
+        ----------
+        i_maturity : int
+            Maturity stage index.
 
         Returns
         -------
         None
+        """
+
+        #Calculation of standard transmembrane fractions
+        jmb=0 #Index for membrane conductance vector
+        passage_cell_ids = np.array(self.geometry.passage_cell_ids)
+        barrier = int(self.geometry.maturity_stages[i_maturity].get("barrier"))
+            
+        for node, edges in self.network.graph.adjacency() : #adjacency_iter returns an iterator of (node, adjacency dict) tuples for all nodes. This is the fastest way to look at every edge. For directed graphs, only outgoing adjacencies are included.
+            i = self.indice[node] #Node ID number
+            if i<self.network.n_walls: #wall ID 
+                psi = solution[i][0]               
+                for neighboor, eattr in edges.items(): #Loop on connections (edges)
+                    j = self.indice[neighboor] #Neighbouring node ID number
+                    path = eattr['path'] #eattr is the edge attribute (i.e. connection type)
+                    if path == "membrane": #Membrane connection
+                        psi_neigh = solution[j][0] #Neighbouring node water potential
+                        K=Kmb[jmb][0]
+                        jmb+=1
+                        #Flow densities calculation
+                        #Macroscopic distributed parameter for transmembrane flow
+                        #Discretization based on cell layers and apoplasmic barriers
+                        rank = int(self.network.cell_ranks[j-self.network.n_wall_junction])
+                        row = int(self.network.rank_to_row[rank])
+                        if rank == 1 and self.network.graph.nodes[node]['count_epi'] > 0: #Outer exodermis
+                            row += 1
+                        if rank == 3 and self.network.graph.nodes[node]['count_cortex'] > 0: #Outer endodermis
+                            if any(passage_cell_ids==np.array(j-self.network.n_wall_junction)) and barrier==2:
+                                row += 2
+                            else:
+                                row += 3
+                        elif rank == 3 and self.network.graph.nodes[node]['count_stele_overall'] > 0: #Inner endodermis
+                            if any(passage_cell_ids==np.array(j-self.network.n_wall_junction)) and barrier==2:
+                                row += 1
+                                
+                        flow = K * (psi - psi_neigh) #Note that this is only valid because we are in the scenario 0 with no osmotic potentials
+                        if ((j-self.network.n_wall_junction not in self.geometry.intercellular_ids) and (j not in self.network.xylem_cells)) or barrier==0: #Not part of STF if crosses an intercellular space "membrane" or mature xylem "membrane" (that is no membrane though still labelled like one)
+                            if flow > 0 :
+                                self.uptake_layer_plus[row][i_maturity][0] += flow #grouping membrane flow rates in cell layers
+                            else:
+                                self.uptake_layer_minus[row][i_maturity][0] += flow
+                            if flow/self.total_flow[i_maturity][0] > 0 :
+                                self.stf_layer_plus[row][i_maturity] += flow/self.total_flow[i_maturity][0] #Cell standard transmembrane fraction (positive)
+                                self.stf_cell_plus[j-self.network.n_wall_junction][i_maturity] += flow/self.total_flow[i_maturity][0] #Cell standard transmembrane fraction (positive)
+                                #STFmb[jmb-1][iMaturity] = Flow/Q_tot[iMaturity][0]
+                            else:
+                                self.stf_layer_minus[row][i_maturity] += flow/self.total_flow[i_maturity][0] #Cell standard transmembrane fraction (negative)
+                                self.stf_cell_minus[j-self.network.n_wall_junction][i_maturity] += flow/self.total_flow[i_maturity][0] #Cell standard transmembrane fraction (negative)
+                                #STFmb[jmb-1][iMaturity] = Flow/Q_tot[iMaturity][0]
+                            self.stf_mb[jmb-1][i_maturity] = flow/self.total_flow[i_maturity][0]
+
+    
+
+    def info(self) -> str:
+        """Prints the descrition of the problem.
+
+        Returns
+        -------
+        str
+            Description of the problem.
 
         """
-        print(self._details)
+        return self._details
     
 

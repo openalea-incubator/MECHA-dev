@@ -15,10 +15,10 @@
 #TODO: Check/remove? PileUp option
 
 #Directory
-dir='C:/Users/couvreurv/Desktop/MECHA_full/'
+dir='./'
 
 #Project
-Project='Projects/Xerobranching_2D_heterogeneity/' #'Projects/Xerobranching_2D_apo/' #'PlantPhys/' #GRANAR/'#Yoan/'#Sixtine/'#BBSRC/'#'Projects/
+Project='Projects/GRANAR/' #'Projects/Xerobranching_2D_apo/' #'PlantPhys/' #GRANAR/'#Yoan/'#Sixtine/'#BBSRC/'#'Projects/
 
 #Inputs
 if Project=='Projects/Xerobranching_2D_heterogeneity/': #Xerobranching_2D_apo/': #
@@ -210,11 +210,11 @@ elif Project=='Projects/Yoan/':
     #        j+=1
 elif Project=='Projects/GRANAR/':
     inputs='in/'
-    Gen='Maize_General.xml'
-    Geom='Maize_Geometry.xml'
-    Hydr='Maize_Hydraulics.xml'
-    BC='Maize_BC.xml'#'Maize_BC_kr.xml'
-    Horm='Maize_Hormones_Carriers.xml'
+    Gen='General.xml'
+    Geom='Geometry.xml'
+    Hydr='Hydraulics.xml'
+    BC='BCs.xml'
+    Horm='Hormones.xml'
     Cell_connec_max=50
     Ncellperimeters=100
     V_modifier=1.0

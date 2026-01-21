@@ -204,11 +204,20 @@ def _visualize_network(
     default_color_map = {'apo': 'red', 'sym': 'yellow'}
     node_color_map = kwargs.get('node_color_map', default_color_map)
 
+    default_edge_color_map = {'wall': 'purple', 'membrane': 'green', 'plasmodesmata': 'gray'}
+    edge_color_map = kwargs.get('edge_color_map', default_edge_color_map)
+
     # Determine node colors
     node_colors = []
     for node in graph.nodes():
         node_type = node_types.get(node, 'sym')  # Default to 'sym' if type is not found
         node_colors.append(node_color_map.get(node_type, 'blue'))  # Default to 'blue' if color not found
+
+        # Determine edge colors
+    edge_colors = []
+    for u, v, edge_attrs in graph.edges(data=True):
+        edge_type = edge_attrs.get('path', 'wall')  # Default to 'wall' if path is not found
+        edge_colors.append(edge_color_map.get(edge_type, 'purple'))
 
     # Draw the network
     fig, ax = plt.subplots(figsize=kwargs.get('figsize', (10, 10)))
@@ -220,7 +229,7 @@ def _visualize_network(
         node_color=node_colors,
         with_labels=kwargs.get('with_labels', False),
         node_size=kwargs.get('node_size', 10),
-        edge_color=kwargs.get('edge_color', 'gray'),
+        edge_color=edge_colors,
         width=kwargs.get('width', 1),
         alpha=kwargs.get('alpha', 0.7)
     )

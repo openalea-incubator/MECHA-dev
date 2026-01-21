@@ -46,14 +46,14 @@ def prepare_geometrical_properties(general, network, hormones, position, indice)
         return arr
 
     # Common arrays (used in both thick and thin cases)
-    wall_to_cell             = nan_array((network.n_walls, 2))
-    n_wall_to_cell            = zeros((network.n_walls, 1))
-    junction_wall_cell    = nan_array((network.n_wall_junction - network.n_walls, 12))
-    n_junction_wall_cell   = zeros((network.n_wall_junction - network.n_walls, 1))
-    wall_to_junction         = nan_array((network.n_walls, 2))
-    n_wall_to_junction        = zeros((network.n_walls, 1))
-    r_rel                 = nan_array((network.n_walls, 1))
-    x_rel                 = nan_array((network.n_wall_junction + network.n_cells, 1))
+    wall_to_cell = nan_array((network.n_walls, 2))
+    n_wall_to_cell = zeros((network.n_walls, 1))
+    junction_wall_cell = nan_array((network.n_wall_junction - network.n_walls, 12))
+    n_junction_wall_cell = zeros((network.n_wall_junction - network.n_walls, 1))
+    wall_to_junction = nan_array((network.n_walls, 2))
+    n_wall_to_junction = zeros((network.n_walls, 1))
+    r_rel = nan_array((network.n_walls, 1))
+    x_rel = nan_array((network.n_wall_junction + network.n_cells, 1))
 
     # Diffusion wall lengths (cm)
     L_diff = (
@@ -429,23 +429,6 @@ def prepare_geometrical_properties(general, network, hormones, position, indice)
                         n_wall_to_wall_x[j] += 1
                         twpidX += 1
 
-    # -------------------------------------------------------------------------
-    # Apo_j_Zombies0 / Apo_j_cc (only in thick mode, like original)
-    # -------------------------------------------------------------------------
-    Apo_j_Zombies0 = []
-    Apo_j_cc       = []
-    if use_thick:
-        for j in range(network.n_walls, network.n_wall_junction):
-            j_idx = j - network.n_walls
-            for cid in junction_wall_cell[j_idx]:
-                if isnan(cid):
-                    continue
-                cell_index = int(cid - network.n_wall_junction)
-                if cell_index in hormones.apo_zombie0:
-                    cc = hormones.apo_cc[hormones.apo_zombie0.index(cell_index)]
-                    if j not in Apo_j_Zombies0:
-                        Apo_j_Zombies0.append(j)
-                        Apo_j_cc.append(cc)
 
     return {
         'wall_to_cell': wall_to_cell,
@@ -470,6 +453,4 @@ def prepare_geometrical_properties(general, network, hormones, position, indice)
         'n_junction_to_wall': n_junction_to_wall,
         'n_thick_wall_polygon_x': n_thick_wall_polygon_x,
         'n_cell_to_thick_wall': n_cell_to_thick_wall,
-        'Apo_j_Zombies0': Apo_j_Zombies0,
-        'Apo_j_cc': Apo_j_cc,
     }

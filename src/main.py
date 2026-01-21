@@ -12,14 +12,15 @@ from pylab import *  # for plotting
 import geopandas as gpd # not used yet but could be useful for spatial data calculations
 import argparse # for command-line argument parsing
 
-from utils import data_loader
-from prepare_paraview import prepare_geometrical_properties
+from utils.data_loader import *
+from utils.prepare_paraview import *
+from utils.network_builder import *
 
-def mecha(general_config='./extdata/Maize_General.xml',#'Arabido1_General.xml' #'MilletLR3_General.xml' #
-          geometry_config='./extdata/Geometry.xml',#'Arabido4_Geometry_BBSRC.xml' #'Maize2_Geometry.xml' #''MilletLR3_Geometry.xml'    #'Wheat1_Nodal_Geometry_aerenchyma.xml' #'Maize1_Geometry.xml' #
-          hydraulic_config='./extdata/Hydraulics.xml', #'Arabido1_Hydraulics_ERC.xml' #'MilletLR3_Hydraulics.xml' #'Test_Hydraulics.xml' #
-          boundary_condition_config='./extdata/Maize_BC_kr.xml', #'Arabido4_BC_BBSRC2.xml' #'Arabido1_BC_Emily.xml' #'Arabido3_BC_BBSRC.xml' #'Maize_BC_SoluteAna_krOsmo.xml'#'Maize_BC_OSxyl_hetero.xml' #'Arabido1_BC_Emily.xml' #'BC_Test.xml' #'Maize_BC_Plant_phys.xml'
-          hormones_config='./extdata/Maize_Hormones_Carriers.xml',
+def mecha(general_config='../extdata/General.xml',#'Arabido1_General.xml' #'MilletLR3_General.xml' #
+          geometry_config='../extdata/Geometry.xml',#'Arabido4_Geometry_BBSRC.xml' #'Maize2_Geometry.xml' #''MilletLR3_Geometry.xml'    #'Wheat1_Nodal_Geometry_aerenchyma.xml' #'Maize1_Geometry.xml' #
+          hydraulic_config='../extdata/Hydraulics.xml', #'Arabido1_Hydraulics_ERC.xml' #'MilletLR3_Hydraulics.xml' #'Test_Hydraulics.xml' #
+          boundary_condition_config='../extdata/BCs.xml', #'Arabido4_BC_BBSRC2.xml' #'Arabido1_BC_Emily.xml' #'Arabido3_BC_BBSRC.xml' #'Maize_BC_SoluteAna_krOsmo.xml'#'Maize_BC_OSxyl_hetero.xml' #'Arabido1_BC_Emily.xml' #'BC_Test.xml' #'Maize_BC_Plant_phys.xml'
+          hormones_config='../extdata/Hormones.xml',
           cellset_file='./extdata/current_root.xml',#present in Geometry.xml
           outdir=os.getcwd()): 
     
@@ -35,7 +36,9 @@ def mecha(general_config='./extdata/Maize_General.xml',#'Arabido1_General.xml' #
     print('[2/5] Creating the network')
     network = NetworkBuilder()
     # Build network structure
-    network.build_network(general, geometry, hormones, cellset_file)
+    print(cellset_file)
+    cellset_data = parse_cellset(cellset_file= cellset_file)
+    network.build_network(general, geometry, cellset_data)
 
     position=nx.get_node_attributes(network.graph,'position') #Updates nodes XY positions (micrometers)
     indice=nx.get_node_attributes(network.graph,'indice') #Node indices (walls, junctions and cells)
@@ -3401,7 +3404,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--general-config",
         type=str,
-        default='./extdata/Maize_General.xml',
+        default='./extdata/General.xml',
         help="Path to the general configuration XML file. Default: './extdata/Maize_General.xml'"
     )
     parser.add_argument(
@@ -3419,20 +3422,20 @@ if __name__ == "__main__":
     parser.add_argument(
         "--boundary-condition-config",
         type=str,
-        default='./extdata/Maize_BC_kr.xml',
-        help="Path to the boundary condition XML file. Default: './extdata/Maize_BC_kr.xml'"
+        default='./extdata/BCs.xml',
+        help="Path to the boundary condition XML file. Default: './extdata/BCs.xml'"
     )
     parser.add_argument(
         "--hormones-config",
         type=str,
-        default='./extdata/Maize_Hormones_Carriers.xml',
-        help="Path to the hormones configuration XML file. Default: './extdata/Maize_Hormones_Carriers.xml'"
+        default='./extdata/Hormones.xml',
+        help="Path to the hormones configuration XML file. Default: '../extdata/Hormones.xml'"
     )
     parser.add_argument(
         "--cellset-file",
         type=str,
         default='./extdata/current_root.xml',
-        help="Path to the cellset XML file. Default: './extdata/current_root.xml'"
+        help="Path to the cellset XML file. Default: '../extdata/current_root.xml'"
     )
     parser.add_argument(
         "--outdir",

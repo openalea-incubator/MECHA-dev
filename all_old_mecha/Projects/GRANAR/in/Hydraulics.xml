@@ -9,16 +9,11 @@
   
   <kwrange>
     <kw value="0.00024" />
-    
-    
-    
-    
-    
   </kwrange>
   
   <kw_barrier_range>
     
-    <kw_barrier value="1.00E-16" />
+    <kw_barrier value="1.00E-16" Casp="1.00E-16" Sub="1.0E-16"/>
   </kw_barrier_range>
   
   <km value="3.0E-5" />
@@ -30,9 +25,11 @@
   
   
   <Kplrange>
-    <Kpl PCC_factor="1.0" PPP_factor="1.0" PST_factor="1.0" cortex_factor="1.0" value="5.3E-12" endo_in_factor="1.0" endo_out_factor="1.0" />
+    <Kpl PCC_factor="1.0" PPP_factor="1.0" PST_factor="1.0" cortex_factor="1.0" value="5.3E-12" />
     
   </Kplrange>
+  <Freq_source value="1"/>
+  <Freq_factor value="1.0"/>
   <Fplxheight value="8.0E5" />
   
   <Fplxheight_epi_exo value="1.08E6" />
@@ -50,10 +47,17 @@
   <Fplxheight_comp_sieve value="1.76E6" />
   <Fplxheight_peri_sieve value="7.2E5" />
   <Fplxheight_stele_sieve value="9.0E5" />
+  <Defheight value="200"/>
+  <Kax_source value="1"/>
+  <!-- 1: Poiseuille law (based on cross-section area); 2: Prescribed here below (for all sieve tubes, and vessel per vessel) -->
   
-  <K_sieve value="1.0E-6" />
+  <K_sieve id="-1" value="0.0"/>
   
-  <K_xyl value="1.0E-6" />
+  <K_xyl_range>
+    <!-- Xylem vessel hydraulic conductance (cm^3/hPa/d) -->
+    <K_xyl id="-1" value="1E-06"/>
+    <!-- estimation based on transverse surface area -->
+  </K_xyl_range>
   
   
   <Xcontactrange>

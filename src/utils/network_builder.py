@@ -48,6 +48,7 @@ class NetworkBuilder:
         self.n_total: int = 0
         self.n_membrane: int = 0
         self.n_membrane_from_epi: int = 0
+        self.n_nodes: int = 0
         
         # Cell and wall properties
         self.cell_areas: Optional[np.ndarray] = None 
@@ -75,8 +76,14 @@ class NetworkBuilder:
         self.intercellular_cells: List[int] = []
         self.passage_cells: List[int] = []
         self.xylem_80_percentile_distance: float = 0.0
+        self.total_xylem_area: float = 0.0
+        self.xylem_area: List[float] = []
+        self.xylem_area_ratio: List[float] = []
         self.n_sieve: int = 0
         self.n_protosieve: int = 0
+        self.total_phloem_area: float = 0.0
+        self.phloem_area: List[float] = []
+        self.phloem_area_ratio: List[float] = []
         
         # Connectivity
         self.n_cell_connections: Optional[np.ndarray] = None
@@ -84,6 +91,11 @@ class NetworkBuilder:
         self.wall_to_cell: Optional[np.ndarray] = None 
         self.junction_to_wall: Dict[Any, Any] = {}
         self.n_junction_to_wall: Dict[Any, Any] = {} 
+
+        # Cellset artifacts
+        self.list_ghostwalls: List[int] = [] #"Fake walls" not to be displayed
+        self.list_ghostjunctions: List[int] = [] #"Fake junctions" not to be displayed
+        self.n_ghost_junction2wall: int = 0
         
         # Gravity center and geometry
         self.x_grav: float = 0.0
@@ -129,34 +141,49 @@ class NetworkBuilder:
         self.apo_wall_target: List[int] = []
         self.apo_wall_immune: List[int] = []
 
+        self.apo_j_zombies0: List[int] = []
+        self.apo_j_cc: List[int] = []
 
-    def build_network(self, general: GeneralData, geometry: GeometryData, cellset_data):
+
+    def build_network(self, general: GeneralData, geometry: GeometryData, cellset_data, verbose: bool = False):
         """Main method to build network from XML data"""
+        if cellset_data is None:
+            raise ValueError("Cellset data is None")
+        if general is None:
+            raise ValueError("General data is None")
+        if geometry is None:
+            raise ValueError("Geometry data is None")
+        
         self.cellset = cellset_data
         self.n_walls = len(self.cellset['points'])
         self.n_cells = len(self.cellset['cells'])
 
-        print('  Creating wall, junction and cell nodes...')
-        self.create_wall_junction_nodes(geometry)
+        if verbose:
+            print('  Creating wall, junction and cell nodes...')
+        self.create_wall_junction_nodes(geometry.im_scale)
         self.identify_border_walls_junctions()
         self.create_cell_nodes(geometry, general.apo_contagion)
         
-        print('  Creating membrane connections...')
+        if verbose:
+            print('  Creating membrane connections...')
         self.build_membrane_connections()
         self.compute_cell_properties()
         self.build_plasmodesmata_connections()
         self.build_wall_connections()
         self.compute_gravity_center()
 
-        print('  Ranking cells by tissue type and distance from root center...')
+        if verbose:
+            print('  Ranking cells by tissue type and distance from root center...')
         self.rank_cells(geometry)
         self.compute_cell_surface(geometry)
         self.create_layer_discretization()
         self.compute_distance_from_center()
+        self.n_nodes = self.graph.number_of_nodes()
+        self._calculate_xylem_area()
+        self._calculate_phloem_area()
     
-    def create_wall_junction_nodes(self, geometry: GeometryData, n_dec_position: int = 6):
+    def create_wall_junction_nodes(self, im_scale: float, n_dec_position: int = 6):
         points = self.cellset['points']
-        im_scale = geometry.im_scale
 
         junction_ni = 0
         self.junction_to_wall = {}
@@ -994,13 +1021,13 @@ class NetworkBuilder:
         distance_from_center = np.array(distance_from_center, dtype=float)
 
         # Outer cortex row: just before exodermis or epidermis
-        row_outercortex = rank_to_row[1] - 1 if not np.isnan(rank_to_row[1]) else rank_to_row[2] - 1
-        row_outercortex = int(row_outercortex)
+        row_outer_cortex = rank_to_row[1] - 1 if not np.isnan(rank_to_row[1]) else rank_to_row[2] - 1
+        row_outer_cortex = int(row_outer_cortex)
 
         self.distance_from_center = distance_from_center
         self.r_discret = r_discret
         self.rank_to_row = rank_to_row
-        self.row_outercortex = row_outercortex
+        self.row_outer_cortex = row_outer_cortex
 
     def compute_distance_from_center(self):
         """Compute distance"""
@@ -1071,6 +1098,21 @@ class NetworkBuilder:
         
         # Fallback to last point
         return coords[-1]
-    
+
+    def _calculate_xylem_area(self):
+        # Calculate total area
+        for cid in self.xylem_cells:
+            area = self.cell_areas[cid - self.n_wall_junction]
+            self.total_xylem_area += area
+            self.xylem_area.append(area)
+        self.xylem_area_ratio = self.xylem_area / self.total_xylem_area
+
+    def _calculate_phloem_area(self):
+        # Calculate total area
+        for cid in self.protosieve_list:
+            area = self.cell_areas[cid - self.n_wall_junction]
+            self.total_phloem_area += area
+            self.phloem_area.append(area)
+        self.phloem_area_ratio = self.phloem_area / self.total_phloem_area
 
         

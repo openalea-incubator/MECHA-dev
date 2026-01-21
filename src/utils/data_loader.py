@@ -21,7 +21,7 @@ import os
 import xml.etree.ElementTree as ET
 from lxml import etree 
 import numpy as np
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass, field
 
 @dataclass
@@ -93,6 +93,8 @@ class BoundaryData:
     
     # Boundary condition scenarios
     scenarios: List[Dict[str, Any]] = field(default_factory=list)
+    osmotic_potentials: List[Dict[str,Any]] = field(default_factory=list)
+    reflection_coefficients: List[Dict[str,Any]] = field(default_factory=list)
     
     # Arrays for boundary conditions
     
@@ -141,14 +143,13 @@ class BoundaryData:
         # Set number of scenarios
         self.n_scenarios = len(self.psi_soil_elems)
 
+        # Check if we need to calculate solute stationary fluxes
+        if self.osmotic_diffusivity_xyl != 0 and self.osmotic_diffusivity_soil != 0:
+            self.c_flag = True
+            print('Calculation of analytical solution for radial solute transport in cell walls')
 
         # Load boundary condition scenarios
-        for count in range(self.n_scenarios):
-            
-            # Check if we need to calculate solute stationary fluxes
-            if self.osmotic_diffusivity_xyl != 0 and self.osmotic_diffusivity_soil != 0:
-                self.c_flag = True
-                print('Calculation of analytical solution for radial solute transport in cell walls')
+        for count in range(self.n_scenarios):            
 
             # Create scenario dictionary
             scenario = {
@@ -159,22 +160,26 @@ class BoundaryData:
                 'osmotic_symmetry_soil': float(self.psi_soil_elems[count].get("osmotic_symmetry")),
                 'osmotic_shape_soil': float(self.psi_soil_elems[count].get("osmotic_shape")), #1 for linear, >1 for outer slope flat, <1 for inner slope flat
                 'osmotic_diffusivity_soil': self.osmotic_diffusivity_soil,
-                'osmotic_xyl': float(self.bc_xyl_elems[count].get("osmotic_xyl")),
-                'osmotic_endo': float(self.bc_xyl_elems[count].get("osmotic_endo")),
-                'osmotic_symmetry_xyl': float(self.bc_xyl_elems[count].get("osmotic_symmetry")),
-                'osmotic_shape_xyl': float(self.bc_xyl_elems[count].get("osmotic_shape")),
+                'osmotic_xyl': float(self.bc_xyl_elems[count].get("osmotic_xyl")) if self.bc_xyl_elems[count].get("osmotic_xyl") else 0.0,
+                'osmotic_endo': float(self.bc_xyl_elems[count].get("osmotic_endo")) if self.bc_xyl_elems[count].get("osmotic_endo") else 0.0,
+                'osmotic_symmetry_xyl': float(self.bc_xyl_elems[count].get("osmotic_symmetry")) if self.bc_xyl_elems[count].get("osmotic_symmetry") else 1.0,
+                'osmotic_shape_xyl': float(self.bc_xyl_elems[count].get("osmotic_shape")) if self.bc_xyl_elems[count].get("osmotic_shape") else 1.0,
                 'osmotic_diffusivity_xyl': self.osmotic_diffusivity_xyl,
-                'pressure_xyl': float(self.bc_xyl_elems[count].get("pressure")) if self.bc_xyl_elems[count].get("pressure") else np.nan,
-                'flow_xyl': float(self.bc_xyl_elems[count].get("flowrate")) if self.bc_xyl_elems[count].get("flowrate") else np.nan,
+                'pressure_xyl_prox': float(self.bc_xyl_elems[count].get("pressure_prox")) if self.bc_xyl_elems[count].get("pressure_prox") or self.bc_xyl_elems[count].get("pressure") else np.nan,
+                'pressure_xyl_dist': float(self.bc_xyl_elems[count].get("pressure_dist")) if self.bc_xyl_elems[count].get("pressure_dist") else np.nan,
+                'flow_xyl_prox': float(self.bc_xyl_elems[count].get("flowrate_prox")) if self.bc_xyl_elems[count].get("flowrate_prox") or self.bc_xyl_elems[count].get("flowrate") else np.nan,
+                'flow_xyl_dist': float(self.bc_xyl_elems[count].get("flowrate_dist")) if self.bc_xyl_elems[count].get("flowrate_dist") else np.nan,
                 'delta_p_xyl': float(self.bc_xyl_elems[count].get("deltaP")) if self.bc_xyl_elems[count].get("deltaP") else np.nan,
-                'pressure_sieve': float(self.bc_sieve_elems[count].get("pressure")) if self.bc_sieve_elems[count].get("pressure") else np.nan,
-                'flow_sieve': float(self.bc_sieve_elems[count].get("flowrate")) if self.bc_sieve_elems[count].get("flowrate") else np.nan,
+                'pressure_sieve_prox': float(self.bc_sieve_elems[count].get("pressure_prox")) if self.bc_sieve_elems[count].get("pressure_prox") or self.bc_sieve_elems[count].get("pressure") else np.nan,
+                'pressure_sieve_dist': float(self.bc_sieve_elems[count].get("pressure_dist")) if self.bc_sieve_elems[count].get("pressure_dist") else np.nan,
+                'flow_sieve_prox': float(self.bc_sieve_elems[count].get("flowrate_prox")) if self.bc_sieve_elems[count].get("flowrate_prox") or self.bc_sieve_elems[count].get("flowrate") else np.nan,
+                'flow_sieve_dist': float(self.bc_sieve_elems[count].get("flowrate_dist")) if self.bc_sieve_elems[count].get("flowrate_dist") else np.nan,
                 'delta_p_sieve': float(self.bc_sieve_elems[count].get("deltaP")) if self.bc_sieve_elems[count].get("deltaP") else np.nan,
                 'osmotic_sieve': float(self.bc_sieve_elems[count].get("osmotic")) if self.bc_sieve_elems[count].get("osmotic") else np.nan,
-                'psi_s_hetero': int(self.psi_cell_elems[count].get("s_hetero")),
-                'psi_s_factor': float(self.psi_cell_elems[count].get("s_factor")),
-                'psi_os_hetero': int(self.psi_cell_elems[count].get("Os_hetero")),
-                'psi_os_cortex': float(self.psi_cell_elems[count].get("Os_cortex")),
+                's_hetero': int(self.psi_cell_elems[count].get("s_hetero")),
+                's_factor': float(self.psi_cell_elems[count].get("s_factor")),
+                'os_hetero': int(self.psi_cell_elems[count].get("Os_hetero")),
+                'os_cortex': float(self.psi_cell_elems[count].get("Os_cortex")),
                 'elongation_midpoint_rate': float(self.elong_cell_elems[count].get("midpoint_rate")),
                 'elongation_side_rate_difference': float(self.elong_cell_elems[count].get("side_rate_difference")),
             }
@@ -197,21 +202,178 @@ class BoundaryData:
             'osmotic_symmetry_xyl': 1.0,
             'osmotic_shape_xyl': 1.0,
             'osmotic_diffusivity_xyl': 0.0,
-            'pressure_xyl': np.nan,
-            'flow_xyl': np.nan,
-            'delta_p_xyl': np.nan,
-            'pressure_sieve': np.nan,
-            'flow_sieve': np.nan,
+            'pressure_xyl_prox': -5.0E3,
+            'pressure_xyl_dist': np.nan,
+            'flow_xyl_prox': np.nan,
+            'flow_xyl_dist': np.nan,
+            'delta_p_xyl_prox': np.nan,
+            'pressure_sieve_prox': 1.1E4,
+            'pressure_sieve_dist': np.nan,
+            'flow_sieve_prox': np.nan,
+            'flow_sieve_dist': np.nan,
             'delta_p_sieve': np.nan,
             'osmotic_sieve': np.nan,
-            'psi_s_hetero': 0,
-            'psi_s_factor': 1.0,
-            'psi_os_hetero': 0,
-            'psi_os_cortex': 0.0,
+            's_hetero': 0,
+            's_factor': 1.0,
+            'os_hetero': 0,
+            'os_cortex': 0.0,
             'elongation_midpoint_rate': 2.8,
             'elongation_side_rate_difference': 0.0,
         }
         self.scenarios.append(scenario)
+
+    def add_scenario(self, scenario):
+        """Add a scenario to the list of scenarios."""
+        self.scenarios.append(scenario)
+        self.n_scenarios = len(self.scenarios)
+
+    def get_reflection_coefficients(self):
+
+        for i_scenario in range(1,self.n_scenarios):
+            #Reflection coefficients of membranes (undimensional)
+            s_hetero=int(self.scenarios[i_scenario].get("s_hetero")) #0:Uniform, 1: non-uniform, stele twice more permeable to solute, 2: non-uniform, cortex twice more permeable to solute
+            s_factor=float(self.scenarios[i_scenario].get("s_factor")) #(undimensional [0 -> 1]) multiplies all sigma values
+            elong_cell=float(self.scenarios[i_scenario].get("elongation_midpoint_rate")) #Cell elongation rate (cm/d)
+            elong_cell_side_diff=float(self.scenarios[i_scenario].get("elongation_side_rate_difference")) #Difference between cell elongation rates on the sides of the root in the EZ (cm/d)
+            if s_hetero==0:
+                s_epi=s_factor*1.0
+                s_exo_epi=s_factor*1.0
+                s_exo_cortex=s_factor*1.0
+                s_cortex=s_factor*1.0
+                s_endo_cortex=s_factor*1.0
+                s_endo_peri=s_factor*1.0
+                s_peri=s_factor*1.0
+                s_stele=s_factor*1.0
+                s_comp=s_factor*1.0
+                s_sieve=s_factor*1.0
+            elif s_hetero==1:
+                s_epi=s_factor*1.0
+                s_exo_epi=s_factor*1.0
+                s_exo_cortex=s_factor*1.0
+                s_cortex=s_factor*1.0
+                s_endo_cortex=s_factor*1.0
+                s_endo_peri=s_factor*0.5
+                s_peri=s_factor*0.5
+                s_stele=s_factor*0.5
+                s_comp=s_factor*0.5
+                s_sieve=s_factor*0.5
+            elif s_hetero==2:
+                s_epi=s_factor*0.5
+                s_exo_epi=s_factor*0.5
+                s_exo_cortex=s_factor*0.5
+                s_cortex=s_factor*0.5
+                s_endo_cortex=s_factor*0.5
+                s_endo_peri=s_factor*1.0
+                s_peri=s_factor*1.0
+                s_stele=s_factor*1.0
+                s_comp=s_factor*1.0
+                s_sieve=s_factor*1.0
+
+            self.reflection_coefficients.append({
+                's_epi': s_epi,
+                's_exo_epi': s_exo_epi,
+                's_exo_cortex': s_exo_cortex,
+                's_cortex': s_cortex,
+                's_endo_cortex': s_endo_cortex,
+                's_endo_peri': s_endo_peri,
+                's_peri': s_peri,
+                's_stele': s_stele,
+                's_comp': s_comp,
+                's_sieve': s_sieve,
+            })
+    
+    
+
+    def get_osmotic_potentials(self):
+        
+        for i_scenario in range(1,self.n_scenarios):
+            #Osmotic potentials (hPa)
+            Os_hetero=int(self.scenarios[i_scenario].get("os_hetero")) #0:Uniform, 1: non-uniform no KNO3 treatment, 2: non-uniform with KNO3 treatment to help guttation
+            Os_cortex=float(self.scenarios[i_scenario].get("os_cortex")) # Cortical cell osmotic potential (hPa)
+            Os_sieve=float(self.scenarios[i_scenario].get("osmotic_sieve"))
+            if Os_hetero==0:
+                #Os_apo=-3000 #-0.3 MPa (Enns et al., 2000) applied stress
+                #-0.80 MPa (Enns et al., 2000) concentration of cortical cells, no KNO3
+                Os_epi=float(Os_cortex)
+                Os_exo=float(Os_cortex)
+                Os_c1=float(Os_cortex)
+                Os_c2=float(Os_cortex)
+                Os_c3=float(Os_cortex)
+                Os_c4=float(Os_cortex)
+                Os_c5=float(Os_cortex)
+                Os_c6=float(Os_cortex)
+                Os_c7=float(Os_cortex)
+                Os_c8=float(Os_cortex)
+                Os_endo=float(Os_cortex)
+                Os_peri=float(Os_cortex)
+                Os_stele=float(Os_cortex)
+                Os_comp=(float(Os_sieve)+Os_cortex)/2 #Average phloem and parenchyma
+                #Os_sieve=float(Os_cortex[i_maturity][count])
+            elif Os_hetero==1:
+                Os_epi=-5000 #(Rygol et al. 1993) #float(Os_cortex[i_maturity][count]) #-0.80 MPa (Enns et al., 2000) concentration of cortical cells, no KNO3
+                Os_exo=-5700 #(Rygol et al. 1993) #float(Os_cortex[i_maturity][count]) #-0.80 MPa (Enns et al., 2000) concentration of cortical cells, no KNO3
+                Os_c1=-6400 #(Rygol et al. 1993)
+                Os_c2=-7100 #(Rygol et al. 1993)
+                Os_c3=-7800 #(Rygol et al. 1993)
+                Os_c4=-8500 #(Rygol et al. 1993)
+                Os_c5=-9000 #(Rygol et al. 1993)
+                Os_c6=-9300 #(Rygol et al. 1993)
+                Os_c7=-9000 #(Rygol et al. 1993)
+                Os_c8=-8500 #(Rygol et al. 1993)
+                Os_endo=-6200 #-0.62 MPa (Enns et al., 2000) concentration of endodermis cells, no KNO3
+                Os_peri=-5000 #-0.50 MPa (Enns et al., 2000) concentration of pericycle cells, no KNO3
+                Os_stele=-7400 #-0.74 MPa (Enns et al., 2000) concentration of xylem parenchyma cells, no KNO3
+                Os_comp=(float(Os_sieve)-7400)/2 #Average phloem and parenchyma
+                #Os_sieve=-14200 #-1.42 MPa (Pritchard, 1996) in barley phloem
+            elif Os_hetero==2:
+                Os_epi=-11200 #(Rygol et al. 1993) #float(Os_cortex[i_maturity][count]) #-1.26 MPa (Enns et al., 2000) concentration of cortical cells, with KNO3
+                Os_exo=-11500 #(Rygol et al. 1993) #float(Os_cortex[i_maturity][count]) #-1.26 MPa (Enns et al., 2000) concentration of cortical cells, with KNO3
+                Os_c1=-11800 #(Rygol et al. 1993)
+                Os_c2=-12100 #(Rygol et al. 1993)
+                Os_c3=-12400 #(Rygol et al. 1993)
+                Os_c4=-12700 #(Rygol et al. 1993)
+                Os_c5=-12850 #(Rygol et al. 1993)
+                Os_c6=-12950 #(Rygol et al. 1993)
+                Os_c7=-12850 #(Rygol et al. 1993)
+                Os_c8=-12700 #(Rygol et al. 1993)
+                Os_endo=-10500 #-1.05 MPa (Enns et al., 2000) concentration of endodermis cells, with KNO3
+                Os_peri=-9200 #-0.92 MPa (Enns et al., 2000) concentration of pericycle cells, with KNO3
+                Os_stele=-12100 #-1.21 MPa (Enns et al., 2000) concentration of xylem parenchyma cells, with KNO3
+                Os_comp=(float(Os_sieve)-12100)/2 #Average of phloem and parenchyma
+            #Os_sieve=-14200 #-1.42 MPa (Pritchard, 1996) in barley phloem
+            elif Os_hetero==3:
+                Os_epi=float(Os_cortex)
+                Os_exo=float(Os_cortex)
+                Os_c1=float(Os_cortex)
+                Os_c2=float(Os_cortex)
+                Os_c3=float(Os_cortex)
+                Os_c4=float(Os_cortex)
+                Os_c5=float(Os_cortex)
+                Os_c6=float(Os_cortex)
+                Os_c7=float(Os_cortex)
+                Os_c8=float(Os_cortex)
+                Os_endo=float((Os_cortex-5000.0)/2.0)
+                Os_peri=-5000.0 #Simple case with no stele pushing water out
+                Os_stele=-5000.0
+                Os_comp=(float(Os_sieve)-5000.0)/2 #Average phloem and parenchyma
+                #Os_sieve=-5000.0
+            self.osmotic_potentials.append({
+                'Os_epi': Os_epi,
+                'Os_exo': Os_exo,
+                'Os_c1': Os_c1,
+                'Os_c2': Os_c2,
+                'Os_c3': Os_c3,
+                'Os_c4': Os_c4,
+                'Os_c5': Os_c5,
+                'Os_c6': Os_c6,
+                'Os_c7': Os_c7,
+                'Os_c8': Os_c8,
+                'Os_endo': Os_endo,
+                'Os_peri': Os_peri,
+                'Os_stele': Os_stele,
+                'Os_comp': Os_comp,
+                'Os_sieve': Os_sieve,
+            })
 
 
 @dataclass
@@ -268,6 +430,10 @@ class GeneralData:
     paraview_pf: int = 0 # Plasmodesmata flux
     paraview_wp: int = 0 # Wall potential
     paraview_cp: int = 0 # Cell potential
+    paraview_uniwalls: int = 1 # UniX walls
+
+    # Analysis options
+    sparse_matrix: int = 0 # Sparse matrix
 
     # Analysis flags
     sym_contagion: int = 0 # Symplastic contagion
@@ -306,10 +472,12 @@ class GeneralData:
         self.paraview_pf = int(root.xpath('Paraview')[0].get("PlasmodesmataFlux"))
         self.paraview_wp = int(root.xpath('Paraview')[0].get("WallPot"))
         self.paraview_cp = int(root.xpath('Paraview')[0].get("CellPot"))
+        self.paraview_uniwalls = int(root.xpath('UniXwalls')[0].get("value"))
 
         self.par_track = int(root.xpath('ParTrack')[0].get("value"))
         self.sym_contagion = int(root.xpath('Sym_Contagion')[0].get("value"))
         self.apo_contagion = int(root.xpath('Apo_Contagion')[0].get("value"))
+        self.sparse_matrix = int(root.xpath('sparse')[0].get("value"))
 
         self.color_threshold = float(root.xpath('color_threshold')[0].get("value"))
         self.thickness_disp = float(root.xpath('thickness_disp')[0].get("value"))
@@ -319,7 +487,6 @@ class GeneralData:
     def _set_default_values(self):
         """Set default values if no file is provided."""
         # Default values are already set in the class definition
-
 
 
 @dataclass
@@ -357,7 +524,7 @@ class GeometryData:
     diffusion_length : numpy.ndarray, optional
         Diffusion length for cortex and stele (default is a 2x1 array of zeros).
     thickness : float, optional
-        Thickness of the plant structure in microns (default is 0.0).
+        Thickness of the cell walls in microns (default is 0.0).
     pd_section : float, optional
         Plasmodesmata section area in square microns (default is 0.0).
     xylem_pieces : bool, optional
@@ -426,14 +593,8 @@ class GeometryData:
         for mat in self.maturity_elems:
             self.maturity_stages.append({
                 'barrier': int(mat.get("Barrier")),
-                'height': int(mat.get("height"))
+                'height': float(mat.get("height"))
             })
-        ###   Apoplastic barriers   ###
-        # 0: No apoplastic barrier
-        # 1: Endodermis radial walls
-        # 2: Endodermis with passage cells
-        # 3: Endodermis full
-        # 4: Endodermis full and exodermis radial walls
         
         self.n_maturity = len(self.maturity_stages)
         # Parse passage cells
@@ -465,19 +626,49 @@ class GeometryData:
         
         self.thickness = float(root.xpath('thickness')[0].get("value")) # in microns
         self.pd_section = float(root.xpath('PD_section')[0].get("value")) # in microns^2
-        self.xylem_pieces = float(root.xpath('Xylem_pieces')[0].get("flag")) == 1
+        self.xylem_pieces = int(root.xpath('Xylem_pieces')[0].get("flag")) == 1
 
     def _set_default_values(self):
         """Set default values if no file is provided."""
         # Default values are already set in the class definition
         # Add default maturity stages
         self.maturity_stages = [
-            {'barrier': 1, 'height': 200, 'nlayers': 1}
+            {'barrier': int(1), 'height': float(200.0), 'nlayers': int(1)}
         ]
         self.n_maturity = len(self.maturity_stages)
         # Set default passage cell ID
         self.passage_cell_ids = [-1]
 
+    def add_maturity_stage(self, barrier: list[int], height: list[float] = [200.0]):
+        if len(barrier) != len(height):
+            print("barrier and height must have the same length")
+            height = [height[0]] * len(barrier)
+
+        for i, b in enumerate(barrier):
+            self.maturity_stages.append({'barrier': b, 'height': height[i], 'nlayers': int(1)})
+        self.n_maturity = len(self.maturity_stages)
+
+    def set_maturity_stages(self, barrier: list[int], height: list[float] = [200.0]):
+        if len(barrier) != len(height):
+            print("barrier and height must have the same length")
+            height = [height[0]] * len(barrier)
+            
+        self.maturity_stages = []
+        for i, b in enumerate(barrier):
+            self.maturity_stages.append({'barrier': b, 'height': height[i], 'nlayers': int(1)})
+        self.n_maturity = len(self.maturity_stages)
+
+    def add_passage_cell(self, cid: int):
+        self.passage_cell_ids.append(cid)
+
+    def add_aer_space(self, cid: int):
+        self.intercellular_ids.append(cid)
+
+    def get_barrier(self, i: int) -> int:
+        return self.maturity_stages[i]['barrier']
+
+    def get_height(self, i: int) -> float:
+        return self.maturity_stages[i]['height']
 
 @dataclass
 class HormonesData:
@@ -681,8 +872,10 @@ class HydraulicData:
         Plasmodesmata height for pericycle-sieve tube interface (default is 0.0).
     fplxheight_stele_sieve : float, optional
         Plasmodesmata height for stele-sieve tube interface (default is 0.0).
+    
     k_sieve : float, optional
         Sieve tube hydraulic conductance (default is 0.0).
+
     k_xyl : float, optional
         Xylem vessel axial hydraulic conductance (default is 0.0).
     kw : List[float], optional
@@ -703,7 +896,7 @@ class HydraulicData:
     kw_barrier_elems: List[Any] = field(default_factory=list)
     kaqp_elems: List[Any] = field(default_factory=list)
     kpl_elems: List[Any] = field(default_factory=list)
-    xcontactrange: List[Any] = field(default_factory=list)
+    xcontactrange: List[Any] = field(default_factory=lambda: [0])
     path_hydraulics: List[Any] = field(default_factory=list)
 
     # Counts
@@ -737,10 +930,16 @@ class HydraulicData:
     fplxheight_stele_sieve: float = 9.0E5
     
     # Conductance parameters
+    axial_conductance_source: int = 1
+    k_sieve_elems: List[Any] = field(default_factory=list)
+    k_xyl_elems: List[Any] = field(default_factory=list)
     k_sieve: float = 1.0E-6  # Sieve tube hydraulic conductance
     K_axial: Optional[np.ndarray] = None
     k_xyl: float = 1.0E-6   # Xylem vessel axial hydraulic conductance
     K_xyl_spec: float = 1.0E-6   # Xylem vessel axial hydraulic conductance ## remove?
+
+    # Root conductivities
+    conductivities: List[Dict[str, Any]] = field(default_factory=list)
 
     # Matrices for Doussan calculations
     matrix_W: Optional[np.ndarray] = None
@@ -759,7 +958,7 @@ class HydraulicData:
     kw: List[float] = field(default_factory=lambda: [0.00024])
     kw_barrier: List[float] = field(default_factory=lambda: [1.00E-16])
     kaqp: List[Dict[str, float]] = field(default_factory=lambda: [{'value': 0.000430, 'cortex_factor': 1.0, 'endo_factor': 1.0, 'epi_factor': 1.0, 'exo_factor': 1.0, 'stele_factor': 1.0}])
-    kpl: List[Dict[str, float]] = field(default_factory=lambda: [{'value': 5.3E-12, 'PCC_factor': 1.0, 'PPP_factor': 1.0, 'cortex_factor': 1.0}])
+    kpl: List[Dict[str, float]] = field(default_factory=lambda: [{'value': 5.3E-12, 'phloem_companion_cell_factor': 1.0, 'pericycle_phloem_pole_factor': 1.0, 'phloem_sieve_tube_factor': 1.0, 'cortex_factor': 1.0}])
 
     def __post_init__(self):
         """Post-initialization method to load hydraulic configuration parameters."""
@@ -811,8 +1010,12 @@ class HydraulicData:
         self.fplxheight_stele_sieve = float(root.xpath('Fplxheight_stele_sieve')[0].get("value"))
         
         # Conductance parameters
-        self.k_sieve = float(root.xpath('K_sieve')[0].get("value"))
-        self.k_xyl = float(root.xpath('K_xyl')[0].get("value"))
+        # 1: Poiseuille law (based on cross-section area); 2: Prescribed here below (for all sieve tubes, and vessel per vessel)
+        self.axial_conductance_source = int(root.xpath('Kax_source')[0].get("value")) if root.xpath('Kax_source') else 1
+        self.k_sieve_elems = root.xpath('K_sieve_range/K_sieve')
+        self.k_xyl_elems = root.xpath('K_xyl_range/K_xyl')
+        self.k_sieve = [float(k_sieve.get("value")) for k_sieve in self.k_sieve_elems] if self.k_sieve_elems else [0.0]
+        self.k_xyl = [float(k_xyl.get("value")) for k_xyl in self.k_xyl_elems] if self.k_xyl_elems else [0.0]
         
         # Contact range
         self.xcontactrange = root.xpath('Xcontactrange/Xcontact')
@@ -839,39 +1042,59 @@ class HydraulicData:
         self.kpl = []
         for kpl_elem in self.kpl_elems if self.kpl_elems else [{'value': 5.3E-12, 'PCC_factor': 1.0, 'PPP_factor': 1.0, 'cortex_factor': 1.0}]:
             kpl_dict = {'value': float(kpl_elem.get("value"))}
-            kpl_dict['PCC_factor'] = float(kpl_elem.get("PCC_factor"))
-            kpl_dict['PPP_factor'] = float(kpl_elem.get("PPP_factor"))
+            kpl_dict['phloem_companion_cell_factor'] = float(kpl_elem.get("PCC_factor")) # 
+            kpl_dict['pericycle_phloem_pole_factor'] = float(kpl_elem.get("PPP_factor")) # 
+            kpl_dict['phloem_sieve_tube_factor'] = float(kpl_elem.get("PST_factor")) # 
             kpl_dict['cortex_factor'] = float(kpl_elem.get("cortex_factor"))
+            kpl_dict['endo_in_factor'] = float(kpl_elem.get("endo_in_factor"))
+            kpl_dict['endo_out_factor'] = float(kpl_elem.get("endo_out_factor"))
+
             self.kpl.append(kpl_dict)
 
     def _set_default_values(self):
         """Set default values if no file is provided."""
+        self.kw_barrier_elems = [{'value': 1.00E-16, 'Casp': 1.00E-16, 'Sub': 1.00E-16, 'Sub_in': 1.00E-16, 'Sub_out': 1.00E-16}]
+        self.kw_elems = [{'value': 0.00024}]
 
     def get_kw_value(self, h: int) -> float:
         """Get the kw value based on the scenario index."""
         if self.n_kw == self.n_hydraulics:
-            return float(self.kw_elems[h].get("value"))
+            return self.kw[h]
         elif self.n_kw == 1:
-            return float(self.kw_elems[0].get("value"))
+            return self.kw[0]
         else:
-            return float(self.kw_elems[int(h/(self.n_kaqp*self.n_kpl))%self.n_kw].get("value"))
+            return self.kw[int(h/(self.n_kaqp*self.n_kpl))%self.n_kw]
 
-    def get_kw_barrier_values(self, h: int) -> Tuple[float, float]:
+    def get_kw_barrier_values(self, h: int) -> Tuple[float, List[float]]:
         """Get the kw_barrier values based on the scenario index."""
         if self.n_kw_barrier == self.n_hydraulics:
             kw_barrier_casparian = float(self.kw_barrier_elems[h].get("Casp"))
             kw_barrier_suberin = float(self.kw_barrier_elems[h].get("Sub"))
+            kw_barrier_suberin_in = float(self.kw_barrier_elems[h].get("Sub_in"))
+            kw_barrier_suberin_out = float(self.kw_barrier_elems[h].get("Sub_out"))
         elif self.n_kw_barrier == 1:
             kw_barrier_casparian = float(self.kw_barrier_elems[0].get("Casp"))
             kw_barrier_suberin = float(self.kw_barrier_elems[0].get("Sub"))
+            kw_barrier_suberin_in = float(self.kw_barrier_elems[0].get("Sub_in"))
+            kw_barrier_suberin_out = float(self.kw_barrier_elems[0].get("Sub_out"))
         else:
             index = int(h/(self.n_kaqp*self.n_kpl*self.n_kw))%self.n_kw_barrier
             kw_barrier_casparian = float(self.kw_barrier_elems[index].get("Casp"))
             kw_barrier_suberin = float(self.kw_barrier_elems[index].get("Sub"))
+            kw_barrier_suberin_in = float(self.kw_barrier_elems[index].get("Sub_in"))
+            kw_barrier_suberin_out = float(self.kw_barrier_elems[index].get("Sub_out"))
 
-        return kw_barrier_casparian, kw_barrier_suberin
+        # Use the general 'suberin' value if specific ones are missing
+        if kw_barrier_suberin_in is None:
+            kw_barrier_suberin_in = float(kw_barrier_suberin) if kw_barrier_suberin is not None else 1E-16
+        if kw_barrier_suberin_out is None:
+            kw_barrier_suberin_out = float(kw_barrier_suberin) if kw_barrier_suberin is not None else 1E-16
 
-    def get_wall_conductivities(self, barrier: int, kw: float, kw_barrier_casparian: float, kw_barrier_suberin: float) -> Dict[str, float]:
+        kw_barrier_suberin_all = [float(kw_barrier_suberin_in), float(kw_barrier_suberin_out)]
+
+        return kw_barrier_casparian, kw_barrier_suberin_all
+
+    def get_wall_conductivities(self, barrier: int, kw: float, kw_barrier_casparian: float, kw_barrier_suberin: List[float]) -> Dict[str, float]:
         """Get wall conductivities based on barrier type."""
         barrier_configs = {
             0: {  # No Casparian strip
@@ -901,8 +1124,8 @@ class HydraulicData:
                 'kw_exo_epi': kw,
                 'kw_exo_cortex': kw,
                 'kw_cortex_cortex': kw,
-                'kw_endo_peri': kw_barrier_suberin,
-                'kw_endo_cortex': kw_barrier_suberin,
+                'kw_endo_peri': kw_barrier_suberin[0],
+                'kw_endo_cortex': kw_barrier_suberin[1],
                 'kw_passage': kw
             },
             3: {  # Endodermis full
@@ -911,9 +1134,9 @@ class HydraulicData:
                 'kw_exo_epi': kw,
                 'kw_exo_cortex': kw,
                 'kw_cortex_cortex': kw,
-                'kw_endo_peri': kw_barrier_suberin,
-                'kw_endo_cortex': kw_barrier_suberin,
-                'kw_passage': kw_barrier_suberin
+                'kw_endo_peri': kw_barrier_suberin[0],
+                'kw_endo_cortex': kw_barrier_suberin[1],
+                'kw_passage': kw_barrier_suberin[0]
             },
             4: {  # Endodermis full and exodermis radial walls
                 'kw_endo_endo': kw_barrier_casparian,
@@ -921,9 +1144,9 @@ class HydraulicData:
                 'kw_exo_epi': kw,
                 'kw_exo_cortex': kw,
                 'kw_cortex_cortex': kw,
-                'kw_endo_peri': kw_barrier_suberin,
-                'kw_endo_cortex': kw_barrier_suberin,
-                'kw_passage': kw_barrier_suberin
+                'kw_endo_peri': kw_barrier_suberin[0],
+                'kw_endo_cortex': kw_barrier_suberin[1],
+                'kw_passage': kw_barrier_suberin[0]
             },
             5: {  # Endodermal & exodermal Casparian strips
                 'kw_endo_endo': kw_barrier_casparian,
@@ -938,8 +1161,8 @@ class HydraulicData:
             6: {  # Exodermis full and endodermis radial walls
                 'kw_endo_endo': kw_barrier_casparian,
                 'kw_exo_exo': kw_barrier_casparian,
-                'kw_exo_epi': kw_barrier_suberin,
-                'kw_exo_cortex': kw_barrier_suberin,
+                'kw_exo_epi': kw_barrier_suberin[1],
+                'kw_exo_cortex': kw_barrier_suberin[0],
                 'kw_cortex_cortex': kw,
                 'kw_endo_peri': kw,
                 'kw_endo_cortex': kw,
@@ -958,17 +1181,17 @@ class HydraulicData:
             8: {  # Exodermis full suberized and endodermis full suberized
                 'kw_endo_endo': kw_barrier_casparian,
                 'kw_exo_exo': kw_barrier_casparian,
-                'kw_exo_epi': kw_barrier_suberin,
-                'kw_exo_cortex': kw_barrier_suberin,
+                'kw_exo_epi': kw_barrier_suberin[1],
+                'kw_exo_cortex': kw_barrier_suberin[0],
                 'kw_cortex_cortex': kw,
-                'kw_endo_peri': kw_barrier_suberin,
-                'kw_endo_cortex': kw_barrier_suberin,
+                'kw_endo_peri': kw_barrier_suberin[0],
+                'kw_endo_cortex': kw_barrier_suberin[1],
                 'kw_passage': kw
             },
             9: {  # Lignin Cap
                 'kw_endo_endo': kw_barrier_casparian,
                 'kw_exo_exo': kw_barrier_casparian,
-                'kw_exo_epi': kw_barrier_suberin,
+                'kw_exo_epi': kw_barrier_suberin[1],
                 'kw_exo_cortex': kw,
                 'kw_cortex_cortex': kw,
                 'kw_endo_peri': kw,
@@ -981,7 +1204,7 @@ class HydraulicData:
         config = barrier_configs.get(barrier, barrier_configs[0])
         return config
 
-    def get_plasmodesmatal_conductance(self, h: int) -> float:
+    def get_plasmodesmatal_conductance(self, h: int) -> Dict[str, float]:
         """Get plasmodesmata conductance."""
         if self.n_kpl == self.n_hydraulics:
             iPD = h
@@ -990,7 +1213,68 @@ class HydraulicData:
         else:
             iPD = int(h/self.n_kaqp)%self.n_kpl
 
-        return float(self.kpl_elems[iPD].get("value"))
+        kpl = float(self.kpl[iPD].get("value"))
+
+        # float() argument must be a string or a real number, not 'NoneType'
+        if self.kpl[iPD].get("stele_factor") is not None:
+            stele_factor = float(self.kpl[iPD].get("stele_factor"))
+        else:
+            stele_factor = 1.0
+
+        if self.kpl[iPD].get("endo_in_factor") is not None:
+            endo_in_factor = float(self.kpl[iPD].get("endo_in_factor"))
+        else:
+            endo_in_factor = 1.0
+
+        if self.kpl[iPD].get("endo_out_factor") is not None:
+            endo_out_factor = float(self.kpl[iPD].get("endo_out_factor"))
+        else:
+            endo_out_factor = 1.0
+
+        if self.kpl[iPD].get("exo_factor") is not None:
+            exo_factor = float(self.kpl[iPD].get("exo_factor"))
+        else:
+            exo_factor = 1.0
+
+        if self.kpl[iPD].get("epi_factor") is not None:
+            epi_factor = float(self.kpl[iPD].get("epi_factor"))
+        else:
+            epi_factor = 1.0
+
+        if self.kpl[iPD].get("cortex_factor") is not None:
+            cortex_factor = float(self.kpl[iPD].get("cortex_factor"))
+        else:
+            cortex_factor = 1.0
+
+        if self.kpl[iPD].get('phloem_companion_cell_factor') is not None:
+            phloem_companion_cell_factor = float(self.kpl[iPD].get('phloem_companion_cell_factor'))
+        else:
+            phloem_companion_cell_factor = 1.0
+
+        if self.kpl[iPD].get('phloem_pericycle_pole_factor') is not None:
+            phloem_pericycle_pole_factor = float(self.kpl[iPD].get('phloem_pericycle_pole_factor'))
+        else:
+            phloem_pericycle_pole_factor = 1.0
+
+        if self.kpl[iPD].get('phloem_sieve_tube_factor') is not None:
+            phloem_sieve_tube_factor = float(self.kpl[iPD].get('phloem_sieve_tube_factor'))
+        else:
+            phloem_sieve_tube_factor = 1.0
+
+        config = {
+            'kpl': kpl,
+            'kpl_stele': kpl * stele_factor,
+            'kpl_endo_in': kpl * endo_in_factor,
+            'kpl_endo_out': kpl * endo_out_factor,
+            'kpl_exo': kpl * exo_factor,
+            'kpl_epi': kpl * epi_factor,
+            'kpl_cortex': kpl * cortex_factor,
+            'phloem_companion_cell_factor': phloem_companion_cell_factor, # PCC
+            'phloem_pericycle_pole_factor': phloem_pericycle_pole_factor, # PPP
+            'phloem_sieve_tube_factor': phloem_sieve_tube_factor, # PST
+            'cortex_factor':cortex_factor
+        }
+        return config
 
     def get_aquaporin_contributions(self, h: int) -> Dict[str, float]:
         """Get aquaporin contributions to membrane hydraulic conductivity."""
@@ -1001,16 +1285,16 @@ class HydraulicData:
         else:
             iAQP = h%self.n_kaqp
 
-        kaqp = float(self.kaqp_elems[iAQP].get("value"))
-        result = {
+        kaqp = float(self.kaqp[iAQP].get("value"))
+        config = {
             'kaqp': kaqp,
-            'kaqp_stele': kaqp * float(self.kaqp_elems[iAQP].get("stele_factor")),
-            'kaqp_endo': kaqp * float(self.kaqp_elems[iAQP].get("endo_factor")),
-            'kaqp_exo': kaqp * float(self.kaqp_elems[iAQP].get("exo_factor")),
-            'kaqp_epi': kaqp * float(self.kaqp_elems[iAQP].get("epi_factor")),
-            'kaqp_cortex': kaqp * float(self.kaqp_elems[iAQP].get("cortex_factor"))
+            'kaqp_stele': kaqp * float(self.kaqp[iAQP].get("stele_factor")),
+            'kaqp_endo': kaqp * float(self.kaqp[iAQP].get("endo_factor")),
+            'kaqp_exo': kaqp * float(self.kaqp[iAQP].get("exo_factor")),
+            'kaqp_epi': kaqp * float(self.kaqp[iAQP].get("epi_factor")),
+            'kaqp_cortex': kaqp * float(self.kaqp[iAQP].get("cortex_factor"))
         }
-        return result
+        return config
 
 
         
@@ -1189,6 +1473,8 @@ class InData:
 
         if verbose:
             print(description)
+        else:
+            return description
 
 
 
