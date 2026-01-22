@@ -152,6 +152,8 @@ def visualize(obj: Any,
         _visualize_network(obj, **kwargs)
     elif visu_type == 'paraview':
         _visualize_pv(obj, **kwargs)
+    elif visu_type == 'water_potential':
+        _visualize_water_potential(obj, **kwargs)
     else:
         raise ValueError(f"Unknown visualization type: {visu_type}")
 
@@ -237,4 +239,118 @@ def _visualize_network(
     ax.set_title(kwargs.get('title', 'Network Visualization'))
     plt.tight_layout()
     plt.show()
+
+
+def plot_water_potential_map(root_gdf: gpd.GeoDataFrame, title: str = "Water Potential"):
+    """Display the root section with water potential colormap."""
+    if root_gdf.empty:
+        print("GeoDataFrame is empty, cannot plot.")
+        return
+    if 'water_potential' not in root_gdf.columns:
+        print("water_potential column missing in GeoDataFrame")
+        return
+    if np.isnan(root_gdf['water_potential']).all():
+        print("All water potential values are NaN, cannot plot.")
+        root_gdf['water_potential'] = 0
+
+    fig, ax = plt.subplots(figsize=(10, 8))
+    root_gdf.plot(
+        ax=ax,
+        column='water_potential',
+        cmap='viridis', 
+        edgecolor='black',
+        linewidth=0.5,
+        legend=True,
+        legend_kwds={'label': 'Water Potential (MPa)', 'orientation': 'vertical'}
+    )
+    ax.set_aspect("equal", "box")
+    ax.set_title(title)
+    ax.set_xlabel("x (mm)")
+    ax.set_ylabel("y (mm)")
+    plt.tight_layout()
+    plt.show()
+
+def _visualize_water_potential(obj: Any, **kwargs: Dict[str, Any]) -> None:
+    """
+    Visualize water potential from a Mecha object.
+    
+    Parameters
+    ----------
+    obj : Any
+        Mecha object containing results and cellset_data.
+    **kwargs : Dict[str, Any]
+        maturity_idx : int, default 0
+        scenario_idx : int, default 0
+    """
+    if not hasattr(obj, 'results'):
+        print("Object does not have results attribute.")
+        return
+
+    results = obj.results
+    if not results:
+        print("Results are empty.")
+        return
+
+    maturity_idx = kwargs.get('maturity_idx', 0)
+    scenario_idx = kwargs.get('scenario_idx', 0)
+
+    # Find the matching result
+    target_res = None
+    if isinstance(results, list):
+        for res in results:
+            if res.get('maturity stage') == maturity_idx and res.get('scenario') == scenario_idx:
+                target_res = res
+                break
+    
+    if target_res is None:
+        print(f"No results found for maturity {maturity_idx} and scenario {scenario_idx}")
+        print("Available results:", [(r.get('maturity stage'), r.get('scenario')) for r in results])
+        return
+
+    solution = target_res['solution']
+    
+    rhs = target_res.get('rhs')
+        
+    matrix_W = target_res.get('matrix_W')
+    if matrix_W is not None:
+         if hasattr(matrix_W, 'toarray') or hasattr(matrix_W, 'tocoo'):
+             # Sparse matrix
+             if hasattr(matrix_W, 'data'):
+                 mat_data = matrix_W.data
+                 print(f"DEBUG: MatrixW (sparse) stats - NaNs: {np.isnan(mat_data).sum()}, Min: {np.nanmin(mat_data)}, Max: {np.nanmax(mat_data)}")
+         else:
+             # Dense matrix
+             print(f"DEBUG: MatrixW (dense) stats - NaNs: {np.isnan(matrix_W).sum()}, Min: {np.nanmin(matrix_W)}, Max: {np.nanmax(matrix_W)}")
+
+    # Check for cellset_data
+    if not hasattr(obj, 'cellset_data'):
+        print("Object does not have cellset_data attribute.")
+        return
+        
+    gdf = prep_section(obj.cellset_data)
+    
+    # Check for network offset
+    if not hasattr(obj, 'network') or not hasattr(obj.network, 'n_wall_junction'):
+         print("Object does not have valid network structure.")
+         return
+
+    offset = obj.network.n_wall_junction
+    
+    def get_pot(cid):
+        idx = int(offset + cid)
+        try:
+             # solution is typically (n_nodes, 1) or (n_nodes,)
+             val = solution[idx]
+             if hasattr(val, '__getitem__') and hasattr(val, '__len__') and len(val) > 0:
+                  return float(val[0])
+             return float(val)
+        except (IndexError, TypeError):
+             print(f"DEBUG: Error retrieving pot for cid {cid} at idx {idx}")
+             return np.nan
+        print(f"DEBUG: Pot for cid {cid} at idx {idx}: {val}")
+
+    gdf['water_potential'] = gdf['id_cell'].apply(get_pot)
+    
+    plot_water_potential_map(gdf, title=f"Water Potential (Mat: {maturity_idx}, Scen: {scenario_idx})")
+
 

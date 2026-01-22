@@ -49,7 +49,7 @@ class Mecha:
             self.hydraulic = None
             self.cellset_data = None
 
-        self.solution = None
+        self.results = []
         self.hydraulic_conductivities = {}
         self.network = NetworkBuilder()
 
@@ -1300,11 +1300,7 @@ class Mecha:
                 
                 psi_soil_profile = psi_soil_left * (1 - x_rel) + psi_soil_right * x_rel
                 
-                # Note: x_rel has size (nodes, 1) or similar. rhs_s has size (nodes, 1).
-                # Ensure dimensions match.
-                # In main.py: rhs += np.multiply(rhs_s, ...)
-                # rhs_s corresponds to -K_soil_interface.
-                rhs += rhs_s * psi_soil_profile[:len(rhs_s)] # psi_soil_profile might encompass all nodes, rhs_s is zeros for internal nodes
+                rhs += np.multiply(rhs_s, psi_soil_profile)
 
                 # Xylem BC
                 psi_xyl_val = self.psi_xyl[1][i_maturity][i_scenario]
@@ -1336,9 +1332,11 @@ class Mecha:
                          rhs += rhs_p * psi_sieve_val
                     elif not np.isnan(flow_sieve_val):
                          rhs += rhs_p
-
+                
                 # Solve Doussan equation, results in soln matrix 
                 solution, _ = self.solve(matrix=matrix_W, rhs=rhs, sparse_matrix=self.general.sparse_matrix)
+                self.results.append({'maturity stage': i_maturity, 'scenario': i_scenario, 
+                                     'solution': solution, 'matrix_W': matrix_W, 'Kmb': Kmb, 'rhs': rhs})
 
                 # Removing Xylem and phloem BC terms
                 self.remove_xyl_phloem_BC(matrix_W, i_maturity, i_scenario)
@@ -1348,6 +1346,8 @@ class Mecha:
 
                 # Calcul of fluxes between nodes and creation of the edge_flux_list
                 self._calculate_edge_fluxes(i_maturity, i_scenario, matrix_W, solution)
+    
+        return solution, matrix_W
 
 
     def standard_solute_flux(self, h: int=0, i_maturity: int=0, i_scenario: int=0) -> tuple: 
