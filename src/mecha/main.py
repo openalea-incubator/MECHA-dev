@@ -12,9 +12,9 @@ from pylab import *  # for plotting
 import geopandas as gpd # not used yet but could be useful for spatial data calculations
 import argparse # for command-line argument parsing
 
-from utils.data_loader import *
-from utils.prepare_paraview import *
-from utils.network_builder import *
+from mecha.utils.data_loader import *
+from mecha.utils.prepare_paraview import *
+from mecha.utils.network_builder import *
 
 def mecha(general_config='../extdata/General.xml',#'Arabido1_General.xml' #'MilletLR3_General.xml' #
           geometry_config='../extdata/Geometry.xml',#'Arabido4_Geometry_BBSRC.xml' #'Maize2_Geometry.xml' #''MilletLR3_Geometry.xml'    #'Wheat1_Nodal_Geometry_aerenchyma.xml' #'Maize1_Geometry.xml' #
