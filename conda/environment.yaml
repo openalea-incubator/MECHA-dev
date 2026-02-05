@@ -1,0 +1,15 @@
+name: mecha_env
+channels:
+  - conda-forge
+channel_priority: strict
+dependencies:
+  - python
+  - pip
+  - numpy
+  - scipy
+  - networkx
+  - lxml
+  - geopandas
+  - matplotlib # bundles pylab
+  - pip:
+    - "-e ..[doc]"
