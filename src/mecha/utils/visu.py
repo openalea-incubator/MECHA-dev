@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from shapely.geometry import LineString, Polygon
 from typing import Tuple, Dict, List, Any
-from src.utils.network_builder import NetworkBuilder
+from mecha.utils.network_builder import NetworkBuilder
 import networkx as nx
 
 
