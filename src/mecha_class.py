@@ -50,6 +50,7 @@ class Mecha:
             self.cellset_data = None
 
         self.results = []
+        self.standardized_results = []
         self.hydraulic_conductivities = {}
         self.network = NetworkBuilder()
 
@@ -1386,6 +1387,8 @@ class Mecha:
             self.standard_water_flow(matrix_W, rhs_s, rhs_p, solution, height, i_maturity)
         else:
             self.standard_water_flow(matrix_W, rhs_s, rhs_x, solution, height, i_maturity)
+
+        self.standardized_results.append(solution)
         return solution, verification_1, matrix_W, Kmb, rhs_s
 
     

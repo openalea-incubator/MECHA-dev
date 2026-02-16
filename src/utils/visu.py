@@ -334,7 +334,9 @@ def _visualize_water_potential(obj: Any, **kwargs: Dict[str, Any]) -> None:
          print("Object does not have valid network structure.")
          return
 
-    offset = obj.network.n_wall_junction
+    offset = obj.network.n_walls
+    offset += obj.network.n_wall_junction
+    
     
     def get_pot(cid):
         idx = int(offset + cid)
@@ -354,3 +356,55 @@ def _visualize_water_potential(obj: Any, **kwargs: Dict[str, Any]) -> None:
     plot_water_potential_map(gdf, title=f"Water Potential (Mat: {maturity_idx}, Scen: {scenario_idx})")
 
 
+def _visualize_standardized_results(obj: Any, **kwargs: Dict[str, Any]) -> None:
+    """
+    Visualize standardized results from a Mecha object.
+    
+    Parameters
+    ----------
+    obj : Any
+        Mecha object containing results and cellset_data.
+    """
+    if not hasattr(obj, 'standardized_results'):
+        print("Object does not have standardized_results attribute.")
+        return
+
+    results = obj.standardized_results[0]
+    if not results:
+        print("Results are empty.")
+        return
+
+    
+    solution = results['solution']
+    
+    # Check for cellset_data
+    if not hasattr(obj, 'cellset_data'):
+        print("Object does not have cellset_data attribute.")
+        return
+        
+    gdf = prep_section(obj.cellset_data)
+    
+    # Check for network offset
+    if not hasattr(obj, 'network') or not hasattr(obj.network, 'n_wall_junction'):
+         print("Object does not have valid network structure.")
+         return
+
+    def get_pot(cid):
+        
+        obj.network.graph.nodes[cid]['water_potential'] = solution[cid][0]
+        
+    for node, edges in obj.network.graph.adjacency() : #adjacency_iter returns an iterator of (node, adjacency dict) tuples for all nodes. This is the fastest way to look at every edge. For directed graphs, only outgoing adjacencies are included.
+        i = obj.network.indice[node] #Node ID number
+        if i<obj.network.n_walls: #wall ID 
+            psi = solution[i][0]
+
+
+
+    offset = obj.network.n_wall_junction
+    offset += obj.network.n_walls
+    
+    
+
+    gdf['water_potential'] = gdf['id_cell'].apply(get_pot)
+    
+    plot_water_potential_map(gdf, title=f"Water Potential (Mat: {maturity_idx}, Scen: {scenario_idx})")
