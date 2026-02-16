@@ -13,9 +13,9 @@ from pylab import *  # for plotting
 import argparse # for command-line argument parsing
 
 
-from src.utils.data_loader import *
-from src.utils.network_builder import *
-from src.utils.prepare_paraview import prepare_geometrical_properties
+from mecha.utils.data_loader import *
+from mecha.utils.network_builder import *
+from mecha.utils.prepare_paraview import prepare_geometrical_properties
 
 class Mecha:
     """Main class of the library, encodes a hydraulic anatomy to solve.
@@ -906,7 +906,7 @@ class Mecha:
                                 if i-network.n_wall_junction not in self.hormones.sym_zombie0:
                                     matrix_SymC[i-network.n_wall_junction][i-network.n_wall_junction] -= DF
                                     matrix_SymC[i-network.n_wall_junction][j-network.n_wall_junction] += DF
-                                if j-network.n_wall_junction not in hormones.sym_zombie0:
+                                if j-network.n_wall_junction not in self.hormones.sym_zombie0:
                                     matrix_SymC[j-network.n_wall_junction][j-network.n_wall_junction] -= DF #Convection will be dealt with further down
                                     matrix_SymC[j-network.n_wall_junction][i-network.n_wall_junction] += DF
                     matrix_W[i][i] -= K #Filling the Doussan matrix (symmetric)

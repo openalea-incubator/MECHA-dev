@@ -17,5 +17,5 @@ Horm='Hormones_Carriers.xml'
 # Run MECHA
 print("Launching MECHA")
 
-from main import *
+from mecha.main import *
 MECHA_run(dir, Project, inputs, Gen, Geom, Hydr, BC, Horm)

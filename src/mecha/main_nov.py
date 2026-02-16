@@ -19,7 +19,7 @@ from lxml import etree #Tree element analysis module
 import sys, os 
 
 # Import MECHA functions
-from functions import *
+from mecha.functions import *
 
 # =====================
 # MAIN MECHA FUNCTION #
