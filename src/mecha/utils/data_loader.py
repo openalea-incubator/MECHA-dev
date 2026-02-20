@@ -1383,7 +1383,7 @@ class InData:
         self.geometry = GeometryData(geometry_file=self.geometry_file)
         self.hormones = HormonesData(hormone_file=self.hormones_file)
         self.hydraulic = HydraulicData(hydraulics_file=self.hydraulics_file)
-        self.cellset_data = parse_cellset(cellset_file= self.cellset_file)
+        self.cellset_data = parse_cellset(cellset_file= self.cellset_file) if self.cellset_file is not None else {}
 
     def info(self, verbose: bool = True) -> None:
         """

@@ -258,7 +258,6 @@ def prepare_geometrical_properties(general, network, hormones, position, indice)
         row2 = get_row_from_cell_id(cid2) if not isnan(cid2) else None
 
         r_rel[wall_id] = radial_position(row1, row2, cid2_exists=(cid2 is not None))
-
         x_rel[wall_id] = (position[wall_id][0] - x_min) / (x_max - x_min)
 
     # -------------------------------------------------------------------------

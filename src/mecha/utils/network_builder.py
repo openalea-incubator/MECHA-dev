@@ -30,11 +30,15 @@ from typing import Dict, Any, List, Optional, Tuple
 from lxml import etree
 import geopandas as gpd
 
-from src.utils.data_loader import GeneralData, GeometryData
+from mecha.utils.data_loader import GeneralData, GeometryData
 
-class NetworkBuilder:
+from granap.network_base import AbstractNetwork
+
+class NetworkBuilder(AbstractNetwork):
     """Builds the hydraulic network graph from XML cell data"""
-    def __init__(self):
+    def __init__(self, source_network: AbstractNetwork = None):
+        super().__init__()
+        self._source_network = source_network
 
         self.cellset_data: Dict[str, Any] = {}
 
@@ -45,7 +49,7 @@ class NetworkBuilder:
         self.n_junctions: int = 0
         self.n_wall_junction: int = 0
         self.n_cells: int = 0
-        self.n_total: int = 0
+        # self.n_total: int = 0
         self.n_membrane: int = 0
         self.n_membrane_from_epi: int = 0
         self.n_nodes: int = 0
@@ -88,7 +92,7 @@ class NetworkBuilder:
         # Connectivity
         self.n_cell_connections: Optional[np.ndarray] = None
         self.cell_connections: Optional[np.ndarray] = None 
-        self.wall_to_cell: Optional[np.ndarray] = None 
+        self.wall_to_cells: Optional[np.ndarray] = None 
         self.junction_to_wall: Dict[Any, Any] = {}
         self.n_junction_to_wall: Dict[Any, Any] = {} 
 
@@ -145,6 +149,16 @@ class NetworkBuilder:
         self.apo_j_cc: List[int] = []
 
 
+    def _build_anatnetwork(self) -> None:
+        """
+        Implementation of AbstractNetwork._build_network.
+        For NetworkBuilder, this is typically handled by build_network with arguments,
+        or populate_from_network.
+        """
+        # If we are using valid input data, build_network should be called explicitly.
+        # If we are populating from another network, this might not be needed.
+        pass
+
     def build_network(self, general: GeneralData, geometry: GeometryData, cellset_data, verbose: bool = False):
         """Main method to build network from XML data"""
         if cellset_data is None:
@@ -182,6 +196,407 @@ class NetworkBuilder:
         self._calculate_xylem_area()
         self._calculate_phloem_area()
     
+    def populate_from_network(self, type_mapper: Dict[str, int] = None) -> None:
+        """
+        Populate this NetworkBuilder from the stored source AbstractNetwork.
+
+        Uses ``self._source_network`` (set during ``__init__``).
+        Derives all MECHA-specific attributes from the graph structure
+        without requiring XML cellset data.
+
+        Parameters
+        ----------
+        type_mapper : Dict[str, int], optional
+            Mapping from GRANAP cell type strings to MECHA cgroup integers.
+        """
+        src = self._source_network
+        if src is None:
+            raise ValueError("No source_network was provided to NetworkBuilder.")
+
+        # ------------------------------------------------------------------
+        # Step 1: Copy graph & counts
+        # ------------------------------------------------------------------
+        self.graph = src.graph
+        self.n_walls = src.n_walls
+        self.n_junctions = src.n_junctions
+        self.n_cells = src.n_cells
+        self.n_wall_junction = self.n_walls + self.n_junctions
+        self.n_nodes = self.graph.number_of_nodes()
+
+        # ------------------------------------------------------------------
+        # Step 2: Extract wall_lengths from graph node attributes
+        # ------------------------------------------------------------------
+        self.wall_lengths = {}
+        for i in range(self.n_walls):
+            node = self.graph.nodes[i]
+            self.wall_lengths[i] = node.get('length', 0.0)
+
+        # Also set junction wall_lengths to 0
+        for i in range(self.n_walls, self.n_wall_junction):
+            self.wall_lengths[i] = self.graph.nodes[i].get('length', 0.0)
+
+        # Step 3: Map cell types via type_mapper → set cgroup
+        if type_mapper is None:
+            type_mapper = {
+                'exodermis': 1,
+                'epidermis': 2,
+                'endodermis': 3,
+                'passage': 3,
+                'cortex': 4,
+                'stele': 5,
+                'pith': 5,
+                'parenchyma': 5,
+                'vascular_parenchyma': 5,
+                'pericycle': 16,
+                'companion': 12,
+                'xylem': 13,
+                'phloem': 11,
+            }
+
+        for i in range(self.n_wall_junction, self.n_wall_junction + self.n_cells):
+            node = self.graph.nodes[i]
+            cell_type_str = node.get('cell_type', '')
+            cgroup = node.get('cgroup')
+
+            # Map string cgroup or missing cgroup using cell_type_str
+            if not isinstance(cgroup, (int, float)) or cgroup is None:
+                cgroup = type_mapper.get(cell_type_str, 4)  # default cortex
+                self.graph.nodes[i]['cgroup'] = cgroup
+
+        # Step 4: Rebuild junction_to_wall / n_junction_to_wall from edges
+        self.junction_to_wall = {}
+        self.n_junction_to_wall = {}
+        for j_id in range(self.n_walls, self.n_wall_junction):
+            walls = []
+            for neighbor in self.graph.neighbors(j_id):
+                edge_data = self.graph.edges[j_id, neighbor]
+                if edge_data.get('path') == 'wall' and neighbor < self.n_walls:
+                    walls.append(neighbor)
+            self.junction_to_wall[j_id] = walls
+            self.n_junction_to_wall[j_id] = len(walls)
+
+        # Step 5: Compute cell_areas, cell_perimeters from source or graph
+        self.cell_areas = np.zeros(self.n_cells)
+        self.cell_perimeters = np.zeros(self.n_cells)
+
+        # Try to get areas from the source_network's all_cells if available
+        if hasattr(src, 'all_cells') and hasattr(src.all_cells, 'cells'):
+            cells_list = src.all_cells.cells
+            for idx, cell in enumerate(cells_list):
+                if idx < self.n_cells:
+                    if hasattr(cell, 'area') and cell.area is not None:
+                        self.cell_areas[idx] = cell.area
+                    if hasattr(cell, 'polygon') and cell.polygon is not None:
+                        self.cell_perimeters[idx] = cell.polygon.length
+
+        # Fallback: compute from membrane edges if areas are still zero
+        if np.sum(self.cell_areas) == 0:
+            for i in range(self.n_cells):
+                node_id = self.n_wall_junction + i
+                # Sum wall lengths around the cell for perimeter
+                perimeter = 0.0
+                for neighbor in self.graph.neighbors(node_id):
+                    edge_data = self.graph.edges[node_id, neighbor]
+                    if edge_data.get('path') == 'membrane':
+                        perimeter += edge_data.get('length', 0.0)
+                self.cell_perimeters[i] = perimeter
+                # Rough area estimate: circle with this perimeter
+                if perimeter > 0:
+                    self.cell_areas[i] = (perimeter ** 2) / (4 * np.pi)
+
+        # Step 6: Compute distance_wall_cell from graph positions
+        position = nx.get_node_attributes(self.graph, 'position')
+        self.distance_wall_cell = np.zeros((self.n_walls, 1))
+
+        for i in range(self.n_walls):
+            total_dist = 0.0
+            n_membranes = 0
+            for neighbor in self.graph.neighbors(i):
+                edge_data = self.graph.edges[i, neighbor]
+                if edge_data.get('path') == 'membrane':
+                    total_dist += edge_data.get('dist', 0.0)
+                    n_membranes += 1
+            self.distance_wall_cell[i] = total_dist
+
+        # Step 7: Identify border_walls (walls with only 1 membrane neighbor)
+        self.border_walls = []
+        self.border_aerenchyma = []
+        self.border_link = 2 * np.ones((self.n_wall_junction, 1), dtype=int)
+
+        for i in range(self.n_walls):
+            membrane_cells = []
+            for neighbor in self.graph.neighbors(i):
+                edge_data = self.graph.edges[i, neighbor]
+                if edge_data.get('path') == 'membrane':
+                    membrane_cells.append(neighbor)
+
+            if len(membrane_cells) == 1:
+                cell_cgroup = self.graph.nodes[membrane_cells[0]].get('cgroup', 0)
+                if cell_cgroup == 2:  # Epidermis → soil border
+                    self.border_walls.append(i)
+                    self.border_link[i] = 1
+                else:  # Other single-membrane = aerenchyma border
+                    self.border_aerenchyma.append(i)
+                    self.border_link[i] = 1
+            elif len(membrane_cells) == 0:
+                self.border_link[i] = 0
+            else:
+                self.border_link[i] = 0
+
+        # Step 8: Identify border_junction from border walls
+        self.border_junction = []
+        for j_id, wall_ids in self.junction_to_wall.items():
+            count = 0
+            length = 0.0
+            for wall_id in wall_ids:
+                if wall_id in self.border_walls:
+                    count += 1
+                    length += self.wall_lengths.get(wall_id, 0.0) / 4.0
+            if count == 2:
+                self.border_junction.append(j_id)
+                self.border_link[j_id] = 1
+                self.wall_lengths[j_id] = length
+            else:
+                self.border_link[j_id] = 0
+
+        # Count membranes
+        self.n_membrane = 0
+        self.n_membrane_from_epi = 0
+        for u, v, data in self.graph.edges(data=True):
+            if data.get('path') == 'membrane':
+                self.n_membrane += 1
+
+        # Step 9: Compute gravity center from endodermis cells
+        self._compute_gravity_center_from_graph(position)
+
+        # Step 10: Track xylem/phloem/passage/intercellular cells
+        self.xylem_cells = []
+        self.sieve_cells = []
+        self.xylem_walls = []
+        self.passage_cells = []
+        self.intercellular_cells = []
+
+        for i in range(self.n_cells):
+            node_id = self.n_wall_junction + i
+            cgroup = self.graph.nodes[node_id].get('cgroup', 0)
+            cell_type_str = self.graph.nodes[node_id].get('cell_type', '')
+
+            if cgroup in [13, 19, 20]:
+                self.xylem_cells.append(node_id)
+                # Find walls connected to this xylem cell
+                for neighbor in self.graph.neighbors(node_id):
+                    edge_data = self.graph.edges[node_id, neighbor]
+                    if edge_data.get('path') == 'membrane' and neighbor < self.n_walls:
+                        self.xylem_walls.append(neighbor)
+            elif cgroup in [11, 23]:
+                self.sieve_cells.append(node_id)
+            elif cell_type_str == 'passage':
+                self.passage_cells.append(i)
+            elif cell_type_str == 'intercellular':
+                self.intercellular_cells.append(i)
+
+        # Step 11: Rank cells from graph
+        self._rank_cells_from_graph(position)
+
+        # Step 12: Create layer discretization
+        self.create_layer_discretization()
+
+        # Step 13: Compute distance_center_grav / distance_from_center
+        self._compute_distance_from_center_graph(position)
+
+        # Step 14: Calculate xylem/phloem areas
+        self._calculate_xylem_area()
+        self._calculate_phloem_area()
+
+        # Build cell connections for symplastic paths
+        self._build_cell_connections_from_graph()
+
+    # Graph-only helper methods (used by populate_from_network)
+    def _compute_gravity_center_from_graph(self, position: dict) -> None:
+        """Compute gravity center from endodermis cell positions."""
+        x_sum, y_sum, count = 0.0, 0.0, 0
+        for node in self.graph.nodes():
+            if self.graph.nodes[node].get('type') == 'cell':
+                if self.graph.nodes[node].get('cgroup') == 3:
+                    pos = position.get(node)
+                    if pos:
+                        x_sum += pos[0]
+                        y_sum += pos[1]
+                        count += 1
+        if count > 0:
+            self.x_grav = x_sum / count
+            self.y_grav = y_sum / count
+
+    def _rank_cells_from_graph(self, position: dict) -> None:
+        """
+        Rank cells using cgroup and connectivity — graph-only version.
+        Equivalent to rank_cells but without XML cellset dependency.
+        """
+        self.cell_ranks = np.zeros(self.n_cells, dtype=int)
+        self.layer_dist = np.zeros(62)
+        self.n_layer = np.zeros(62, dtype=int)
+        self.xylem_distance = []
+
+        # First pass: basic cell type assignment
+        for cell_id in range(self.n_cells):
+            node_id = self.n_wall_junction + cell_id
+            cgroup = self.graph.nodes[node_id].get('cgroup', 0)
+
+            # Normalize cell groups
+            if cgroup in [19, 20]:
+                cgroup = 13
+            elif cgroup == 21:
+                cgroup = 16
+            elif cgroup == 23:
+                cgroup = 11
+            elif cgroup == 26:
+                cgroup = 12
+
+            self.cell_ranks[cell_id] = cgroup
+            pos = position.get(node_id, (0, 0))
+            dist = np.hypot(pos[0] - self.x_grav, pos[1] - self.y_grav)
+            self.layer_dist[cgroup] += dist
+            self.n_layer[cgroup] += 1
+
+            if cgroup == 13:
+                self.xylem_distance.append(dist)
+
+        self.xylem_80_percentile_distance = (
+            np.percentile(self.xylem_distance, 80) if self.xylem_distance else 0
+        )
+
+        # Determine connection ranks
+        if self.n_layer[16] == 0:
+            self.stele_connec_rank = 3
+        else:
+            self.stele_connec_rank = 16
+
+        if self.n_layer[1] == 0:
+            self.outercortex_connec_rank = 2
+        else:
+            self.outercortex_connec_rank = 1
+
+        # Second pass: initial layer assignment
+        for cell_id in range(self.n_cells):
+            node_id = self.n_wall_junction + cell_id
+            celltype = self.cell_ranks[cell_id]
+            pos = position.get(node_id, (0, 0))
+            connected_ranks = self._get_connected_cell_ranks(cell_id)
+
+            if celltype == 4:  # Cortex
+                if 3 in connected_ranks:
+                    self.cell_ranks[cell_id] = 40
+                    dist = np.hypot(pos[0] - self.x_grav, pos[1] - self.y_grav)
+                    self.layer_dist[40] += dist
+                    self.n_layer[40] += 1
+                elif self.outercortex_connec_rank in connected_ranks:
+                    self.cell_ranks[cell_id] = 49
+                    dist = np.hypot(pos[0] - self.x_grav, pos[1] - self.y_grav)
+                    self.layer_dist[49] += dist
+                    self.n_layer[49] += 1
+
+            elif celltype in [5, 11, 12, 13]:
+                if self.stele_connec_rank in connected_ranks:
+                    self.cell_ranks[cell_id] = 50
+                    dist = np.hypot(pos[0] - self.x_grav, pos[1] - self.y_grav)
+                    self.layer_dist[50] += dist
+                    self.n_layer[50] += 1
+                    cgroup = self.graph.nodes[node_id].get('cgroup', 0)
+                    if cgroup in [11, 23]:
+                        self.protosieve_list.append(node_id)
+
+        # Iterative pass: refine layer rankings
+        for iteration in range(12):
+            for cell_id in range(self.n_cells):
+                node_id = self.n_wall_junction + cell_id
+                celltype = self.cell_ranks[cell_id]
+                pos = position.get(node_id, (0, 0))
+                connected_ranks = self._get_connected_cell_ranks(cell_id)
+
+                if celltype == 4 and iteration < 4:
+                    if (40 + iteration) in connected_ranks:
+                        self.cell_ranks[cell_id] = 41 + iteration
+                        dist = np.hypot(pos[0] - self.x_grav, pos[1] - self.y_grav)
+                        self.layer_dist[41 + iteration] += dist
+                        self.n_layer[41 + iteration] += 1
+                    elif (49 - iteration) in connected_ranks:
+                        self.cell_ranks[cell_id] = 48 - iteration
+                        dist = np.hypot(pos[0] - self.x_grav, pos[1] - self.y_grav)
+                        self.layer_dist[48 - iteration] += dist
+                        self.n_layer[48 - iteration] += 1
+
+                elif celltype in [5, 11, 12, 13]:
+                    if iteration < 10:
+                        if (50 + iteration) in connected_ranks:
+                            self.cell_ranks[cell_id] = 51 + iteration
+                            dist = np.hypot(pos[0] - self.x_grav, pos[1] - self.y_grav)
+                            self.layer_dist[51 + iteration] += dist
+                            self.n_layer[51 + iteration] += 1
+                    else:
+                        self.cell_ranks[cell_id] = 61
+                        dist = np.hypot(pos[0] - self.x_grav, pos[1] - self.y_grav)
+                        self.layer_dist[61] += dist
+                        self.n_layer[61] += 1
+
+        # Average distances
+        for i in range(62):
+            if self.n_layer[i] > 0:
+                self.layer_dist[i] /= self.n_layer[i]
+
+        self.n_sieve = len(self.sieve_cells)
+        self.n_protosieve = len(self.protosieve_list)
+
+    def _compute_distance_from_center_graph(self, position: dict) -> None:
+        """Compute wall→gravity-center distances from graph positions."""
+        self.distance_center_grav = np.zeros((self.n_walls, 1))
+        self.distance_max_cortex = 0.0
+        self.distance_min_cortex = np.inf
+        self.distance_avg_epi = 0.0
+        t = 0
+
+        for i in range(self.n_walls):
+            pos = position.get(i, (0, 0))
+            d = np.sqrt((pos[0] - self.x_grav) ** 2 + (pos[1] - self.y_grav) ** 2)
+            self.distance_center_grav[i] = d
+
+            # Check which cells this wall is connected to via membrane
+            for neighbor in self.graph.neighbors(i):
+                edge_data = self.graph.edges[i, neighbor]
+                if edge_data.get('path') == 'membrane':
+                    cgroup = self.graph.nodes[neighbor].get('cgroup', 0)
+                    if cgroup == 4:  # Cortex
+                        self.distance_max_cortex = max(self.distance_max_cortex, d)
+                        self.distance_min_cortex = min(self.distance_min_cortex, d)
+                    elif cgroup == 2:  # Epidermis
+                        self.distance_avg_epi += d
+                        t += 1
+
+        if t > 0:
+            self.distance_avg_epi /= t
+        self.perimeter = 2 * np.pi * self.distance_avg_epi * 1.0E-04  # (cm)
+
+    def _build_cell_connections_from_graph(self, rank_number: int = 65) -> None:
+        """Build cell-to-cell connection arrays from plasmodesmata edges."""
+        self.n_cell_connections = np.zeros((self.n_cells, 1), dtype=int)
+        self.cell_connections = -np.ones((self.n_cells, rank_number), dtype=int)
+
+        for u, v, data in self.graph.edges(data=True):
+            if data.get('path') == 'plasmodesmata':
+                if u >= self.n_wall_junction and v >= self.n_wall_junction:
+                    cell_id_u = u - self.n_wall_junction
+                    cell_id_v = v - self.n_wall_junction
+                    if cell_id_u < self.n_cells and cell_id_v < self.n_cells:
+                        idx_u = self.n_cell_connections[cell_id_u][0]
+                        if idx_u < rank_number:
+                            self.cell_connections[cell_id_u][idx_u] = cell_id_v
+                            self.n_cell_connections[cell_id_u] += 1
+
+                        idx_v = self.n_cell_connections[cell_id_v][0]
+                        if idx_v < rank_number:
+                            self.cell_connections[cell_id_v][idx_v] = cell_id_u
+                            self.n_cell_connections[cell_id_v] += 1
+
+
     def create_wall_junction_nodes(self, im_scale: float, n_dec_position: int = 6):
         points = self.cellset['points']
 
@@ -1109,10 +1524,14 @@ class NetworkBuilder:
 
     def _calculate_phloem_area(self):
         # Calculate total area
+        
         for cid in self.protosieve_list:
             area = self.cell_areas[cid - self.n_wall_junction]
             self.total_phloem_area += area
             self.phloem_area.append(area)
-        self.phloem_area_ratio = self.phloem_area / self.total_phloem_area
+        if self.total_phloem_area != 0:
+            self.phloem_area_ratio = self.phloem_area / self.total_phloem_area
+        else:
+            self.phloem_area_ratio = []
 
         

@@ -5,8 +5,8 @@ import numpy as np
 # Ensure src is in pythonpath
 sys.path.append(os.getcwd())
 
-from src.mecha_class import Mecha
-from src.utils.data_loader import InData
+from src.mecha.mecha_class import Mecha
+from src.mecha.utils.data_loader import InData
 
 def test_build_matrices():
     print("Loading data...")

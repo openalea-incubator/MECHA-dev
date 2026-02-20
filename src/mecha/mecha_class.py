@@ -16,18 +16,21 @@ import argparse # for command-line argument parsing
 from mecha.utils.data_loader import *
 from mecha.utils.network_builder import *
 from mecha.utils.prepare_paraview import prepare_geometrical_properties
+from granap.network_base import AbstractNetwork
 
 class Mecha:
     """Main class of the library, encodes a hydraulic anatomy to solve.
     """
 
-    def __init__(self, all_input: Optional[InData] = None):
+    def __init__(self, all_input: Optional[InData] = None, network: Optional['NetworkBuilder'] = None):
         """Initialize the Mecha class.
 
         Parameters
         ----------
         all_input : InData, optional
             Input data containing all configurations.
+        network : NetworkBuilder, optional
+            Pre-populated NetworkBuilder (e.g. from GRANAP Organ).
         """
         if all_input is not None:
             self.all_input = all_input
@@ -52,10 +55,17 @@ class Mecha:
         self.results = []
         self.standardized_results = []
         self.hydraulic_conductivities = {}
-        self.network = NetworkBuilder()
+
+        if network is None:
+            self.network = NetworkBuilder()
+            if self.all_input is not None:
+                self._build_anatomy()
+        else:
+            self.network = network
+            self.network.populate_from_network()
+            self._initialize_from_network()
 
         if self.all_input is not None:
-            self._build_anatomy()
             self._count_surrounding_cells()
             self._set_hydraulics()
 
@@ -90,6 +100,21 @@ class Mecha:
         if self.general.apo_contagion==2:
             self._initialize_apo_j_zombies0()
         
+    def _initialize_from_network(self):
+        """Initialize Mecha when using an external network (e.g. GRANAP Organ)."""
+        self.position = nx.get_node_attributes(self.network.graph, 'position')
+        self.indice = nx.get_node_attributes(self.network.graph, 'indice')
+
+        # prepare_geometrical_properties requires general & hormones data
+        if self.general is not None and self.hormones is not None:
+            self.geo_props = prepare_geometrical_properties(
+                self.general, self.network, self.hormones,
+                self.position, self.indice
+            )
+        else:
+            self.geo_props = None
+
+    
     def _set_hydraulics(self) -> None:
         """Set up hydraulic properties and solution arrays."""
         # Initialize dimensions
@@ -499,10 +524,25 @@ class Mecha:
     def _count_surrounding_cells(self):
         """
         Count the number of surrounding cells of a given node.
+        Uses geometry data when available, falls back to graph data from GRANAP.
         """
         n_walls = self.network.n_walls
         n_wall_junction = self.network.n_wall_junction
-        passage_cell_ids = self.geometry.passage_cell_ids
+
+        # Get passage / intercellular cell IDs from geometry or graph
+        if self.geometry is not None:
+            passage_cell_ids = np.array(self.geometry.passage_cell_ids)
+            intercellular_ids = np.array(self.geometry.intercellular_ids)
+            xylem_pieces = self.geometry.xylem_pieces
+        else:
+            # GRANAP mode: look in graph for 'passage' and 'intercellular' cell_types
+            passage_cell_ids = np.array(self.network.passage_cells)
+            intercellular_ids = np.array(self.network.intercellular_cells)
+            xylem_pieces = False
+
+        # Ensure we have self.list_ghostwalls
+        if not hasattr(self, 'list_ghostwalls'):
+            self.list_ghostwalls = []
 
         for node, edges in self.network.graph.adjacency():
             i = self.indice[node]
@@ -512,27 +552,28 @@ class Mecha:
             count_interC = 0
             if i < n_walls:
                 for neighboor, eattr in edges.items():
-                    if eattr['path'] == 'membrane':                       
-                        if any(np.array(self.geometry.intercellular_ids) == array((self.indice[neighboor] - n_wall_junction))):
+                    if eattr['path'] == 'membrane':
+                        neighbor_cell_id = self.indice[neighboor] - n_wall_junction
+                        if len(intercellular_ids) > 0 and any(intercellular_ids == neighbor_cell_id):
                             count_interC += 1
-                            if count_interC==2 and i not in self.list_ghostwalls:
+                            if count_interC == 2 and i not in self.list_ghostwalls:
                                 self.list_ghostwalls.append(i)
                         elif self.network.graph.nodes[neighboor]['cgroup'] in [13, 19, 20]:
                             count_xyl += 1
-                            if (count_xyl==2 and self.geometry.xylem_pieces) and i not in self.list_ghostwalls:
+                            if (count_xyl == 2 and xylem_pieces) and i not in self.list_ghostwalls:
                                 self.list_ghostwalls.append(i)
-                        elif any(passage_cell_ids==array((self.indice[neighboor])-self.network.n_wall_junction)):
-                            count_passage+=1
-                        elif self.network.graph.nodes[neighboor]['cgroup']==3:#Endodermis
-                            count_endo+=1
-                        elif self.network.graph.nodes[neighboor]['cgroup']>4:#Pericycle or stele
-                            count_stele_overall+=1
-                        elif self.network.graph.nodes[neighboor]['cgroup']==4:#Cortex
-                            count_cortex+=1
-                        elif self.network.graph.nodes[neighboor]['cgroup']==1:#Exodermis
-                            count_exo+=1
-                        elif self.network.graph.nodes[neighboor]['cgroup']==2:#Epidermis
-                            count_epi+=1
+                        elif len(passage_cell_ids) > 0 and any(passage_cell_ids == neighbor_cell_id):
+                            count_passage += 1
+                        elif self.network.graph.nodes[neighboor]['cgroup'] == 3:  # Endodermis
+                            count_endo += 1
+                        elif self.network.graph.nodes[neighboor]['cgroup'] > 4:  # Pericycle or stele
+                            count_stele_overall += 1
+                        elif self.network.graph.nodes[neighboor]['cgroup'] == 4:  # Cortex
+                            count_cortex += 1
+                        elif self.network.graph.nodes[neighboor]['cgroup'] == 1:  # Exodermis
+                            count_exo += 1
+                        elif self.network.graph.nodes[neighboor]['cgroup'] == 2:  # Epidermis
+                            count_epi += 1
             # Store counts as node attributes
             self.network.graph.nodes[node]['count_endo'] = count_endo
             self.network.graph.nodes[node]['count_stele_overall'] = count_stele_overall
@@ -562,7 +603,7 @@ class Mecha:
         hydraulic = self.hydraulic
         barrier = int(maturity_stages[i_maturity].get("barrier"))
         height = float(maturity_stages[i_maturity].get("height"))
-        x_contact = float(hydraulic.xcontactrange[h])        
+        x_contact = float(hydraulic.xcontactrange[h])  
         
         hyd_props = self.hydraulic_conductivities[h, i_maturity, barrier]
         kw_config = hyd_props['kw']
@@ -627,6 +668,8 @@ class Mecha:
         passage_cell_ID = []
         if hasattr(self.geometry, 'passage_cell_ids'):
              passage_cell_ID = np.array(self.geometry.passage_cell_ids)
+        if hasattr(self.network, 'passage_cells'):
+             passage_cell_ID = np.array(self.network.passage_cells)
 
         ######################
         ##Filling the matrix##
@@ -915,10 +958,13 @@ class Mecha:
                     matrix_W[j][j] -= K
 
         
+        # unpacking geo_props
+        wall_to_cell = self.geo_props['wall_to_cell']
+        junction_wall_cell = self.geo_props['junction_wall_cell']
         
         #Adding matrix components at soil-wall connections
         for wall_id in network.border_walls:
-            if (position[wall_id][0]>=x_contact) or (wall_to_cell[wall_id][0]-network.n_wall_junction in hormones.contact): #Wall (not including junctions) connected to soil
+            if (position[wall_id][0]>=x_contact) or (wall_to_cell[wall_id][0]-network.n_wall_junction in self.hormones.contact): #Wall (not including junctions) connected to soil
                 temp=1.0E-04*(network.wall_lengths[wall_id]/2*height)/(thickness/2)
                 K=kw*temp #Half the wall length is used here as the other half is attributed to the junction (Only for connection to soil)
                 matrix_W[wall_id][wall_id] -= K #Doussan matrix
@@ -930,7 +976,7 @@ class Mecha:
                     
         #Adding matrix components at soil-junction connections
         for network.n_junctions in network.border_junction:
-            if (position[network.n_junctions][0]>=x_contact) or (junction_wall_cell[network.n_junctions-network.n_walls][0]-network.n_wall_junction in hormones.contact) or (junction_wall_cell[network.n_junctions-network.n_walls][1]-network.n_wall_junction in hormones.contact) or (junction_wall_cell[network.n_junctions-network.n_walls][2]-network.n_wall_junction in hormones.contact): #Junction connected to soil
+            if (position[network.n_junctions][0]>=x_contact) or (junction_wall_cell[network.n_junctions-network.n_walls][0]-network.n_wall_junction in self.hormones.contact) or (junction_wall_cell[network.n_junctions-network.n_walls][1]-network.n_wall_junction in self.hormones.contact) or (junction_wall_cell[network.n_junctions-network.n_walls][2]-network.n_wall_junction in self.hormones.contact): #Junction connected to soil
                 temp=1.0E-04*(network.wall_lengths[network.n_junctions]*height)/(thickness/2)
                 K=kw*temp
                 matrix_W[network.n_junctions][network.n_junctions] -= K #Doussan matrix
@@ -1002,12 +1048,14 @@ class Mecha:
 
         self.root_hydraulic_properties = self.hydraulic.conductivities
         self.solve_all_W(h = h)
+        idx = 0
         for i_maturity, maturity_stage in enumerate(self.geometry.maturity_stages):
             _, kx = self.calculate_axial_conductance(i_maturity = i_maturity)
             self.root_hydraulic_properties.append({'barrier': int(maturity_stage['barrier']), 
                             'height': float(maturity_stage['height']),
-                            'kr': float(self.kr_tot[i_maturity]),
+                            'kr': float(self.kr_tot[idx][0]),
                             'Kx': float(kx)})
+            idx += 1 
 
     def elongation_BC(self, i_scenario: int, i_maturity: int) -> np.ndarray:
         """Calculate elongation boundary condition vector."""
