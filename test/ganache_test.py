@@ -15,8 +15,16 @@ root = RootAnatomy()
 _ = root.export_to_adjencymatrix()
 
 # Create a default input for Mecha
-# default_input = InData()
-# root_network = NetworkBuilder(root)
+default_input = InData()
+default_input.geometry.set_maturity_stages([1])
+ganache_network = NetworkBuilder(root)
+ganache_network.populate_from_network()
+mecha_ganache = Mecha(default_input, network=ganache_network)
+
+mecha_ganache.compute_conductivities()
+for i in range(len(mecha_ganache.root_hydraulic_properties)):
+    print(mecha_ganache.root_hydraulic_properties[i])
+# mecha_ganache = Mecha(default_input)
 
 Granar_input = InData(cellset_file="simulations/tutorials/tutorial_data/current_root.xml")
 Granar_input.geometry.set_maturity_stages([1])

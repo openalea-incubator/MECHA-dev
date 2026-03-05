@@ -104,7 +104,7 @@ class NetworkBuilder(AbstractNetwork):
         # Gravity center and geometry
         self.x_grav: float = 0.0
         self.y_grav: float = 0.0
-        self.x_min: float = np.inf
+        self.x_min: float = 0.0
         self.x_max: float = 0.0
         
         # Layer discretization
@@ -189,7 +189,7 @@ class NetworkBuilder(AbstractNetwork):
         if verbose:
             print('  Ranking cells by tissue type and distance from root center...')
         self.rank_cells(geometry)
-        self.compute_cell_surface(geometry)
+        self.compute_cell_surface(geometry.intercellular_ids)
         self.create_layer_discretization()
         self.compute_distance_from_center()
         self.n_nodes = self.graph.number_of_nodes()
@@ -222,6 +222,10 @@ class NetworkBuilder(AbstractNetwork):
         self.n_cells = src.n_cells
         self.n_wall_junction = self.n_walls + self.n_junctions
         self.n_nodes = self.graph.number_of_nodes()
+        self.x_min = src._cells_gdf['x'].min()
+        self.x_max = src._cells_gdf['x'].max()
+        self.y_min = src._cells_gdf['y'].min()
+        self.y_max = src._cells_gdf['y'].max()
 
         # ------------------------------------------------------------------
         # Step 2: Extract wall_lengths from graph node attributes
@@ -394,6 +398,10 @@ class NetworkBuilder(AbstractNetwork):
                 self.passage_cells.append(i)
             elif cell_type_str == 'intercellular':
                 self.intercellular_cells.append(i)
+            elif cell_type_str == 'air space':
+                self.intercellular_cells.append(i)
+
+        self.compute_cell_surface(self.intercellular_cells)
 
         # Step 11: Rank cells from graph
         self._rank_cells_from_graph(position)
@@ -969,7 +977,7 @@ class NetworkBuilder(AbstractNetwork):
             self.x_grav = x_sum / count
             self.y_grav = y_sum / count
     
-    def compute_cell_surface(self, geometry: GeometryData):
+    def compute_cell_surface(self, intercellular_ids: List[int]):
         """Calculate cell surfaces at tissue interfaces"""
         indice = nx.get_node_attributes(self.graph,'indice') #Node indices (walls, junctions and cells)
         
@@ -1001,7 +1009,7 @@ class NetworkBuilder(AbstractNetwork):
             # Handle outer cortex, cortex, and endodermis (not intercellular)
             if node_group not in [self.outercortex_connec_rank, 3, 4]:
                 continue
-            if i - (self.n_walls + self.n_junctions) in geometry.intercellular_ids:
+            if i - (self.n_walls + self.n_junctions) in intercellular_ids:
                 continue
                 
             for neighboor, eattr in edges.items():
@@ -1011,7 +1019,7 @@ class NetworkBuilder(AbstractNetwork):
                 j = indice[neighboor]
                 j_group = self.graph.nodes[j]['cgroup']
                 length = eattr['length']
-                is_not_intercellular = j - (self.n_walls + self.n_junctions) not in geometry.intercellular_ids
+                is_not_intercellular = j - (self.n_walls + self.n_junctions) not in intercellular_ids
                 
                 # Outer cortex - cortex
                 if {node_group, j_group} == {self.outercortex_connec_rank, 4}:
