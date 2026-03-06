@@ -504,7 +504,7 @@ class GeometryData:
     plant_name : str, optional
         Name of the plant (default is "").
     im_scale : float, optional
-        Image scale factor (default is 1.0).
+        Image scale factor (default is 1000.0).
     maturity_elems : List[Dict[str, int]], optional
         List of raw maturity elements from the XML file (default is an empty list).
     maturity_stages : List[Dict[str, int]], optional
@@ -1306,8 +1306,6 @@ def parse_cellset(cellset_file: str) -> Dict[str, Any]:
     ----------
     cellset_file : str
         Path to the cellset XML file
-    im_scale : float
-        Image scale factor for coordinate conversion
             
     Returns
     -------

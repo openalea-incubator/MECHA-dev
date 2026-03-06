@@ -216,16 +216,26 @@ class NetworkBuilder(AbstractNetwork):
         # ------------------------------------------------------------------
         # Step 1: Copy graph & counts
         # ------------------------------------------------------------------
-        self.graph = src.graph
+        self.graph = src.graph.copy()
+        for _, data in self.graph.nodes(data=True):
+            if 'position' in data:
+                data['position'] = (data['position'][0] * 1000, data['position'][1] * 1000)
+            if 'length' in data:
+                data['length'] = data['length'] * 1000
+            if 'area' in data:
+                data['area'] = data['area'] * 1000**2
+            if 'dist' in data:
+                data['dist'] = data['dist'] * 1000
+                
         self.n_walls = src.n_walls
         self.n_junctions = src.n_junctions
         self.n_cells = src.n_cells
         self.n_wall_junction = self.n_walls + self.n_junctions
         self.n_nodes = self.graph.number_of_nodes()
-        self.x_min = src._cells_gdf['x'].min()
-        self.x_max = src._cells_gdf['x'].max()
-        self.y_min = src._cells_gdf['y'].min()
-        self.y_max = src._cells_gdf['y'].max()
+        self.x_min = src._cells_gdf['x'].min()*1000
+        self.x_max = src._cells_gdf['x'].max()*1000
+        self.y_min = src._cells_gdf['y'].min()*1000
+        self.y_max = src._cells_gdf['y'].max()*1000
 
         # ------------------------------------------------------------------
         # Step 2: Extract wall_lengths from graph node attributes
@@ -282,6 +292,7 @@ class NetworkBuilder(AbstractNetwork):
         # Step 5: Compute cell_areas, cell_perimeters from source or graph
         self.cell_areas = np.zeros(self.n_cells)
         self.cell_perimeters = np.zeros(self.n_cells)
+        self.cell_types = [''] * self.n_cells
 
         # Try to get areas from the source_network's all_cells if available
         if hasattr(src, 'all_cells') and hasattr(src.all_cells, 'cells'):
@@ -289,9 +300,11 @@ class NetworkBuilder(AbstractNetwork):
             for idx, cell in enumerate(cells_list):
                 if idx < self.n_cells:
                     if hasattr(cell, 'area') and cell.area is not None:
-                        self.cell_areas[idx] = cell.area
+                        self.cell_areas[idx] = cell.area*1000**2
                     if hasattr(cell, 'polygon') and cell.polygon is not None:
-                        self.cell_perimeters[idx] = cell.polygon.length
+                        self.cell_perimeters[idx] = cell.polygon.length*1000
+                    if hasattr(cell, 'type') and cell.type is not None:
+                        self.cell_types[idx] = cell.type
 
         # Fallback: compute from membrane edges if areas are still zero
         if np.sum(self.cell_areas) == 0:
@@ -310,6 +323,7 @@ class NetworkBuilder(AbstractNetwork):
 
         # Step 6: Compute distance_wall_cell from graph positions
         position = nx.get_node_attributes(self.graph, 'position')
+        # position = {k: (v[0]/1000, v[1]/1000) for k, v in position_raw.items()}
         self.distance_wall_cell = np.zeros((self.n_walls, 1))
 
         for i in range(self.n_walls):

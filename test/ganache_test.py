@@ -14,28 +14,46 @@ from mecha.utils.visu import visualize
 root = RootAnatomy()
 _ = root.export_to_adjencymatrix()
 
-# Create a default input for Mecha
+root.plot_cells()
+root.plot_network()
+
+# Create a default input for Mecha use with the GRANAP network
 default_input = InData()
 default_input.geometry.set_maturity_stages([1])
 ganache_network = NetworkBuilder(root)
 ganache_network.populate_from_network()
 mecha_ganache = Mecha(default_input, network=ganache_network)
 
-mecha_ganache.compute_conductivities()
-for i in range(len(mecha_ganache.root_hydraulic_properties)):
-    print(mecha_ganache.root_hydraulic_properties[i])
-# mecha_ganache = Mecha(default_input)
 
+# Create a default input for Mecha use with cellset data
 Granar_input = InData(cellset_file="simulations/tutorials/tutorial_data/current_root.xml")
 Granar_input.geometry.set_maturity_stages([1])
 
 # Create a Mecha instance with the default input
-
 mecha = Mecha(Granar_input)
 
-# Test the connection
-# visualize(mecha.network, "network")
-
+print("mecha classic")
 mecha.compute_conductivities()
 for i in range(len(mecha.root_hydraulic_properties)):
     print(mecha.root_hydraulic_properties[i])
+
+print("mecha ganache")
+mecha_ganache.compute_conductivities()
+for i in range(len(mecha_ganache.root_hydraulic_properties)):
+    print(mecha_ganache.root_hydraulic_properties[i])
+
+print("Perimeter")
+print("ganache ", mecha_ganache.network.perimeter)
+print("mecha classic ", mecha.network.perimeter)
+
+import matplotlib.pyplot as plt
+
+# Test the connection visualization
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10), sharex=True, sharey=True)
+
+visualize(mecha.network, "network", ax=ax1, title="Root network")
+visualize(mecha_ganache.network, "network", ax=ax2, title="Ganache network")
+
+plt.tight_layout()
+plt.show()
+
