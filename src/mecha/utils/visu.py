@@ -222,7 +222,11 @@ def _visualize_network(
         edge_colors.append(edge_color_map.get(edge_type, 'purple'))
 
     # Draw the network
-    fig, ax = plt.subplots(figsize=kwargs.get('figsize', (10, 10)))
+    ax = kwargs.get('ax')
+    show_plot = False
+    if ax is None:
+        fig, ax = plt.subplots(figsize=kwargs.get('figsize', (10, 10)))
+        show_plot = True
 
     nx.draw(
         graph,
@@ -236,9 +240,12 @@ def _visualize_network(
         alpha=kwargs.get('alpha', 0.7)
     )
 
+    ax.set_aspect("equal", "box")
     ax.set_title(kwargs.get('title', 'Network Visualization'))
-    plt.tight_layout()
-    plt.show()
+    
+    if show_plot:
+        plt.tight_layout()
+        plt.show()
 
 
 def plot_water_potential_map(root_gdf: gpd.GeoDataFrame, title: str = "Water Potential"):

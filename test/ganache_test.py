@@ -56,3 +56,4 @@ visualize(mecha_ganache.network, "network", ax=ax2, title="Ganache network")
 
 plt.tight_layout()
 plt.show()
+

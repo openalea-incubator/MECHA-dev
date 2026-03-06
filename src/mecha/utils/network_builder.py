@@ -104,7 +104,7 @@ class NetworkBuilder(AbstractNetwork):
         # Gravity center and geometry
         self.x_grav: float = 0.0
         self.y_grav: float = 0.0
-        self.x_min: float = np.inf
+        self.x_min: float = 0.0
         self.x_max: float = 0.0
         
         # Layer discretization
@@ -189,7 +189,7 @@ class NetworkBuilder(AbstractNetwork):
         if verbose:
             print('  Ranking cells by tissue type and distance from root center...')
         self.rank_cells(geometry)
-        self.compute_cell_surface(geometry)
+        self.compute_cell_surface(geometry.intercellular_ids)
         self.create_layer_discretization()
         self.compute_distance_from_center()
         self.n_nodes = self.graph.number_of_nodes()
@@ -216,12 +216,26 @@ class NetworkBuilder(AbstractNetwork):
         # ------------------------------------------------------------------
         # Step 1: Copy graph & counts
         # ------------------------------------------------------------------
-        self.graph = src.graph
+        self.graph = src.graph.copy()
+        for _, data in self.graph.nodes(data=True):
+            if 'position' in data:
+                data['position'] = (data['position'][0] * 1000, data['position'][1] * 1000)
+            if 'length' in data:
+                data['length'] = data['length'] * 1000
+            if 'area' in data:
+                data['area'] = data['area'] * 1000**2
+            if 'dist' in data:
+                data['dist'] = data['dist'] * 1000
+                
         self.n_walls = src.n_walls
         self.n_junctions = src.n_junctions
         self.n_cells = src.n_cells
         self.n_wall_junction = self.n_walls + self.n_junctions
         self.n_nodes = self.graph.number_of_nodes()
+        self.x_min = src._cells_gdf['x'].min()*1000
+        self.x_max = src._cells_gdf['x'].max()*1000
+        self.y_min = src._cells_gdf['y'].min()*1000
+        self.y_max = src._cells_gdf['y'].max()*1000
 
         # ------------------------------------------------------------------
         # Step 2: Extract wall_lengths from graph node attributes
@@ -278,6 +292,7 @@ class NetworkBuilder(AbstractNetwork):
         # Step 5: Compute cell_areas, cell_perimeters from source or graph
         self.cell_areas = np.zeros(self.n_cells)
         self.cell_perimeters = np.zeros(self.n_cells)
+        self.cell_types = [''] * self.n_cells
 
         # Try to get areas from the source_network's all_cells if available
         if hasattr(src, 'all_cells') and hasattr(src.all_cells, 'cells'):
@@ -285,9 +300,11 @@ class NetworkBuilder(AbstractNetwork):
             for idx, cell in enumerate(cells_list):
                 if idx < self.n_cells:
                     if hasattr(cell, 'area') and cell.area is not None:
-                        self.cell_areas[idx] = cell.area
+                        self.cell_areas[idx] = cell.area*1000**2
                     if hasattr(cell, 'polygon') and cell.polygon is not None:
-                        self.cell_perimeters[idx] = cell.polygon.length
+                        self.cell_perimeters[idx] = cell.polygon.length*1000
+                    if hasattr(cell, 'type') and cell.type is not None:
+                        self.cell_types[idx] = cell.type
 
         # Fallback: compute from membrane edges if areas are still zero
         if np.sum(self.cell_areas) == 0:
@@ -306,6 +323,7 @@ class NetworkBuilder(AbstractNetwork):
 
         # Step 6: Compute distance_wall_cell from graph positions
         position = nx.get_node_attributes(self.graph, 'position')
+        # position = {k: (v[0]/1000, v[1]/1000) for k, v in position_raw.items()}
         self.distance_wall_cell = np.zeros((self.n_walls, 1))
 
         for i in range(self.n_walls):
@@ -394,6 +412,10 @@ class NetworkBuilder(AbstractNetwork):
                 self.passage_cells.append(i)
             elif cell_type_str == 'intercellular':
                 self.intercellular_cells.append(i)
+            elif cell_type_str == 'air space':
+                self.intercellular_cells.append(i)
+
+        self.compute_cell_surface(self.intercellular_cells)
 
         # Step 11: Rank cells from graph
         self._rank_cells_from_graph(position)
@@ -969,7 +991,7 @@ class NetworkBuilder(AbstractNetwork):
             self.x_grav = x_sum / count
             self.y_grav = y_sum / count
     
-    def compute_cell_surface(self, geometry: GeometryData):
+    def compute_cell_surface(self, intercellular_ids: List[int]):
         """Calculate cell surfaces at tissue interfaces"""
         indice = nx.get_node_attributes(self.graph,'indice') #Node indices (walls, junctions and cells)
         
@@ -1001,7 +1023,7 @@ class NetworkBuilder(AbstractNetwork):
             # Handle outer cortex, cortex, and endodermis (not intercellular)
             if node_group not in [self.outercortex_connec_rank, 3, 4]:
                 continue
-            if i - (self.n_walls + self.n_junctions) in geometry.intercellular_ids:
+            if i - (self.n_walls + self.n_junctions) in intercellular_ids:
                 continue
                 
             for neighboor, eattr in edges.items():
@@ -1011,7 +1033,7 @@ class NetworkBuilder(AbstractNetwork):
                 j = indice[neighboor]
                 j_group = self.graph.nodes[j]['cgroup']
                 length = eattr['length']
-                is_not_intercellular = j - (self.n_walls + self.n_junctions) not in geometry.intercellular_ids
+                is_not_intercellular = j - (self.n_walls + self.n_junctions) not in intercellular_ids
                 
                 # Outer cortex - cortex
                 if {node_group, j_group} == {self.outercortex_connec_rank, 4}:
