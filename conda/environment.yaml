@@ -1,15 +1,21 @@
-name: mecha_env
+name: mecha
 channels:
   - conda-forge
+  - openalea3
 channel_priority: strict
 dependencies:
   - python
   - pip
+  - pytest
   - numpy
   - scipy
+  - ipykernel
   - networkx
   - lxml
   - geopandas
   - matplotlib # bundles pylab
+  - shapely
+  - opencv
+  - openalea.mtg
   - pip:
     - "-e ..[doc]"
