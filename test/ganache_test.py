@@ -9,51 +9,61 @@ from mecha.utils.prepare_paraview import prepare_geometrical_properties
 from granap.network_base import AbstractNetwork
 from granap.root_class import RootAnatomy
 from mecha.utils.visu import visualize
-
-# Create a Mecha instance with a GRANAP network
-root = RootAnatomy()
-_ = root.export_to_adjencymatrix()
-
-root.plot_cells()
-root.plot_network()
-
-# Create a default input for Mecha use with the GRANAP network
-default_input = InData()
-default_input.geometry.set_maturity_stages([1])
-ganache_network = NetworkBuilder(root)
-ganache_network.populate_from_network()
-mecha_ganache = Mecha(default_input, network=ganache_network)
+import math
 
 
-# Create a default input for Mecha use with cellset data
-Granar_input = InData(cellset_file="simulations/tutorials/tutorial_data/current_root.xml")
-Granar_input.geometry.set_maturity_stages([1])
+def test_compare_granar_ganache():
+    # Create a Mecha instance with a GRANAP network
+    root = RootAnatomy()
+    _ = root.export_to_adjencymatrix()
 
-# Create a Mecha instance with the default input
-mecha = Mecha(Granar_input)
+    root.plot_cells()
+    root.plot_network()
 
-print("mecha classic")
-mecha.compute_conductivities()
-for i in range(len(mecha.root_hydraulic_properties)):
-    print(mecha.root_hydraulic_properties[i])
+    # Create a default input for Mecha use with the GRANAP network
+    default_input = InData()
+    default_input.geometry.set_maturity_stages([1])
+    ganache_network = NetworkBuilder(root)
+    ganache_network.populate_from_network()
+    mecha_ganache = Mecha(default_input, network=ganache_network)
 
-print("mecha ganache")
-mecha_ganache.compute_conductivities()
-for i in range(len(mecha_ganache.root_hydraulic_properties)):
-    print(mecha_ganache.root_hydraulic_properties[i])
+    # Create a default input for Mecha use with cellset data
+    Granar_input = InData(cellset_file="inputs/current_root.xml")
+    Granar_input.geometry.set_maturity_stages([1])
 
-print("Perimeter")
-print("ganache ", mecha_ganache.network.perimeter)
-print("mecha classic ", mecha.network.perimeter)
+    # Create a Mecha instance with the default input
+    mecha = Mecha(Granar_input)
 
-import matplotlib.pyplot as plt
+    print("mecha classic")
+    mecha.compute_conductivities()
+    print(mecha.root_hydraulic_properties)
+    for i in range(len(mecha.root_hydraulic_properties)):
+        print(mecha.root_hydraulic_properties[i])
 
-# Test the connection visualization
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10), sharex=True, sharey=True)
+    print("mecha ganache")
+    mecha_ganache.compute_conductivities()
+    print(mecha_ganache.root_hydraulic_properties)
+    for i in range(len(mecha_ganache.root_hydraulic_properties)):
+        print(mecha_ganache.root_hydraulic_properties[i])
 
-visualize(mecha.network, "network", ax=ax1, title="Root network")
-visualize(mecha_ganache.network, "network", ax=ax2, title="Ganache network")
+    perim_ganache = mecha_ganache.network.perimeter
+    perim_mecha = mecha.network.perimeter
+    assert perim_ganache != 0 and perim_mecha != 0, "Zero has no log10 order of magnitude"
+    assert math.floor(math.log10(abs(perim_ganache))) == math.floor(math.log10(abs(perim_mecha)))
 
-plt.tight_layout()
-plt.show()
+    plotting = False
+    if plotting:
+        import matplotlib.pyplot as plt
 
+        # Test the connection visualization
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10), sharex=True, sharey=True)
+
+        visualize(mecha.network, "network", ax=ax1, title="Root network")
+        visualize(mecha_ganache.network, "network", ax=ax2, title="Ganache network")
+
+        plt.tight_layout()
+        plt.show()
+
+
+if __name__ == "__main__":
+    test_compare_granar_ganache()
