@@ -3112,7 +3112,7 @@ for h in range(Nhydraulics):
                         #matrix_C2[Ntot:,:-Ntot] += spdiags(DF_axial[:-Ntot].T, 0, temp, temp).toarray() #Adding connections across layers
                         ##This is expected not to cause such errors
                         matrix_C2[:Ntot,:Ntot] -= spdiags(DF_axial[:Ntot].T, 0, Ntot, Ntot).toarray() #A[1, 100:200] = A[0, :100]
-                        matrix_C2[:Ntot,Ntot:2*Ntot] = spdiags(DF_axial[:Ntot].T, 0, Ntot, Ntot).toarray() #Adding connections across layers
+                        matrix_C2[:Ntot,Ntot:2*Ntot] = spdiags(DF_axial[:Ntot].T, 0, Ntot, Ntot).toarray() # @note Adding connections across layers
                         #Central layers
                         for istack in range(1,AxialLayers-1):
                             matrix_C2[istack*Ntot:(istack+1)*Ntot,istack*Ntot:(istack+1)*Ntot] -= spdiags(DF_axial[(istack-1)*Ntot:istack*Ntot].T, 0, Ntot, Ntot).toarray()
@@ -7466,7 +7466,7 @@ for h in range(Nhydraulics):
                 for Faxial in Faxial_TM_list:
                     for iLayer in range(AxialLayers-1):
                         Q=Faxial[iLayer] #Positive when pressure i (distal) > pressure i+Ntot (proximal)
-                        if Q>0: #Flow from i upwards
+                        if Q>0: # @note Flow from i upwards
                             if sparseM==1:
                                 if D2O1==1:#Solute that moves across membranes like water 
                                     matrix_C2[iLayer*Ntot+i,iLayer*Ntot+i] += Q
