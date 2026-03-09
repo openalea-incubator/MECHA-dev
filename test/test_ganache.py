@@ -34,7 +34,6 @@ def test_compare_granar_ganache():
     # Create a Mecha instance with the default input
     mecha = Mecha(Granar_input)
 
-    print("mecha classic")
     mecha.compute_conductivities()
     for i in range(len(mecha.root_hydraulic_properties)):
         print(mecha.root_hydraulic_properties[i])
@@ -44,10 +43,13 @@ def test_compare_granar_ganache():
     for i in range(len(mecha_ganache.root_hydraulic_properties)):
         print(mecha_ganache.root_hydraulic_properties[i])
 
-    perim_ganache = mecha_ganache.network.perimeter
-    perim_mecha = mecha.network.perimeter
-    assert perim_ganache != 0 and perim_mecha != 0, "Zero has no log10 order of magnitude"
-    assert math.floor(math.log10(abs(perim_ganache))) == math.floor(math.log10(abs(perim_mecha)))
+    for i in range(len(mecha.root_hydraulic_properties)):
+        mecha_props = mecha.root_hydraulic_properties[i]
+        for j in range(len(mecha_ganache.root_hydraulic_properties)):
+            ganache_props = mecha_ganache.root_hydraulic_properties[j]
+            if mecha_props['barrier'] == ganache_props['barrier']:
+                assert_close_range(ganache_props['kr'], mecha_props['kr'], "different kr")
+                assert_close_range(ganache_props['Kx'], mecha_props['Kx'], "different Kx")
 
     plotting = True
     if plotting:
@@ -61,6 +63,10 @@ def test_compare_granar_ganache():
 
         plt.tight_layout()
         plt.show()
+
+def assert_close_range(a, b, msg: str = ""):
+    assert a != 0 and b != 0, "Zero has no log10 order of magnitude"
+    assert math.floor(math.log10(abs(a))) == math.floor(math.log10(abs(b))), f'{msg}: {a} vs. {b}'
 
 
 if __name__ == "__main__":
