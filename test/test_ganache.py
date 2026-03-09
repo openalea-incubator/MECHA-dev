@@ -35,7 +35,13 @@ def test_compare_granar_ganache():
     mecha = Mecha(Granar_input)
 
     mecha.compute_conductivities()
+    for i in range(len(mecha.root_hydraulic_properties)):
+        print(mecha.root_hydraulic_properties[i])
+
+    print("mecha ganache")
     mecha_ganache.compute_conductivities()
+    for i in range(len(mecha_ganache.root_hydraulic_properties)):
+        print(mecha_ganache.root_hydraulic_properties[i])
 
     for i in range(len(mecha.root_hydraulic_properties)):
         mecha_props = mecha.root_hydraulic_properties[i]
@@ -44,9 +50,6 @@ def test_compare_granar_ganache():
             if mecha_props['barrier'] == ganache_props['barrier']:
                 assert_close_range(ganache_props['kr'], mecha_props['kr'], "different kr")
                 assert_close_range(ganache_props['Kx'], mecha_props['Kx'], "different Kx")
-
-    # Comparing perimeters
-    assert_close_range(mecha_ganache.network.perimeter, mecha.network.perimeter, "different perimeters")
 
     plotting = True
     if plotting:

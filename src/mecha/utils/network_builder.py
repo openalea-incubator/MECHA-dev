@@ -115,6 +115,10 @@ class NetworkBuilder(AbstractNetwork):
         self.distance_from_center: Optional[np.ndarray] = None
         self.row_outer_cortex: Optional[np.ndarray] = None
 
+        # Relative positions for walls
+        self.r_rel: Optional[np.ndarray] = None
+        self.x_rel: Optional[np.ndarray] = None
+
         # Rank 
         self.stele_connec_rank: int = 0
         self.outercortex_connec_rank: int = 0
@@ -1556,4 +1560,89 @@ class NetworkBuilder(AbstractNetwork):
         else:
             self.phloem_area_ratio = []
 
+    def compute_relative_positions(self):
+        """
+        Compute radial (r_rel) and horizontal (x_rel) positions for each wall.
+        r_rel: negative for stelar side, positive for cortical side.
+        x_rel: relative bound based on overall x_min and x_max.
+        """
+        self.r_rel = np.full((self.n_walls, 1), np.nan)
+        self.x_rel = np.full((self.n_wall_junction + self.n_cells, 1), np.nan)
         
+        position = nx.get_node_attributes(self.graph, 'position')
+        
+        # Build mapping of wall to valid connected cells based on 'membrane' path
+        wall_to_cell = [[] for _ in range(self.n_walls)]
+        for u, v, data in self.graph.edges(data=True):
+            if data.get('path') == 'membrane':
+                if u < self.n_walls and v >= self.n_wall_junction:
+                    wall_to_cell[u].append(v)
+                elif v < self.n_walls and u >= self.n_wall_junction:
+                    wall_to_cell[v].append(u)
+
+        def get_row_from_cell_id(cid):
+            if cid - self.n_wall_junction >= self.n_cells:
+                return np.nan
+            cr = self.cell_ranks[int(cid - self.n_wall_junction)]
+            row = self.rank_to_row[int(cr.item() if hasattr(cr, "item") else cr)]
+            return row.item() if hasattr(row, "item") else row
+
+        def radial_position(row1, row2, cid2_exists):
+            def dc_val(idx):
+                v = self.distance_from_center[int(idx)]
+                return v[0] if hasattr(v, "__len__") and len(v) == 1 else v
+
+            d_endodermis = self.layer_dist[3]
+            d_epidermis  = self.layer_dist[2]
+            xylem80 = self.xylem_80_percentile_distance
+
+            # Handle exception when row1 is nan
+            if pd.isna(row1) if 'pd' in globals() else np.isnan(row1):
+                return np.nan
+
+            if row2 is not None and not np.isnan(row2) and row1 <= self.rank_to_row[3] and row2 <= self.rank_to_row[3]:
+                # Stelar side, two cells
+                rad_pos = -((dc_val(row1) + dc_val(row2)) / 2.0 - xylem80) / (d_endodermis - xylem80)
+                return max(min(rad_pos, -0.00001), -1.0)
+            elif (row2 is None or np.isnan(row2)) and row1 <= self.rank_to_row[3]:
+                # Stelar side, single cell
+                rad_pos = -(dc_val(row1) - xylem80) / (d_endodermis - xylem80)
+                return max(min(rad_pos, -0.00001), -1.0)
+            elif row2 is not None and not np.isnan(row2):
+                # Cortical side, two cells
+                rad_pos = (d_epidermis - (dc_val(row1) + dc_val(row2)) / 2.0) / (d_epidermis - d_endodermis)
+                return min(max(rad_pos, 0.00001), 1.0)
+            else:
+                # Cortical side, single cell
+                rad_pos = (d_epidermis - dc_val(row1)) / (d_epidermis - d_endodermis)
+                return min(max(rad_pos, 0.00001), 1.0)
+
+        for wall_id in range(self.n_walls):
+            cells = wall_to_cell[wall_id]
+            if len(cells) == 0:
+                self.r_rel[wall_id] = np.nan
+            else:
+                cid1 = cells[0]
+                cid2 = cells[1] if len(cells) > 1 else None
+                row1 = get_row_from_cell_id(cid1)
+                row2 = get_row_from_cell_id(cid2) if cid2 is not None else np.nan
+                
+                self.r_rel[wall_id] = radial_position(row1, row2, cid2 is not None)
+                
+            if wall_id in position:
+                self.x_rel[wall_id] = (position[wall_id][0] - self.x_min) / (self.x_max - self.x_min) if (self.x_max - self.x_min) > 0 else 0.0
+
+    def get_relative_positions(self) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Compute and return r_rel (radial position to endodermis) and 
+        x_rel (relative position to x bounding) for all walls.
+        
+        Returns
+        -------
+        Tuple[np.ndarray, np.ndarray]
+            - r_rel: Radial position mapping of the walls related to the endodermis.
+            - x_rel: Relative mapping of the wall nodes along the x bounding box.
+        """
+        if getattr(self, 'r_rel', None) is None or getattr(self, 'x_rel', None) is None:
+            self.compute_relative_positions()
+        return self.r_rel, self.x_rel

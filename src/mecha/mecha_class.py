@@ -96,7 +96,7 @@ class Mecha:
         self.network.build_network(self.general, self.geometry, self.cellset_data)
         self.position=nx.get_node_attributes(self.network.graph,'position') #Updates nodes XY positions (micrometers)
         self.indice=nx.get_node_attributes(self.network.graph,'indice') #Node indices (walls, junctions and cells)
-        self.geo_props = prepare_geometrical_properties(self.general, self.network, self.hormones, self.position, self.indice)
+        self.geo_props = prepare_geometrical_properties(self.general, self.network, self.position, self.indice)
         if self.general.apo_contagion==2:
             self._initialize_apo_j_zombies0()
         
@@ -105,10 +105,10 @@ class Mecha:
         self.position = nx.get_node_attributes(self.network.graph, 'position')
         self.indice = nx.get_node_attributes(self.network.graph, 'indice')
 
-        # prepare_geometrical_properties requires general & hormones data
+        # prepare_geometrical_properties requires general
         if self.general is not None and self.hormones is not None:
             self.geo_props = prepare_geometrical_properties(
-                self.general, self.network, self.hormones,
+                self.general, self.network,
                 self.position, self.indice
             )
         else:
