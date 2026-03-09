@@ -3,7 +3,7 @@ from numpy import empty, zeros, cos, sin, arctan, sign, inf, isnan, array
 
 # Never tried, was vibe coding this part
 
-def prepare_geometrical_properties(general, network, hormones, position, indice):
+def prepare_geometrical_properties(general, network, position, indice):
     """
     Prepare geometrical properties arrays for MECHA simulation.
 
@@ -13,8 +13,6 @@ def prepare_geometrical_properties(general, network, hormones, position, indice)
         General configuration data.
     network : NetworkBuilder
         The network structure.
-    hormones : HormonesData
-        Hormonal configuration data.
     position : dict
         Node positions (XY coordinates).
     indice : dict
@@ -34,6 +32,8 @@ def prepare_geometrical_properties(general, network, hormones, position, indice)
     border_link        = network.border_link
     x_min, x_max       = network.x_min, network.x_max
     xylem80            = network.xylem_80_percentile_distance
+    r_rel              = network.r_rel
+    x_rel              = network.x_rel
 
     use_thick = (
         general.paraview == 1 or general.par_track == 1 or
@@ -52,8 +52,6 @@ def prepare_geometrical_properties(general, network, hormones, position, indice)
     n_junction_wall_cell = zeros((network.n_wall_junction - network.n_walls, 1))
     wall_to_junction = nan_array((network.n_walls, 2))
     n_wall_to_junction = zeros((network.n_walls, 1))
-    r_rel = nan_array((network.n_walls, 1))
-    x_rel = nan_array((network.n_wall_junction + network.n_cells, 1))
 
     # Diffusion wall lengths (cm)
     L_diff = (
@@ -109,46 +107,6 @@ def prepare_geometrical_properties(general, network, hormones, position, indice)
             abs(float((layer_dist[3][0] - layer_dist[2][0]) * 1.0e-4)),
             abs(float((layer_dist[3][0] - xylem80) * 1.0e-4)),
         )
-
-    # -------------------------------------------------------------------------
-    # Helper: radial position and row retrieval
-    # -------------------------------------------------------------------------
-    def get_row_from_cell_id(cid):
-        """Return row index for a cell id (graph node id)."""
-        cr = cell_ranks[int(cid - network.n_wall_junction)]
-        # rank_to_row might be 1D or 2D; use .item() defensively
-        row = rank_to_row[int(cr.item())]
-        return row.item() if hasattr(row, "item") else row
-
-    def radial_position(row1, row2, cid2_exists):
-        """
-        Compute radial position r_rel for a wall given rows of up to two cells.
-        Negative: stelar side; positive: cortical side.
-        """
-        # convenience (again, distance_from_c might be 1D or Nx1)
-        def dc_val(idx):
-            v = distance_from_c[int(idx)]
-            return v[0] if hasattr(v, "__len__") and len(v) == 1 else v
-
-        d_endodermis = layer_dist[3]
-        d_epidermis  = layer_dist[2]
-
-        if row2 is not None and not isnan(row2) and row1 <= rank_to_row[3] and row2 <= rank_to_row[3]:
-            # Stelar side, two cells
-            rad_pos = -((dc_val(row1) + dc_val(row2)) / 2.0 - xylem80) / (d_endodermis - xylem80)
-            return max(min(rad_pos, -0.00001), -1.0)
-        elif (row2 is None or isnan(row2)) and row1 <= rank_to_row[3]:
-            # Stelar side, single cell
-            rad_pos = -(dc_val(row1) - xylem80) / (d_endodermis - xylem80)
-            return max(min(rad_pos, -0.00001), -1.0)
-        elif row2 is not None and not isnan(row2):
-            # Cortical side, two cells
-            rad_pos = (d_epidermis - (dc_val(row1) + dc_val(row2)) / 2.0) / (d_epidermis - d_endodermis)
-            return min(max(rad_pos, 0.00001), 1.0)
-        else:
-            # Cortical side, single cell
-            rad_pos = (d_epidermis - dc_val(row1)) / (d_epidermis - d_endodermis)
-            return min(max(rad_pos, 0.00001), 1.0)
 
     # -------------------------------------------------------------------------
     # FIRST PASS on adjacency: build wall_to_cell, wall_to_junction, r_rel, x_rel,
@@ -249,16 +207,6 @@ def prepare_geometrical_properties(general, network, hormones, position, indice)
                 idx = int(n_wall_to_junction[wall_id][0])
                 wall_to_junction[wall_id][idx] = indice[neighboor]
                 n_wall_to_junction[wall_id] += 1
-
-        # After all neighbors are processed: compute r_rel and x_rel for wall_id
-        cid1 = wall_to_cell[wall_id][0]
-        cid2 = wall_to_cell[wall_id][1]
-
-        row1 = get_row_from_cell_id(cid1)
-        row2 = get_row_from_cell_id(cid2) if not isnan(cid2) else None
-
-        r_rel[wall_id] = radial_position(row1, row2, cid2_exists=(cid2 is not None))
-        x_rel[wall_id] = (position[wall_id][0] - x_min) / (x_max - x_min)
 
     # -------------------------------------------------------------------------
     # SECOND PASS on adjacency: build junction_wall_cell (+ thick junctions)

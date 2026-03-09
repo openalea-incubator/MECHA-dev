@@ -17,8 +17,8 @@ def test_compare_granar_ganache():
     root = RootAnatomy()
     _ = root.export_to_adjencymatrix()
 
-    root.plot_cells()
-    root.plot_network()
+    # root.plot_cells()
+    # root.plot_network()
 
     # Create a default input for Mecha use with the GRANAP network
     default_input = InData()
@@ -36,13 +36,11 @@ def test_compare_granar_ganache():
 
     print("mecha classic")
     mecha.compute_conductivities()
-    print(mecha.root_hydraulic_properties)
     for i in range(len(mecha.root_hydraulic_properties)):
         print(mecha.root_hydraulic_properties[i])
 
     print("mecha ganache")
     mecha_ganache.compute_conductivities()
-    print(mecha_ganache.root_hydraulic_properties)
     for i in range(len(mecha_ganache.root_hydraulic_properties)):
         print(mecha_ganache.root_hydraulic_properties[i])
 
@@ -51,7 +49,7 @@ def test_compare_granar_ganache():
     assert perim_ganache != 0 and perim_mecha != 0, "Zero has no log10 order of magnitude"
     assert math.floor(math.log10(abs(perim_ganache))) == math.floor(math.log10(abs(perim_mecha)))
 
-    plotting = False
+    plotting = True
     if plotting:
         import matplotlib.pyplot as plt
 
