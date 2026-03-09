@@ -17,8 +17,8 @@ def test_compare_granar_ganache():
     root = RootAnatomy()
     _ = root.export_to_adjencymatrix()
 
-    root.plot_cells()
-    root.plot_network()
+    # root.plot_cells()
+    # root.plot_network()
 
     # Create a default input for Mecha use with the GRANAP network
     default_input = InData()
@@ -48,7 +48,7 @@ def test_compare_granar_ganache():
     # Comparing perimeters
     assert_close_range(mecha_ganache.network.perimeter, mecha.network.perimeter, "different perimeters")
 
-    plotting = False
+    plotting = True
     if plotting:
         import matplotlib.pyplot as plt
 
