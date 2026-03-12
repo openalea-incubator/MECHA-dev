@@ -230,6 +230,12 @@ class NetworkBuilder(AbstractNetwork):
                 data['area'] = data['area'] * 1000**2
             if 'dist' in data:
                 data['dist'] = data['dist'] * 1000
+
+        for u, v, data in self.graph.edges(data=True):
+            if 'length' in data:
+                data['length'] = data['length'] * 1000
+            if 'dist' in data:
+                data['dist'] = data['dist'] * 1000
                 
         self.n_walls = src.n_walls
         self.n_junctions = src.n_junctions
@@ -261,14 +267,20 @@ class NetworkBuilder(AbstractNetwork):
                 'endodermis': 3,
                 'passage': 3,
                 'cortex': 4,
+                'mesophyll':4,
                 'stele': 5,
                 'pith': 5,
                 'parenchyma': 5,
                 'vascular_parenchyma': 5,
-                'pericycle': 16,
-                'companion': 12,
-                'xylem': 13,
                 'phloem': 11,
+                'companion': 12,               
+                'cambium':12,
+                'guard cell': 12,
+                'Strasburger cell': 12,
+                'xylem': 13,
+                'protoxylem': 13,
+                'metaxylem': 13,
+                'pericycle': 16,
             }
 
         for i in range(self.n_wall_junction, self.n_wall_junction + self.n_cells):
