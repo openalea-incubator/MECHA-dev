@@ -5,8 +5,8 @@
 from mecha.mecha_class import Mecha
 from mecha.utils.data_loader import InData
 from mecha.utils.network_builder import NetworkBuilder
-from mecha.utils.prepare_paraview import prepare_geometrical_properties
-from granap.network_base import AbstractNetwork
+# from mecha.utils.prepare_paraview import prepare_geometrical_properties
+# from granap.network_base import AbstractNetwork
 from granap.root_class import RootAnatomy
 from mecha.utils.visu import visualize
 import math
@@ -44,9 +44,7 @@ def test_compare_granar_ganache():
     for i in range(len(mecha_ganache.root_hydraulic_properties)):
         print(mecha_ganache.root_hydraulic_properties[i])
 
-
-
-    plotting = True
+    plotting = False
     if plotting:
         import matplotlib.pyplot as plt
 
@@ -67,6 +65,8 @@ def test_compare_granar_ganache():
             if mecha_props['barrier'] == ganache_props['barrier']:
                 assert_close_range(ganache_props['kr'], mecha_props['kr'], "different kr")
                 assert_close_range(ganache_props['Kx'], mecha_props['Kx'], "different Kx")
+
+    print("Test granar / ganache comparision was successfull")
 
 def assert_close_range(a, b, msg: str = ""):
     assert a != 0 and b != 0, "Zero has no log10 order of magnitude"
