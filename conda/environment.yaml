@@ -17,5 +17,8 @@ dependencies:
   - shapely
   - opencv
   - openalea.mtg
+  - pyan3 
+  - graphviz 
+  - python-graphviz
   - pip:
     - "-e ..[doc]"
