@@ -1,3 +1,24 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+#
+#       mecha.mecha_class
+#
+#       File author(s):
+#           Dilhan Ozturk, Adrien Heymans
+#
+#       File contributor(s):
+#           Tristan Gérault
+#
+#       File maintainer(s):
+#           Valentin Couvreur
+#
+#       Copyright © by UCLouvain
+#       Distributed under the LGPL License..
+#       See accompanying file LICENSE.txt or copy at
+#           https://www.gnu.org/licenses/lgpl-3.0.en.html
+#
+# -----------------------------------------------------------------------
+
 
 from py_compile import main
 import numpy as np 

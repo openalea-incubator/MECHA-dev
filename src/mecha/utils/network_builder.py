@@ -4,10 +4,7 @@
 #       mecha.utils.loader
 #
 #       File author(s):
-#           Dilhan Ozturk
-#
-#       File contributor(s):
-#           Adrien Heymans
+#           Dilhan Ozturk, Adrien Heymans
 #
 #       File maintainer(s):
 #           Valentin Couvreur
@@ -429,6 +426,8 @@ class NetworkBuilder(AbstractNetwork):
             elif cell_type_str == 'intercellular':
                 self.intercellular_cells.append(i)
             elif cell_type_str == 'air space':
+                self.intercellular_cells.append(i)
+            elif cell_type_str == 'aerenchyma':
                 self.intercellular_cells.append(i)
 
         self.compute_cell_surface(self.intercellular_cells)
@@ -1558,7 +1557,9 @@ class NetworkBuilder(AbstractNetwork):
             area = self.cell_areas[cid - self.n_wall_junction]
             self.total_xylem_area += area
             self.xylem_area.append(area)
-        self.xylem_area_ratio = self.xylem_area / self.total_xylem_area
+        # each element of the list is divided by the total area
+        for xyl_area in self.xylem_area:
+            self.xylem_area_ratio.append(xyl_area / self.total_xylem_area)
 
     def _calculate_phloem_area(self):
         # Calculate total area
@@ -1567,10 +1568,9 @@ class NetworkBuilder(AbstractNetwork):
             area = self.cell_areas[cid - self.n_wall_junction]
             self.total_phloem_area += area
             self.phloem_area.append(area)
-        if self.total_phloem_area != 0:
-            self.phloem_area_ratio = self.phloem_area / self.total_phloem_area
-        else:
-            self.phloem_area_ratio = []
+        # each element of the list is divided by the total area
+        for phl_area in self.phloem_area:
+            self.phloem_area_ratio.append(phl_area / self.total_phloem_area)
 
     def compute_relative_positions(self):
         """

@@ -5,8 +5,8 @@
 from mecha.mecha_class import Mecha
 from mecha.utils.data_loader import InData
 from mecha.utils.network_builder import NetworkBuilder
-# from mecha.utils.prepare_paraview import prepare_geometrical_properties
-# from granap.network_base import AbstractNetwork
+from mecha.utils.prepare_paraview import prepare_geometrical_properties
+from granap.network_base import AbstractNetwork
 from granap.root_class import RootAnatomy
 from mecha.utils.visu import visualize
 import math
@@ -15,7 +15,10 @@ import math
 def test_compare_granar_ganache():
     # Create a Mecha instance with a GRANAP network
     root = RootAnatomy()
+    root.update_params("inter_cellular_space", "cortex", 0.1)
     _ = root.export_to_adjencymatrix()
+
+    root.write_to_xml("inputs/test_ganache.xml")
 
     # root.plot_cells()
     # root.plot_network()
@@ -26,7 +29,22 @@ def test_compare_granar_ganache():
 
     ganache_network = NetworkBuilder(root)
     ganache_network.populate_from_network()
-    mecha_ganache = Mecha(default_input, network=ganache_network)
+    mecha_ganache_1 = Mecha(default_input, network=ganache_network)
+
+    # Create a default input for Mecha use with cellset data
+    Ganache_input = InData(cellset_file="inputs/test_ganache.xml")
+    Ganache_input.geometry.set_maturity_stages([1,3])
+    mecha_ganache_2 = Mecha(Ganache_input)
+
+    print("mecha ganache 1")
+    mecha_ganache_1.compute_conductivities()
+    for i in range(len(mecha_ganache_1.root_hydraulic_properties)):
+        print(mecha_ganache_1.root_hydraulic_properties[i])
+
+    print("mecha ganache 2")
+    mecha_ganache_2.compute_conductivities()
+    for i in range(len(mecha_ganache_2.root_hydraulic_properties)):
+        print(mecha_ganache_2.root_hydraulic_properties[i])
 
     # Create a default input for Mecha use with cellset data
     Granar_input = InData(cellset_file="inputs/current_root5.xml")
@@ -35,24 +53,21 @@ def test_compare_granar_ganache():
     # Create a Mecha instance with the default input
     mecha = Mecha(Granar_input)
 
+    print("classic mecha")
     mecha.compute_conductivities()
     for i in range(len(mecha.root_hydraulic_properties)):
         print(mecha.root_hydraulic_properties[i])
 
-    print("mecha ganache")
-    mecha_ganache.compute_conductivities()
-    for i in range(len(mecha_ganache.root_hydraulic_properties)):
-        print(mecha_ganache.root_hydraulic_properties[i])
-
-    plotting = False
+    plotting = True
     if plotting:
         import matplotlib.pyplot as plt
 
         # Test the connection visualization
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10), sharex=True, sharey=True)
+        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 10), sharex=True, sharey=True)
 
         visualize(mecha.network, "network", ax=ax1, title="Granar - cellset network")
-        visualize(mecha_ganache.network, "network", ax=ax2, title="Ganache network")
+        visualize(mecha_ganache_1.network, "network", ax=ax2, title="Ganache network 1")
+        visualize(mecha_ganache_2.network, "network", ax=ax3, title="Ganache network 2")
 
         plt.tight_layout()
         plt.show()
@@ -60,13 +75,16 @@ def test_compare_granar_ganache():
 
     for i in range(len(mecha.root_hydraulic_properties)):
         mecha_props = mecha.root_hydraulic_properties[i]
-        for j in range(len(mecha_ganache.root_hydraulic_properties)):
-            ganache_props = mecha_ganache.root_hydraulic_properties[j]
+        for j in range(len(mecha_ganache_1.root_hydraulic_properties)):
+            ganache_props = mecha_ganache_1.root_hydraulic_properties[j]
             if mecha_props['barrier'] == ganache_props['barrier']:
                 assert_close_range(ganache_props['kr'], mecha_props['kr'], "different kr")
                 assert_close_range(ganache_props['Kx'], mecha_props['Kx'], "different Kx")
-
-    print("Test granar / ganache comparision was successfull")
+        for j in range(len(mecha_ganache_2.root_hydraulic_properties)):
+            ganache_props = mecha_ganache_2.root_hydraulic_properties[j]
+            if mecha_props['barrier'] == ganache_props['barrier']:
+                assert_close_range(ganache_props['kr'], mecha_props['kr'], "different kr")
+                assert_close_range(ganache_props['Kx'], mecha_props['Kx'], "different Kx")
 
 def assert_close_range(a, b, msg: str = ""):
     assert a != 0 and b != 0, "Zero has no log10 order of magnitude"
