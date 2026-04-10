@@ -84,7 +84,8 @@ class Mecha:
                 self._build_anatomy()
         else:
             self.network = network
-            self.network.populate_from_network()
+            if not network._is_populated:
+                self.network.populate_from_network()
             self._initialize_from_network()
 
         if self.all_input is not None:
@@ -175,7 +176,7 @@ class Mecha:
         self.i_equil_xyl = np.nan  # Index of the equilibrium root xylem pressure scenario
 
         # Initialize with one extra row for total flow
-        self.distributed_flow_xyl = np.empty((2, len(self.network.xylem_cells) + 1, n_scenarios))
+        self.distributed_flow_xyl = np.empty((2, len(self.network.cell_manager.xylem) + 1, n_scenarios))
         self.distributed_flow_xyl[:] = np.nan
         
         for i in range(n_scenarios):
@@ -204,7 +205,7 @@ class Mecha:
         self.i_equil_sieve = np.nan  # Index of the equilibrium root phloem pressure scenario
 
         # Initialize with one extra row for total flow
-        self.distributed_flow_sieve = np.empty((2, self.network.n_sieve + 1, n_scenarios))
+        self.distributed_flow_sieve = np.empty((2, len(self.network.cell_manager.sieve) + 1, n_scenarios))
         self.distributed_flow_sieve[:] = np.nan
 
         for i_scenario in range(n_scenarios):
@@ -245,8 +246,8 @@ class Mecha:
     def _initialize_stf_arrays(self, r_discret: int, n_maturity: int) -> None:
         """Initialize STF (Specific Tissue Function) arrays."""
         self.stf_mb = np.zeros((self.network.n_membrane, n_maturity))
-        self.stf_cell_plus = np.zeros((self.network.n_cells, n_maturity))
-        self.stf_cell_minus = np.zeros((self.network.n_cells, n_maturity))
+        self.stf_cell_plus = np.zeros((len(self.network.cell_manager), n_maturity))
+        self.stf_cell_minus = np.zeros((len(self.network.cell_manager), n_maturity))
         self.stf_layer_plus = np.zeros((r_discret, n_maturity))
         self.stf_layer_minus = np.zeros((r_discret, n_maturity))
 
@@ -322,7 +323,7 @@ class Mecha:
     def _distribute_xylem_flow(self) -> None:
         """Distribute xylem flow proportionally to xylem cross-section area."""
         flow = self.distributed_flow_xyl[1, 0, 0]
-        for i in range(self.network.n_xylem):
+        for i in range(len(self.network.cell_manager.xylem)):
             self.distributed_flow_xyl[1, i+1, 0] = flow * self.network.xylem_area_ratio[i]
 
     def _handle_phloem_flow_conditions(self, i_maturity: int, i_scenario: int) -> None:
@@ -342,7 +343,7 @@ class Mecha:
         flow = self.distributed_flow_sieve[1, 0, 0]
 
         # Distribute flow
-        for i in range(self.network.n_protosieve):
+        for i in range(len(self.network.cell_manager.protosieve)):
             self.distributed_flow_sieve[1, i+1, 0] = flow * self.network.phloem_area_ratio[i]
 
     def _set_hydraulic_conductivities(self, i_maturity: int, barrier: int, height: float) -> None:
@@ -378,19 +379,62 @@ class Mecha:
             b_cortex = kaqp_cortex  # (cm/hPa/d)
         else:
             # Calculate total surface and other parameters
-            tot_surf_cortex=0.0 #Total membrane exchange surface in cortical cells (square centimeters)
-            temp=0.0 #Term for summation (cm3)
-            for cell_group in self.network.cellset['cell_to_wall']: #Loop on cells. network.cellset['cell_to_wall'] contains cell wall groups info (one group by cell)
-                cell_id = int(cell_group.getparent().get("id")) #Cell ID number
-                for r in cell_group: #Loop for wall elements around the cell
-                    wall_id= int(r.get("id")) #Cell wall ID
-                    if self.network.graph.nodes[self.network.n_wall_junction + cell_id]['cgroup']==4: #Cortex
-                        dist_cell=sqrt(square(self.position[wall_id][0]-self.position[self.network.n_wall_junction+cell_id][0])+square(self.position[wall_id][1]-self.position[self.network.n_wall_junction+cell_id][1])) #distance between wall node and cell node (micrometers)
-                        surf=(height+dist_cell)*self.network.wall_lengths[wall_id]*1.0E-08 #(square centimeters)
-                        temp+=surf*1.0E-04*(self.network.distance_center_grav[wall_id]+(hydraulic.ratio_cortex*self.network.distance_max_cortex-self.network.distance_min_cortex)/(1-hydraulic.ratio_cortex))
-                        tot_surf_cortex+=surf
-            a_cortex=kaqp_cortex*tot_surf_cortex/temp  #(1/hPa/d)
-            b_cortex=a_cortex*1.0E-04*(hydraulic.ratio_cortex*self.network.distance_max_cortex-self.network.distance_min_cortex)/(1-hydraulic.ratio_cortex) #(cm/hPa/d)
+            tot_surf_cortex = 0.0  # Total membrane exchange surface in cortical cells (square centimeters)
+            temp = 0.0  # Term for summation (cm3)
+
+            nwj = self.network.n_wall_junction
+            has_cellset = hasattr(self.network, 'cellset') and self.network.cellset
+
+            if has_cellset:
+                # XML-path: iterate over cellset element tree
+                for cell_group in self.network.cellset['cell_to_wall']:
+                    cell_id = int(cell_group.getparent().get("id"))
+                    for r in cell_group:
+                        wall_id = int(r.get("id"))
+                        if self.network.graph.nodes[nwj + cell_id]['cgroup'] == 4:  # Cortex
+                            dist_cell = sqrt(
+                                square(self.position[wall_id][0] - self.position[nwj + cell_id][0]) +
+                                square(self.position[wall_id][1] - self.position[nwj + cell_id][1])
+                            )
+                            surf = (height + dist_cell) * self.network.wall_lengths[wall_id] * 1.0E-08
+                            temp += surf * 1.0E-04 * (
+                                self.network.distance_center_grav[wall_id] +
+                                (hydraulic.ratio_cortex * self.network.distance_max_cortex -
+                                 self.network.distance_min_cortex) / (1 - hydraulic.ratio_cortex)
+                            )
+                            tot_surf_cortex += surf
+            else:
+                # GRANAP-path: derive the same quantities from the graph
+                for cell_id in range(len(self.network.cell_manager)):
+                    node_id = nwj + cell_id
+                    if self.network.graph.nodes[node_id].get('cgroup') != 4:  # Cortex only
+                        continue
+                    cell_pos = self.position[node_id]
+                    for neighbor in self.network.graph.neighbors(node_id):
+                        edge = self.network.graph.edges[node_id, neighbor]
+                        if edge.get('path') == 'membrane' and neighbor < self.network.n_walls:
+                            wall_pos = self.position[neighbor]
+                            dist_cell = sqrt(
+                                square(wall_pos[0] - cell_pos[0]) +
+                                square(wall_pos[1] - cell_pos[1])
+                            )
+                            surf = (height + dist_cell) * self.network.wall_lengths[neighbor] * 1.0E-08
+                            tot_surf_cortex += surf
+                            temp += surf * 1.0E-04 * (
+                                self.network.distance_center_grav[neighbor] +
+                                (hydraulic.ratio_cortex * self.network.distance_max_cortex -
+                                 self.network.distance_min_cortex) / (1 - hydraulic.ratio_cortex)
+                            )
+
+            if temp == 0.0:
+                a_cortex = 0.0
+                b_cortex = kaqp_cortex
+            else:
+                a_cortex = kaqp_cortex * tot_surf_cortex / temp  # (1/hPa/d)
+                b_cortex = a_cortex * 1.0E-04 * (
+                    hydraulic.ratio_cortex * self.network.distance_max_cortex -
+                    self.network.distance_min_cortex
+                ) / (1 - hydraulic.ratio_cortex)  # (cm/hPa/d)
 
         return a_cortex, b_cortex
 
@@ -427,7 +471,7 @@ class Mecha:
 
 
         #Axial conductances
-        K_axial=np.zeros((network.n_cells + network.n_walls + network.n_junctions,1)) #Vector of apoplastic and plasmodesmatal axial conductances
+        K_axial=np.zeros((len(network.cell_manager) + network.n_walls + network.n_junctions,1)) #Vector of apoplastic and plasmodesmatal axial conductances
         if barrier>0: 
             if hydraulic.axial_conductance_source==2:
                 for K_xyl in hydraulic.k_xyl_elems:
@@ -438,10 +482,10 @@ class Mecha:
                     cellnumber=int(K_sieve.get("id"))
                     K_axial[cellnumber+network.n_wall_junction]=float(K_sieve.get("value"))
             else: #K_xyl_spec calculated from Poiseuille law (cm^3/hPa/d)
-                for cid in network.xylem_cells:
+                for cid in [c.node_id for c in network.cell_manager.xylem]:
                     K_axial[cid]=network.cell_areas[cid-network.n_wall_junction]**2/(8*3.141592*height*1.0E-05/3600/24)*1.0E-12 #(micron^4/micron)->(cm^3) & (1.0E-3 Pa.s)->(1.0E-05/3600/24 hPa.d) 
                 K_xyl_spec=sum(K_axial)*height/1.0E04
-                for cid in network.sieve_cells:
+                for cid in [c.node_id for c in network.cell_manager.sieve]:
                     K_axial[cid]=network.cell_areas[cid-network.n_wall_junction]**2/(8*3.141592*height*1.0E-05/3600/24)*1.0E-12 #(micron^4/micron)->(cm^3) & (1.0E-3 Pa.s)->(1.0E-05/3600/24 hPa.d) 
         else: # barrier=0
             if hydraulic.axial_conductance_source==2:
@@ -470,9 +514,16 @@ class Mecha:
             xylem_pieces = self.geometry.xylem_pieces
         else:
             # GRANAP mode: look in graph for 'passage' and 'intercellular' cell_types
-            passage_cell_ids = np.array(self.network.passage_cells)
-            intercellular_ids = np.array(self.network.intercellular_cells)
+            passage_cell_ids = np.array([c.node_id for c in self.network.cell_manager.passage])
+            intercellular_ids = np.array([c.node_id for c in self.network.cell_manager.intercellular])
             xylem_pieces = False
+
+        # When geometry exists but lists are empty, fall back to network-derived lists
+        # (happens when Mecha is built from a GRANAP network with a default InData)
+        if len(passage_cell_ids) == 0 and len(self.network.cell_manager.passage) > 0:
+            passage_cell_ids = np.array([c.node_id for c in self.network.cell_manager.passage])
+        if len(intercellular_ids) == 0 and len(self.network.cell_manager.intercellular) > 0:
+            intercellular_ids = np.array([c.node_id for c in self.network.cell_manager.intercellular])
 
         # Ensure we have self.list_ghostwalls
         if not hasattr(self, 'list_ghostwalls'):
@@ -600,7 +651,7 @@ class Mecha:
                                     (elong_cell + (x_rel[wall_id] - 0.5) * elong_side) * \
                                     self.boundary.water_fraction_apo
             
-            for cid in range(self.network.n_cells):
+            for cid in range(len(self.network.cell_manager)):
                 node_idx = self.network.n_wall_junction + cid
                 if self.network.cell_areas[cid] > self.network.cell_perimeters[cid] * thickness/2:
                     rhs_e[node_idx][0] = (self.network.cell_areas[cid] - self.network.cell_perimeters[cid] * thickness/2) * \
@@ -625,7 +676,7 @@ class Mecha:
         os_membranes = np.zeros((self.network.n_membrane, 2))
         s_membranes = np.zeros((self.network.n_membrane, 1))
         os_walls = np.zeros((self.network.n_walls, 1))
-        os_cells = np.zeros((self.network.n_cells, 1))
+        os_cells = np.zeros((len(self.network.cell_manager), 1))
         
         # Scenario parameters
         s_hetero = int(self.boundary.scenarios[i_scenario].get("s_hetero"))
@@ -820,17 +871,17 @@ class Mecha:
             flow_x = self.distributed_flow_xyl[1][0][i_scenario] if not np.isnan(self.distributed_flow_xyl[1][0][i_scenario]) else np.nan
             
             if not np.isnan(psi_x):
-                for cid in self.network.xylem_cells:
+                for cid in [c.node_id for c in self.network.cell_manager.xylem]:
                     rhs_x[cid][0] = -self.hydraulic.k_xyl
             elif not np.isnan(flow_x):
-                 for i, cid in enumerate(self.network.xylem_cells):
+                 for i, cid in enumerate([c.node_id for c in self.network.cell_manager.xylem]):
                      rhs_x[cid][0] = self.distributed_flow_xyl[1][i+1][i_scenario]
 
         # Calculate rhs_p (Phloem BC)
         psi_p = self.psi_sieve[1][i_maturity][i_scenario]
         flow_p = self.distributed_flow_sieve[1][0][i_scenario] if not np.isnan(self.distributed_flow_sieve[1][0][i_scenario]) else np.nan
         
-        target_sieve = self.network.protosieve_list if barrier == 0 else self.network.sieve_cells
+        target_sieve = [c.node_id for c in self.network.cell_manager.protosieve] if barrier == 0 else [c.node_id for c in self.network.cell_manager.sieve]
         k_sieve = self.hydraulic.k_sieve
         
         if not np.isnan(psi_p):
@@ -882,7 +933,7 @@ class Mecha:
 
                 if barrier > 0:
                      if not np.isnan(psi_xyl_val): # Pressure BC
-                         for cid in self.network.xylem_cells:
+                         for cid in [c.node_id for c in self.network.cell_manager.xylem]:
                              matrix_W[cid][cid] -= self.hydraulic.k_xyl
                          rhs += rhs_x * psi_xyl_val
                      elif not np.isnan(flow_xyl_val): # Flow BC
@@ -894,14 +945,14 @@ class Mecha:
                 
                 if barrier == 0:
                     if not np.isnan(psi_sieve_val):
-                         for cid in self.network.protosieve_list:
+                         for cid in [c.node_id for c in self.network.cell_manager.protosieve]:
                              matrix_W[cid][cid] -= self.hydraulic.k_sieve
                          rhs += rhs_p * psi_sieve_val
                     elif not np.isnan(flow_sieve_val):
                          rhs += rhs_p
                 elif barrier > 0:
                     if not np.isnan(psi_sieve_val):
-                         for cid in self.network.sieve_cells:
+                         for cid in [c.node_id for c in self.network.cell_manager.sieve]:
                              matrix_W[cid][cid] -= self.hydraulic.k_sieve
                          rhs += rhs_p * psi_sieve_val
                     elif not np.isnan(flow_sieve_val):
@@ -971,11 +1022,11 @@ class Mecha:
         #Removing xylem and phloem BC terms
         if barrier==0:
             if not isnan(self.psi_sieve[1][i_maturity][i_scenario]):
-                for cid in self.network.protosieve_list:
+                for cid in [c.node_id for c in self.network.cell_manager.protosieve]:
                     matrix_W[cid][cid] += self.hydraulic.k_sieve
         else:
             if not isnan(self.psi_xyl[1][i_maturity][i_scenario]): #Pressure xylem BC
-                for cid in self.network.xylem_cells:
+                for cid in [c.node_id for c in self.network.cell_manager.xylem]:
                     matrix_W[cid][cid] += self.hydraulic.k_xyl
             else:
                 pass
@@ -998,14 +1049,14 @@ class Mecha:
 
         if barrier > 0:
             if not np.isnan(self.psi_xyl[1][i_maturity][i_scenario]):
-                for cid in self.network.xylem_cells:
+                for cid in [c.node_id for c in self.network.cell_manager.xylem]:
                     Q = rhs[cid][0] * (solution[cid][0] - self.psi_xyl[1][i_maturity][i_scenario])
                     q_xyl.append(Q)
                     rank = int(self.network.cell_ranks[cid - self.network.n_wall_junction])
                     row = int(self.network.rank_to_row[rank])
                     self.flow_xyl_layer[row][i_maturity][i_scenario] += Q
             elif not np.isnan(self.distributed_flow_xyl[1][0][i_scenario]):
-                 for cid in self.network.xylem_cells:
+                 for cid in [c.node_id for c in self.network.cell_manager.xylem]:
                     Q = -rhs[cid][0]
                     q_xyl.append(Q)
                     rank = int(self.network.cell_ranks[cid - self.network.n_wall_junction])
@@ -1016,14 +1067,14 @@ class Mecha:
 
         elif barrier == 0:
             if not np.isnan(self.psi_sieve[1][i_maturity][i_scenario]):
-                for cid in self.network.protosieve_list:
+                for cid in [c.node_id for c in self.network.cell_manager.protosieve]:
                     Q = rhs[cid][0] * (solution[cid][0] - self.psi_sieve[1][i_maturity][i_scenario])
                     q_sieve.append(Q)
                     rank = int(self.network.cell_ranks[cid - self.network.n_wall_junction])
                     row = int(self.network.rank_to_row[rank])
                     self.flow_sieve_layer[row][i_maturity][i_scenario] += Q
             elif not np.isnan(self.distributed_flow_sieve[1][0][i_scenario]):
-                for cid in self.network.protosieve_list:
+                for cid in [c.node_id for c in self.network.cell_manager.protosieve]:
                      Q = -rhs[cid][0]
                      q_sieve.append(Q)
                      rank = int(self.network.cell_ranks[cid - self.network.n_wall_junction])
@@ -1090,12 +1141,12 @@ class Mecha:
 
         if barrier>0 and isnan(self.psi_xyl[1][i_maturity][0]):
             self.psi_xyl[1][i_maturity][0]=0.0
-            for cid in self.network.xylem_cells:
-                self.psi_xyl[1][i_maturity][0]+=solution[cid][0]/len(self.network.xylem_cells) #Average of xylem water pressures
+            for cid in [c.node_id for c in self.network.cell_manager.xylem]:
+                self.psi_xyl[1][i_maturity][0]+=solution[cid][0]/len(self.network.cell_manager.xylem) #Average of xylem water pressures
         elif barrier==0 and isnan(self.psi_sieve[1][i_maturity][0]):
             self.psi_sieve[1][i_maturity][0]=0.0
-            for cid in self.network.protosieve_list:
-                self.psi_sieve[1][i_maturity][0]+=solution[cid][0]/self.network.n_protosieve #Average of protophloem water pressures
+            for cid in [c.node_id for c in self.network.cell_manager.protosieve]:
+                self.psi_sieve[1][i_maturity][0]+=solution[cid][0]/len(self.network.cell_manager.protosieve) #Average of protophloem water pressures
 
     #Calculation of standard transmembrane fractions
     def standard_transmembrane_fractions(self, solution, i_maturity, Kmb):
@@ -1145,7 +1196,7 @@ class Mecha:
                                 row += 1
                                 
                         flow = K * (psi - psi_neigh) #Note that this is only valid because we are in the scenario 0 with no osmotic potentials
-                        if ((j-self.network.n_wall_junction not in self.geometry.intercellular_ids) and (j not in self.network.xylem_cells)) or barrier==0: #Not part of STF if crosses an intercellular space "membrane" or mature xylem "membrane" (that is no membrane though still labelled like one)
+                        if ((j-self.network.n_wall_junction not in self.geometry.intercellular_ids) and (j not in [c.node_id for c in self.network.cell_manager.xylem])) or barrier==0: #Not part of STF if crosses an intercellular space "membrane" or mature xylem "membrane" (that is no membrane though still labelled like one)
                             if flow > 0 :
                                 self.uptake_layer_plus[row][i_maturity][0] += flow #grouping membrane flow rates in cell layers
                             else:

@@ -28,8 +28,10 @@ from lxml import etree
 import geopandas as gpd
 
 from mecha.utils.data_loader import GeneralData, GeometryData
+from mecha.utils.hydraulic_cell import HydraulicCellManager
 
 from granap.network_base import AbstractNetwork
+from shapely.geometry import Polygon
 
 class NetworkBuilder(AbstractNetwork):
     """Builds the hydraulic network graph from XML cell data"""
@@ -38,6 +40,7 @@ class NetworkBuilder(AbstractNetwork):
         self._source_network = source_network
 
         self.cellset_data: Dict[str, Any] = {}
+        self._is_populated: bool = False  # Guard against double population
 
         self.graph: nx.Graph = nx.Graph()
 
@@ -117,8 +120,8 @@ class NetworkBuilder(AbstractNetwork):
         self.x_rel: Optional[np.ndarray] = None
 
         # Rank 
-        self.stele_connec_rank: int = 0
-        self.outercortex_connec_rank: int = 0
+        self.stele_connec_rank: int = 3 # Default: Endodermis/passage cells
+        self.outercortex_connec_rank: int = 1 # Default: Exodermis/hypodermis
         
         # Lists for special cells
         self.xylem_distance: List[int] = []
@@ -148,6 +151,9 @@ class NetworkBuilder(AbstractNetwork):
 
         self.apo_j_zombies0: List[int] = []
         self.apo_j_cc: List[int] = []
+
+        # Cell manager — populated after build_network / populate_from_network
+        self.cell_manager: Optional[HydraulicCellManager] = None
 
 
     def _build_anatnetwork(self) -> None:
@@ -196,6 +202,7 @@ class NetworkBuilder(AbstractNetwork):
         self.n_nodes = self.graph.number_of_nodes()
         self._calculate_xylem_area()
         self._calculate_phloem_area()
+        self._build_cell_manager()
     
     def populate_from_network(self, type_mapper: Dict[str, int] = None) -> None:
         """
@@ -210,6 +217,9 @@ class NetworkBuilder(AbstractNetwork):
         type_mapper : Dict[str, int], optional
             Mapping from GRANAP cell type strings to MECHA cgroup integers.
         """
+        if self._is_populated:
+            return  # Already populated — skip to avoid double unit-scaling
+
         src = self._source_network
         if src is None:
             raise ValueError("No source_network was provided to NetworkBuilder.")
@@ -290,6 +300,14 @@ class NetworkBuilder(AbstractNetwork):
                 cgroup = type_mapper.get(cell_type_str, 4)  # default cortex
                 self.graph.nodes[i]['cgroup'] = cgroup
 
+        # which outer layer is connected to the cortex/mesophyll
+        # do we have a cgroup of 1? if not outercortex_connec_rank = 2, direct connection to the epidermis
+        self.outercortex_connec_rank = 2
+        for i in range(self.n_wall_junction, self.n_wall_junction + self.n_cells):
+            if self.graph.nodes[i]['cgroup'] == 1:
+                self.outercortex_connec_rank = 1
+                break
+
         # Step 4: Rebuild junction_to_wall / n_junction_to_wall from edges
         self.junction_to_wall = {}
         self.n_junction_to_wall = {}
@@ -365,12 +383,9 @@ class NetworkBuilder(AbstractNetwork):
                 cell_cgroup = self.graph.nodes[membrane_cells[0]].get('cgroup', 0)
                 if cell_cgroup == 2:  # Epidermis → soil border
                     self.border_walls.append(i)
-                    self.border_link[i] = 1
                 else:  # Other single-membrane = aerenchyma border
                     self.border_aerenchyma.append(i)
-                    self.border_link[i] = 1
-            elif len(membrane_cells) == 0:
-                self.border_link[i] = 0
+                self.border_link[i] = 1
             else:
                 self.border_link[i] = 0
 
@@ -447,8 +462,29 @@ class NetworkBuilder(AbstractNetwork):
 
         # Build cell connections for symplastic paths
         self._build_cell_connections_from_graph()
+        self._build_cell_manager()
 
+        self._is_populated = True
+
+    # ------------------------------------------------------------------
+    # Cell manager construction
+    # ------------------------------------------------------------------
+
+    def _build_cell_manager(self) -> None:
+        """Construct ``self.cell_manager`` from the current graph state.
+
+        Called automatically at the end of :meth:`build_network` and
+        :meth:`populate_from_network`.  Safe to call multiple times — the
+        manager is rebuilt from scratch each time.
+        """
+        manager = HydraulicCellManager()
+        manager.sync_from_network(self)
+        self.cell_manager = manager
+
+    # ------------------------------------------------------------------
     # Graph-only helper methods (used by populate_from_network)
+    # ------------------------------------------------------------------
+
     def _compute_gravity_center_from_graph(self, position: dict) -> None:
         """Compute gravity center from endodermis cell positions."""
         x_sum, y_sum, count = 0.0, 0.0, 0
@@ -947,17 +983,14 @@ class NetworkBuilder(AbstractNetwork):
                 if wall_id in self.wall_lengths:
                     self.cell_perimeters[cell_id] += self.wall_lengths[wall_id]
             
-            # Calculate area using wall centers and junctions
-            # This assumes walls are ordered anti-clockwise around the cell center
             if len(wall_ids) >= 3:
-                area = 0.0
+                poly_points = []
             
                 for i in range(len(wall_ids)):
                     wall_id_1 = wall_ids[i]
-                    wall_id_2 = wall_ids[(i + 1) % len(wall_ids)]  # Next wall (wraps around)
+                    wall_id_2 = wall_ids[(i + 1) % len(wall_ids)]
                     
                     wall_pos_1 = position[wall_id_1]
-                    wall_pos_2 = position[wall_id_2]
                     
                     # Find the junction closest to wall1
                     # junction_positions[wall_id] contains [x1, y1, x2, y2] for the two junctions
@@ -973,19 +1006,13 @@ class NetworkBuilder(AbstractNetwork):
                     )
                     
                     # Choose closest junction
-                    if dist1 < dist2:
-                        j = 0  # Use first junction (indices 0, 1)
-                    else:
-                        j = 2  # Use second junction (indices 2, 3)
+                    j = 0 if dist1 < dist2 else 2
                     
-                    # Add two segments to the area calculation (shoelace formula)
-                    # Segment 1: from wall1 center to chosen junction of wall2
-                    area += (wall_pos_1[0] + junction_pos[0 + j]) * (wall_pos_1[1] - junction_pos[1 + j])
-                    
-                    # Segment 2: from junction to wall2 center
-                    area += (junction_pos[0 + j] + wall_pos_2[0]) * (junction_pos[1 + j] - wall_pos_2[1])
+                    # Append wall center and junction to the polygon
+                    poly_points.append((wall_pos_1[0], wall_pos_1[1]))
+                    poly_points.append((junction_pos[j], junction_pos[j + 1]))
 
-            self.cell_areas[cell_id] = abs(area) / 2.0
+                self.cell_areas[cell_id] = Polygon(poly_points).area
 
     def compute_gravity_center(self):
         """Compute gravity center of endodermis cells"""
@@ -1050,7 +1077,7 @@ class NetworkBuilder(AbstractNetwork):
                 length = eattr['length']
                 is_not_intercellular = j - (self.n_walls + self.n_junctions) not in intercellular_ids
                 
-                # Outer cortex - cortex
+                # Exodermis/hypodermis or epidermis if no exodermis outer layer - cortex
                 if {node_group, j_group} == {self.outercortex_connec_rank, 4}:
                     self.len_outer_cortex += length
                     if is_not_intercellular:
