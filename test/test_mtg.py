@@ -44,8 +44,6 @@ def whatis(value, dictionary):
     return translator[value]
 
 
-
-
 def build_mtg(scales: dict) -> MTG:
     """
     Build an MTG with actual scales (OpenAlea MTG concept), not a 'scale' property.
@@ -59,17 +57,8 @@ def build_mtg(scales: dict) -> MTG:
 
     return g
 
-def mtg_summary(g: MTG):
-    root = g.root
-    print("MTG root:", root)
-    max_scale = g.max_scale()
-    print("max scale:", max_scale)
-    for k in range(max_scale):
-        print(f"scale {k+1}: {len(g.components_at_scale(root, scale=k+1))} elements")
-    print("available properties:", g.properties().keys())
-    
 
-if __name__ == "__main__":
+def build_three_cell_mtg():
     # skipping the plant creation part to jump straight to a single segment
     g = build_mtg(scales= {
                         "plant": 1,
@@ -154,6 +143,9 @@ if __name__ == "__main__":
                     else:
                         current.c_type_c = nei.c_type_a
                         current.c_nid_c = nei.c_nid_a
+                    for tup in nei.adjacent_nodes:
+                        if tup not in current.adjacent_nodes:
+                            current.adjacent_nodes.append(tup)
                     assert current.n_type == nei.n_type, f"{current.n_type}, {nei.n_type}"
                     del nei
                     g.remove_vertex(neighbor_id)
@@ -235,16 +227,8 @@ if __name__ == "__main__":
 
                     sorted_walls.append(nei_id)
 
-    # Compute network positions and length
+    # Compute network and length
     edges = g.component_roots_at_scale(segment_id, scale=scales["edge"])
-    e_types = np.array([g.node(vid).e_type for vid in edges])
-    # discrete colormap for integer classes
-    cmap = plt.get_cmap("tab10")  # or "Set2", "viridis", etc.
-    norm = mpl.colors.BoundaryNorm(
-        boundaries=np.arange(e_types.min() - 0.5, e_types.max() + 1.5, 1),
-        ncolors=cmap.N
-    )
-
     for vid in edges:
         n = g.node(vid)
         x1 = props["x"][n.n_id_a]
@@ -259,11 +243,36 @@ if __name__ == "__main__":
 
     mtg_to_arraydict(g)
 
+    return g
+
+
+def mtg_summary(g: MTG):
+    root = g.root
+    print("MTG root:", root)
+    max_scale = g.max_scale()
+    print("max scale:", max_scale)
+    for k in range(max_scale):
+        print(f"scale {k+1}: {len(g.components_at_scale(root, scale=k+1))} elements")
+    print("available properties:", g.properties().keys())
+
+
+def plot_mtg_network(g):
+
+    props = g.properties()
+    root = g.root
+
     mtg_summary(g)
     
     fig, ax = plt.subplots()
 
-    edges = g.component_roots_at_scale(segment_id, scale=scales["edge"])
+    edges = g.component_roots_at_scale(root, scale=scales["edge"])
+    e_types = np.array([g.node(vid).e_type for vid in edges])
+    # discrete colormap for integer classes
+    cmap = plt.get_cmap("tab10")  # or "Set2", "viridis", etc.
+    norm = mpl.colors.BoundaryNorm(
+        boundaries=np.arange(e_types.min() - 0.5, e_types.max() + 1.5, 1),
+        ncolors=cmap.N
+    )
     edge_type_values = sorted({g.node(vid).e_type for vid in edges})
     for vid in edges:
         n = g.node(vid)
@@ -274,7 +283,7 @@ if __name__ == "__main__":
         color = cmap(norm(n.e_type))
         ax.plot([x1, x2], [y1, y2], color=color)
 
-    nodes = g.component_roots_at_scale(segment_id, scale=scales["node"])
+    nodes = g.component_roots_at_scale(root, scale=scales["node"])
     # node_filter = np.isin(props["vertex_id"].values_array(), nodes)
     # print(sum(node_filter))
     x = props["x"].values_array()
@@ -316,3 +325,23 @@ if __name__ == "__main__":
     ax.legend(handles=node_legend_handles, title="Node type", loc="upper right")
 
     plt.show()
+    
+
+# actual test functions
+def test_three_cells_network_generation():
+    g = build_three_cell_mtg()
+    
+    root = g.root
+    assert len(g.components_at_scale(root, scale=scales["node"])) == 21
+    assert len(g.components_at_scale(root, scale=scales["edge"])) == 34
+
+
+def test_mecha_kr_kx():
+    assert True
+
+
+
+if __name__ == "__main__":
+    g = build_three_cell_mtg()
+
+    plot_mtg_network(g)
