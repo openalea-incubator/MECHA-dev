@@ -8,7 +8,11 @@ from mecha.utils.network_builder import NetworkBuilder
 from mecha.utils.prepare_paraview import prepare_geometrical_properties
 from granap.network_base import AbstractNetwork
 from granap.root_class import RootAnatomy
+from granap.anatomy_writer import AnatomyWriter
 from mecha.utils.visu import visualize
+
+from utils import assert_close_range
+
 import math
 import numpy as np
 
@@ -17,8 +21,9 @@ def test_compare_granar_ganache():
     # Create a Mecha instance with a GRANAP network
     root = RootAnatomy()
     _ = root.export_to_adjencymatrix()
-
-    root.write_to_xml("inputs/test_ganache.xml")
+    
+    writer = AnatomyWriter(root)
+    writer.write_to_xml("outputs/test_ganache.xml")
 
     # root.plot_cells()
     # root.plot_network()
@@ -36,7 +41,7 @@ def test_compare_granar_ganache():
     m1 = matrix_W
     
     # Create a default input for Mecha use with cellset data
-    Ganache_input = InData(cellset_file="inputs/test_ganache.xml")
+    Ganache_input = InData(cellset_file="outputs/test_ganache.xml")
     Ganache_input.geometry.set_maturity_stages([1,3])
     mecha_ganache_2 = Mecha(Ganache_input)
 
@@ -141,9 +146,9 @@ def test_compare_granar_ganache():
         print(f"  Epidermis cells: {len(cm.epidermis)}")
 
 
-    print_network_summary("Ganache network 1", mecha_ganache_1.network, "compare_nx_ganache_1.txt")
-    print_network_summary("Ganache network 2", mecha_ganache_2.network, "compare_nx_ganache_2.txt")
-    print_network_summary("Classic Mecha", mecha.network, "compare_nx_classic.txt")
+    print_network_summary("Ganache network 1", mecha_ganache_1.network, "outputs/compare_nx_ganache_1.txt")
+    print_network_summary("Ganache network 2", mecha_ganache_2.network, "outputs/compare_nx_ganache_2.txt")
+    print_network_summary("Classic Mecha", mecha.network, "outputs/compare_nx_classic.txt")
 
     plotting = False
     if plotting:
@@ -173,9 +178,6 @@ def test_compare_granar_ganache():
                 assert_close_range(ganache_props['kr'], mecha_props['kr'], "different kr")
                 assert_close_range(ganache_props['Kx'], mecha_props['Kx'], "different Kx")
 
-def assert_close_range(a, b, msg: str = ""):
-    assert a != 0 and b != 0, "Zero has no log10 order of magnitude"
-    assert math.floor(math.log10(abs(a))) == math.floor(math.log10(abs(b))), f'{msg}: {a} vs. {b}'
 
 
 if __name__ == "__main__":
