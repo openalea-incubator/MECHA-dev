@@ -1,6 +1,11 @@
 from openalea.mtg import MTG
 from utils import mtg_to_arraydict
 import numpy as np
+import os
+os.environ["QT_QPA_PLATFORM"] = "xcb"   # or "wayland"
+import matplotlib.pyplot as plt
+import matplotlib as mpl
+from matplotlib.lines import Line2D
 
 
 scales = {
@@ -34,8 +39,10 @@ e_type = {
 }
 
 
+def whatis(value, dictionary):
+    translator = {v: k for k, v in dictionary.items()}
+    return translator[value]
 
-scales_translator = {v: k for k, v in scales.items()}
 
 
 
@@ -106,8 +113,8 @@ if __name__ == "__main__":
     sorted_nodes = []
     for cell_id in cells:
         init_dict = dict(n_type = n_type["cell"],
-                         x = props["x_cell"][cell_id],
-                         y = props["y_cell"][cell_id],
+                         x = props["x_cell"][cell_id] + 1e-6,
+                         y = props["y_cell"][cell_id] + 1e-6,
                          c_type_a = props["c_type"][cell_id],
                          c_type_b = -1,
                          c_type_c = -1,
@@ -178,15 +185,16 @@ if __name__ == "__main__":
         # Wall nodes help define symplastic and transmembrane edges
         if n.n_type == n_type["wall"]:
             # Symplastic node
-            init_dict = dict(e_type = e_type["symplastic"],
-                            c_type_a = n.c_type_a,
-                            n_id_a = n.c_nid_a,
-                            c_type_b = n.c_type_b,
-                            n_id_b = n.c_nid_b,
-                            c_type_c = -1,
-                            length = 0)
-        
-            g.add_component(symbolic_anchoring, label=scales["edge"], **init_dict)
+            if n.c_type_b != -1:
+                init_dict = dict(e_type = e_type["symplastic"],
+                                c_type_a = n.c_type_a,
+                                n_id_a = n.c_nid_a,
+                                c_type_b = n.c_type_b,
+                                n_id_b = n.c_nid_b,
+                                c_type_c = -1,
+                                length = 0)
+            
+                g.add_component(symbolic_anchoring, label=scales["edge"], **init_dict)
 
             # 2 or less Transmembrane node
             init_dict = dict(e_type = e_type["transmembrane"],
@@ -213,7 +221,8 @@ if __name__ == "__main__":
         elif n.n_type == n_type["junction"]:
             # Apoplastic nodes
             for nei_id in n.adjacent_node_ids:
-                if nei_id not in sorted_walls:
+                # if nei_id not in sorted_walls:
+                if True:
                     init_dict = dict(e_type = e_type["apoplastic"],
                                     c_type_a = n.c_type_a,
                                     n_id_a = vid,
@@ -228,6 +237,14 @@ if __name__ == "__main__":
 
     # Compute network positions and length
     edges = g.component_roots_at_scale(segment_id, scale=scales["edge"])
+    e_types = np.array([g.node(vid).e_type for vid in edges])
+    # discrete colormap for integer classes
+    cmap = plt.get_cmap("tab10")  # or "Set2", "viridis", etc.
+    norm = mpl.colors.BoundaryNorm(
+        boundaries=np.arange(e_types.min() - 0.5, e_types.max() + 1.5, 1),
+        ncolors=cmap.N
+    )
+
     for vid in edges:
         n = g.node(vid)
         x1 = props["x"][n.n_id_a]
@@ -236,7 +253,66 @@ if __name__ == "__main__":
         y2 = props["y"][n.n_id_b]
         n.length = np.sqrt(((x1 - x2)**2) + ((y1 - y2)**2))
 
+    for vid in g.vertices():
+        n = g.node(vid)
+        n.vertex_id = vid
+
     mtg_to_arraydict(g)
 
     mtg_summary(g)
+    
+    fig, ax = plt.subplots()
 
+    edges = g.component_roots_at_scale(segment_id, scale=scales["edge"])
+    edge_type_values = sorted({g.node(vid).e_type for vid in edges})
+    for vid in edges:
+        n = g.node(vid)
+        x1 = props["x"][n.n_id_a]
+        y1 = props["y"][n.n_id_a]
+        x2 = props["x"][n.n_id_b]
+        y2 = props["y"][n.n_id_b]
+        color = cmap(norm(n.e_type))
+        ax.plot([x1, x2], [y1, y2], color=color)
+
+    nodes = g.component_roots_at_scale(segment_id, scale=scales["node"])
+    # node_filter = np.isin(props["vertex_id"].values_array(), nodes)
+    # print(sum(node_filter))
+    x = props["x"].values_array()
+    y = props["y"].values_array()
+    c = props["n_type"].values_array()
+    node_type_values = sorted(np.unique(c).astype(int).tolist())
+    node_cmap = plt.get_cmap("Set1")
+    node_norm = mpl.colors.BoundaryNorm(
+        boundaries=np.arange(min(node_type_values) - 0.5, max(node_type_values) + 1.5, 1),
+        ncolors=node_cmap.N
+    )
+    ax.scatter(x, y, c=c, cmap=node_cmap, norm=node_norm)
+
+    edge_legend_handles = [
+        Line2D(
+            [0],
+            [0],
+            color=cmap(norm(etype)),
+            lw=2,
+            label=whatis(etype, e_type),
+        )
+        for etype in edge_type_values
+    ]
+    edge_legend = ax.legend(handles=edge_legend_handles, title="Edge type", loc="upper left")
+    ax.add_artist(edge_legend)
+
+    node_legend_handles = [
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            linestyle="None",
+            markerfacecolor=node_cmap(node_norm(ntype)),
+            markeredgecolor="black",
+            label=whatis(ntype, n_type),
+        )
+        for ntype in node_type_values
+    ]
+    ax.legend(handles=node_legend_handles, title="Node type", loc="upper right")
+
+    plt.show()
