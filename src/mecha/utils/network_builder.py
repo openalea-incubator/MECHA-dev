@@ -166,7 +166,7 @@ class NetworkBuilder(AbstractNetwork):
         # If we are populating from another network, this might not be needed.
         pass
 
-    def build_network(self, general: GeneralData, geometry: GeometryData, cellset_data, verbose: bool = False):
+    def build_network(self, general: GeneralData, geometry: GeometryData, cellset_data, verbose: bool = False, centroid_method: str = "shapely"):
         """Main method to build network from XML data"""
         if cellset_data is None:
             raise ValueError("Cellset data is None")
@@ -183,7 +183,7 @@ class NetworkBuilder(AbstractNetwork):
             print('  Creating wall, junction and cell nodes...')
         self.create_wall_junction_nodes(geometry.im_scale)
         self.identify_border_walls_junctions()
-        self.create_cell_nodes(geometry, general.apo_contagion)
+        self.create_cell_nodes(geometry, general.apo_contagion, centroid_method=centroid_method)
         
         if verbose:
             print('  Creating membrane connections...')
@@ -681,11 +681,14 @@ class NetworkBuilder(AbstractNetwork):
 
             wall_id = int((point_groups.getparent().get)("id")) # wall_id records the current wall id number
 
-            coords = []
+            coords     = []  # rounded, used for geometry
+            coords_raw = []  # unrounded, used for dedup key (mirrors old MECHA str(x)+str(y) approach)
             for point in point_groups:
-                x = round(im_scale * float(point.get("x")), n_dec_position)
-                y = round(im_scale * float(point.get("y")), n_dec_position)
-                coords.append((x, y))
+                x_raw = im_scale * float(point.get("x"))
+                y_raw = im_scale * float(point.get("y"))
+                coords_raw.append((x_raw, y_raw))
+                coords.append((round(x_raw, n_dec_position), round(y_raw, n_dec_position)))
+
             # Store junction positions for this wall
             self.junction_positions[wall_id] = [
                 coords[0][0], coords[0][1],  # First junction
@@ -717,9 +720,13 @@ class NetworkBuilder(AbstractNetwork):
                 length=length
             )
 
-            # Add junction node
-            for coord in [coords[0], coords[-1]]: # First and last point as junctions
-                pos_key = f"x{coord[0]}y{coord[1]}"
+            # Add junction node — use raw (unrounded) floats for the dedup key so that
+            # two walls whose endpoint was written from the same Python float get the
+            # identical key after the XML round-trip.  This matches old MECHA's
+            # `pos = "x" + str(x) + "y" + str(y)` pattern.
+            for raw_coord, coord in zip([coords_raw[0], coords_raw[-1]],
+                                        [coords[0],     coords[-1]]):
+                pos_key = "x" + str(raw_coord[0]) + "y" + str(raw_coord[1])
 
                 if pos_key not in junction_list:
                     node_id = self.n_walls + junction_ni
@@ -727,13 +734,13 @@ class NetworkBuilder(AbstractNetwork):
                         node_id,
                         indice=node_id,
                         type="apo",
-                        position=coord,
+                        position=coord,   # rounded position for graph geometry
                         length=0
                     )
                     junction_list[pos_key] = node_id
                     self.junction_to_wall[node_id] = [wall_id]
                     self.n_junction_to_wall[node_id] = 1
-                    junction_ni += 1 # New junction created 
+                    junction_ni += 1 # New junction created
                 else:
                     junction_id = junction_list[pos_key]
                     self.junction_to_wall[junction_id].append(wall_id) # Several cell wall ID numbers can correspond to the same X Y coordinate where they meet
@@ -787,13 +794,19 @@ class NetworkBuilder(AbstractNetwork):
                 self.border_link[junction_id + self.n_walls] = 0
             junction_id+=1
     
-    def create_cell_nodes(self, geometry:GeometryData, contagion: Any = 0):
+    def create_cell_nodes(self, geometry:GeometryData, contagion: Any = 0, centroid_method: str = "shapely"):
         """Create nodes for cells"""
         cell_to_wall = self.cellset['cell_to_wall']
         position = nx.get_node_attributes(self.graph,'position') #Nodes XY positions (micrometers)
         # Initialize tracking arrays
         self.intercellular_cells = list(geometry.intercellular_ids)
         self.passage_cells = list(geometry.passage_cell_ids)
+        
+        poly_dict = {}
+        if centroid_method == "shapely":
+            from mecha.utils.visu import prep_section
+            gdf = prep_section(self.cellset)
+            poly_dict = {row["id_cell"]: row["geometry"] for _, row in gdf.iterrows()}
         
         for cell_group in cell_to_wall:
             cell_id = int(cell_group.getparent().get("id"))
@@ -809,8 +822,17 @@ class NetworkBuilder(AbstractNetwork):
             if not wall_positions:
                 continue
             
-            center_x = np.mean([p[0] for p in wall_positions])
-            center_y = np.mean([p[1] for p in wall_positions])
+            if centroid_method == "shapely":
+                poly = poly_dict.get(cell_id)
+                if poly is not None and not poly.is_empty:
+                    center_x = poly.centroid.x * geometry.im_scale
+                    center_y = poly.centroid.y * geometry.im_scale
+                else:
+                    center_x = np.mean([p[0] for p in wall_positions])
+                    center_y = np.mean([p[1] for p in wall_positions])
+            else:
+                center_x = np.mean([p[0] for p in wall_positions])
+                center_y = np.mean([p[1] for p in wall_positions])
             
             node_id = self.n_walls + self.n_junctions + cell_id
             

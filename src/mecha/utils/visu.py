@@ -415,3 +415,133 @@ def _visualize_standardized_results(obj: Any, **kwargs: Dict[str, Any]) -> None:
     gdf['water_potential'] = gdf['id_cell'].apply(get_pot)
     
     plot_water_potential_map(gdf, title=f"Water Potential (Mat: {maturity_idx}, Scen: {scenario_idx})")
+
+
+def plot_matrix_difference(m1, m2, title="Absolute Difference between Matrices"):
+    """
+    Plots the absolute difference between two matrices.
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    
+    # Convert sparse matrices to dense if needed
+    if hasattr(m1, 'toarray'): m1 = m1.toarray()
+    if hasattr(m2, 'toarray'): m2 = m2.toarray()
+
+    
+    diff = np.abs(m1 - m2)
+
+    plt.figure(figsize=(10, 8))
+    plt.imshow(diff, cmap='hot', interpolation='nearest', vmin=1E-16, vmax=1E-3)
+    plt.colorbar(label='Absolute Difference')
+    plt.title(title)
+    plt.xlabel('Column Index')
+    plt.ylabel('Row Index')
+    plt.tight_layout()
+    plt.show()
+
+
+def _plot_network_property(network, prop_name, ax, title, node_size=10):
+    import networkx as nx
+    from matplotlib import colormaps
+    graph = network.graph if hasattr(network, 'graph') else network
+    
+    position = nx.get_node_attributes(graph, 'position')
+    default_pos = {n: (0,0) for n in graph.nodes if n not in position}
+    position.update(default_pos)
+    
+    props = nx.get_node_attributes(graph, prop_name)
+    has_props_in_graph = len(props) > 0
+    
+    if not has_props_in_graph and hasattr(network, 'cell_manager'):
+        props = {}
+        for c in network.cell_manager:
+            props[c.node_id] = getattr(c, prop_name, -1)
+            
+    # Extract unique properties
+    prop_values = list(props.values())
+    unique_props = list(set(prop_values))
+    cmap = colormaps.get_cmap('tab20')
+    color_map = {val: cmap(i / len(unique_props)) if len(unique_props) > 0 else 'gray' for i, val in enumerate(unique_props)}
+    
+    node_colors = []
+    for node in graph.nodes():
+        val = props.get(node, None) # None for non-cell nodes
+        if val is not None:
+            node_colors.append(color_map[val])
+        else:
+            node_colors.append('lightgray') # Juncs or walls
+            
+    nx.draw(
+        graph,
+        position,
+        ax=ax,
+        node_color=node_colors,
+        node_size=node_size,
+        edge_color='black',
+        alpha=0.7
+    )
+    ax.set_aspect("equal", "box")
+    ax.set_title(title)
+
+
+def plot_networks_cgroup(net1, net2, title1="Network 1", title2="Network 2"):
+    """
+    Plots two networks side by side colored by cgroup.
+    """
+    import matplotlib.pyplot as plt
+    
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10))
+    _plot_network_property(net1, 'cgroup', ax=ax1, title=title1 + ' (cgroup)')
+    _plot_network_property(net2, 'cgroup', ax=ax2, title=title2 + ' (cgroup)')
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_networks_rank(net1, net2, title1="Network 1", title2="Network 2"):
+    """
+    Plots two networks side by side colored by rank.
+    """
+    import matplotlib.pyplot as plt
+    
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10))
+    _plot_network_property(net1, 'rank', ax=ax1, title=title1 + ' (rank)', node_size=10)
+    _plot_network_property(net2, 'rank', ax=ax2, title=title2 + ' (rank)', node_size=10)
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_network_difference(net1, net2, title="Network Spatial Difference"):
+    """
+    Plots two networks overplotted in different colors to highlight spatial and topological differences.
+    Red nodes/edges belong to Net1, Blue to Net2. Overlap appears as a mix.
+    """
+    import matplotlib.pyplot as plt
+    import networkx as nx
+    
+    fig, ax = plt.subplots(figsize=(12, 12))
+    g1 = net1.graph if hasattr(net1, 'graph') else net1
+    g2 = net2.graph if hasattr(net2, 'graph') else net2
+    
+    pos1 = nx.get_node_attributes(g1, 'position')
+    pos2 = nx.get_node_attributes(g2, 'position')
+    
+    # Plot net1 elements in red (alpha=0.5)
+    nx.draw(g1, pos1, ax=ax, node_color='red', edge_color='red', node_size=15, width=2, alpha=0.5, label='Net1')
+    
+    # Plot net2 elements in blue (alpha=0.5)
+    nx.draw(g2, pos2, ax=ax, node_color='blue', edge_color='blue', node_size=10, width=1, alpha=0.5, label='Net2')
+    
+    ax.set_aspect("equal", "box")
+    ax.set_title(title)
+    
+    # Create custom legend
+    from matplotlib.lines import Line2D
+    legend_elements = [
+        Line2D([0], [0], marker='o', color='w', label='Net1', markerfacecolor='red', markersize=10),
+        Line2D([0], [0], marker='o', color='w', label='Net2', markerfacecolor='blue', markersize=10)
+    ]
+    ax.legend(handles=legend_elements, loc='upper right')
+    
+    plt.tight_layout()
+    plt.show()
