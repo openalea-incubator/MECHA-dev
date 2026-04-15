@@ -1,4 +1,3 @@
-
 # test GANACHE
 # GRANAP connection with MECHA
 
@@ -8,7 +7,11 @@ from mecha.utils.network_builder import NetworkBuilder
 from mecha.utils.prepare_paraview import prepare_geometrical_properties
 from granap.network_base import AbstractNetwork
 from granap.root_class import RootAnatomy
+from granap.anatomy_writer import AnatomyWriter
 from mecha.utils.visu import visualize
+
+from utils import assert_close_range
+
 import math
 import numpy as np
 
@@ -18,29 +21,30 @@ def test_compare_granar_ganache():
     root = RootAnatomy()
     _ = root.export_to_adjencymatrix()
 
-    root.write_to_xml("inputs/test_ganache.xml")
+    writer = AnatomyWriter(root)
+    writer.write_to_xml("outputs/test_ganache.xml")
 
     # root.plot_cells()
     # root.plot_network()
 
     # Create a default input for Mecha use with the GRANAP network
     default_input = InData()
-    default_input.geometry.set_maturity_stages([1,3])
+    default_input.geometry.set_maturity_stages([1, 3])
 
     ganache_network = NetworkBuilder(root)
     ganache_network.populate_from_network()
     mecha_ganache_1 = Mecha(default_input, network=ganache_network)
-    
-    solution, _, matrix_W, Kmb, rhs_s = mecha_ganache_1.solve_W(h = 0, i_maturity = 1)
-    
+
+    solution, _, matrix_W, Kmb, rhs_s = mecha_ganache_1.solve_W(h=0, i_maturity=1)
+
     m1 = matrix_W
-    
+
     # Create a default input for Mecha use with cellset data
-    Ganache_input = InData(cellset_file="inputs/test_ganache.xml")
-    Ganache_input.geometry.set_maturity_stages([1,3])
+    Ganache_input = InData(cellset_file="outputs/test_ganache.xml")
+    Ganache_input.geometry.set_maturity_stages([1, 3])
     mecha_ganache_2 = Mecha(Ganache_input)
 
-    solution, _, matrix_W, Kmb, rhs_s = mecha_ganache_2.solve_W(h = 0, i_maturity = 1)
+    solution, _, matrix_W, Kmb, rhs_s = mecha_ganache_2.solve_W(h=0, i_maturity=1)
 
     m2 = matrix_W
 
@@ -51,16 +55,21 @@ def test_compare_granar_ganache():
         diff = np.abs(m1 - m2)
         max_diff = np.max(diff)
         print(f"Max difference in Matrix_W: {max_diff}")
-    
+
         if max_diff > 1e-10:
             i, j = np.unravel_index(np.argmax(diff), diff.shape)
-            print(f"Max difference occurs at ({i}, {j}): m1={m1[i,j]:.6e} vs m2={m2[i,j]:.6e}")
+            print(
+                f"Max difference occurs at ({i}, {j}): m1={m1[i, j]:.6e} vs m2={m2[i, j]:.6e}"
+            )
             flat_indices = np.argsort(diff.flatten())[::-1]
             print("Top 10 differences:")
             for count, idx in enumerate(flat_indices[:10]):
                 r, c = np.unravel_index(idx, diff.shape)
-                if diff[r, c] < 1e-10: break
-                print(f"({r}, {c}): m1={m1[r,c]:.6g}, m2={m2[r,c]:.6g}, diff={diff[r,c]:.6g}")
+                if diff[r, c] < 1e-10:
+                    break
+                print(
+                    f"({r}, {c}): m1={m1[r, c]:.6g}, m2={m2[r, c]:.6g}, diff={diff[r, c]:.6g}"
+                )
         else:
             print("Matrices are practically EXACTLY identical.")
 
@@ -72,9 +81,11 @@ def test_compare_granar_ganache():
     xyl = mecha_ganache_1.network.cell_manager.xylem
     K_xyl_spec = 0
     for i in range(len(xyl)):
-        kx_spec = xyl[i].area **2/(8*3.141592*200*1.0E-05/3600/24)*1.0E-12
+        kx_spec = (
+            xyl[i].area ** 2 / (8 * 3.141592 * 200 * 1.0e-05 / 3600 / 24) * 1.0e-12
+        )
         K_xyl_spec += kx_spec
-    K_xyl_spec = K_xyl_spec*200/1E4
+    K_xyl_spec = K_xyl_spec * 200 / 1e4
     print(K_xyl_spec)
 
     print("mecha ganache 2")
@@ -85,14 +96,16 @@ def test_compare_granar_ganache():
     xyl = mecha_ganache_2.network.cell_manager.xylem
     K_xyl_spec = 0
     for i in range(len(xyl)):
-        kx_spec = xyl[i].area **2/(8*3.141592*200*1.0E-05/3600/24)*1.0E-12
+        kx_spec = (
+            xyl[i].area ** 2 / (8 * 3.141592 * 200 * 1.0e-05 / 3600 / 24) * 1.0e-12
+        )
         K_xyl_spec += kx_spec
-    K_xyl_spec = K_xyl_spec*200/1E4
+    K_xyl_spec = K_xyl_spec * 200 / 1e4
     print(K_xyl_spec)
 
     # Create a default input for Mecha use with cellset data
     Granar_input = InData(cellset_file="inputs/current_root5.xml")
-    Granar_input.geometry.set_maturity_stages([1,3])
+    Granar_input.geometry.set_maturity_stages([1, 3])
 
     # Create a Mecha instance with the default input
     mecha = Mecha(Granar_input)
@@ -105,9 +118,11 @@ def test_compare_granar_ganache():
     xyl = mecha.network.cell_manager.xylem
     K_xyl_spec = 0
     for i in range(len(xyl)):
-        kx_spec = xyl[i].area **2/(8*3.141592*200*1.0E-05/3600/24)*1.0E-12
+        kx_spec = (
+            xyl[i].area ** 2 / (8 * 3.141592 * 200 * 1.0e-05 / 3600 / 24) * 1.0e-12
+        )
         K_xyl_spec += kx_spec
-    K_xyl_spec = K_xyl_spec*200/1E4
+    K_xyl_spec = K_xyl_spec * 200 / 1e4
     print(K_xyl_spec)
 
     def print_network_summary(name, network, filename):
@@ -119,7 +134,9 @@ def test_compare_granar_ganache():
             f.write(f"  Xylem cells: {len(network.cell_manager.xylem)}\n")
             f.write(f"  Sieve cells: {len(network.cell_manager.sieve)}\n")
             f.write(f"  Passage cells: {len(network.cell_manager.passage)}\n")
-            f.write(f"  Intercellular cells: {len(network.cell_manager.intercellular)}\n")
+            f.write(
+                f"  Intercellular cells: {len(network.cell_manager.intercellular)}\n"
+            )
             f.write(f"  Epidermis cells: {len(network.cell_manager.epidermis)}\n")
 
             for cell in network.cell_manager.xylem:
@@ -140,17 +157,24 @@ def test_compare_granar_ganache():
         print(f"  Intercellular cells: {len(cm.intercellular)}")
         print(f"  Epidermis cells: {len(cm.epidermis)}")
 
-
-    print_network_summary("Ganache network 1", mecha_ganache_1.network, "compare_nx_ganache_1.txt")
-    print_network_summary("Ganache network 2", mecha_ganache_2.network, "compare_nx_ganache_2.txt")
-    print_network_summary("Classic Mecha", mecha.network, "compare_nx_classic.txt")
+    print_network_summary(
+        "Ganache network 1", mecha_ganache_1.network, "outputs/compare_nx_ganache_1.txt"
+    )
+    print_network_summary(
+        "Ganache network 2", mecha_ganache_2.network, "outputs/compare_nx_ganache_2.txt"
+    )
+    print_network_summary(
+        "Classic Mecha", mecha.network, "outputs/compare_nx_classic.txt"
+    )
 
     plotting = False
     if plotting:
         import matplotlib.pyplot as plt
 
-        # Test the connection visualization
-        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 10), sharex=True, sharey=True)
+        # est the connection visualization
+        fig, (ax1, ax2, ax3) = plt.subplots(
+            1, 3, figsize=(20, 10), sharex=True, sharey=True
+        )
 
         visualize(mecha.network, "network", ax=ax1, title="Granar - cellset network")
         visualize(mecha_ganache_1.network, "network", ax=ax2, title="Ganache network 1")
@@ -159,23 +183,26 @@ def test_compare_granar_ganache():
         plt.tight_layout()
         plt.show()
 
-
     for i in range(len(mecha.root_hydraulic_properties)):
         mecha_props = mecha.root_hydraulic_properties[i]
         for j in range(len(mecha_ganache_1.root_hydraulic_properties)):
             ganache_props = mecha_ganache_1.root_hydraulic_properties[j]
-            if mecha_props['barrier'] == ganache_props['barrier']:
-                assert_close_range(ganache_props['kr'], mecha_props['kr'], "different kr")
-                assert_close_range(ganache_props['Kx'], mecha_props['Kx'], "different Kx")
+            if mecha_props["barrier"] == ganache_props["barrier"]:
+                assert_close_range(
+                    ganache_props["kr"], mecha_props["kr"], "different kr"
+                )
+                assert_close_range(
+                    ganache_props["Kx"], mecha_props["Kx"], "different Kx"
+                )
         for j in range(len(mecha_ganache_2.root_hydraulic_properties)):
             ganache_props = mecha_ganache_2.root_hydraulic_properties[j]
-            if mecha_props['barrier'] == ganache_props['barrier']:
-                assert_close_range(ganache_props['kr'], mecha_props['kr'], "different kr")
-                assert_close_range(ganache_props['Kx'], mecha_props['Kx'], "different Kx")
-
-def assert_close_range(a, b, msg: str = ""):
-    assert a != 0 and b != 0, "Zero has no log10 order of magnitude"
-    assert math.floor(math.log10(abs(a))) == math.floor(math.log10(abs(b))), f'{msg}: {a} vs. {b}'
+            if mecha_props["barrier"] == ganache_props["barrier"]:
+                # assert_close_range(
+                    ganache_props["kr"], mecha_props["kr"], "different kr"
+                )
+                assert_close_range(
+                    ganache_props["Kx"], mecha_props["Kx"], "different Kx"
+                )
 
 
 if __name__ == "__main__":

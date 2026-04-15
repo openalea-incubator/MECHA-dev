@@ -1,4 +1,5 @@
 import numpy as np
+import math
 from collections.abc import MutableMapping
 
 
@@ -225,3 +226,7 @@ def mtg_to_arraydict(g, ignore: list = []):
             stored = v.to_dict()
             props[k] = ArrayDict(stored)
                 
+
+def assert_close_range(a, b, msg: str = ""):
+    assert a != 0 and b != 0, "Zero has no log10 order of magnitude"
+    assert math.floor(math.log10(abs(a))) == math.floor(math.log10(abs(b))), f'{msg}: {a} vs. {b}'
