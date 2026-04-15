@@ -44,6 +44,7 @@ def test_compare_granar_ganache():
 
     m2 = matrix_W
 
+
     # Ensure same shape
     if m1.shape != m2.shape:
         print(f"Shapes differ: {m1.shape} vs {m2.shape}")
@@ -55,6 +56,10 @@ def test_compare_granar_ganache():
         if max_diff > 1e-10:
             i, j = np.unravel_index(np.argmax(diff), diff.shape)
             print(f"Max difference occurs at ({i}, {j}): m1={m1[i,j]:.6e} vs m2={m2[i,j]:.6e}")
+            if i == j:
+                print("Diagonal element is different")
+                # node type
+                
             flat_indices = np.argsort(diff.flatten())[::-1]
             print("Top 10 differences:")
             for count, idx in enumerate(flat_indices[:10]):
@@ -83,26 +88,6 @@ def test_compare_granar_ganache():
         print(mecha_ganache_2.root_hydraulic_properties[i])
 
     xyl = mecha_ganache_2.network.cell_manager.xylem
-    K_xyl_spec = 0
-    for i in range(len(xyl)):
-        kx_spec = xyl[i].area **2/(8*3.141592*200*1.0E-05/3600/24)*1.0E-12
-        K_xyl_spec += kx_spec
-    K_xyl_spec = K_xyl_spec*200/1E4
-    print(K_xyl_spec)
-
-    # Create a default input for Mecha use with cellset data
-    Granar_input = InData(cellset_file="inputs/current_root5.xml")
-    Granar_input.geometry.set_maturity_stages([1,3])
-
-    # Create a Mecha instance with the default input
-    mecha = Mecha(Granar_input)
-
-    print("classic mecha")
-    mecha.compute_conductivities()
-    for i in range(len(mecha.root_hydraulic_properties)):
-        print(mecha.root_hydraulic_properties[i])
-
-    xyl = mecha.network.cell_manager.xylem
     K_xyl_spec = 0
     for i in range(len(xyl)):
         kx_spec = xyl[i].area **2/(8*3.141592*200*1.0E-05/3600/24)*1.0E-12
@@ -143,27 +128,43 @@ def test_compare_granar_ganache():
 
     print_network_summary("Ganache network 1", mecha_ganache_1.network, "compare_nx_ganache_1.txt")
     print_network_summary("Ganache network 2", mecha_ganache_2.network, "compare_nx_ganache_2.txt")
-    print_network_summary("Classic Mecha", mecha.network, "compare_nx_classic.txt")
 
-    plotting = False
+    plotting = True
     if plotting:
         import matplotlib.pyplot as plt
+        from mecha.utils.visu import (
+            plot_network_difference, plot_matrix_difference, 
+            plot_networks_cgroup, plot_networks_rank
+        )
 
-        # Test the connection visualization
-        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 10), sharex=True, sharey=True)
+        # Plot absolute difference between the two matrices
+        plot_matrix_difference(m1, m2, title="Absolute Difference between Matrix_W (Net 1 vs Net 2)")
 
-        visualize(mecha.network, "network", ax=ax1, title="Granar - cellset network")
-        visualize(mecha_ganache_1.network, "network", ax=ax2, title="Ganache network 1")
-        visualize(mecha_ganache_2.network, "network", ax=ax3, title="Ganache network 2")
+        # Test the connection visualization side by side
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10), sharex=True, sharey=True)
+
+        visualize(mecha_ganache_1.network, "network", ax=ax1, title="Ganache network 1")
+        visualize(mecha_ganache_2.network, "network", ax=ax2, title="Ganache network 2")
 
         plt.tight_layout()
         plt.show()
 
+        # Plot the difference between the two networks
+        plot_network_difference(mecha_ganache_1.network, mecha_ganache_2.network)
 
-    for i in range(len(mecha.root_hydraulic_properties)):
-        mecha_props = mecha.root_hydraulic_properties[i]
-        for j in range(len(mecha_ganache_1.root_hydraulic_properties)):
-            ganache_props = mecha_ganache_1.root_hydraulic_properties[j]
+        # Plot the two networks side by side with cgroup coloring
+        plot_networks_cgroup(mecha_ganache_1.network, mecha_ganache_2.network, 
+                             title1="Ganache network 1", title2="Ganache network 2")
+
+        # Plot the two networks side by side with rank coloring
+        plot_networks_rank(mecha_ganache_1.network, mecha_ganache_2.network,
+                           title1="Ganache network 1", title2="Ganache network 2")
+
+
+    for i in range(len(mecha_ganache_1.root_hydraulic_properties)):
+        mecha_props = mecha_ganache_1.root_hydraulic_properties[i]
+        for j in range(len(mecha_ganache_2.root_hydraulic_properties)):
+            ganache_props = mecha_ganache_2.root_hydraulic_properties[j]
             if mecha_props['barrier'] == ganache_props['barrier']:
                 assert_close_range(ganache_props['kr'], mecha_props['kr'], "different kr")
                 assert_close_range(ganache_props['Kx'], mecha_props['Kx'], "different Kx")

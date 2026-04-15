@@ -13,10 +13,15 @@
 #
 # -----------------------------------------------------------------------
 """
-HydraulicCell and HydraulicCellManager
+HydraulicWall, HydraulicCell and HydraulicCellManager
 =======================================
 
-A standalone cell descriptor for MECHA's hydraulic network.
+Standalone descriptors for MECHA's hydraulic network.
+
+``HydraulicWall`` carries:
+  - geometry of a cell wall in MECHA's hydraulic network
+  - graph-topology identifiers (node_id)
+  - hydraulic properties of a cell wall in MECHA's hydraulic network
 
 ``HydraulicCell`` carries:
   - geometry fields mirrored from GRANAP Cell (without inheriting it)
@@ -158,6 +163,8 @@ class HydraulicCell:
         "km", "kaqp",
         # --- hydraulic state (potentials) ---
         "os", "psi", "psi_p",
+        # --- growth ---
+        "elongattion_rate",
     )
 
     def __init__(
@@ -172,12 +179,14 @@ class HydraulicCell:
         cell_id: int,
         cgroup: int,
         rank: int = 0,
+        elongattion_rate: Optional[float] = 0.0,
         walls: Optional[List['HydraulicWall']] = None,
     ) -> None:
         # Geometry
         self.x: float = x
         self.y: float = y
         self.area: float = area
+        self.elongattion_rate: float = 0.0
         self.perimeter: float = perimeter
         self.cell_type: str = cell_type
 
