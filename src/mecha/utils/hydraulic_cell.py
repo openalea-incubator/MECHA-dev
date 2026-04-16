@@ -328,6 +328,7 @@ class HydraulicCellManager:
         result = []
         for key in ("intercellular", "air space", "aerenchyma"):
             result.extend(self._by_type.get(key, []))
+
         return result
 
     @property
@@ -435,6 +436,9 @@ class HydraulicCellManager:
                     and cell_id < len(network.cell_types))
                 else node_data.get("cell_type", "")
             )
+            
+            if hasattr(network, "intercellular_cells") and network.intercellular_cells is not None and cell_id in network.intercellular_cells:
+                cell_type = "air space"
 
             # --- Rank ------------------------------------------------------
             rank = (

@@ -19,10 +19,16 @@ import numpy as np
 def test_compare_granar_ganache():
     # Create a Mecha instance with a GRANAP network
     root = RootAnatomy()
+    root.update_params(param_name="aerenchyma", attribute="aerenchyma_proportion", value = 0.05)
+    root.update_params("cortex", "n_layers", 6)
+    root.update_params("inter_cellular_spaces", "tissue", "cortex")
+    root.update_params("inter_cellular_spaces", "smoothness", 0.05)
+
     _ = root.export_to_adjencymatrix()
 
     writer = AnatomyWriter(root)
     writer.write_to_xml("outputs/test_ganache.xml")
+    writer.write_xml_geometry("outputs/test_ganache_geometry.xml")
 
     # root.plot_cells()
     # root.plot_network()
@@ -40,8 +46,7 @@ def test_compare_granar_ganache():
     m1 = matrix_W
 
     # Create a default input for Mecha use with cellset data
-    Ganache_input = InData(cellset_file="outputs/test_ganache.xml")
-    Ganache_input.geometry.set_maturity_stages([1, 3])
+    Ganache_input = InData(cellset_file="outputs/test_ganache.xml", geometry_file="outputs/test_ganache_geometry.xml")
     mecha_ganache_2 = Mecha(Ganache_input)
 
     solution, _, matrix_W, Kmb, rhs_s = mecha_ganache_2.solve_W(h=0, i_maturity=1)
@@ -81,30 +86,10 @@ def test_compare_granar_ganache():
     for i in range(len(mecha_ganache_1.root_hydraulic_properties)):
         print(mecha_ganache_1.root_hydraulic_properties[i])
 
-    xyl = mecha_ganache_1.network.cell_manager.xylem
-    K_xyl_spec = 0
-    for i in range(len(xyl)):
-        kx_spec = (
-            xyl[i].area ** 2 / (8 * 3.141592 * 200 * 1.0e-05 / 3600 / 24) * 1.0e-12
-        )
-        K_xyl_spec += kx_spec
-    K_xyl_spec = K_xyl_spec * 200 / 1e4
-    print(K_xyl_spec)
-
     print("mecha ganache 2")
     mecha_ganache_2.compute_conductivities()
     for i in range(len(mecha_ganache_2.root_hydraulic_properties)):
         print(mecha_ganache_2.root_hydraulic_properties[i])
-
-    xyl = mecha_ganache_2.network.cell_manager.xylem
-    K_xyl_spec = 0
-    for i in range(len(xyl)):
-        kx_spec = (
-            xyl[i].area ** 2 / (8 * 3.141592 * 200 * 1.0e-05 / 3600 / 24) * 1.0e-12
-        )
-        K_xyl_spec += kx_spec
-    K_xyl_spec = K_xyl_spec * 200 / 1e4
-    print(K_xyl_spec)
 
     # Create a default input for Mecha use with cellset data
     Granar_input = InData(cellset_file="inputs/current_root5.xml")
@@ -117,16 +102,6 @@ def test_compare_granar_ganache():
     mecha.compute_conductivities()
     for i in range(len(mecha.root_hydraulic_properties)):
         print(mecha.root_hydraulic_properties[i])
-
-    xyl = mecha.network.cell_manager.xylem
-    K_xyl_spec = 0
-    for i in range(len(xyl)):
-        kx_spec = (
-            xyl[i].area ** 2 / (8 * 3.141592 * 200 * 1.0e-05 / 3600 / 24) * 1.0e-12
-        )
-        K_xyl_spec += kx_spec
-    K_xyl_spec = K_xyl_spec * 200 / 1e4
-    print(K_xyl_spec)
 
     def print_network_summary(name, network, filename):
         # write the output to a file
@@ -214,12 +189,8 @@ def test_compare_granar_ganache():
         for j in range(len(mecha_ganache_2.root_hydraulic_properties)):
             ganache_props = mecha_ganache_2.root_hydraulic_properties[j]
             if mecha_props["barrier"] == ganache_props["barrier"]:
-                # assert_close_range(
-                    ganache_props["kr"], mecha_props["kr"], "different kr"
-                )
-                assert_close_range(
-                    ganache_props["Kx"], mecha_props["Kx"], "different Kx"
-                )
+                assert_close_range(ganache_props["kr"], mecha_props["kr"], "different kr")
+                assert_close_range(ganache_props["Kx"], mecha_props["Kx"], "different Kx")
 
 
 if __name__ == "__main__":

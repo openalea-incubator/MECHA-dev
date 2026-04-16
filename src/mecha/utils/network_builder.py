@@ -274,6 +274,7 @@ class NetworkBuilder(AbstractNetwork):
                 'endodermis': 3,
                 'passage': 3,
                 'cortex': 4,
+                'air space': 4,
                 'mesophyll':4,
                 'stele': 5,
                 'pith': 5,
