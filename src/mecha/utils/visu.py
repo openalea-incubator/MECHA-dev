@@ -417,7 +417,7 @@ def _visualize_standardized_results(obj: Any, **kwargs: Dict[str, Any]) -> None:
     plot_water_potential_map(gdf, title=f"Water Potential (Mat: {maturity_idx}, Scen: {scenario_idx})")
 
 
-def plot_matrix_difference(m1, m2, title="Absolute Difference between Matrices"):
+def plot_matrix_difference(m1, m2, title="Absolute Difference between Matrices", threshold=1e-12):
     """
     Plots the absolute difference between two matrices.
     """
@@ -428,20 +428,119 @@ def plot_matrix_difference(m1, m2, title="Absolute Difference between Matrices")
     if hasattr(m1, 'toarray'): m1 = m1.toarray()
     if hasattr(m2, 'toarray'): m2 = m2.toarray()
 
-    
     diff = np.abs(m1 - m2)
 
+    rows, cols = np.where(diff > threshold)
+    values = diff[rows, cols]
+
     plt.figure(figsize=(10, 8))
-    plt.imshow(diff, cmap='hot', interpolation='nearest', vmin=1E-16, vmax=1E-3)
-    plt.colorbar(label='Absolute Difference')
+    if len(values) > 0:
+        plt.scatter(cols, rows, c=values, cmap='hot', s=50, alpha=0.8, vmin=np.min(values), vmax=np.max(values))
+        plt.colorbar(label='Absolute Difference')
+    else:
+        plt.text(0.5, 0.5, 'No differences found', horizontalalignment='center', verticalalignment='center', transform=plt.gca().transAxes)
+    
     plt.title(title)
     plt.xlabel('Column Index')
     plt.ylabel('Row Index')
+    if hasattr(m1, 'shape'):
+        plt.xlim(-0.5, m1.shape[1]-0.5)
+        plt.ylim(m1.shape[0]-0.5, -0.5) # Invert y axis
     plt.tight_layout()
     plt.show()
 
 
-def _plot_network_property(network, prop_name, ax, title, node_size=10):
+def plot_edge_and_node_differences(net1, net2, title="Detailed Topology Differences", distance_threshold=1e-6):
+    """
+    Locates and plots differences between two networks: Code colored by type.
+    """
+    import matplotlib.pyplot as plt
+    import networkx as nx
+    import numpy as np
+    
+    fig, ax = plt.subplots(figsize=(14, 14))
+    g1 = net1.graph if hasattr(net1, 'graph') else net1
+    g2 = net2.graph if hasattr(net2, 'graph') else net2
+    
+    pos1 = nx.get_node_attributes(g1, 'position')
+    pos2 = nx.get_node_attributes(g2, 'position')
+
+    # Defaults for positions
+    default_pos1 = {n: (0,0) for n in g1.nodes if n not in pos1}
+    pos1.update(default_pos1)
+    default_pos2 = {n: (0,0) for n in g2.nodes if n not in pos2}
+    pos2.update(default_pos2)
+
+    nodes1 = set(g1.nodes())
+    nodes2 = set(g2.nodes())
+
+    missing_in_2 = list(nodes1 - nodes2)
+    missing_in_1 = list(nodes2 - nodes1)
+
+    common_nodes = nodes1.intersection(nodes2)
+    moved_nodes = []
+    stable_nodes = []
+    
+    for n in common_nodes:
+        p1, p2 = pos1[n], pos2[n]
+        d = np.hypot(p1[0]-p2[0], p1[1]-p2[1])
+        if d > distance_threshold:
+            moved_nodes.append(n)
+        else:
+            stable_nodes.append(n)
+
+    # Convert edges to canonical forms (min, max) so direction doesn't matter
+    edges1 = set([tuple(sorted((u, v))) for u, v in g1.edges()])
+    edges2 = set([tuple(sorted((u, v))) for u, v in g2.edges()])
+
+    missing_edges_in_2 = list(edges1 - edges2)
+    missing_edges_in_1 = list(edges2 - edges1)
+    common_edges = list(edges1.intersection(edges2))
+
+    # Base plot (common stuff in light gray to provide context)
+    nx.draw_networkx_nodes(g1, pos1, nodelist=stable_nodes, node_color='lightgray', node_size=10, ax=ax, alpha=0.5)
+    nx.draw_networkx_edges(g1, pos1, edgelist=common_edges, edge_color='lightgray', width=1, ax=ax, alpha=0.5)
+
+    # Draw missing nodes in 2 (i.e., only in 1) -> Red
+    nx.draw_networkx_nodes(g1, pos1, nodelist=missing_in_2, node_color='red', node_size=30, ax=ax, label='Node only in net1')
+    
+    # Draw missing nodes in 1 (i.e., only in 2) -> Blue
+    nx.draw_networkx_nodes(g2, pos2, nodelist=missing_in_1, node_color='blue', node_size=30, ax=ax, label='Node only in net2')
+
+    # Draw moved nodes 
+    # Draw them in Net 1 position (Orange) and Net 2 position (Purple) with an arrow between them
+    nx.draw_networkx_nodes(g1, pos1, nodelist=moved_nodes, node_color='orange', node_size=50, ax=ax, label='Moved node (Net1 pos)')
+    nx.draw_networkx_nodes(g2, pos2, nodelist=moved_nodes, node_color='purple', node_size=20, ax=ax, label='Moved node (Net2 pos)')
+    for n in moved_nodes:
+        ax.annotate("", xy=pos2[n], xycoords='data', xytext=pos1[n], textcoords='data',
+                    arrowprops=dict(arrowstyle="->", color="black", shrinkA=0, shrinkB=0, alpha=0.5))
+
+    # Draw missing edges in 2 (i.e., only in net 1) -> Red edges
+    # Be careful some nodes might not exist in pos2 if they are only in 1, so use pos1
+    nx.draw_networkx_edges(g1, pos1, edgelist=missing_edges_in_2, edge_color='red', width=2, ax=ax, label='Edge only in net1')
+    
+    # Draw missing edges in 1 (i.e., only in net 2) -> Blue edges
+    nx.draw_networkx_edges(g2, pos2, edgelist=missing_edges_in_1, edge_color='blue', width=2, ax=ax, label='Edge only in net2')
+
+    ax.set_aspect("equal", "box")
+    ax.set_title(title)
+    
+    # Legend
+    from matplotlib.lines import Line2D
+    legend_elements = [
+        Line2D([0], [0], marker='o', color='w', label='Node only in net1', markerfacecolor='red', markersize=10),
+        Line2D([0], [0], marker='o', color='w', label='Node only in net2', markerfacecolor='blue', markersize=10),
+        Line2D([0], [0], marker='o', color='w', label='Moved node (Net1 pos)', markerfacecolor='orange', markersize=10),
+        Line2D([0], [0], marker='o', color='w', label='Moved node (Net2 pos)', markerfacecolor='purple', markersize=10),
+        Line2D([0], [0], color='red', lw=2, label='Edge only in net1'),
+        Line2D([0], [0], color='blue', lw=2, label='Edge only in net2'),
+    ]
+    ax.legend(handles=legend_elements, loc='upper right')
+    
+    plt.tight_layout()
+    plt.show()
+
+def _plot_network_property(network, prop_name, ax, title, node_size=30):
     import networkx as nx
     from matplotlib import colormaps
     graph = network.graph if hasattr(network, 'graph') else network
@@ -545,3 +644,45 @@ def plot_network_difference(net1, net2, title="Network Spatial Difference"):
     
     plt.tight_layout()
     plt.show()
+
+def plot_intercellular_spaces(net1, net2, title1="Net 1", title2="Net 2"):
+    """
+    Plots two networks side by side and highlights the intercellular spaces.
+    """
+    import matplotlib.pyplot as plt
+    import networkx as nx
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10), sharex=True, sharey=True)
+
+    def _plot_intercellular(network, ax, title):
+        graph = network.graph if hasattr(network, 'graph') else network
+        pos = nx.get_node_attributes(graph, 'position')
+        
+        # Draw everything in light gray
+        nx.draw_networkx_nodes(graph, pos, node_color='lightgray', node_size=10, ax=ax, alpha=0.5)
+        nx.draw_networkx_edges(graph, pos, edge_color='lightgray', width=1, ax=ax, alpha=0.5)
+        
+        # Highlight intercellular nodes
+        if hasattr(network, 'intercellular_cells'):
+            intercellular_nodes = [network.n_wall_junction + cid for cid in network.intercellular_cells]
+        else:
+            intercellular_nodes = []
+            
+        nx.draw_networkx_nodes(graph, pos, nodelist=intercellular_nodes, node_color='blue', node_size=50, ax=ax, label='Intercellular Space')
+        
+        ax.set_aspect("equal", "box")
+        ax.set_title(title)
+        
+        from matplotlib.lines import Line2D
+        legend_elements = [
+            Line2D([0], [0], marker='o', color='w', label='Intercellular Space', markerfacecolor='blue', markersize=10),
+        ]
+        if intercellular_nodes:
+            ax.legend(handles=legend_elements, loc='upper right')
+
+    _plot_intercellular(net1, ax1, title1)
+    _plot_intercellular(net2, ax2, title2)
+    
+    plt.tight_layout()
+    plt.show()
+

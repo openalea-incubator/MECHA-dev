@@ -16,9 +16,14 @@ import numpy as np
 def test_compare_granar_ganache():
     # Create a Mecha instance with a GRANAP network
     root = RootAnatomy()
+    root.update_params("aerenchyma", "aerenchyma_proportion", 0.1)
+    root.update_params("inter_cellular_spaces", "tissue", "cortex")
+    print(root.params) 
+
     _ = root.export_to_adjencymatrix()
 
-    root.write_to_xml("inputs/test_ganache.xml")
+    root.write_to_xml("outputs/test_ganache.xml")
+    root.write_xml_geometry("outputs/test_ganache_geometry.xml")
 
     # root.plot_cells()
     # root.plot_network()
@@ -36,7 +41,7 @@ def test_compare_granar_ganache():
     m1 = matrix_W
     
     # Create a default input for Mecha use with cellset data
-    Ganache_input = InData(cellset_file="inputs/test_ganache.xml")
+    Ganache_input = InData(cellset_file="outputs/test_ganache.xml", geometry_file="outputs/test_ganache_geometry.xml")
     Ganache_input.geometry.set_maturity_stages([1,3])
     mecha_ganache_2 = Mecha(Ganache_input)
 
@@ -126,39 +131,24 @@ def test_compare_granar_ganache():
         print(f"  Epidermis cells: {len(cm.epidermis)}")
 
 
-    print_network_summary("Ganache network 1", mecha_ganache_1.network, "compare_nx_ganache_1.txt")
-    print_network_summary("Ganache network 2", mecha_ganache_2.network, "compare_nx_ganache_2.txt")
+    # print_network_summary("Ganache network 1", mecha_ganache_1.network, "compare_nx_ganache_1.txt")
+    # print_network_summary("Ganache network 2", mecha_ganache_2.network, "compare_nx_ganache_2.txt")
 
     plotting = True
     if plotting:
         import matplotlib.pyplot as plt
         from mecha.utils.visu import (
             plot_network_difference, plot_matrix_difference, 
-            plot_networks_cgroup, plot_networks_rank
+            plot_networks_cgroup, plot_networks_rank, 
+            plot_edge_and_node_differences,
+            plot_intercellular_spaces
         )
+
+        plot_edge_and_node_differences(mecha_ganache_1.network, mecha_ganache_2.network)
+        plot_intercellular_spaces(mecha_ganache_1.network, mecha_ganache_2.network)
 
         # Plot absolute difference between the two matrices
         plot_matrix_difference(m1, m2, title="Absolute Difference between Matrix_W (Net 1 vs Net 2)")
-
-        # Test the connection visualization side by side
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10), sharex=True, sharey=True)
-
-        visualize(mecha_ganache_1.network, "network", ax=ax1, title="Ganache network 1")
-        visualize(mecha_ganache_2.network, "network", ax=ax2, title="Ganache network 2")
-
-        plt.tight_layout()
-        plt.show()
-
-        # Plot the difference between the two networks
-        plot_network_difference(mecha_ganache_1.network, mecha_ganache_2.network)
-
-        # Plot the two networks side by side with cgroup coloring
-        plot_networks_cgroup(mecha_ganache_1.network, mecha_ganache_2.network, 
-                             title1="Ganache network 1", title2="Ganache network 2")
-
-        # Plot the two networks side by side with rank coloring
-        plot_networks_rank(mecha_ganache_1.network, mecha_ganache_2.network,
-                           title1="Ganache network 1", title2="Ganache network 2")
 
 
     for i in range(len(mecha_ganache_1.root_hydraulic_properties)):
