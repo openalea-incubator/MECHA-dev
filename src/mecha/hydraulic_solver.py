@@ -159,7 +159,7 @@ class HydraulicMatrixBuilder:
         cgroup = self.network.graph.nodes[neighboor]['cgroup']
         n_wall_junction = self.network.n_wall_junction
         
-        intercellular_ids = self.geometry.intercellular_ids if hasattr(self.geometry, 'intercellular_ids') else []
+        intercellular_ids = np.array([c.cell_id for c in self.network.cell_manager.intercellular])
 
         if matrix_C is not None and self.general.c_flag:
             for carrier in getattr(self.hormones, 'carrier_elems', []):
@@ -253,7 +253,7 @@ class HydraulicMatrixBuilder:
         cgroupj = map_cgroup(cgroupj)
         
         n_wall_junction = self.network.n_wall_junction
-        intercellular_ids = self.geometry.intercellular_ids if hasattr(self.geometry, 'intercellular_ids') else []
+        intercellular_ids = np.array([c.cell_id for c in self.network.cell_manager.intercellular])
 
         temp_factor = 1.0
         

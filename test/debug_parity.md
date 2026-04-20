@@ -49,9 +49,14 @@ While mathematically similar, these two methods produce slightly different resul
 **Attempted Fix:** Strengthened validation loop to execute `cgroup = int(cgroup)` immediately, throwing an exception only if non-numeric/empty types arise.
 **Result:** Ensures intact GRANAP grouping designations endure to correctly dictate ranks spanning `_rank_cells_from_graph`.
 
+### 7. Cell Type Assignment (Intercellular and Passage Cells)
+**Observation:** When intercellular spaces or passage cells were included, numerical divergence appeared in the conductance matrix, even though the total count of cells seemed consistent.
+**Root Cause:** The `HydraulicCellManager.sync_from_network()` method had a broken conditional block for determining `cell_type`. It attempted to use `elif` within a parenthesized expression (invalid syntax in Python ternary) and had a logic error in checking the length of `intercellular_cells` (`len(network.intercellular_cells > 0)`). This caused fallback to `node_data.get("cell_type", "")`, which could be empty or inconsistent.
+**Attempted Fix:** Fixed the `cell_type` assignment logic in `sync_from_network` by converting it to a standard `if/elif/else` block that correctly prioritizes `network.cell_types`, `network.intercellular_cells`, and `network.passage_cells`.
+**Result:** **FULL PARITY ACHIEVED.** Both `Matrix_W` and derived hydraulic properties (`kr`, `Kx`) now match with machine-precision accuracy even when complex tissues like aerenchyma are included.
+
 ## Current State
-The structural alignment (number of nodes, walls, junctions, and connectivity mappings) and topological parity has been established! Node assignments for junctions and the hydraulic attributes dictating conductance inside the matrix are almost synchronized.
-with aerenchyma and intercellular spaces set to 0, the two networks are identical. However, when aerenchyma and intercellular spaces are added, the two conductance matrices are not.
+Numerical parity has been fully established across structural, topological, and hydraulic levels! The direct-to-graph (`Ganache_1`) and XML-mediated (`Ganache_2`) pathways now produce matrices and simulation results that are identical to within floating-point epsilon (~1e-15).
 
 ## New tools for debugging
 - [x] creation of more visualization tools to compare the two networks and identify the source of the numerical discrepancy.
@@ -63,27 +68,26 @@ with aerenchyma and intercellular spaces set to 0, the two networks are identica
     - [x] create a function to plot where the intercellular spaces are in the two networks
 
 
-## Results
+Max difference in Matrix_W: 1.4242e-15
+Matrices are practically EXACTLY identical.
 
 --- Ganache network 1 Summary ---
   Cells: 2104
   Walls: 6307
   Xylem cells: 25
   Sieve cells: 50
-  Passage cells: 0
   Intercellular cells: 338
-  Epidermis cells: 184
 
-  barrier': 1, 'height': 200.0, 'kr': 7.6071e-05, 'Kx': 1.2162
+  {'barrier': 1, 'kr': 8.38849e-05, 'Kx': 1.1849}
+  {'barrier': 3, 'kr': 3.53086e-05, 'Kx': 1.1849}
 
 --- Ganache network 2 Summary ---
   Cells: 2104
   Walls: 6307
   Xylem cells: 25
   Sieve cells: 50
-  Passage cells: 0
   Intercellular cells: 338
-  Epidermis cells: 184
 
-  barrier': 1, 'height': 200.0, 'kr': 7.5392e-05, 'Kx': 1.2162
+  {'barrier': 1, 'kr': 8.38849e-05, 'Kx': 1.1849}
+  {'barrier': 3, 'kr': 3.53086e-05, 'Kx': 1.1849}
   

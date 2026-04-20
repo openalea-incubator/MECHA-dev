@@ -584,6 +584,18 @@ def _plot_network_property(network, prop_name, ax, title, node_size=30):
     ax.set_title(title)
 
 
+def plot_networks_interC(net1, net2, title1="Network 1", title2="Network 2"):
+    """
+    Plots two networks side by side colored by cgroup.
+    """
+    import matplotlib.pyplot as plt
+    
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10))
+    _plot_network_property(net1, 'count_interC', ax=ax1, title=title1 + ' interC')
+    _plot_network_property(net2, 'count_interC', ax=ax2, title=title2 + ' interC')
+    plt.tight_layout()
+    plt.show()
+
 def plot_networks_cgroup(net1, net2, title1="Network 1", title2="Network 2"):
     """
     Plots two networks side by side colored by cgroup.

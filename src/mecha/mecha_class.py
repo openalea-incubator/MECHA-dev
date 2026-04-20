@@ -510,15 +510,9 @@ class Mecha:
         n_wall_junction = self.network.n_wall_junction
 
         # Get passage / intercellular cell IDs from geometry or graph
-        if self.geometry is not None:
-            passage_cell_ids = np.array(self.geometry.passage_cell_ids)
-            intercellular_ids = np.array(self.geometry.intercellular_ids)
-            xylem_pieces = self.geometry.xylem_pieces
-        else:
-            # GRANAP mode: look in graph for 'passage' and 'intercellular' cell_types
-            passage_cell_ids = np.array([c.node_id for c in self.network.cell_manager.passage])
-            intercellular_ids = np.array([c.node_id for c in self.network.cell_manager.intercellular])
-            xylem_pieces = False
+        passage_cell_ids = np.array([c.cell_id for c in self.network.cell_manager.passage])
+        intercellular_ids = np.array([c.cell_id for c in self.network.cell_manager.intercellular])
+        xylem_pieces = self.geometry.xylem_pieces
 
         # # When geometry exists but lists are empty, fall back to network-derived lists
         # # (happens when Mecha is built from a GRANAP network with a default InData)
