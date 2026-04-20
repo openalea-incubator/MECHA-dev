@@ -10,7 +10,7 @@ A Python package for simulating hydraulic scenarios in plant root systems.
 In MECHA-dev root directory, install the environment with
 ```bash
 mamba create -f ./conda/environment.yaml -y
-mamba activate mecha_env 
+mamba activate mecha 
 ```
 
 For source to be recognized in the environment, run the following at the root of the MECHA-env directory

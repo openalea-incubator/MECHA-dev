@@ -328,6 +328,7 @@ class HydraulicCellManager:
         result = []
         for key in ("intercellular", "air space", "aerenchyma"):
             result.extend(self._by_type.get(key, []))
+
         return result
 
     @property
