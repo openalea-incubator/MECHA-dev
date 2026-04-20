@@ -243,6 +243,10 @@ class NetworkBuilder(AbstractNetwork):
                 data['length'] = data['length'] * 1000
             if 'dist' in data:
                 data['dist'] = data['dist'] * 1000
+            if 'lateral_distance' in data:
+                data['lateral_distance'] = data['lateral_distance'] * 1000
+            if 'distnode_wall_cell' in data:
+                data['distnode_wall_cell'] = data['distnode_wall_cell'] * 1000
                 
         self.n_walls = src.n_walls
         self.n_junctions = src.n_junctions
@@ -296,10 +300,12 @@ class NetworkBuilder(AbstractNetwork):
             cell_type_str = node.get('cell_type', '')
             cgroup = node.get('cgroup')
 
-            # Map string cgroup or missing cgroup using cell_type_str
-            if not isinstance(cgroup, (int, float)) or cgroup is None:
+            # Map string cgroup or missing/invalid cgroup using cell_type_str
+            try:
+                cgroup = int(cgroup)
+            except (ValueError, TypeError):
                 cgroup = type_mapper.get(cell_type_str, 4)  # default cortex
-                self.graph.nodes[i]['cgroup'] = cgroup
+            self.graph.nodes[i]['cgroup'] = cgroup
 
         # which outer layer is connected to the cortex/mesophyll
         # do we have a cgroup of 1? if not outercortex_connec_rank = 2, direct connection to the epidermis
@@ -309,17 +315,63 @@ class NetworkBuilder(AbstractNetwork):
                 self.outercortex_connec_rank = 1
                 break
 
-        # Step 4: Rebuild junction_to_wall / n_junction_to_wall from edges
+        # Step 4: Rebuild junction_to_wall / n_junction_to_wall from edges mimicking create_wall_junction_nodes
+        old_juncs = list(range(self.n_walls, self.n_wall_junction))
+        wall_to_junc_coords = {}
+        for wall_id in range(self.n_walls):
+            junc_coords = []
+            for neighbor in self.graph.neighbors(wall_id):
+                if neighbor in old_juncs:
+                    edge_data = self.graph.edges[wall_id, neighbor]
+                    if edge_data.get('path') == 'wall':
+                        junc_coords.append(self.graph.nodes[neighbor]['position'])
+            wall_to_junc_coords[wall_id] = junc_coords
+        
+        # Remove old junctions and their edges
+        self.graph.remove_nodes_from(old_juncs)
+
         self.junction_to_wall = {}
         self.n_junction_to_wall = {}
-        for j_id in range(self.n_walls, self.n_wall_junction):
-            walls = []
-            for neighbor in self.graph.neighbors(j_id):
-                edge_data = self.graph.edges[j_id, neighbor]
-                if edge_data.get('path') == 'wall' and neighbor < self.n_walls:
-                    walls.append(neighbor)
-            self.junction_to_wall[j_id] = walls
-            self.n_junction_to_wall[j_id] = len(walls)
+        self.junction_positions = {}
+        junction_list = {}
+        junction_ni = 0
+        n_dec_position = 6
+
+        for wall_id in range(self.n_walls):
+            coords = wall_to_junc_coords.get(wall_id, [])
+            if len(coords) < 2:
+                continue
+            
+            # Store junction positions for this wall
+            self.junction_positions[wall_id] = [
+                coords[0][0], coords[0][1],  # First junction
+                coords[1][0], coords[1][1]   # Last junction
+            ]
+            
+            for coord in coords:
+                # Use raw unrounded floats for the dedup key to mimic XML parsing path
+                pos_key = "x" + str(coord[0]) + "y" + str(coord[1])
+                
+                if pos_key not in junction_list:
+                    node_id = self.n_walls + junction_ni
+                    self.graph.add_node(
+                        node_id,
+                        indice=node_id,
+                        type="apo",
+                        position=(round(coord[0], n_dec_position), round(coord[1], n_dec_position)),
+                        length=0
+                    )
+                    junction_list[pos_key] = node_id
+                    self.junction_to_wall[node_id] = [wall_id]
+                    self.n_junction_to_wall[node_id] = 1
+                    junction_ni += 1
+                else:
+                    junction_id = junction_list[pos_key]
+                    self.junction_to_wall[junction_id].append(wall_id)
+                    self.n_junction_to_wall[junction_id] += 1
+                    
+        self.n_junctions = junction_ni
+        self.n_wall_junction = self.n_walls + self.n_junctions
 
         # Step 5: Compute cell_areas, cell_perimeters from source or graph
         self.cell_areas = np.zeros(self.n_cells)
@@ -464,6 +516,9 @@ class NetworkBuilder(AbstractNetwork):
         # Build cell connections for symplastic paths
         self._build_cell_connections_from_graph()
         self._build_cell_manager()
+        
+        # Build new wall connections to junctions
+        self.build_wall_connections()
 
         self._is_populated = True
 

@@ -430,15 +430,17 @@ class HydraulicCellManager:
 
             # --- Type / group ----------------------------------------------
             cgroup = int(node_data.get("cgroup", 0))
-            cell_type = (
-                network.cell_types[cell_id]
-                if (hasattr(network, "cell_types") and network.cell_types is not None
-                    and cell_id < len(network.cell_types))
-                else node_data.get("cell_type", "")
-            )
-            
-            if hasattr(network, "intercellular_cells") and network.intercellular_cells is not None and cell_id in network.intercellular_cells:
+            if (hasattr(network, "cell_types") and network.cell_types is not None
+                and cell_id < len(network.cell_types) and network.cell_types[cell_id]):
+                cell_type = list(network.cell_types)[cell_id]
+            elif (hasattr(network, "intercellular_cells") and network.intercellular_cells is not None
+                  and cell_id in network.intercellular_cells):
                 cell_type = "air space"
+            elif (hasattr(network, "passage_cells") and network.passage_cells is not None
+                  and cell_id in network.passage_cells):
+                cell_type = "passage"
+            else:
+                cell_type = node_data.get("cell_type", "")
 
             # --- Rank ------------------------------------------------------
             rank = (

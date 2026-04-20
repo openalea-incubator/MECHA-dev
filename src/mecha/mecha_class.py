@@ -127,6 +127,8 @@ class Mecha:
         """Initialize Mecha when using an external network (e.g. GRANAP Organ)."""
         self.position = nx.get_node_attributes(self.network.graph, 'position')
         self.indice = nx.get_node_attributes(self.network.graph, 'indice')
+        self.geometry.intercellular_ids = self.network.cell_manager.intercellular
+        self.geometry.passage_cell_ids = self.network.cell_manager.passage
 
         # prepare_geometrical_properties requires general
         if self.general is not None and self.hormones is not None:
@@ -508,22 +510,16 @@ class Mecha:
         n_wall_junction = self.network.n_wall_junction
 
         # Get passage / intercellular cell IDs from geometry or graph
-        if self.geometry is not None:
-            passage_cell_ids = np.array(self.geometry.passage_cell_ids)
-            intercellular_ids = np.array(self.geometry.intercellular_ids)
-            xylem_pieces = self.geometry.xylem_pieces
-        else:
-            # GRANAP mode: look in graph for 'passage' and 'intercellular' cell_types
-            passage_cell_ids = np.array([c.node_id for c in self.network.cell_manager.passage])
-            intercellular_ids = np.array([c.node_id for c in self.network.cell_manager.intercellular])
-            xylem_pieces = False
+        passage_cell_ids = np.array([c.cell_id for c in self.network.cell_manager.passage])
+        intercellular_ids = np.array([c.cell_id for c in self.network.cell_manager.intercellular])
+        xylem_pieces = self.geometry.xylem_pieces
 
-        # When geometry exists but lists are empty, fall back to network-derived lists
-        # (happens when Mecha is built from a GRANAP network with a default InData)
-        if len(passage_cell_ids) == 0 and len(self.network.cell_manager.passage) > 0:
-            passage_cell_ids = np.array([c.node_id for c in self.network.cell_manager.passage])
-        if len(intercellular_ids) == 0 and len(self.network.cell_manager.intercellular) > 0:
-            intercellular_ids = np.array([c.node_id for c in self.network.cell_manager.intercellular])
+        # # When geometry exists but lists are empty, fall back to network-derived lists
+        # # (happens when Mecha is built from a GRANAP network with a default InData)
+        # if len(passage_cell_ids) == 0 and len(self.network.cell_manager.passage) > 0:
+        #     passage_cell_ids = np.array([c.node_id for c in self.network.cell_manager.passage])
+        # if len(intercellular_ids) == 0 and len(self.network.cell_manager.intercellular) > 0:
+        #     intercellular_ids = np.array([c.node_id for c in self.network.cell_manager.intercellular])
 
         # Ensure we have self.list_ghostwalls
         if not hasattr(self, 'list_ghostwalls'):
