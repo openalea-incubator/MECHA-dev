@@ -128,7 +128,8 @@ def prepare_geometrical_properties(general, network, position, indice):
             if ntype == "cell":
                 # Common: build wall_to_cell
                 idx = int(n_wall_to_cell[wall_id][0])
-                wall_to_cell[wall_id][idx] = cid
+                if idx < wall_to_cell.shape[1]:
+                    wall_to_cell[wall_id][idx] = cid
                 n_wall_to_cell[wall_id] += 1
 
                 if use_thick:

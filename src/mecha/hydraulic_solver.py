@@ -1,12 +1,13 @@
 import numpy as np
 import math
+from scipy.sparse import coo_matrix
 
 class HydraulicMatrixBuilder:
     """
     Builds the Doussan matrix (matrix_W) and solute transport matrix (matrix_C)
     for a specific hydraulic scenario and maturity stage.
     """
-    
+
     def __init__(self, network, geometry, boundary, hydraulic, hormones, general, geo_props, position, indice):
         self.network = network
         self.geometry = geometry
@@ -17,44 +18,51 @@ class HydraulicMatrixBuilder:
         self.geo_props = geo_props
         self.position = position
         self.indice = indice
-        
+
     def build(self, h, i_maturity, hydraulic_conductivities, boundary,
               psi_xyl, psi_sieve, distributed_flow_xyl, distributed_flow_sieve):
-        
+
         # Unpack properties
         maturity_stages = self.geometry.maturity_stages
         barrier = int(maturity_stages[i_maturity].get("barrier"))
         height = float(maturity_stages[i_maturity].get("height"))
-        x_contact = float(self.hydraulic.xcontactrange[h])  
-        
+        x_contact = float(self.hydraulic.xcontactrange[h])
+
         hyd_props = hydraulic_conductivities[h, i_maturity, barrier]
         kw_config = hyd_props['kw']
         kpl_config = hyd_props['kpl']
         kaqp_config = hyd_props['kaqp']
         a_cortex = hyd_props['a_cortex']
         b_cortex = hyd_props['b_cortex']
-        
+
         kw = self.hydraulic.get_kw_value(h)
         kpl = kpl_config['kpl']
-        
+
         n_nodes = self.network.graph.number_of_nodes()
         n_walls = self.network.n_walls
         n_wall_junction = self.network.n_wall_junction
         thickness = self.geometry.thickness
-        
-        # Initialize matrices
-        matrix_W = np.zeros((n_nodes, n_nodes))
-        matrix_C = np.zeros((n_nodes, n_nodes)) if self.boundary.c_flag else None
-        
+
+        # Initialize COO triplet lists for matrix_W
+        self._rows_W = []
+        self._cols_W = []
+        self._data_W = []
+
+        # Initialize COO triplet lists for matrix_C (only if needed)
+        if self.boundary.c_flag:
+            self._rows_C = []
+            self._cols_C = []
+            self._data_C = []
+
         rhs = np.zeros((n_nodes, 1))
         rhs_C = np.zeros((n_nodes, 1)) if self.boundary.c_flag else None
         rhs_s = np.zeros((n_nodes, 1))
         rhs_x = np.zeros((n_nodes, 1))
         rhs_p = np.zeros((n_nodes, 1))
-        
+
         Kmb = np.zeros((self.network.n_membrane, 1))
         jmb = 0
-        
+
         # 1. Edge loops (wall, membrane, plasmodesmata conductances)
         for node, edges in self.network.graph.adjacency():
             i = self.indice[node]
@@ -63,25 +71,42 @@ class HydraulicMatrixBuilder:
                 if j > i:  # Only process one way
                     path = eattr['path']
                     if path == 'wall':
-                        self._fill_wall(i, j, node, eattr, kw, kw_config, height, thickness, barrier, matrix_W, matrix_C)
+                        self._fill_wall(i, j, node, eattr, kw, kw_config, height, thickness, barrier)
                     elif path == 'membrane':
                         K_mem = self._fill_membrane(i, j, node, neighboor, eattr, kw, kw_config, height, thickness, barrier,
-                                                   kaqp_config, a_cortex, b_cortex, matrix_W, matrix_C)
+                                                   kaqp_config, a_cortex, b_cortex)
                         Kmb[jmb] = K_mem
                         jmb += 1
                     elif path == 'plasmodesmata':
-                        self._fill_plasmodesmata(i, j, node, neighboor, eattr, kpl, kpl_config, height, thickness, barrier, matrix_W, matrix_C)
+                        self._fill_plasmodesmata(i, j, node, neighboor, eattr, kpl, kpl_config, height, thickness, barrier)
 
         # 2. Add soil-wall connections
-        self._apply_soil_boundary(x_contact, height, thickness, kw, barrier, boundary, matrix_W, rhs_s, matrix_C, rhs_C)
-        
+        self._apply_soil_boundary(x_contact, height, thickness, kw, barrier, boundary, rhs_s, rhs_C)
+
         # 3. Add xylem / phloem BC
-        self._apply_xylo_phloem_boundary(i_maturity, barrier, psi_xyl, psi_sieve, distributed_flow_xyl, distributed_flow_sieve, boundary, matrix_W, rhs_s, rhs_x, rhs_p, rhs)
-        
+        self._apply_xylo_phloem_boundary(i_maturity, barrier, psi_xyl, psi_sieve, distributed_flow_xyl, distributed_flow_sieve, boundary, rhs_s, rhs_x, rhs_p, rhs)
+
+        # Build COO sparse matrices from accumulated triplets
+        matrix_W = coo_matrix((self._data_W, (self._rows_W, self._cols_W)), shape=(n_nodes, n_nodes))
+        if self.boundary.c_flag:
+            matrix_C = coo_matrix((self._data_C, (self._rows_C, self._cols_C)), shape=(n_nodes, n_nodes))
+        else:
+            matrix_C = None
+
         # Unified solute matrix -> removed ApoC and SymC
         return matrix_W, matrix_C, rhs_C, rhs_p, rhs_x, rhs_s, rhs, Kmb
 
-    def _fill_wall(self, i, j, node, eattr, kw, kw_config, height, thickness, barrier, matrix_W, matrix_C):
+    def _add_W(self, i, j, val):
+        self._rows_W.append(i)
+        self._cols_W.append(j)
+        self._data_W.append(val)
+
+    def _add_C(self, i, j, val):
+        self._rows_C.append(i)
+        self._cols_C.append(j)
+        self._data_C.append(val)
+
+    def _fill_wall(self, i, j, node, eattr, kw, kw_config, height, thickness, barrier):
         count_interC = self.network.graph.nodes[node].get('count_interC', 0)
         count_xyl = self.network.graph.nodes[node].get('count_xyl', 0)
         count_cortex = self.network.graph.nodes[node].get('count_cortex', 0)
@@ -92,7 +117,7 @@ class HydraulicMatrixBuilder:
 
         temp = 1.0E-04 * ((eattr['lateral_distance'] + height) * thickness - thickness**2) / eattr['length']
         temp_factor = 1.0
-        
+
         xylem_pieces = self.geometry.xylem_pieces if hasattr(self.geometry, 'xylem_pieces') else False
 
         if (count_interC >= 2 and barrier > 0) or (count_xyl == 2 and xylem_pieces):
@@ -137,34 +162,34 @@ class HydraulicMatrixBuilder:
         else:
             K = kw * temp
 
-        matrix_W[i][i] -= K
-        matrix_W[i][j] += K
-        matrix_W[j][i] += K
-        matrix_W[j][j] -= K
-        
+        self._add_W(i, i, -K)
+        self._add_W(i, j,  K)
+        self._add_W(j, i,  K)
+        self._add_W(j, j, -K)
+
         # Solute flux
-        if matrix_C is not None and self.general.c_flag:
+        if self.boundary.c_flag and self.general.c_flag:
             DF = temp * temp_factor * self.hormones.diff1_pw1
             if i not in self.network.apo_wall_zombies0:
-                matrix_C[i][i] -= DF
-                matrix_C[i][j] += DF
+                self._add_C(i, i, -DF)
+                self._add_C(i, j,  DF)
             if j not in self.network.apo_j_zombies0:
-                matrix_C[j][j] -= DF
-                matrix_C[j][i] += DF
+                self._add_C(j, j, -DF)
+                self._add_C(j, i,  DF)
 
-    def _fill_membrane(self, i, j, node, neighboor, eattr, kw, kw_config, height, thickness, barrier, kaqp_config, a_cortex, b_cortex, matrix_W, matrix_C):
+    def _fill_membrane(self, i, j, node, neighboor, eattr, kw, kw_config, height, thickness, barrier, kaqp_config, a_cortex, b_cortex):
         count_endo = self.network.graph.nodes[node].get('count_endo', 0)
         count_exo = self.network.graph.nodes[node].get('count_exo', 0)
         count_stele_overall = self.network.graph.nodes[node].get('count_stele_overall', 0)
         count_passage = self.network.graph.nodes[node].get('count_passage', 0)
         count_epi = self.network.graph.nodes[node].get('count_epi', 0)
-        
+
         cgroup = self.network.graph.nodes[neighboor]['cgroup']
         n_wall_junction = self.network.n_wall_junction
-        
+
         intercellular_ids = np.array([c.cell_id for c in self.network.cell_manager.intercellular])
 
-        if matrix_C is not None and self.general.c_flag:
+        if self.boundary.c_flag and self.general.c_flag:
             for carrier in getattr(self.hormones, 'carrier_elems', []):
                 if int(carrier.get("tissue")) == cgroup:
                     cid = j - n_wall_junction
@@ -173,14 +198,14 @@ class HydraulicMatrixBuilder:
                         direction = int(carrier.get("direction"))
                         if direction == 1:
                             if cid not in self.hormones.sym_zombie0:
-                                matrix_C[j][i] += temp_c
+                                self._add_C(j, i,  temp_c)
                             if i not in self.network.apo_wall_zombies0:
-                                matrix_C[i][i] -= temp_c
+                                self._add_C(i, i, -temp_c)
                         elif direction == -1:
                             if cid not in self.hormones.sym_zombie0:
-                                matrix_C[j][j] -= temp_c
+                                self._add_C(j, j, -temp_c)
                             if i not in self.network.apo_wall_zombies0:
-                                matrix_C[i][j] += temp_c
+                                self._add_C(i, j,  temp_c)
 
         kaqp_curr = 0.0
         if cgroup == 1: kaqp_curr = kaqp_config['kaqp_exo']
@@ -189,14 +214,14 @@ class HydraulicMatrixBuilder:
         elif cgroup in [13, 19, 20]:
             if barrier > 0:
                 kaqp_curr = kaqp_config['kaqp_stele'] * 10000
-                if matrix_C is not None and self.general.c_flag:
+                if self.boundary.c_flag and self.general.c_flag:
                     temp_c = 1.0E-04 * (self.network.wall_lengths[i] * height) / thickness
                     if i not in self.network.apo_wall_zombies0:
-                        matrix_C[i][i] -= temp_c * self.hormones.diff1_pw1
-                        matrix_C[i][j] += temp_c * self.hormones.diff1_pw1
+                        self._add_C(i, i, -temp_c * self.hormones.diff1_pw1)
+                        self._add_C(i, j,  temp_c * self.hormones.diff1_pw1)
                     if (j - n_wall_junction) not in self.hormones.sym_zombie0:
-                        matrix_C[j][j] -= temp_c * self.hormones.diff1_pw1
-                        matrix_C[j][i] += temp_c * self.hormones.diff1_pw1
+                        self._add_C(j, j, -temp_c * self.hormones.diff1_pw1)
+                        self._add_C(j, i,  temp_c * self.hormones.diff1_pw1)
             else:
                 kaqp_curr = kaqp_config['kaqp_stele']
         elif cgroup > 4:
@@ -234,14 +259,14 @@ class HydraulicMatrixBuilder:
             if kaqp_curr == 0.0: K = 1.00E-16
             else: K = calc_K(kw)
 
-        matrix_W[i][i] -= K
-        matrix_W[i][j] += K
-        matrix_W[j][i] += K
-        matrix_W[j][j] -= K
+        self._add_W(i, i, -K)
+        self._add_W(i, j,  K)
+        self._add_W(j, i,  K)
+        self._add_W(j, j, -K)
 
         return K
 
-    def _fill_plasmodesmata(self, i, j, node, neighboor, eattr, kpl, kpl_config, height, thickness, barrier, matrix_W, matrix_C):
+    def _fill_plasmodesmata(self, i, j, node, neighboor, eattr, kpl, kpl_config, height, thickness, barrier):
         cgroupi = self.network.graph.nodes[node].get('cgroup')
         cgroupj = self.network.graph.nodes[neighboor].get('cgroup')
 
@@ -251,15 +276,15 @@ class HydraulicMatrixBuilder:
             elif cg == 23: return 11
             elif cg == 26: return 12
             return cg
-        
+
         cgroupi = map_cgroup(cgroupi)
         cgroupj = map_cgroup(cgroupj)
-        
+
         n_wall_junction = self.network.n_wall_junction
         intercellular_ids = np.array([c.cell_id for c in self.network.cell_manager.intercellular])
 
         temp_factor = 1.0
-        
+
         if (((j - n_wall_junction) in intercellular_ids) or ((i - n_wall_junction) in intercellular_ids)) and barrier > 0:
             temp_factor = 0.0
         elif cgroupj == 13 and cgroupi == 13:
@@ -327,54 +352,54 @@ class HydraulicMatrixBuilder:
 
         K = kpl * temp_factor
 
-        matrix_W[i][i] -= K
-        matrix_W[i][j] += K
-        matrix_W[j][i] += K
-        matrix_W[j][j] -= K
-        
+        self._add_W(i, i, -K)
+        self._add_W(i, j,  K)
+        self._add_W(j, i,  K)
+        self._add_W(j, j, -K)
+
         # Solute flux
-        if matrix_C is not None and getattr(self.general, 'c_flag', False):
+        if self.boundary.c_flag and getattr(self.general, 'c_flag', False):
             DF = self.geometry.pd_section * temp_factor / thickness * 1.0E-04 * self.hormones.diff1_pd1
             if (i - n_wall_junction) not in self.hormones.sym_zombie0:
-                matrix_C[i][i] -= DF
-                matrix_C[i][j] += DF
+                self._add_C(i, i, -DF)
+                self._add_C(i, j,  DF)
             if (j - n_wall_junction) not in self.hormones.sym_zombie0:
-                matrix_C[j][j] -= DF
-                matrix_C[j][i] += DF
+                self._add_C(j, j, -DF)
+                self._add_C(j, i,  DF)
 
-    def _apply_soil_boundary(self, x_contact, height, thickness, kw, barrier, boundary, matrix_W, rhs_s, matrix_C, rhs_C):
+    def _apply_soil_boundary(self, x_contact, height, thickness, kw, barrier, boundary, rhs_s, rhs_C):
         wall_to_cell = self.geo_props['wall_to_cell']
         junction_wall_cell = self.geo_props['junction_wall_cell']
-        
+
         for wall_id in self.network.border_walls:
             if (self.position[wall_id][0] >= x_contact) or ((wall_to_cell[wall_id][0] - self.network.n_wall_junction) in getattr(self.hormones, 'contact', [])):
                 temp = 1.0E-04 * (self.network.wall_lengths[wall_id] / 2 * height) / (thickness / 2)
                 K = kw * temp
-                matrix_W[wall_id][wall_id] -= K
+                self._add_W(wall_id, wall_id, -K)
                 rhs_s[wall_id][0] = -K
-                #if matrix_C is not None:
-                #    matrix_C[wall_id][wall_id] -= temp * Diff1
+                #if rhs_C is not None:
+                #    self._add_C(wall_id, wall_id, -temp * Diff1)
                 #    rhs_C[wall_id][0] -= temp * Diff1 * Os_soil[0][0]
-                
+
         for j_id in self.network.border_junction:
             cells = junction_wall_cell[j_id - self.network.n_walls]
             contact_nodes = getattr(self.hormones, 'contact', [])
             has_contact = any((c - self.network.n_wall_junction) in contact_nodes for c in cells[:3] if not np.isnan(c))
-            
+
             if (self.position[j_id][0] >= x_contact) or has_contact:
                 temp = 1.0E-04 * (self.network.wall_lengths[j_id] * height) / (thickness / 2)
                 K = kw * temp
-                matrix_W[j_id][j_id] -= K
+                self._add_W(j_id, j_id, -K)
                 rhs_s[j_id][0] = -K
 
-    def _apply_xylo_phloem_boundary(self, i_maturity, barrier, psi_xyl, psi_sieve, distributed_flow_xyl, distributed_flow_sieve, boundary, matrix_W, rhs_s, rhs_x, rhs_p, rhs):
+    def _apply_xylo_phloem_boundary(self, i_maturity, barrier, psi_xyl, psi_sieve, distributed_flow_xyl, distributed_flow_sieve, boundary, rhs_s, rhs_x, rhs_p, rhs):
         if barrier > 0:
             if not np.isnan(psi_xyl[1][i_maturity][0]):
                 for cid in self.network.xylem_cells:
                     rhs_x[cid][0] = -self.hydraulic.k_xyl
-                    matrix_W[cid][cid] -= self.hydraulic.k_xyl
+                    self._add_W(cid, cid, -self.hydraulic.k_xyl)
                 rhs[:] = rhs_s * boundary.scenarios[0]['psi_soil_left'] + rhs_x * psi_xyl[1][i_maturity][0]
-                
+
                 if not np.isnan(psi_xyl[0][i_maturity][0]):
                     print('Distal xylem pressure BC not accounted for in kr estimation')
 
@@ -384,12 +409,12 @@ class HydraulicMatrixBuilder:
                 rhs[:] = rhs_s * boundary.scenarios[0]['psi_soil_left'] + rhs_x
             else:
                 rhs[:] = rhs_s * boundary.scenarios[0]['psi_soil_left']
-                
+
         elif barrier == 0:
             if not np.isnan(psi_sieve[1][i_maturity][0]):
                 for cid in getattr(self.network, 'protosieve_list', []):
                     rhs_p[cid][0] = -self.hydraulic.k_sieve
-                    matrix_W[cid][cid] -= self.hydraulic.k_sieve
+                    self._add_W(cid, cid, -self.hydraulic.k_sieve)
                 rhs[:] = rhs_s * boundary.scenarios[0]['psi_soil_left'] + rhs_p * psi_sieve[1][i_maturity][0]
             elif not np.isnan(distributed_flow_sieve[1][1][0]):
                 for i, cid in enumerate(getattr(self.network, 'protosieve_list', [])):

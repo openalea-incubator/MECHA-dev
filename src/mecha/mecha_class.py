@@ -25,6 +25,7 @@ import numpy as np
 from numpy import genfromtxt #Load data from a text file, with missing values handled as specified.
 from numpy.random import *  # for random sampling
 import scipy.linalg as slin #Linear algebra functions
+from scipy.sparse.linalg import spsolve
 import pylab #Found in the package pyqt
 from pylab import *  # for plotting
 import networkx as nx
@@ -585,7 +586,7 @@ class Mecha:
 
 
     @staticmethod
-    def solve(matrix: np.ndarray, rhs: np.ndarray, sparse_matrix: int) -> tuple: 
+    def solve(matrix, rhs: np.ndarray, sparse_matrix: int) -> tuple:
         """Solve the system.
 
         Solve the system based on the provided configurations and network.
@@ -594,14 +595,16 @@ class Mecha:
         print("Solving system")
         t00 = time.perf_counter()  #Lasts about 35 sec in the 24mm root
 
-        if sparse_matrix==1:
-            matrix=matrix.tocsr()
-            solution = spsolve(matrix,rhs)
-            verification_1=np.allclose(np.dot(matrix,solution),rhs)
+        if sparse_matrix == 1 or hasattr(matrix, 'tocsr'):
+            mat_csr = matrix.tocsr()
+            rhs_1d = np.asarray(rhs).ravel()
+            solution_1d = spsolve(mat_csr, rhs_1d)
+            solution = solution_1d.reshape(-1, 1)
+            verification_1 = np.allclose(mat_csr.dot(solution_1d), rhs_1d)
         else:
-            solution = np.linalg.solve(matrix,rhs) #Solving the equation to get potentials inside the network
-            verification_1=np.allclose(np.dot(matrix,solution),rhs)
-        
+            solution = np.linalg.solve(matrix, rhs)  #Solving the equation to get potentials inside the network
+            verification_1 = np.allclose(np.dot(matrix, solution), rhs)
+
         t01 = time.perf_counter()
         print(t01-t00, "seconds process time to solve system")
         return solution, verification_1
@@ -927,7 +930,7 @@ class Mecha:
                 if barrier > 0:
                      if not np.isnan(psi_xyl_val): # Pressure BC
                          for cid in [c.node_id for c in self.network.cell_manager.xylem]:
-                             matrix_W[cid][cid] -= self.hydraulic.k_xyl
+                             matrix_W[cid, cid] -= self.hydraulic.k_xyl
                          rhs += rhs_x * psi_xyl_val
                      elif not np.isnan(flow_xyl_val): # Flow BC
                          rhs += rhs_x
@@ -935,18 +938,18 @@ class Mecha:
                 # Phloem BC
                 psi_sieve_val = self.psi_sieve[1][i_maturity][i_scenario]
                 flow_sieve_val = self.distributed_flow_sieve[1][0][i_scenario]
-                
+
                 if barrier == 0:
                     if not np.isnan(psi_sieve_val):
                          for cid in [c.node_id for c in self.network.cell_manager.protosieve]:
-                             matrix_W[cid][cid] -= self.hydraulic.k_sieve
+                             matrix_W[cid, cid] -= self.hydraulic.k_sieve
                          rhs += rhs_p * psi_sieve_val
                     elif not np.isnan(flow_sieve_val):
                          rhs += rhs_p
                 elif barrier > 0:
                     if not np.isnan(psi_sieve_val):
                          for cid in [c.node_id for c in self.network.cell_manager.sieve]:
-                             matrix_W[cid][cid] -= self.hydraulic.k_sieve
+                             matrix_W[cid, cid] -= self.hydraulic.k_sieve
                          rhs += rhs_p * psi_sieve_val
                     elif not np.isnan(flow_sieve_val):
                          rhs += rhs_p
@@ -993,9 +996,10 @@ class Mecha:
         barrier = int(maturity_stages[i_maturity].get("barrier"))
         height = float(maturity_stages[i_maturity].get("height"))
 
-        # Build matrices
+        # Build matrices (COO) and convert to CSR for in-place diagonal modifications
         matrix_W, matrix_C, rhs_C, rhs_p, rhs_x, rhs_s, rhs, Kmb =\
             self.build_matrices(h = h, i_maturity = i_maturity)
+        matrix_W = matrix_W.tocsr()
         # Solve system
         solution, verification_1 = self.solve(matrix = matrix_W, rhs = rhs, sparse_matrix = self.general.sparse_matrix)
 
@@ -1009,18 +1013,18 @@ class Mecha:
         return solution, verification_1, matrix_W, Kmb, rhs_s
 
     
-    def remove_xyl_phloem_BC(self, matrix_W: np.ndarray, i_maturity: int, i_scenario: int = 0) -> np.ndarray :
+    def remove_xyl_phloem_BC(self, matrix_W, i_maturity: int, i_scenario: int = 0):
 
         barrier = int(self.geometry.maturity_stages[i_maturity].get("barrier"))
         #Removing xylem and phloem BC terms
         if barrier==0:
             if not isnan(self.psi_sieve[1][i_maturity][i_scenario]):
                 for cid in [c.node_id for c in self.network.cell_manager.protosieve]:
-                    matrix_W[cid][cid] += self.hydraulic.k_sieve
+                    matrix_W[cid, cid] += self.hydraulic.k_sieve
         else:
             if not isnan(self.psi_xyl[1][i_maturity][i_scenario]): #Pressure xylem BC
                 for cid in [c.node_id for c in self.network.cell_manager.xylem]:
-                    matrix_W[cid][cid] += self.hydraulic.k_xyl
+                    matrix_W[cid, cid] += self.hydraulic.k_xyl
             else:
                 pass
         return matrix_W
