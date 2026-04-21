@@ -901,6 +901,7 @@ class HydraulicData:
 
     # Counts
     n_kw: int = 1
+    n_kw_septa: int = 1
     n_kw_barrier: int = 1
     n_kaqp: int = 1
     n_kpl: int = 1
@@ -957,6 +958,7 @@ class HydraulicData:
     # Processed parameter arrays
     kw: List[float] = field(default_factory=lambda: [0.00024])
     kw_barrier: List[float] = field(default_factory=lambda: [1.00E-16])
+    kw_septa: List[float] = field(default_factory=lambda: [0.00012])
     kaqp: List[Dict[str, float]] = field(default_factory=lambda: [{'value': 0.000430, 'cortex_factor': 1.0, 'endo_factor': 1.0, 'epi_factor': 1.0, 'exo_factor': 1.0, 'stele_factor': 1.0}])
     kpl: List[Dict[str, float]] = field(default_factory=lambda: [{'value': 5.3E-12, 'phloem_companion_cell_factor': 1.0, 'pericycle_phloem_pole_factor': 1.0, 'phloem_sieve_tube_factor': 1.0, 'cortex_factor': 1.0}])
 
@@ -978,11 +980,13 @@ class HydraulicData:
 
         # Parse different hydraulic parameter sets
         self.kw_elems = root.xpath('kwrange/kw')
+        self.kw_septa_elems = root.xpath('kw_septa_range/kw_septa')
         self.kw_barrier_elems = root.xpath('kw_barrier_range/kw_barrier')
         self.kaqp_elems = root.xpath('kAQPrange/kAQP')
         self.kpl_elems = root.xpath('Kplrange/Kpl')
 
         self.n_kw = len(self.kw_elems)
+        self.n_kw_septa = len(self.kw_septa_elems)
         self.n_kw_barrier = len(self.kw_barrier_elems)
         self.n_kaqp = len(self.kaqp_elems)
         self.n_kpl = len(self.kpl_elems)
@@ -1027,6 +1031,7 @@ class HydraulicData:
         
         # Process parameter arrays
         self.kw = [float(kw.get("value")) for kw in self.kw_elems] if self.kw_elems else [0.00024]
+        self.kw_septa = [float(kw_septa.get("value")) for kw_septa in self.kw_septa_elems] if self.kw_septa_elems else [0.00012]
         self.kw_barrier = [float(kw_barrier.get("value")) for kw_barrier in self.kw_barrier_elems] if self.kw_barrier_elems else [1.00E-16]
 
         self.kaqp = []
@@ -1055,6 +1060,7 @@ class HydraulicData:
         """Set default values if no file is provided."""
         self.kw_barrier_elems = [{'value': 1.00E-16, 'Casp': 1.00E-16, 'Sub': 1.00E-16, 'Sub_in': 1.00E-16, 'Sub_out': 1.00E-16}]
         self.kw_elems = [{'value': 0.00024}]
+        self.kw_septa_elems = [{'value': 0.00012}]
 
     def get_kw_value(self, h: int) -> float:
         """Get the kw value based on the scenario index."""
@@ -1064,6 +1070,15 @@ class HydraulicData:
             return self.kw[0]
         else:
             return self.kw[int(h/(self.n_kaqp*self.n_kpl))%self.n_kw]
+
+    def get_kw_septa_value(self, h: int) -> float:
+        """Get the kw_septa value based on the scenario index."""
+        if self.n_kw_septa == self.n_hydraulics:
+            return self.kw_septa[h]
+        elif self.n_kw_septa == 1:
+            return self.kw_septa[0]
+        else:
+            return self.kw_septa[int(h/(self.n_kaqp*self.n_kpl))%self.n_kw_septa]
 
     def get_kw_barrier_values(self, h: int) -> Tuple[float, List[float]]:
         """Get the kw_barrier values based on the scenario index."""
@@ -1094,8 +1109,11 @@ class HydraulicData:
 
         return kw_barrier_casparian, kw_barrier_suberin_all
 
-    def get_wall_conductivities(self, barrier: int, kw: float, kw_barrier_casparian: float, kw_barrier_suberin: List[float]) -> Dict[str, float]:
+    def get_wall_conductivities(self, barrier: int, h: int) -> Dict[str, float]:
         """Get wall conductivities based on barrier type."""
+        kw =  self.get_kw_value(h)
+        kw_septa = self.get_kw_septa_value(h)
+        kw_barrier_casparian, kw_barrier_suberin = self.get_kw_barrier_values(h)
         barrier_configs = {
             0: {  # No Casparian strip
                 'kw_endo_endo': kw,
@@ -1103,6 +1121,7 @@ class HydraulicData:
                 'kw_exo_exo': kw,
                 'kw_exo_epi': kw,
                 'kw_exo_cortex': kw,
+                'kw_septa': kw_septa,
                 'kw_cortex_cortex': kw,
                 'kw_endo_peri': kw,
                 'kw_endo_cortex': kw,
@@ -1113,6 +1132,7 @@ class HydraulicData:
                 'kw_exo_exo': kw,
                 'kw_exo_epi': kw,
                 'kw_exo_cortex': kw,
+                'kw_septa': kw_septa,
                 'kw_cortex_cortex': kw,
                 'kw_endo_peri': kw,
                 'kw_endo_cortex': kw,
@@ -1123,6 +1143,7 @@ class HydraulicData:
                 'kw_exo_exo': kw,
                 'kw_exo_epi': kw,
                 'kw_exo_cortex': kw,
+                'kw_septa': kw_septa,
                 'kw_cortex_cortex': kw,
                 'kw_endo_peri': kw_barrier_suberin[0],
                 'kw_endo_cortex': kw_barrier_suberin[1],
@@ -1133,6 +1154,7 @@ class HydraulicData:
                 'kw_exo_exo': kw,
                 'kw_exo_epi': kw,
                 'kw_exo_cortex': kw,
+                'kw_septa': kw_septa,
                 'kw_cortex_cortex': kw,
                 'kw_endo_peri': kw_barrier_suberin[0],
                 'kw_endo_cortex': kw_barrier_suberin[1],
@@ -1143,6 +1165,7 @@ class HydraulicData:
                 'kw_exo_exo': kw_barrier_casparian,
                 'kw_exo_epi': kw,
                 'kw_exo_cortex': kw,
+                'kw_septa': kw_septa,
                 'kw_cortex_cortex': kw,
                 'kw_endo_peri': kw_barrier_suberin[0],
                 'kw_endo_cortex': kw_barrier_suberin[1],
@@ -1153,6 +1176,7 @@ class HydraulicData:
                 'kw_exo_exo': kw_barrier_casparian,
                 'kw_exo_epi': kw,
                 'kw_exo_cortex': kw,
+                'kw_septa': kw_septa,
                 'kw_cortex_cortex': kw,
                 'kw_endo_peri': kw,
                 'kw_endo_cortex': kw,
@@ -1163,6 +1187,7 @@ class HydraulicData:
                 'kw_exo_exo': kw_barrier_casparian,
                 'kw_exo_epi': kw_barrier_suberin[1],
                 'kw_exo_cortex': kw_barrier_suberin[0],
+                'kw_septa': kw_septa,
                 'kw_cortex_cortex': kw,
                 'kw_endo_peri': kw,
                 'kw_endo_cortex': kw,
@@ -1173,6 +1198,7 @@ class HydraulicData:
                 'kw_exo_exo': kw_barrier_casparian,
                 'kw_exo_epi': kw,
                 'kw_exo_cortex': kw,
+                'kw_septa': kw_septa,
                 'kw_cortex_cortex': kw,
                 'kw_endo_peri': kw,
                 'kw_endo_cortex': kw,
@@ -1183,6 +1209,7 @@ class HydraulicData:
                 'kw_exo_exo': kw_barrier_casparian,
                 'kw_exo_epi': kw_barrier_suberin[1],
                 'kw_exo_cortex': kw_barrier_suberin[0],
+                'kw_septa': kw_septa,
                 'kw_cortex_cortex': kw,
                 'kw_endo_peri': kw_barrier_suberin[0],
                 'kw_endo_cortex': kw_barrier_suberin[1],
@@ -1193,6 +1220,7 @@ class HydraulicData:
                 'kw_exo_exo': kw_barrier_casparian,
                 'kw_exo_epi': kw_barrier_suberin[1],
                 'kw_exo_cortex': kw,
+                'kw_septa': kw_septa,
                 'kw_cortex_cortex': kw,
                 'kw_endo_peri': kw,
                 'kw_endo_cortex': kw,

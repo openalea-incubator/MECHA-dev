@@ -1512,7 +1512,7 @@ class NetworkBuilder(AbstractNetwork):
                                     n_layer[i1] * layer_dist[i1] +
                                     nLayer_ref * Layer_dist_ref
                                 ) / (n_layer[i1] + nLayer_ref)
-                                distance_from_center[j] = avg_prev
+                                distance_from_center[j-1] = avg_prev # correction: j-1 replaces j
 
                                 rank_to_row[i2] = j
                                 rank_to_row[i2 + 1] = j
