@@ -13,7 +13,8 @@
 #
 # -----------------------------------------------------------------------
 """
-HydraulicWall, HydraulicCell and HydraulicCellManager
+HydraulicWall, HydraulicMembrane, HydraulicPlasmodesmata,
+HydraulicCell and HydraulicCellManager
 =======================================
 
 Standalone descriptors for MECHA's hydraulic network.
@@ -23,6 +24,16 @@ Standalone descriptors for MECHA's hydraulic network.
   - graph-topology identifiers (node_id)
   - hydraulic properties of a cell wall in MECHA's hydraulic network
 
+``HydraulicMembrane`` carries:
+  - a single wall ↔ cell membrane connection (graph edge path='membrane')
+  - geometry: length, dist (wall-to-cell half-thickness distance)
+  - hydraulic properties: km (total membrane), kaqp (aquaporin), K_computed
+
+``HydraulicPlasmodesmata`` carries:
+  - a single cell ↔ cell symplastic connection (graph edge path='plasmodesmata')
+  - geometry: length between the two cell centroids
+  - hydraulic properties: kpl (conductance, cm³ hPa⁻¹ d⁻¹)
+
 ``HydraulicCell`` carries:
   - geometry fields mirrored from GRANAP Cell (without inheriting it)
   - graph-topology identifiers (node_id, cgroup, rank, wall_ids)
@@ -30,6 +41,7 @@ Standalone descriptors for MECHA's hydraulic network.
 
 ``HydraulicCellManager`` holds an ordered list of HydraulicCell objects and
 exposes filtered views (xylem, sieve, passage, …) plus O(1) lookups.
+It also holds all HydraulicMembrane and HydraulicPlasmodesmata objects.
 It communicates with NetworkBuilder exclusively through ``sync_from_network``.
 
 Units (same convention as the rest of MECHA):
@@ -42,7 +54,7 @@ Units (same convention as the rest of MECHA):
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, TYPE_CHECKING
+from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
     # Avoid circular import at runtime; only used for type hints.
@@ -62,6 +74,8 @@ class HydraulicWall:
         Midpoint position (µm).
     length : float
         Wall length (µm).
+    thickness : float
+        Wall half-thickness (µm).
     node_id : int
         Graph node index (0 to n_walls - 1).
     is_border : bool
@@ -72,7 +86,7 @@ class HydraulicWall:
 
     __slots__ = (
         "x", "y", "length", "thickness", "node_id", "is_border", "is_aerenchyma",
-        "cells",
+        "cells", "membranes",
         # Hydraulic properties
         "kw",
     )
@@ -96,8 +110,11 @@ class HydraulicWall:
         self.is_border: bool = is_border
         self.is_aerenchyma: bool = is_aerenchyma
 
-        # Link to connected cells
+        # Link to connected cells (via membrane edges)
         self.cells: List['HydraulicCell'] = []
+
+        # Link to HydraulicMembrane objects for this wall
+        self.membranes: List['HydraulicMembrane'] = []
 
         # Hydraulic Cell-wall (apoplastic) conductivity [cm hPa⁻¹ d⁻¹]
         self.kw: Optional[float] = None
@@ -108,6 +125,126 @@ class HydraulicWall:
 
     def __repr__(self) -> str:
         return f"HydraulicWall(node_id={self.node_id}, length={self.length:.1f})"
+
+
+# ---------------------------------------------------------------------------
+# HydraulicMembrane
+# ---------------------------------------------------------------------------
+
+class HydraulicMembrane:
+    """Descriptor for a single wall ↔ cell membrane connection.
+
+    Represents one graph edge with ``path='membrane'``, connecting a
+    ``HydraulicWall`` node to a ``HydraulicCell`` node.
+
+    Parameters
+    ----------
+    wall : HydraulicWall
+        The wall-side of this membrane connection.
+    cell : HydraulicCell
+        The cell-side of this membrane connection.
+    length : float
+        Shared wall length for this connection (µm).
+    dist : float
+        Half-thickness distance from the wall midpoint to the cell centroid (µm).
+    """
+
+    __slots__ = (
+        "wall", "cell",
+        # Geometry
+        "length", "dist",
+        # Hydraulic properties — None until solver assigns them
+        "km",    # Total membrane conductivity  [cm hPa⁻¹ d⁻¹]
+        "kaqp",  # Aquaporin contribution        [cm hPa⁻¹ d⁻¹]
+        "K_computed",  # Effective conductance computed by HydraulicMatrixBuilder [cm³ hPa⁻¹ d⁻¹]
+    )
+
+    def __init__(
+        self,
+        *,
+        wall: 'HydraulicWall',
+        cell: 'HydraulicCell',
+        length: float,
+        dist: float,
+    ) -> None:
+        self.wall: 'HydraulicWall' = wall
+        self.cell: 'HydraulicCell' = cell
+        self.length: float = length
+        self.dist: float = dist
+
+        # Hydraulic fields — None until explicitly assigned
+        self.km: Optional[float] = None
+        self.kaqp: Optional[float] = None
+        self.K_computed: Optional[float] = None
+
+    def reset_hydraulics(self) -> None:
+        """Reset all hydraulic fields to ``None``."""
+        self.km = self.kaqp = self.K_computed = None
+
+    def __repr__(self) -> str:
+        return (
+            f"HydraulicMembrane(wall={self.wall.node_id}, "
+            f"cell={self.cell.node_id}, length={self.length:.1f}, "
+            f"dist={self.dist:.1f})"
+        )
+
+
+# ---------------------------------------------------------------------------
+# HydraulicPlasmodesmata
+# ---------------------------------------------------------------------------
+
+class HydraulicPlasmodesmata:
+    """Descriptor for a single cell ↔ cell symplastic (plasmodesmata) connection.
+
+    Represents one graph edge with ``path='plasmodesmata'``, connecting two
+    ``HydraulicCell`` nodes through the symplastic pathway.
+
+    Parameters
+    ----------
+    cell_i : HydraulicCell
+        First cell node of this connection.
+    cell_j : HydraulicCell
+        Second cell node of this connection.
+    length : float
+        Shared wall / contact length between the two cells (µm).
+    """
+
+    __slots__ = (
+        "cell_i", "cell_j",
+        # Geometry
+        "length",
+        # Hydraulic properties — None until solver assigns them
+        "kpl",        # Plasmodesmata conductance [cm³ hPa⁻¹ d⁻¹]
+        "fplxheight", # plasmodesmata height (default 8.0E5) [] UNITS ?
+        "temp_factor",  # Tissue-specific frequency factor (dimensionless × µm)
+    )
+
+    def __init__(
+        self,
+        *,
+        cell_i: 'HydraulicCell',
+        cell_j: 'HydraulicCell',
+        length: float,
+    ) -> None:
+        self.cell_i: 'HydraulicCell' = cell_i
+        self.cell_j: 'HydraulicCell' = cell_j
+        self.length: float = length
+
+        # Hydraulic fields — None until explicitly assigned
+        self.kpl: Optional[float] = None
+        self.fplxheight: Optional[float] = None
+        self.temp_factor: Optional[float] = None
+
+    def reset_hydraulics(self) -> None:
+        """Reset all hydraulic fields to ``None``."""
+        self.kpl = self.fplxheight = self.temp_factor = None
+
+    def __repr__(self) -> str:
+        return (
+            f"HydraulicPlasmodesmata(cell_i={self.cell_i.node_id}, "
+            f"cell_j={self.cell_j.node_id}, length={self.length:.1f})"
+        )
+
 
 # ---------------------------------------------------------------------------
 # HydraulicCell
@@ -243,6 +380,10 @@ class HydraulicCellManager:
     cells.  Lookups by ``node_id`` or ``cgroup`` are O(1) thanks to internal
     dictionaries that are rebuilt whenever the manager is synchronised.
 
+    Also holds all :class:`HydraulicMembrane` and
+    :class:`HydraulicPlasmodesmata` connection objects built from the network
+    graph edges (``path='membrane'`` and ``path='plasmodesmata'``).
+
     Typical usage::
 
         manager = HydraulicCellManager()
@@ -251,6 +392,12 @@ class HydraulicCellManager:
         cortex = manager.get_by_cgroup(4)
         xylem  = manager.xylem
         cell   = manager.get_by_node_id(452)
+
+        # Access connection objects
+        all_membranes       = manager.membranes
+        all_plasmodesmata   = manager.plasmodesmata
+        mb = manager.get_membrane_by_edge(wall_id, cell_node_id)
+        pd = manager.get_plasmodesmata_by_edge(cell_i_node_id, cell_j_node_id)
     """
 
     def __init__(self) -> None:
@@ -261,6 +408,14 @@ class HydraulicCellManager:
 
         self._walls: List[HydraulicWall] = []
         self._wall_by_node_id: Dict[int, HydraulicWall] = {}
+
+        # Membrane connections (wall ↔ cell, path='membrane')
+        self._membranes: List[HydraulicMembrane] = []
+        self._membrane_by_edge: Dict[Tuple[int, int], HydraulicMembrane] = {}
+
+        # Plasmodesmata connections (cell ↔ cell, path='plasmodesmata')
+        self._plasmodesmata: List[HydraulicPlasmodesmata] = []
+        self._pd_by_edge: Dict[Tuple[int, int], HydraulicPlasmodesmata] = {}
 
     # ------------------------------------------------------------------
     # Collection protocol
@@ -276,10 +431,16 @@ class HydraulicCellManager:
         return self._cells[index]
 
     def __repr__(self) -> str:
-        return f"HydraulicCellManager({len(self._cells)} cells)"
+        return (
+            f"HydraulicCellManager("
+            f"{len(self._cells)} cells, "
+            f"{len(self._walls)} walls, "
+            f"{len(self._membranes)} membranes, "
+            f"{len(self._plasmodesmata)} plasmodesmata)"
+        )
 
     # ------------------------------------------------------------------
-    # Lookups
+    # Lookups — cells / walls
     # ------------------------------------------------------------------
 
     def get_by_node_id(self, node_id: int) -> Optional[HydraulicCell]:
@@ -299,7 +460,29 @@ class HydraulicCellManager:
         return self._by_type.get(type_str, [])
 
     # ------------------------------------------------------------------
-    # Filtered views (properties)
+    # Lookups — connection objects
+    # ------------------------------------------------------------------
+
+    def get_membrane_by_edge(self, wall_node_id: int, cell_node_id: int) -> Optional[HydraulicMembrane]:
+        """Return the membrane connecting *wall_node_id* ↔ *cell_node_id*, or ``None``.
+
+        The key is stored canonically as ``(min, max)`` so the order of
+        arguments does not matter.
+        """
+        key = (min(wall_node_id, cell_node_id), max(wall_node_id, cell_node_id))
+        return self._membrane_by_edge.get(key)
+
+    def get_plasmodesmata_by_edge(self, node_i: int, node_j: int) -> Optional[HydraulicPlasmodesmata]:
+        """Return the plasmodesmata connecting *node_i* ↔ *node_j*, or ``None``.
+
+        The key is stored canonically as ``(min, max)`` so the order of
+        arguments does not matter.
+        """
+        key = (min(node_i, node_j), max(node_i, node_j))
+        return self._pd_by_edge.get(key)
+
+    # ------------------------------------------------------------------
+    # Filtered views (properties) — cells
     # ------------------------------------------------------------------
 
     @property
@@ -328,14 +511,26 @@ class HydraulicCellManager:
         result = []
         for key in ("intercellular", "air space", "aerenchyma"):
             result.extend(self._by_type.get(key, []))
-
         return result
+
+    # ------------------------------------------------------------------
+    # Filtered views (properties) — connection objects
+    # ------------------------------------------------------------------
 
     @property
     def walls(self) -> List[HydraulicWall]:
         """All cell walls in the network."""
         return self._walls
 
+    @property
+    def membranes(self) -> List[HydraulicMembrane]:
+        """All membrane (wall ↔ cell) connections in the network."""
+        return self._membranes
+
+    @property
+    def plasmodesmata(self) -> List[HydraulicPlasmodesmata]:
+        """All plasmodesmata (cell ↔ cell) connections in the network."""
+        return self._plasmodesmata
 
     # ------------------------------------------------------------------
     # Communication bridge with NetworkBuilder
@@ -347,6 +542,10 @@ class HydraulicCellManager:
         Reads the graph topology and all MECHA-derived arrays (cell_areas,
         cell_perimeters, cell_ranks, cell_types) directly from *network*.
         Previous contents are discarded entirely.
+
+        Also calls :meth:`sync_membranes_from_network` and
+        :meth:`sync_plasmodesmata_from_network` to build the connection
+        descriptor objects.
 
         Parameters
         ----------
@@ -361,6 +560,10 @@ class HydraulicCellManager:
         self._by_type = {}
         self._walls = []
         self._wall_by_node_id = {}
+        self._membranes = []
+        self._membrane_by_edge = {}
+        self._plasmodesmata = []
+        self._pd_by_edge = {}
 
         nwj = network.n_wall_junction
         position = {}
@@ -481,3 +684,105 @@ class HydraulicCellManager:
 
             self._by_cgroup.setdefault(cgroup, []).append(cell)
             self._by_type.setdefault(cell_type, []).append(cell)
+
+        # Pass 3: Build Membrane and Plasmodesmata connection objects
+        self.sync_membranes_from_network(network)
+        self.sync_plasmodesmata_from_network(network)
+
+    # ------------------------------------------------------------------
+    # Connection sync helpers
+    # ------------------------------------------------------------------
+
+    def sync_membranes_from_network(self, network: "NetworkBuilder") -> None:
+        """Build :class:`HydraulicMembrane` objects from ``path='membrane'`` edges.
+
+        Iterates all membrane edges in the network graph (wall node ↔ cell
+        node) and creates one ``HydraulicMembrane`` per edge.  The resulting
+        objects are stored in :attr:`_membranes` and indexed in
+        :attr:`_membrane_by_edge`.  Back-references are also added to the
+        corresponding ``HydraulicWall.membranes`` list.
+
+        Parameters
+        ----------
+        network : NetworkBuilder
+            Must have a populated ``graph`` and a valid ``n_walls`` attribute.
+        """
+        self._membranes = []
+        self._membrane_by_edge = {}
+
+        # Also clear existing membrane back-refs on walls
+        for wall in self._walls:
+            wall.membranes = []
+
+        for u, v, eattr in network.graph.edges(data=True):
+            if eattr.get("path") != "membrane":
+                continue
+
+            # Determine which endpoint is the wall, which is the cell
+            if u < network.n_walls:
+                wall_node_id, cell_node_id = u, v
+            elif v < network.n_walls:
+                wall_node_id, cell_node_id = v, u
+            else:
+                # Both endpoints are cells or junctions — not a membrane edge
+                continue
+
+            wall_obj = self._wall_by_node_id.get(wall_node_id)
+            cell_obj = self._by_node_id.get(cell_node_id)
+            if wall_obj is None or cell_obj is None:
+                continue
+
+            length = float(eattr.get("length", 0.0))
+            dist   = float(eattr.get("dist", eattr.get("distnode_wall_cell", 0.0)))
+
+            mb = HydraulicMembrane(
+                wall=wall_obj,
+                cell=cell_obj,
+                length=length,
+                dist=dist,
+            )
+            self._membranes.append(mb)
+
+            key = (min(wall_node_id, cell_node_id), max(wall_node_id, cell_node_id))
+            self._membrane_by_edge[key] = mb
+
+            # Back-reference on the wall
+            if mb not in wall_obj.membranes:
+                wall_obj.membranes.append(mb)
+
+    def sync_plasmodesmata_from_network(self, network: "NetworkBuilder") -> None:
+        """Build :class:`HydraulicPlasmodesmata` objects from ``path='plasmodesmata'`` edges.
+
+        Iterates all plasmodesmata edges in the network graph (cell ↔ cell)
+        and creates one ``HydraulicPlasmodesmata`` per edge.  The resulting
+        objects are stored in :attr:`_plasmodesmata` and indexed in
+        :attr:`_pd_by_edge`.
+
+        Parameters
+        ----------
+        network : NetworkBuilder
+            Must have a populated ``graph`` and valid ``n_wall_junction``.
+        """
+        self._plasmodesmata = []
+        self._pd_by_edge = {}
+
+        for u, v, eattr in network.graph.edges(data=True):
+            if eattr.get("path") != "plasmodesmata":
+                continue
+
+            cell_i = self._by_node_id.get(u)
+            cell_j = self._by_node_id.get(v)
+            if cell_i is None or cell_j is None:
+                continue
+
+            length = float(eattr.get("length", 0.0))
+
+            pd = HydraulicPlasmodesmata(
+                cell_i=cell_i,
+                cell_j=cell_j,
+                length=length,
+            )
+            self._plasmodesmata.append(pd)
+
+            key = (min(u, v), max(u, v))
+            self._pd_by_edge[key] = pd
