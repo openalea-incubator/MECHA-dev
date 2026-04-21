@@ -19,7 +19,8 @@ import numpy as np
 def test_compare_granar_ganache():
     # Create a Mecha instance with a GRANAP network
     root = RootAnatomy()
-    root.update_params("aerenchyma", "aerenchyma_proportion", 0.1)
+    root.update_params("aerenchyma", "aerenchyma_proportion", 0.7)
+    root.update_params("aerenchyma", "n_files", 15)
     root.update_params("inter_cellular_spaces", "tissue", "cortex")
 
     _ = root.export_to_adjencymatrix()
@@ -37,9 +38,7 @@ def test_compare_granar_ganache():
     ganache_network = NetworkBuilder(root)
     ganache_network.populate_from_network()
     mecha_ganache_1 = Mecha(default_input, network=ganache_network)
-
     solution, _, matrix_W, Kmb, rhs_s = mecha_ganache_1.solve_W(h=0, i_maturity=1)
-
     m1 = matrix_W
 
     # Create a default input for Mecha use with cellset data

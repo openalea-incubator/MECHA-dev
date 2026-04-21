@@ -99,15 +99,18 @@ class HydraulicMatrixBuilder:
             K = 1.0E-16
             temp_factor = 1.0E-16
             # ghost junction logic
-            n_walls = self.network.n_walls
+            # n_walls = self.network.n_walls
             if j not in self.network.list_ghostjunctions:
                 fakeJ = True
-                for ind in range(int(self.network.n_junction_to_wall[j - n_walls])):
-                    if self.network.junction_to_wall[j - n_walls][ind] not in self.network.list_ghostwalls:
+                for ind in range(int(self.network.n_junction_to_wall[j])): # why j? and no -n_walls? old code: for ind in range(int(self.network.n_junction_to_wall[j - n_walls])):
+                    if self.network.junction_to_wall[j][ind] not in self.network.list_ghostwalls: # why j? and no -n_walls? old code: if self.network.junction_to_wall[j - n_walls][ind] not in self.network.list_ghostwalls:
                         fakeJ = False
                 if fakeJ:
                     self.network.list_ghostjunctions.append(j)
-                    self.network.n_ghost_junction2wall += int(self.network.n_junction_to_wall[j - n_walls]) + 2
+                    self.network.n_ghost_junction2wall += int(self.network.n_junction_to_wall[j]) + 2
+                elif count_interC >= 2: # septa walls
+                    K = kw_config['kw_septa'] * temp
+                    if kw > 0: temp_factor = kw_config['kw_septa'] / kw
         elif count_cortex >= 2:
             K = kw_config['kw_cortex_cortex'] * temp
             if kw > 0: temp_factor = kw_config['kw_cortex_cortex'] / kw

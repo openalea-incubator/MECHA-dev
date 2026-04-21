@@ -355,11 +355,8 @@ class Mecha:
         # Loop through hydraulic scenarios (default is 1)
         for h in range(hydraulic.n_hydraulics):
             # Cell wall hydraulic conductivity
-            kw =  hydraulic.get_kw_value(h)
-            kw_barrier_casp, kw_barrier_sub = hydraulic.get_kw_barrier_values(h)
-
             # Set wall conductivities based on barrier type
-            kw_config = hydraulic.get_wall_conductivities(barrier, kw, kw_barrier_casp, kw_barrier_sub)
+            kw_config = hydraulic.get_wall_conductivities(barrier, h)
 
             # Plasmodesmatal hydraulic conductance
             kpl_config = hydraulic.get_plasmodesmatal_conductance(h)
