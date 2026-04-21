@@ -55,17 +55,20 @@ def test_compare_granar_ganache():
     if m1.shape != m2.shape:
         print(f"Shapes differ: {m1.shape} vs {m2.shape}")
     else:
-        diff = np.abs(m1 - m2)
+        # Convert sparse matrices to dense for element-wise comparison
+        d1 = m1.toarray() if hasattr(m1, 'toarray') else np.asarray(m1)
+        d2 = m2.toarray() if hasattr(m2, 'toarray') else np.asarray(m2)
+        diff = np.abs(d1 - d2)
         max_diff = np.max(diff)
         print(f"Max difference in Matrix_W: {max_diff}")
 
         if max_diff > 1e-10:
             i, j = np.unravel_index(np.argmax(diff), diff.shape)
-            print(f"Max difference occurs at ({i}, {j}): m1={m1[i,j]:.6e} vs m2={m2[i,j]:.6e}")
+            print(f"Max difference occurs at ({i}, {j}): m1={d1[i,j]:.6e} vs m2={d2[i,j]:.6e}")
             if i == j:
                 print("Diagonal element is different")
                 # node type
-                
+
             flat_indices = np.argsort(diff.flatten())[::-1]
             print("Top 10 differences:")
             for count, idx in enumerate(flat_indices[:10]):
@@ -73,7 +76,7 @@ def test_compare_granar_ganache():
                 if diff[r, c] < 1e-10:
                     break
                 print(
-                    f"({r}, {c}): m1={m1[r, c]:.6g}, m2={m2[r, c]:.6g}, diff={diff[r, c]:.6g}"
+                    f"({r}, {c}): m1={d1[r, c]:.6g}, m2={d2[r, c]:.6g}, diff={diff[r, c]:.6g}"
                 )
         else:
             print("Matrices are practically EXACTLY identical.")
