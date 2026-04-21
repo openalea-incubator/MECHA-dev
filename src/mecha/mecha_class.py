@@ -1010,7 +1010,62 @@ class Mecha:
             self.standard_water_flow(matrix_W, rhs_s, rhs_x, solution, height, i_maturity)
 
         self.standardized_results.append(solution)
+        self.compute_edge_flows(solution)
         return solution, verification_1, matrix_W, Kmb, rhs_s
+
+    def compute_edge_flows(self, solution: np.ndarray) -> None:
+        """Compute and store flow Q = K*(Psi_i - Psi_j) on every graph edge.
+
+        Reads the conductance ``K`` written by ``HydraulicMatrixBuilder`` onto
+        each graph edge attribute during ``build_matrices()``, then computes the
+        signed flow ``Q`` (cm³ d⁻¹, positive from node *u* to node *v*) and
+        writes it back as ``graph.edges[u, v]['Q']``.
+
+        Also back-propagates relevant values onto the
+        :class:`~mecha.utils.hydraulic_cell.HydraulicMembrane` and
+        :class:`~mecha.utils.hydraulic_cell.HydraulicPlasmodesmata` objects
+        stored in ``network.cell_manager``.
+
+        Parameters
+        ----------
+        solution : np.ndarray, shape (n_nodes, 1) or (n_nodes,)
+            Node water-potential vector returned by :meth:`solve_W`.
+        """
+        sol = np.asarray(solution).ravel()
+        graph = self.network.graph
+        cm = self.network.cell_manager
+
+        for u, v, eattr in graph.edges(data=True):
+            K = eattr.get('K')
+            if K is None:
+                continue
+            psi_u = float(sol[self.indice[u]])
+            psi_v = float(sol[self.indice[v]])
+            Q = K * (psi_u - psi_v)   # positive → flow from u to v
+            eattr['Q'] = Q
+
+            path = eattr.get('path', '')
+
+            # Back-propagate onto HydraulicWall
+            if path == 'wall':
+                wall_obj = cm.get_wall_by_node_id(u) or cm.get_wall_by_node_id(v)
+                if wall_obj is not None and wall_obj.kw is None:
+                    wall_obj.kw = K
+
+            # Back-propagate onto HydraulicMembrane
+            elif path == 'membrane':
+                mb = cm.get_membrane_by_edge(u, v)
+                if mb is not None:
+                    mb.K_computed = K
+
+            # Back-propagate onto HydraulicPlasmodesmata
+            elif path == 'plasmodesmata':
+                pd = cm.get_plasmodesmata_by_edge(u, v)
+                if pd is not None:
+                    pd.kpl = K
+                    tf = eattr.get('temp_factor')
+                    if tf is not None:
+                        pd.temp_factor = tf
 
     
     def remove_xyl_phloem_BC(self, matrix_W, i_maturity: int, i_scenario: int = 0):

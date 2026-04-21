@@ -177,6 +177,9 @@ class HydraulicMatrixBuilder:
                 self._add_C(j, j, -DF)
                 self._add_C(j, i,  DF)
 
+        # Store K on graph edge for post-solve flow computation
+        eattr['K'] = float(K)
+
     def _fill_membrane(self, i, j, node, neighboor, eattr, kw, kw_config, height, thickness, barrier, kaqp_config, a_cortex, b_cortex):
         count_endo = self.network.graph.nodes[node].get('count_endo', 0)
         count_exo = self.network.graph.nodes[node].get('count_exo', 0)
@@ -263,6 +266,9 @@ class HydraulicMatrixBuilder:
         self._add_W(i, j,  K)
         self._add_W(j, i,  K)
         self._add_W(j, j, -K)
+
+        # Store K on graph edge for post-solve flow computation
+        eattr['K'] = float(K)
 
         return K
 
@@ -356,6 +362,10 @@ class HydraulicMatrixBuilder:
         self._add_W(i, j,  K)
         self._add_W(j, i,  K)
         self._add_W(j, j, -K)
+
+        # Store K on graph edge for post-solve flow computation
+        eattr['K'] = float(K)
+        eattr['temp_factor'] = float(temp_factor)
 
         # Solute flux
         if self.boundary.c_flag and getattr(self.general, 'c_flag', False):
