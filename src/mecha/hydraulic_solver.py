@@ -380,7 +380,6 @@ class HydraulicMatrixBuilder:
     def _apply_soil_boundary(self, x_contact, height, thickness, kw, barrier, boundary, rhs_s, rhs_C):
         wall_to_cell = self.geo_props['wall_to_cell']
         junction_wall_cell = self.geo_props['junction_wall_cell']
-
         for wall_id in self.network.border_walls:
             if (self.position[wall_id][0] >= x_contact) or ((wall_to_cell[wall_id][0] - self.network.n_wall_junction) in getattr(self.hormones, 'contact', [])):
                 temp = 1.0E-04 * (self.network.wall_lengths[wall_id] / 2 * height) / (thickness / 2)

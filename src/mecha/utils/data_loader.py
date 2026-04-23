@@ -896,7 +896,7 @@ class HydraulicData:
     kw_barrier_elems: List[Any] = field(default_factory=list)
     kaqp_elems: List[Any] = field(default_factory=list)
     kpl_elems: List[Any] = field(default_factory=list)
-    xcontactrange: List[Any] = field(default_factory=lambda: [0])
+    xcontactrange: List[Any] = field(default_factory=lambda: [-15E9])
     path_hydraulics: List[Any] = field(default_factory=list)
 
     # Counts

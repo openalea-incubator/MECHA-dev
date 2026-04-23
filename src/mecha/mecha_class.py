@@ -75,9 +75,9 @@ class Mecha:
             self.hydraulic = None
             self.cellset_data = None
 
-        self.results = []
-        self.standardized_results = []
-        self.hydraulic_conductivities = {}
+        self.results: List[Dict] = []
+        self.standardized_results: List[np.ndarray] = []
+        self.hydraulic_conductivities: Dict = {}
 
         if network is None:
             self.network = NetworkBuilder()
@@ -1002,6 +1002,9 @@ class Mecha:
         matrix_W = matrix_W.tocsr()
         # Solve system
         solution, verification_1 = self.solve(matrix = matrix_W, rhs = rhs, sparse_matrix = self.general.sparse_matrix)
+
+        # Store for visualization
+        self.results.append({'maturity stage': i_maturity, 'solution': solution, 'matrix_W': matrix_W, 'Kmb': Kmb, 'rhs': rhs, 'scenario': 'standard water flow', 'h':h})
 
         # Calculate standard water flow
         if barrier==0:

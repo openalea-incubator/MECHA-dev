@@ -51,7 +51,7 @@ def _build_mecha():
     network.populate_from_network()
 
     mecha = Mecha(default_input, network=network)
-    solution, _, matrix_W, Kmb, rhs_s = mecha.solve_W(h=0, i_maturity=1)
+    solution, _, matrix_W, Kmb, rhs_s = mecha.solve_W(h=0, i_maturity=0)
     return mecha, solution
 
 

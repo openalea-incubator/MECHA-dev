@@ -55,6 +55,7 @@ Units (same convention as the rest of MECHA):
 from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
+from shapely.geometry import Polygon
 
 if TYPE_CHECKING:
     # Avoid circular import at runtime; only used for type hints.
@@ -290,6 +291,8 @@ class HydraulicCell:
     __slots__ = (
         # --- geometry (mirrored from GRANAP Cell) ---
         "x", "y", "area", "perimeter", "cell_type",
+        # --- spatial polygon (Shapely Polygon, µm units) ---
+        "polygon",
         # --- topology ---
         "node_id", "cell_id", "cgroup", "rank", "walls",
         # --- hydraulic configuration (apoplastic) ---
@@ -318,6 +321,7 @@ class HydraulicCell:
         rank: int = 0,
         elongattion_rate: Optional[float] = 0.0,
         walls: Optional[List['HydraulicWall']] = None,
+        polygon: Optional[Polygon] = None,
     ) -> None:
         # Geometry
         self.x: float = x
@@ -326,6 +330,7 @@ class HydraulicCell:
         self.elongattion_rate: float = 0.0
         self.perimeter: float = perimeter
         self.cell_type: str = cell_type
+        self.polygon: Optional[Polygon] = polygon
 
         # Topology
         self.node_id: int = node_id
@@ -359,6 +364,10 @@ class HydraulicCell:
         """Reset all hydraulic fields to ``None``."""
         self.kw = self.kpl = self.km = self.kaqp = None
         self.os = self.psi = self.psi_p = None
+
+    def _polygon(self) -> Polygon:
+        
+        return Polygon()
 
     def __repr__(self) -> str:
         return (
@@ -572,6 +581,13 @@ class HydraulicCellManager:
             if pos is not None:
                 position[node] = pos
 
+        # Build polygon lookup from _cells_gdf (id_cell → Shapely Polygon)
+        poly_dict: Dict[int, Optional[Polygon]] = {}
+        gdf = getattr(network, '_cells_gdf', None)
+        if gdf is not None and 'id_cell' in gdf.columns and 'geometry' in gdf.columns:
+            for _, row in gdf.iterrows():
+                poly_dict[int(row['id_cell'])] = row['geometry']
+
         # Ensure network.wall_lengths is accessible via standard dict or array
         wall_lengths = getattr(network, "wall_lengths", {})
         if wall_lengths is None:
@@ -671,6 +687,7 @@ class HydraulicCellManager:
                 cgroup=cgroup,
                 rank=rank,
                 walls=linked_walls,
+                polygon=poly_dict.get(cell_id),
             )
 
             # Link back from wall to cell

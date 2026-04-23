@@ -1,11 +1,24 @@
 import geopandas as gpd
 from shapely.ops import polygonize
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+import matplotlib.cm as cm
 import numpy as np
 from shapely.geometry import LineString, Polygon
-from typing import Tuple, Dict, List, Any
+from typing import Tuple, Dict, List, Any, Optional
 from mecha.utils.network_builder import NetworkBuilder
 import networkx as nx
+
+_PATH_COLORS = {
+    'wall':          '#e07b4a',   # warm orange
+    'membrane':      '#4ab5e0',   # sky blue
+    'plasmodesmata': '#7be04a',   # lime green
+}
+_PATH_LABELS = {
+    'wall':          'Apoplastic (wall)',
+    'membrane':      'Transcellular (membrane)',
+    'plasmodesmata': 'Symplastic (PD)',
+}
 
 
 def prep_section(cellset_data) -> gpd.GeoDataFrame:
@@ -154,6 +167,14 @@ def visualize(obj: Any,
         _visualize_pv(obj, **kwargs)
     elif visu_type == 'water_potential':
         _visualize_water_potential(obj, **kwargs)
+    elif visu_type == 'conductance':
+        _plot_K_network(obj, **kwargs)
+    elif visu_type == 'flow':
+        _plot_flow_network(obj, **kwargs) # slow, 
+    elif visu_type == 'psi_distribution':
+        plot_psi_distribution(obj, **kwargs)
+    elif visu_type == 'q_distribution':
+        plot_Q_distribution(obj, **kwargs)
     else:
         raise ValueError(f"Unknown visualization type: {visu_type}")
 
@@ -268,7 +289,7 @@ def plot_water_potential_map(root_gdf: gpd.GeoDataFrame, title: str = "Water Pot
         edgecolor='black',
         linewidth=0.5,
         legend=True,
-        legend_kwds={'label': 'Water Potential (MPa)', 'orientation': 'vertical'}
+        legend_kwds={'label': 'Water Potential (hPa)', 'orientation': 'vertical'}
     )
     ax.set_aspect("equal", "box")
     ax.set_title(title)
@@ -285,136 +306,227 @@ def _visualize_water_potential(obj: Any, **kwargs: Dict[str, Any]) -> None:
     ----------
     obj : Any
         Mecha object containing results and cellset_data.
-    **kwargs : Dict[str, Any]
-        maturity_idx : int, default 0
-        scenario_idx : int, default 0
+        results list: list of solutions, each solution is a numpy array of water potentials for each cell. It's obtained by the 
+        solve_W() or water_flow() method.
+
     """
-    if not hasattr(obj, 'results'):
-        print("Object does not have results attribute.")
-        return
+    # Use pre-computed _cells_gdf if available, else fall back to prep_section
+    if hasattr(obj.network, '_cells_gdf') and obj.network._cells_gdf is not None:
+        gdf = obj.network._cells_gdf.copy()
+    else:
+        gdf = prep_section(obj.cellset_data)
+    
+    # Check for network and indices
+    if not hasattr(obj, 'network') or not hasattr(obj, 'indice'):
+         print("Object does not have valid network structure or indice mapping.")
+         return
 
-    results = obj.results
-    if not results:
-        print("Results are empty.")
-        return
-
-    maturity_idx = kwargs.get('maturity_idx', 0)
-    scenario_idx = kwargs.get('scenario_idx', 0)
-
-    # Find the matching result
-    target_res = None
-    if isinstance(results, list):
-        for res in results:
+    nwj = obj.network.n_wall_junction
+    # Support results list or direct solution
+    if hasattr(obj, 'results') and obj.results:
+        standardized_results = kwargs.get('standardized_results', True)
+        maturity_idx = kwargs.get('maturity_idx', 0)
+        scenario_idx = kwargs.get('scenario_idx', "standard water flow")
+        target_res = None
+        for res in obj.results:
             if res.get('maturity stage') == maturity_idx and res.get('scenario') == scenario_idx:
                 target_res = res
                 break
-    
-    if target_res is None:
-        print(f"No results found for maturity {maturity_idx} and scenario {scenario_idx}")
-        print("Available results:", [(r.get('maturity stage'), r.get('scenario')) for r in results])
-        return
-
-    solution = target_res['solution']
-    
-    rhs = target_res.get('rhs')
-        
-    matrix_W = target_res.get('matrix_W')
-    if matrix_W is not None:
-         if hasattr(matrix_W, 'toarray') or hasattr(matrix_W, 'tocoo'):
-             # Sparse matrix
-             if hasattr(matrix_W, 'data'):
-                 mat_data = matrix_W.data
-                 print(f"DEBUG: MatrixW (sparse) stats - NaNs: {np.isnan(mat_data).sum()}, Min: {np.nanmin(mat_data)}, Max: {np.nanmax(mat_data)}")
-         else:
-             # Dense matrix
-             print(f"DEBUG: MatrixW (dense) stats - NaNs: {np.isnan(matrix_W).sum()}, Min: {np.nanmin(matrix_W)}, Max: {np.nanmax(matrix_W)}")
-
-    # Check for cellset_data
-    if not hasattr(obj, 'cellset_data'):
-        print("Object does not have cellset_data attribute.")
-        return
-        
-    gdf = prep_section(obj.cellset_data)
-    
-    # Check for network offset
-    if not hasattr(obj, 'network') or not hasattr(obj.network, 'n_wall_junction'):
-         print("Object does not have valid network structure.")
-         return
-
-    offset = obj.network.n_walls
-    offset += obj.network.n_wall_junction
-    
+        if target_res:
+            sol = np.asarray(target_res['solution']).ravel()
+        else:
+            print(f"No results found for maturity {maturity_idx} and scenario {scenario_idx}")
+            return
+    else:
+        sol = np.asarray(obj.solution).ravel()
     
     def get_pot(cid):
-        idx = int(offset + cid)
+        """Map cell ID to water potential using the network indice mapping."""
+        node_id = nwj + cid
         try:
-             # solution is typically (n_nodes, 1) or (n_nodes,)
-             val = solution[idx]
-             if hasattr(val, '__getitem__') and hasattr(val, '__len__') and len(val) > 0:
-                  return float(val[0])
-             return float(val)
-        except (IndexError, TypeError):
-             print(f"DEBUG: Error retrieving pot for cid {cid} at idx {idx}")
+            # Use the indice mapping from Mecha (obj), just like in test_KQnetwork.py
+            idx = obj.indice[node_id]
+            return float(sol[idx])
+        except (KeyError, IndexError):
              return np.nan
-        print(f"DEBUG: Pot for cid {cid} at idx {idx}: {val}")
 
     gdf['water_potential'] = gdf['id_cell'].apply(get_pot)
     
-    plot_water_potential_map(gdf, title=f"Water Potential (Mat: {maturity_idx}, Scen: {scenario_idx})")
+    plot_water_potential_map(gdf, title=kwargs.get('title', "Water Potential"))
 
+def _plot_flow_network(obj, **kwargs):
+    """Draw arrows on edges proportional to |Q|, coloured by edge type.
 
-def _visualize_standardized_results(obj: Any, **kwargs: Dict[str, Any]) -> None:
+    Arrow head direction follows sign of Q (u→v if Q>0, v→u if Q<0).
     """
-    Visualize standardized results from a Mecha object.
+    graph  = obj.network.graph
+    pos    = nx.get_node_attributes(graph, 'position')
+
+    save_path = kwargs.get('save_path', None)
+
+    fig, ax = plt.subplots(figsize=(12, 12), facecolor='#0d0d1a')
+    ax.set_facecolor('#0d0d1a')
+    ax.set_aspect('equal')
+    ax.set_title("Water Flow Q on network edges", color='white', fontsize=13)
+
+    # Background: all nodes
+    nx.draw_networkx_nodes(graph, pos, ax=ax,
+                           node_size=2, node_color='#333355', alpha=0.3)
+
+    # Gather all Q values for normalisation
+    all_Q = [abs(d.get('Q', 0.0))
+             for _, _, d in graph.edges(data=True)
+             if d.get('Q') is not None]
+    q_max = max(all_Q) if all_Q else 1.0
+
+    from matplotlib.patches import FancyArrowPatch
+
+    legend_handles = []
+    for path_type, color in _PATH_COLORS.items():
+        drawn = False
+        for u, v, eattr in graph.edges(data=True):
+            if eattr.get('path') != path_type:
+                continue
+            Q = eattr.get('Q')
+            K = eattr.get('K')
+            if Q is None or K is None or K == 0:
+                continue
+
+            pu = pos.get(u, (0, 0))
+            pv = pos.get(v, (0, 0))
+
+            # Arrow direction follows sign of Q
+            if Q >= 0:
+                src, dst = pu, pv
+            else:
+                src, dst = pv, pu
+
+            magnitude = abs(Q) / q_max       # 0…1
+            if magnitude < 1e-12:
+                continue
+
+            lw  = 0.2 + 4.0 * magnitude
+            hw  = 0.4 + 5.0 * magnitude      # head width
+            alpha = 0.35 + 0.55 * magnitude  # more opaque for stronger flow
+
+            ax.annotate(
+                "", xy=dst, xytext=src,
+                arrowprops=dict(
+                    arrowstyle=f"->,head_width={hw:.2f},head_length={hw*0.8:.2f}",
+                    color=color,
+                    lw=lw,
+                    alpha=alpha,
+                    connectionstyle="arc3,rad=0.0"
+                )
+            )
+            if not drawn:
+                drawn = True
+
+        # Legend proxy
+        from matplotlib.lines import Line2D
+        legend_handles.append(
+            Line2D([0], [0], color=color, lw=2, label=_PATH_LABELS[path_type])
+        )
+
+    ax.legend(handles=legend_handles, loc='upper right',
+              facecolor='#222244', labelcolor='white', edgecolor='white',
+              fontsize=8)
+    plt.tight_layout()
+    if save_path is not None:
+        out = save_path
+        plt.savefig(out, dpi=150, bbox_inches='tight', facecolor='#0d0d1a')
+        print(f"Saved → {out}")
+    else:
+        plt.show()
+
     
-    Parameters
-    ----------
-    obj : Any
-        Mecha object containing results and cellset_data.
+def _plot_K_network(obj, **kwargs):
+    """Draw the graph with edges coloured and scaled by conductance K.
+
+    Three subplots: one per path type (wall / membrane / PD).
     """
-    if not hasattr(obj, 'standardized_results'):
-        print("Object does not have standardized_results attribute.")
-        return
+    if hasattr(obj, 'network'):
+        graph  = obj.network.graph
+    elif hasattr(obj, 'graph'):
+        graph  = obj.graph
+    pos    = nx.get_node_attributes(graph, 'position')
 
-    results = obj.standardized_results[0]
-    if not results:
-        print("Results are empty.")
-        return
+    save_path = kwargs.get('save_path', None)
 
-    
-    solution = results['solution']
-    
-    # Check for cellset_data
-    if not hasattr(obj, 'cellset_data'):
-        print("Object does not have cellset_data attribute.")
-        return
-        
-    gdf = prep_section(obj.cellset_data)
-    
-    # Check for network offset
-    if not hasattr(obj, 'network') or not hasattr(obj.network, 'n_wall_junction'):
-         print("Object does not have valid network structure.")
-         return
+    title = kwargs.get('title', "Tri-pathways Hydraulic Conductance (K) on Edges")
 
-    def get_pot(cid):
-        
-        obj.network.graph.nodes[cid]['water_potential'] = solution[cid][0]
-        
-    for node, edges in obj.network.graph.adjacency() : #adjacency_iter returns an iterator of (node, adjacency dict) tuples for all nodes. This is the fastest way to look at every edge. For directed graphs, only outgoing adjacencies are included.
-        i = obj.network.indice[node] #Node ID number
-        if i<obj.network.n_walls: #wall ID 
-            psi = solution[i][0]
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6), facecolor='#111111')
+    fig.suptitle(title, color='white', fontsize=14, y=1.01)
 
+    for ax, path_type in zip(axes, ['wall', 'membrane', 'plasmodesmata']):
+        ax.set_facecolor('#1a1a2e')
+        ax.set_aspect('equal')
 
+        # Draw background nodes (small, grey)
+        nx.draw_networkx_nodes(
+            graph, pos, ax=ax,
+            node_size=2, node_color='#444466', alpha=0.4
+        )
 
-    offset = obj.network.n_wall_junction
-    offset += obj.network.n_walls
-    
-    
+        # Collect edges of this type
+        edge_list, K_vals = [], []
+        for u, v, eattr in graph.edges(data=True):
+            if eattr.get('path') == path_type:
+                K = eattr.get('K')
+                if K is not None and K > 0:
+                    edge_list.append((u, v))
+                    K_vals.append(K)
 
-    gdf['water_potential'] = gdf['id_cell'].apply(get_pot)
-    
-    plot_water_potential_map(gdf, title=f"Water Potential (Mat: {maturity_idx}, Scen: {scenario_idx})")
+        if not edge_list:
+            ax.set_title(f"{_PATH_LABELS[path_type]}\n(no edges)", color='white')
+            continue
+
+        K_arr  = np.array(K_vals)
+        log_K  = np.log10(K_arr + 1e-30)
+        log_K -= log_K.min()
+        if log_K.max() > 0:
+            log_K /= log_K.max()   # normalise 0→1 for width
+
+        widths = 0.3 + 4.5 * log_K
+
+        # Colour map: low K = dark, high K = bright
+        cmap   = cm.get_cmap('plasma')
+        colors = [cmap(v) for v in log_K]
+
+        nx.draw_networkx_edges(
+            graph, pos, ax=ax,
+            edgelist=edge_list,
+            edge_color=colors,
+            width=widths,
+            alpha=0.85
+        )
+
+        # Colourbar
+        sm = cm.ScalarMappable(
+            cmap='plasma',
+            norm=mcolors.LogNorm(vmin=max(K_arr.min(), 1e-30), vmax=K_arr.max())
+        )
+        sm.set_array([])
+        cbar = fig.colorbar(sm, ax=ax, fraction=0.04, pad=0.02)
+        cbar.set_label('K  [cm³ hPa⁻¹ d⁻¹]', color='white', fontsize=8)
+        cbar.ax.yaxis.set_tick_params(color='white')
+        plt.setp(cbar.ax.yaxis.get_ticklabels(), color='white')
+
+        ax.set_title(
+            f"{_PATH_LABELS[path_type]}\n"
+            f"n={len(edge_list)}  K∈[{K_arr.min():.2e}, {K_arr.max():.2e}]",
+            color='white', fontsize=9
+        )
+
+    plt.tight_layout()
+
+    if save_path is not None:
+        out = save_path
+        plt.savefig(out, dpi=150, bbox_inches='tight', facecolor='#111111')
+        print(f"Saved → {out}")
+    else:
+        plt.show()
+
 
 
 def plot_matrix_difference(m1, m2, title="Absolute Difference between Matrices", threshold=1e-12):
@@ -698,3 +810,23 @@ def plot_intercellular_spaces(net1, net2, title1="Net 1", title2="Net 2"):
     plt.tight_layout()
     plt.show()
 
+def _gather_edge_data(graph):
+    """Return a dict of lists: {path_type: {'K': [...], 'Q': [...], 'pos': [...]}}."""
+    data = {k: {'K': [], 'Q': [], 'xy_mid': []} for k in _PATH_COLORS}
+    pos = nx.get_node_attributes(graph, 'position')
+
+    for u, v, eattr in graph.edges(data=True):
+        path = eattr.get('path', 'wall')
+        if path not in data:
+            continue
+        K = eattr.get('K')
+        Q = eattr.get('Q')
+        if K is None:
+            continue
+        pu = pos.get(u, (0, 0))
+        pv = pos.get(v, (0, 0))
+        mid = ((pu[0] + pv[0]) / 2, (pu[1] + pv[1]) / 2)
+        data[path]['K'].append(K)
+        data[path]['Q'].append(Q if Q is not None else 0.0)
+        data[path]['xy_mid'].append(mid)
+    return data
