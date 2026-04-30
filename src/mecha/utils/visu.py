@@ -8,6 +8,7 @@ from shapely.geometry import LineString, Polygon
 from typing import Tuple, Dict, List, Any, Optional
 from mecha.utils.network_builder import NetworkBuilder
 import networkx as nx
+import pandas as pd
 
 _PATH_COLORS = {
     'wall':          '#e07b4a',   # warm orange
@@ -170,7 +171,11 @@ def visualize(obj: Any,
     elif visu_type == 'conductance':
         _plot_K_network(obj, **kwargs)
     elif visu_type == 'flow':
-        _plot_flow_network(obj, **kwargs) # slow, 
+        _plot_flow_network(obj, **kwargs)
+    elif visu_type == 'flow_pathway':
+        _plot_flow_pathway_breakdown(obj, **kwargs)
+    elif visu_type == 'psi_profile':
+        _plot_psi_radial_profile(obj, **kwargs)
     elif visu_type == 'psi_distribution':
         plot_psi_distribution(obj, **kwargs)
     elif visu_type == 'q_distribution':
@@ -354,11 +359,37 @@ def _visualize_water_potential(obj: Any, **kwargs: Dict[str, Any]) -> None:
     
     plot_water_potential_map(gdf, title=kwargs.get('title', "Water Potential"))
 
+def _get_result_data(obj: Any, **kwargs: Any) -> Tuple[Optional[np.ndarray], Optional[Dict[str, Any]]]:
+    """Helper to extract solution and result dict from Mecha object."""
+    maturity_idx = kwargs.get('maturity_idx', 0)
+    scenario_idx = kwargs.get('scenario_idx', 'standard water flow')
+    
+    if hasattr(obj, 'results') and obj.results:
+        for res in obj.results:
+            if res.get('maturity stage') == maturity_idx and res.get('scenario') == scenario_idx:
+                return np.asarray(res['solution']).ravel(), res
+    
+    if hasattr(obj, 'solution'):
+        return np.asarray(obj.solution).ravel(), None
+        
+    return None, None
+
 def _plot_flow_network(obj, **kwargs):
     """Draw arrows on edges proportional to |Q|, coloured by edge type.
 
     Arrow head direction follows sign of Q (u→v if Q>0, v→u if Q<0).
     """
+    sol, res = _get_result_data(obj, **kwargs)
+    if sol is not None:
+        # Update flows in graph if we have a solution
+        indices = getattr(obj, 'indice', nx.get_node_attributes(obj.network.graph, 'indice'))
+        for u, v, eattr in obj.network.graph.edges(data=True):
+            K = eattr.get('K')
+            if K is not None:
+                psi_u = float(sol[indices[u]])
+                psi_v = float(sol[indices[v]])
+                eattr['Q'] = K * (psi_u - psi_v)
+
     graph  = obj.network.graph
     pos    = nx.get_node_attributes(graph, 'position')
 
@@ -367,7 +398,7 @@ def _plot_flow_network(obj, **kwargs):
     fig, ax = plt.subplots(figsize=(12, 12), facecolor='#0d0d1a')
     ax.set_facecolor('#0d0d1a')
     ax.set_aspect('equal')
-    ax.set_title("Water Flow Q on network edges", color='white', fontsize=13)
+    ax.set_title(f"Water Flow Q on network edges (Mat {kwargs.get('maturity_idx', 0)})", color='white', fontsize=13)
 
     # Background: all nodes
     nx.draw_networkx_nodes(graph, pos, ax=ax,
@@ -449,11 +480,21 @@ def _plot_K_network(obj, **kwargs):
         graph  = obj.network.graph
     elif hasattr(obj, 'graph'):
         graph  = obj.graph
+    else:
+        raise ValueError("Object must have a network or graph.")
+
     pos    = nx.get_node_attributes(graph, 'position')
 
     save_path = kwargs.get('save_path', None)
+    maturity_idx = kwargs.get('maturity_idx', 0)
+    
+    # If obj is Mecha, we might need to re-run build_matrices to get the right K for the maturity
+    if hasattr(obj, 'build_matrices') and maturity_idx != getattr(obj, '_current_visu_maturity', -1):
+        print(f"Re-building matrices for maturity {maturity_idx} to update graph K attributes...")
+        obj.build_matrices(h=kwargs.get('h', 0), i_maturity=maturity_idx)
+        obj._current_visu_maturity = maturity_idx
 
-    title = kwargs.get('title', "Tri-pathways Hydraulic Conductance (K) on Edges")
+    title = kwargs.get('title', f"Tri-pathways Hydraulic Conductance (K) - Mat {maturity_idx}")
 
     fig, axes = plt.subplots(1, 3, figsize=(18, 6), facecolor='#111111')
     fig.suptitle(title, color='white', fontsize=14, y=1.01)
@@ -808,6 +849,128 @@ def plot_intercellular_spaces(net1, net2, title1="Net 1", title2="Net 2"):
     _plot_intercellular(net2, ax2, title2)
     
     plt.tight_layout()
+    plt.show()
+
+def _plot_psi_radial_profile(obj, **kwargs):
+    """Plot average Psi vs radial distance (rank)."""
+    sol, _ = _get_result_data(obj, **kwargs)
+    if sol is None:
+        print("No solution found for specified maturity/scenario.")
+        return
+
+    cm = obj.network.cell_manager
+    data = []
+    for cell in cm:
+        psi = sol[cell.node_id]
+        data.append({'rank': cell.rank, 'psi': psi, 'type': cell.cell_type})
+    
+    df = pd.DataFrame(data)
+    # filter out NaN psi
+    df = df.dropna(subset=['psi'])
+    
+    # Group by rank and average
+    profile = df.groupby('rank')['psi'].agg(['mean', 'std']).reset_index()
+    
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.errorbar(profile['rank'], profile['mean'], yerr=profile['std'], fmt='-o', 
+                capsize=3, color='#4ab5e0', ecolor='#4ab5e0', alpha=0.8)
+    
+    ax.set_xlabel('Cell Rank (Radial Layer)')
+    ax.set_ylabel('Water Potential (hPa)')
+    ax.set_title(f"Radial Psi Profile - Mat {kwargs.get('maturity_idx', 0)}, Scen {kwargs.get('scenario_idx', 'standard')}")
+    plt.grid(True, linestyle='--', alpha=0.5)
+    plt.tight_layout()
+    plt.show()
+
+
+def _plot_flow_pathway_breakdown(obj, **kwargs):
+    """Stacked area plot of flow through pathways vs radial distance."""
+    sol, res = _get_result_data(obj, **kwargs)
+    if sol is None:
+        print("No solution found for specified maturity/scenario.")
+        return
+
+    graph = obj.network.graph
+    indices = getattr(obj, 'indice', nx.get_node_attributes(graph, 'indice'))
+    
+    # We need to map edges to radial ranks.
+    # We'll use the average rank of the connected nodes.
+    node_ranks = nx.get_node_attributes(graph, 'rank')
+    
+    flow_data = []
+    for u, v, eattr in graph.edges(data=True):
+        K = eattr.get('K')
+        path = eattr.get('path', 'wall')
+        if K is None or path not in _PATH_COLORS:
+            continue
+            
+        psi_u = sol[indices[u]]
+        psi_v = sol[indices[v]]
+        Q = abs(K * (psi_u - psi_v)) # Use absolute flow for pathway contribution
+        
+        # Get rank (average of u and v)
+        r_u = node_ranks.get(u, node_ranks.get(v, 0))
+        r_v = node_ranks.get(v, node_ranks.get(u, 0))
+        avg_rank = (r_u + r_v) / 2
+        
+        flow_data.append({'rank': avg_rank, 'Q': Q, 'path': path})
+
+    df = pd.DataFrame(flow_data)
+    # Bin by integer rank for plotting
+    df['rank_bin'] = df['rank'].round().astype(int)
+    
+    # Pivot: ranks as index, paths as columns, sum of Q as values
+    pivot_df = df.pivot_table(index='rank_bin', columns='path', values='Q', aggfunc='sum').fillna(0)
+    
+    # Ensure all paths exist in columns
+    for p in _PATH_COLORS:
+        if p not in pivot_df.columns:
+            pivot_df[p] = 0.0
+            
+    # Sort columns to match _PATH_COLORS order for consistent coloring
+    pivot_df = pivot_df[['wall', 'plasmodesmata', 'membrane']]
+    
+    # Convert to percentages
+    row_sums = pivot_df.sum(axis=1)
+    # Avoid division by zero
+    row_sums[row_sums == 0] = 1.0
+    pivot_pct = pivot_df.div(row_sums, axis=0) * 100
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    pivot_pct.plot.area(ax=ax, color=[_PATH_COLORS[c] for c in pivot_pct.columns], alpha=0.7)
+    
+    ax.set_xlabel('Cell Rank (Radial Layer)')
+    ax.set_ylabel('Pathway Contribution (%)')
+    ax.set_title(f"Flow Pathway Breakdown - Mat {kwargs.get('maturity_idx', 0)}")
+    ax.set_ylim(0, 100)
+    plt.legend(loc='lower left')
+    plt.tight_layout()
+    plt.show()
+
+def plot_psi_distribution(obj, **kwargs):
+    """Histogram of water potentials."""
+    sol, _ = _get_result_data(obj, **kwargs)
+    if sol is None: return
+    
+    plt.figure(figsize=(8, 5))
+    plt.hist(sol, bins=50, color='#4ab5e0', alpha=0.7, edgecolor='black')
+    plt.xlabel('Psi (hPa)')
+    plt.ylabel('Count')
+    plt.title('Water Potential Distribution')
+    plt.grid(True, alpha=0.3)
+    plt.show()
+
+def plot_Q_distribution(obj, **kwargs):
+    """Histogram of edge flow magnitudes."""
+    graph = obj.network.graph
+    flows = [abs(d.get('Q', 0)) for _, _, d in graph.edges(data=True) if 'Q' in d]
+    
+    plt.figure(figsize=(8, 5))
+    plt.hist(np.log10(np.array(flows) + 1e-20), bins=50, color='#7be04a', alpha=0.7, edgecolor='black')
+    plt.xlabel('log10(|Q|)')
+    plt.ylabel('Count')
+    plt.title('Edge Flow Distribution')
+    plt.grid(True, alpha=0.3)
     plt.show()
 
 def _gather_edge_data(graph):

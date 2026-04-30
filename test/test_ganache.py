@@ -19,8 +19,8 @@ import numpy as np
 def test_compare_granar_ganache():
     # Create a Mecha instance with a GRANAP network
     root = RootAnatomy()
-    root.update_params("aerenchyma", "aerenchyma_proportion", 0.7)
-    root.update_params("aerenchyma", "n_files", 15)
+    root.update_params("aerenchyma", "aerenchyma_proportion", 0.02)
+    root.update_params("aerenchyma", "n_files", 1)
     root.update_params("inter_cellular_spaces", "tissue", "cortex")
 
     _ = root.export_to_adjencymatrix()
@@ -40,6 +40,7 @@ def test_compare_granar_ganache():
     mecha_ganache_1 = Mecha(default_input, network=ganache_network)
     solution, _, matrix_W, Kmb, rhs_s = mecha_ganache_1.solve_W(h=0, i_maturity=1)
     m1 = matrix_W
+    
 
     # Create a default input for Mecha use with cellset data
     Ganache_input = InData(cellset_file="outputs/test_ganache.xml", geometry_file="outputs/test_ganache_geometry.xml")
@@ -140,7 +141,9 @@ def test_compare_granar_ganache():
         # plot_networks_interC(mecha_ganache_1.network, mecha_ganache_2.network)
         plot_edge_and_node_differences(mecha_ganache_1.network, mecha_ganache_2.network)
         # plot_intercellular_spaces(mecha_ganache_1.network, mecha_ganache_2.network)
-
+        visualize(mecha_ganache_2, visu_type="water_potential", i_maturity=1)
+        visualize(mecha_ganache_2, visu_type="flow")
+        visualize(mecha_ganache_2, visu_type="conductance")
         # Plot absolute difference between the two matrices
         # plot_matrix_difference(m1, m2, title="Absolute Difference between Matrix_W (Net 1 vs Net 2)")
 
