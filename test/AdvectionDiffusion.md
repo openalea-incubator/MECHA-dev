@@ -9,56 +9,151 @@
 Two construction pathways exist to build a hydraulic network in MECHA: the **XML path** (legacy) and the **GRANAP path** (new). Both converge on a `NetworkBuilder` that feeds into `Mecha`.
 
 ```mermaid
-graph TB
-    subgraph GRANAP
-        direction TB
-        OID(OrganInputData) -->|factory| Organ
-        Organ -->|subclass| Root(RootAnatomy)
-        Organ -->|subclass| Needle(NeedleAnatomy)
-        Organ -.-|manages| LM(LayerManager)
-        Organ -.-|populates| CM(CellManager)
-        Organ -->|generate_cells| Voronoi(Voronoi tessellation)
-        Voronoi --> AllCells(all_cells: CellManager)
-        AllCells -->|NetworkExporter| AN(AbstractNetwork / graph)
-    end
+classDiagram
+    class AbstractNetwork {
+        <<abstract>>
+        +graph: nx.Graph
+        +n_walls: int
+        +n_junctions: int
+        +n_cells: int
+        #_build_anatnetwork()*
+    }
 
-    subgraph MECHA
-        direction TB
+    class Organ {
+        <<abstract>>
+        +all_cells: CellManager
+        +layer_manager: LayerManager
+        +generate_cells()
+        +export_to_adjencymatrix()
+    }
 
-        subgraph InData [InData - Input Data]
-            direction LR
-            GD(GeneralData)
-            GeoD(GeometryData)
-            HD(HydraulicData)
-            HoD(HormoneData)
-            BD(BoundaryData)
-            CSD(CellsetData)
-        end
+    class RootAnatomy {
+        #_create_base_shape()
+    }
 
-        subgraph XML_Path [XML Path - Legacy]
-            InData -->|_build_anatomy| NB_XML(NetworkBuilder)
-            NB_XML -->|build_network| G_XML(nx.Graph)
-            G_XML --> M_XML(Mecha)
-        end
+    class NeedleAnatomy {
+        #_create_base_shape()
+    }
 
-        subgraph GRANAP_Path [GRANAP Path - New]
-            AN -->|source_network| NB_GR(NetworkBuilder)
-            NB_GR -->|populate_from_network| G_GR(nx.Graph)
-            InData -->|all_input| M_GR(Mecha)
-            G_GR -->|network=| M_GR
-        end
+    class Cell{
+        +id_cell: int
+        +type: str
+        +polygon: Polygon
+        +cell_to_dict()
+    }
+    class CellManager{
+        +cells: list~Cell~
+        +add_cell()
+        +recalculate_cell_properties()
+    }
+    class LayerManager{
+        +layers: list~Layer~
+        +add_layer()
+        +recalculate_layer_properties()
+    }
 
-        M_XML -->|build_matrices| HMB(HydraulicMatrixBuilder)
-        M_GR  -->|build_matrices| HMB
+    class AnatomyWriter{
+        +write_to_xml(organ: Organ, filename: str)
+        +write_to_geo(organ: Organ, filename: str)
+    }
 
-        HMB -->|wall edges| W(matrix_W)
-        HMB -->|membrane edges| W
-        HMB -->|plasmodesmata edges| W
-        HMB -->|if c_flag| C(matrix_C)
+    class NetworkBuilder {
+        +cell_manager: HydraulicCellManager
+        +populate_from_network(source_network)
+        +build_network(general, geometry, cellset)
+    }
 
-        W -->|Mecha.solve| PSI(ψ - water potential field)
-        C -->|Mecha.solve| CONC(c - solute concentration field)
-    end
+    class Mecha {
+        +all_input: InData
+        +network: NetworkBuilder
+        +solve_W(h, i_maturity)
+        +build_matrices(h, i_maturity)
+    }
+
+    class HydraulicMatrixBuilder {
+        +build(h, i_maturity, ...)
+    }
+
+    class HydraulicCellManager{
+        +cells: list~HydraulicCell~
+        +walls: list~HydraulicWall~
+        +membranes: list~HydraulicMembrane~
+        +plasmodesmata: list~HydraulicPlasmodesmata~
+        +sync_from_network(network)
+        +get_by_node_id(node_id)
+        +get_membrane_by_edge(wall, cell)
+        +get_plasmodesmata_by_edge(node_i, node_j)
+    }
+
+    class HydraulicCell{
+        +node_id: int
+        +cgroup: int
+        +cell_type: str
+        +kw: float
+        +kpl: float
+        +km: float
+        +psi: float
+        +os: float
+        +psi_p: float
+    }
+    class HydraulicWall{
+        +node_id: int
+        +length: float
+        +thickness: float
+        +kw: float
+        +is_border: bool
+        +is_aerenchyma: bool
+    }
+    class HydraulicMembrane{
+        +wall: HydraulicWall
+        +cell: HydraulicCell
+        +length: float
+        +dist: float
+        +km: float
+        +kaqp: float
+    }
+    class HydraulicPlasmodesmata{
+        +cell_i: HydraulicCell
+        +cell_j: HydraulicCell
+        +length: float
+        +kpl: float
+    }
+
+    class InData {
+        +general: GeneralData
+        +geometry: GeometryData
+        +hydraulic: HydraulicData
+        +hormones: HormoneData
+        +boundary: BoundaryData
+        +cellset_data: CellsetData
+    }
+
+    AbstractNetwork <|-- Organ
+    AbstractNetwork <|-- NetworkBuilder
+    Organ <|-- RootAnatomy
+    Organ <|-- NeedleAnatomy
+    Organ *-- CellManager
+    Organ *-- LayerManager
+    CellManager o-- Cell
+    LayerManager o-- Layer
+    AnatomyWriter o-- Organ
+
+    AnatomyWriter ..> InData : CellSet.xml & Geometry.xml
+    
+    Mecha o-- InData
+    Mecha <|-- NetworkBuilder: has
+    Mecha ..> HydraulicMatrixBuilder : uses
+    Mecha ..> HydraulicCellManager : uses
+
+    HydraulicCellManager *-- HydraulicCell
+    HydraulicCellManager *-- HydraulicWall
+    HydraulicCellManager *-- HydraulicMembrane
+    HydraulicCellManager *-- HydraulicPlasmodesmata
+    
+    HydraulicCell -- HydraulicWall : connected via
+    HydraulicWall -- HydraulicMembrane : connected
+    HydraulicCell -- HydraulicMembrane : has
+    HydraulicCell -- HydraulicPlasmodesmata : symplastic connection
 ```
 
 ---
