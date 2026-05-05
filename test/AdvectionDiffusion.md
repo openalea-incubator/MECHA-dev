@@ -10,6 +10,8 @@ Two construction pathways exist to build a hydraulic network in MECHA: the **XML
 
 ```mermaid
 classDiagram
+
+namespace GRANAP {
     class AbstractNetwork {
         <<abstract>>
         +graph: nx.Graph
@@ -51,12 +53,16 @@ classDiagram
         +add_layer()
         +recalculate_layer_properties()
     }
+    class Layer {
+    }
 
     class AnatomyWriter{
         +write_to_xml(organ: Organ, filename: str)
         +write_to_geo(organ: Organ, filename: str)
     }
+}
 
+namespace MECHA{
     class NetworkBuilder {
         +cell_manager: HydraulicCellManager
         +populate_from_network(source_network)
@@ -127,6 +133,7 @@ classDiagram
         +boundary: BoundaryData
         +cellset_data: CellsetData
     }
+}
 
     AbstractNetwork <|-- Organ
     AbstractNetwork <|-- NetworkBuilder
@@ -209,20 +216,15 @@ W[j, j] -= K
 
 ### Simplified 3-node example (Doussan 1998)
 
-```
-Soil_node[4] <- edge[3] <-  root_nodes[1]
-                                 |
-                                 v
-                                 edge [1]
-                                 |
-                                 v
-Soil_node[5] <- edge[4] <-  root_nodes[2]
-                                 |
-                                 v
-                                 edge [2]
-                                 |
-                                 v
-Soil_node[6] <- edge[5] <- root_nodes[3]
+```mermaid
+flowchart LR
+    
+    1(root 1) -->|edge 1| 2(root 2)
+    1(root 1) -->|edge 3| 4(soil 4)
+    2(root 2) -->|edge 2| 3(root 3)
+    2(root 2) -->|edge 4| 5(soil 5)
+    3(root 3) -->|edge 5| 6(soil 6)
+    
 ```
 
 Doussan incidence matrix:
