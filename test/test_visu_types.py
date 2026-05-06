@@ -45,9 +45,7 @@ def test_all_visu_types():
         "conductance",
         "flow",
         "psi_profile",
-        "flow_pathway",
-        "psi_distribution",
-        "q_distribution"
+        "flow_pathway"
     ]
     
     for vt in visu_types:

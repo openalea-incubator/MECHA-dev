@@ -30,11 +30,21 @@ The **solver** (`hydraulic_solver.py`) already handles three edge types: `'wall'
 
 ### Next Round of Implementation: Visuals & Geometry
 
-  - [ ] `_plot_conductance_network` (Conductance K on edges): at the moment, `visualize(obj, visu_type="conductance")` does work. It should use **kwargs to select the maturity stage and scenario.
-  - [ ] `_plot_flow_network` (Water Flow Q on edges): at the moment, `visualize(obj, visu_type="flow")` does work, but it is slow for large networks. It should use **kwargs to select the maturity stage and scenario.
-  - [ ] `_plot_flow_pathway_breakdown` (Percentage of flow going through each pathway vs. radial distance - Staked Area Plot). at every discrete set of radial distances, calculate the percentage of flow going through each pathway (apoplast, symplast, transcellular). 
-  - [ ] `_plot_psi_radial_profile` (Psi vs radial distance). The average water potential at each radial distance.
-- [ ] **Update `visualize()` dispatcher** — Integrate the newly transferred plots into the main `visualize(obj, visu_type=...)` function in `visu.py` (e.g., adding `'flow'`, `'conductance'`, `'psi_profile'`).
+profile plots: should use the 3 mean radial distances for the nodes in each "row" as x axis.
+aggregated all nodes on the outer side of the cell, the ones of the middle and the one on the inner side of the cell layer.
+
+ex:
+epidermis layer : outer side (all outer nodes of epidermis)
+                  middle side (all middle nodes of epidermis)
+                  inner side (all inner nodes of epidermis shared with the ones of the outer nodes of the next layer (exodermis or cortex))
+                  ...
+
+  - [x] `_plot_conductance_network` (Conductance K on edges): at the moment, `visualize(obj, visu_type="conductance")` does work. It should use **kwargs to select the maturity stage and scenario.
+  - [x] `_plot_flow_network` (Water Flow Q on edges): at the moment, `visualize(obj, visu_type="flow")` does work, but it is slow for large networks. It should use **kwargs to select the maturity stage and scenario. This is slow. use the Q values saved in the node dicts instead.
+  - [x] `_plot_flow_pathway_breakdown` (Percentage of flow going through each pathway vs. radial distance - Staked Area Plot). at every discrete set of radial distances, calculate the percentage of flow going through each pathway (apoplast, symplast, transcellular). Top priority!
+  - [x] `_plot_psi_radial_profile` (Psi vs radial distance). The average water potential at each radial distance. At the moment, the values are not correctly handled. get inspiration from visu_type="water_potential". Separate symplastic and apoplastic potential distributions in the plot.
+
+- [x] **Update `visualize()` dispatcher** — Integrate the newly transferred plots into the main `visualize(obj, visu_type=...)` function in `visu.py` (e.g., adding `'flow'`, `'conductance'`, `'psi_profile'`).
 
 ---
 
@@ -65,16 +75,13 @@ The solver (`hydraulic_solver.py`) fills `matrix_W` via three fill functions. Af
   - Implemented as `Mecha.compute_edge_flows(solution)` method
   - Store per edge type: `'Q_wall'`, `'Q_membrane'`, `'Q_plasmodesmata'` on node dicts for fast node-level aggregation
 
-- [ ] **`HydraulicWall.kw`**: Populate from solved `K` (apoplastic conductance). Currently set to `None` after `sync_from_network`.
-- [ ] **`HydraulicPlasmodesmata.kpl`**: Populate `K` after solver runs (links back to `temp_factor`).
-- [ ] **`HydraulicMembrane.km` / `kaqp`**: Populate `K_computed` (from `Kmb` in `build()`) after solver build.
+- [x] **`HydraulicWall.kw`**: Populate from solved `K` (apoplastic conductance). Currently set to `None` after `sync_from_network`.
+- [x] **`HydraulicPlasmodesmata.kpl`**: Populate `K` after solver runs (links back to `temp_factor`).
+- [x] **`HydraulicMembrane.km` / `kaqp`**: Populate `K_computed` (from `Kmb` in `build()`) after solver build.
   - `Kmb` array is already built per membrane during `HydraulicMatrixBuilder.build()` — expose it to cell manager.
 
 - [ ] **`HydraulicCell` flow aggregation**: Add `Q_in`, `Q_out` attributes to `HydraulicCell`, summed from all connected membrane edges post-solve.
 
-- [ ] **Conductance (K) visualization**: Visualize conductance on graph edges (colored by type: wall / membrane / PD).
-- [ ] **Flow (Q) visualization**: Arrow-based edge visualization showing flow direction and magnitude.
-- [ ] **Pathway Contribution**: Identifying and visualizing main water pathways (Apoplastic, Symplastic, Transcellular).
 
 ---
 

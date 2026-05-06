@@ -92,6 +92,11 @@ def test_compare_granar_ganache():
     for i in range(len(mecha_ganache_2.root_hydraulic_properties)):
         print(mecha_ganache_2.root_hydraulic_properties[i])
 
+    print("--- Endodermis cells repr showcase ---")
+    for cell in mecha_ganache_2.network.cell_manager.get_by_cgroup(3):
+        print(repr(cell))
+        break
+
     def print_network_summary(name, network, filename):
         # write the output to a file
         with open(filename, "w") as f:

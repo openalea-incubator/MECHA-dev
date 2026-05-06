@@ -7,6 +7,7 @@ import numpy as np
 from shapely.geometry import LineString, Polygon
 from typing import Tuple, Dict, List, Any, Optional
 from mecha.utils.network_builder import NetworkBuilder
+from mecha.mecha_class import Mecha
 import networkx as nx
 import pandas as pd
 
@@ -16,9 +17,9 @@ _PATH_COLORS = {
     'plasmodesmata': '#7be04a',   # lime green
 }
 _PATH_LABELS = {
-    'wall':          'Apoplastic (wall)',
-    'membrane':      'Transcellular (membrane)',
-    'plasmodesmata': 'Symplastic (PD)',
+    'wall':          'Apoplastic (cell wall)',
+    'membrane':      'Transcellular (cell membrane)',
+    'plasmodesmata': 'Symplastic (plasmodesmata)',
 }
 
 
@@ -128,16 +129,16 @@ def prep_section(cellset_data) -> gpd.GeoDataFrame:
     gdf = gpd.GeoDataFrame(records, crs="EPSG:4326")
     return gdf
 
-def plot_root_section(root_gdf: gpd.GeoDataFrame):
-    """Display the root section as polygons using GeoPandas and Matplotlib."""
-    if root_gdf.empty:
+def plot_organ_section(organ_gdf: gpd.GeoDataFrame):
+    """Display the organ section as polygons using GeoPandas and Matplotlib."""
+    if organ_gdf.empty:
         print("GeoDataFrame is empty, cannot plot.")
         return
 
     # GeoPandas handles the figure creation and geometry plotting
     fig, ax = plt.subplots(figsize=(8, 8))
 
-    root_gdf.plot(
+    organ_gdf.plot(
         ax=ax,
         column='type',           # Color polygons by the 'type' column
         cmap='viridis',          # Use a nice color map
@@ -150,7 +151,7 @@ def plot_root_section(root_gdf: gpd.GeoDataFrame):
     ax.set_aspect("equal", "box")
     ax.set_xlabel("x (mm)")
     ax.set_ylabel("y (mm)")
-    ax.set_title("Cross Section Preview")
+    ax.set_title("Organ Cross Section")
     plt.tight_layout()
     plt.show()
     # plt.show() # Use this for local testing
@@ -176,10 +177,6 @@ def visualize(obj: Any,
         _plot_flow_pathway_breakdown(obj, **kwargs)
     elif visu_type == 'psi_profile':
         _plot_psi_radial_profile(obj, **kwargs)
-    elif visu_type == 'psi_distribution':
-        plot_psi_distribution(obj, **kwargs)
-    elif visu_type == 'q_distribution':
-        plot_Q_distribution(obj, **kwargs)
     else:
         raise ValueError(f"Unknown visualization type: {visu_type}")
 
@@ -197,10 +194,17 @@ def _visualize_polygon(
         Additional keyword arguments for customizing the plot.
     """
     if isinstance(obj, dict):
-        root_gdf = prep_section(obj)
-        plot_root_section(root_gdf)
+        cells_gdf = prep_section(obj)
+        plot_organ_section(cells_gdf)
     elif isinstance(obj, gpd.GeoDataFrame):
-        plot_root_section(obj)
+        plot_organ_section(obj)
+    elif isinstance(obj, Mecha):
+        if obj.network is None:
+            raise ValueError("Mecha object has no network.")
+        if obj.network._cells_gdf is None:
+            raise ValueError("Mecha object has no _cells_gdf.")
+        cells_gdf = obj.network._cells_gdf
+        plot_organ_section(cells_gdf)
     else:
         raise ValueError("Unsupported object type for polygon visualization.")
 
@@ -222,6 +226,8 @@ def _visualize_network(
         graph = obj.graph
     elif isinstance(obj, nx.Graph):
         graph = obj
+    elif isinstance(obj, Mecha):
+        graph = obj.network.graph
     else:
         raise ValueError("Unsupported object type for network visualization.")
 
@@ -274,20 +280,20 @@ def _visualize_network(
         plt.show()
 
 
-def plot_water_potential_map(root_gdf: gpd.GeoDataFrame, title: str = "Water Potential"):
+def plot_water_potential_map(organ_gdf: gpd.GeoDataFrame, title: str = "Water Potential"):
     """Display the root section with water potential colormap."""
-    if root_gdf.empty:
+    if organ_gdf.empty:
         print("GeoDataFrame is empty, cannot plot.")
         return
-    if 'water_potential' not in root_gdf.columns:
+    if 'water_potential' not in organ_gdf.columns:
         print("water_potential column missing in GeoDataFrame")
         return
-    if np.isnan(root_gdf['water_potential']).all():
+    if np.isnan(organ_gdf['water_potential']).all():
         print("All water potential values are NaN, cannot plot.")
-        root_gdf['water_potential'] = 0
+        organ_gdf['water_potential'] = 0
 
     fig, ax = plt.subplots(figsize=(10, 8))
-    root_gdf.plot(
+    organ_gdf.plot(
         ax=ax,
         column='water_potential',
         cmap='viridis', 
@@ -349,7 +355,6 @@ def _visualize_water_potential(obj: Any, **kwargs: Dict[str, Any]) -> None:
         """Map cell ID to water potential using the network indice mapping."""
         node_id = nwj + cid
         try:
-            # Use the indice mapping from Mecha (obj), just like in test_KQnetwork.py
             idx = obj.indice[node_id]
             return float(sol[idx])
         except (KeyError, IndexError):
@@ -385,7 +390,8 @@ def _plot_flow_network(obj, **kwargs):
         indices = getattr(obj, 'indice', nx.get_node_attributes(obj.network.graph, 'indice'))
         for u, v, eattr in obj.network.graph.edges(data=True):
             K = eattr.get('K')
-            if K is not None:
+            Q = eattr.get('Q', None)
+            if Q is None and K is not None:
                 psi_u = float(sol[indices[u]])
                 psi_v = float(sol[indices[v]])
                 eattr['Q'] = K * (psi_u - psi_v)
@@ -860,24 +866,60 @@ def _plot_psi_radial_profile(obj, **kwargs):
 
     cm = obj.network.cell_manager
     data = []
+    
+    # 1) Collect node potentials and assign to 'out', 'mid', or 'in' for each cell rank
     for cell in cm:
-        psi = sol[cell.node_id]
-        data.append({'rank': cell.rank, 'psi': psi, 'type': cell.cell_type})
+        rc = np.hypot(cell.x, cell.y)
+        if rc < 1e-6:
+            continue
+            
+        psi_c = sol[cell.node_id]
+        data.append({'rank': cell.rank, 'side': 'mid', 'r': rc, 'psi': psi_c})
+        
+        vc_x, vc_y = cell.x, cell.y
+        norm_vc = rc
+        
+        for w in cell.walls:
+            rw = np.hypot(w.x, w.y)
+            vw_x, vw_y = w.x - cell.x, w.y - cell.y
+            norm_vw = np.hypot(vw_x, vw_y)
+            if norm_vw < 1e-6:
+                continue
+                
+            # Angle between vector-to-cell-center and cell-to-wall vector
+            cos_theta = (vc_x * vw_x + vc_y * vw_y) / (norm_vc * norm_vw)
+            psi_w = sol[w.node_id]
+            
+            if cos_theta > 0.4:
+                data.append({'rank': cell.rank, 'side': 'out', 'r': rw, 'psi': psi_w})
+            elif cos_theta < -0.4:
+                data.append({'rank': cell.rank, 'side': 'in', 'r': rw, 'psi': psi_w})
     
     df = pd.DataFrame(data)
-    # filter out NaN psi
     df = df.dropna(subset=['psi'])
     
-    # Group by rank and average
-    profile = df.groupby('rank')['psi'].agg(['mean', 'std']).reset_index()
+    # Group by rank and side to get the 3 mean radial distances and potentials per row
+    profile = df.groupby(['rank', 'side']).agg({'r': 'mean', 'psi': ['mean', 'std']}).reset_index()
+    profile.columns = ['rank', 'side', 'r', 'psi_mean', 'psi_std']
+    
+    # Separate Symplastic (mid/cell nodes) and Apoplastic (out/in/wall nodes)
+    sym_df = profile[profile['side'] == 'mid'].sort_values('r')
+    apo_df = profile[profile['side'].isin(['out', 'in'])].sort_values('r')
     
     fig, ax = plt.subplots(figsize=(10, 6))
-    ax.errorbar(profile['rank'], profile['mean'], yerr=profile['std'], fmt='-o', 
-                capsize=3, color='#4ab5e0', ecolor='#4ab5e0', alpha=0.8)
     
-    ax.set_xlabel('Cell Rank (Radial Layer)')
+    # Plot Symplastic
+    ax.errorbar(sym_df['r'], sym_df['psi_mean'], yerr=sym_df['psi_std'], fmt='-o', 
+                capsize=3, color='#7be04a', ecolor='#7be04a', alpha=0.8, label='Symplastic')
+                
+    # Plot Apoplastic
+    ax.errorbar(apo_df['r'], apo_df['psi_mean'], yerr=apo_df['psi_std'], fmt='-s', 
+                capsize=3, color='#e07b4a', ecolor='#e07b4a', alpha=0.8, label='Apoplastic')
+    
+    ax.set_xlabel('Radial Distance (µm)')
     ax.set_ylabel('Water Potential (hPa)')
     ax.set_title(f"Radial Psi Profile - Mat {kwargs.get('maturity_idx', 0)}, Scen {kwargs.get('scenario_idx', 'standard')}")
+    ax.legend(loc='best')
     plt.grid(True, linestyle='--', alpha=0.5)
     plt.tight_layout()
     plt.show()
@@ -892,10 +934,33 @@ def _plot_flow_pathway_breakdown(obj, **kwargs):
 
     graph = obj.network.graph
     indices = getattr(obj, 'indice', nx.get_node_attributes(graph, 'indice'))
+    pos = nx.get_node_attributes(graph, 'position')
+    cm = obj.network.cell_manager
     
-    # We need to map edges to radial ranks.
-    # We'll use the average rank of the connected nodes.
-    node_ranks = nx.get_node_attributes(graph, 'rank')
+    # 1) Get the discrete set of 3 mean radial distances per rank
+    data = []
+    for cell in cm:
+        rc = np.hypot(cell.x, cell.y)
+        if rc < 1e-6: continue
+        data.append({'rank': cell.rank, 'side': 'mid', 'r': rc})
+        vc_x, vc_y = cell.x, cell.y
+        norm_vc = rc
+        for w in cell.walls:
+            rw = np.hypot(w.x, w.y)
+            vw_x, vw_y = w.x - cell.x, w.y - cell.y
+            norm_vw = np.hypot(vw_x, vw_y)
+            if norm_vw < 1e-6: continue
+            cos_theta = (vc_x * vw_x + vc_y * vw_y) / (norm_vc * norm_vw)
+            if cos_theta > 0.4:
+                data.append({'rank': cell.rank, 'side': 'out', 'r': rw})
+            elif cos_theta < -0.4:
+                data.append({'rank': cell.rank, 'side': 'in', 'r': rw})
+                
+    df_r = pd.DataFrame(data).groupby(['rank', 'side']).mean().reset_index()
+    R_list = np.sort(df_r['r'].unique())
+    if len(R_list) == 0:
+        print("No radial distances calculated.")
+        return
     
     flow_data = []
     for u, v, eattr in graph.edges(data=True):
@@ -906,21 +971,35 @@ def _plot_flow_pathway_breakdown(obj, **kwargs):
             
         psi_u = sol[indices[u]]
         psi_v = sol[indices[v]]
-        Q = abs(K * (psi_u - psi_v)) # Use absolute flow for pathway contribution
+        Q = K * (psi_u - psi_v)
         
-        # Get rank (average of u and v)
-        r_u = node_ranks.get(u, node_ranks.get(v, 0))
-        r_v = node_ranks.get(v, node_ranks.get(u, 0))
-        avg_rank = (r_u + r_v) / 2
+        pu = pos.get(u, (0,0))
+        pv = pos.get(v, (0,0))
         
-        flow_data.append({'rank': avg_rank, 'Q': Q, 'path': path})
+        v_edge_x, v_edge_y = pv[0] - pu[0], pv[1] - pu[1]
+        mid_x, mid_y = (pu[0] + pv[0]) / 2, (pu[1] + pv[1]) / 2
+        norm_mid = np.hypot(mid_x, mid_y)
+        norm_edge = np.hypot(v_edge_x, v_edge_y)
+        
+        # Calculate radial component of flow Q
+        if norm_mid < 1e-6 or norm_edge < 1e-6:
+            Q_rad = abs(Q)
+        else:
+            rad_x, rad_y = mid_x / norm_mid, mid_y / norm_mid
+            dr = v_edge_x * rad_x + v_edge_y * rad_y
+            Q_rad = abs(Q) * abs(dr) / norm_edge
+            
+        # Assign to nearest discrete radial distance
+        closest_R = R_list[np.argmin(np.abs(R_list - norm_mid))]
+        flow_data.append({'r': closest_R, 'path': path, 'Q_rad': Q_rad})
 
     df = pd.DataFrame(flow_data)
-    # Bin by integer rank for plotting
-    df['rank_bin'] = df['rank'].round().astype(int)
-    
-    # Pivot: ranks as index, paths as columns, sum of Q as values
-    pivot_df = df.pivot_table(index='rank_bin', columns='path', values='Q', aggfunc='sum').fillna(0)
+    if df.empty:
+        print("No flow data available.")
+        return
+        
+    # Pivot: discrete r as index, paths as columns, sum of Q_rad as values
+    pivot_df = df.pivot_table(index='r', columns='path', values='Q_rad', aggfunc='sum').fillna(0)
     
     # Ensure all paths exist in columns
     for p in _PATH_COLORS:
@@ -932,45 +1011,22 @@ def _plot_flow_pathway_breakdown(obj, **kwargs):
     
     # Convert to percentages
     row_sums = pivot_df.sum(axis=1)
-    # Avoid division by zero
-    row_sums[row_sums == 0] = 1.0
+    row_sums[row_sums == 0] = 1.0 # Avoid division by zero
     pivot_pct = pivot_df.div(row_sums, axis=0) * 100
 
+    # Rename columns for the automatic legend and map colors
+    colors = [_PATH_COLORS[c] for c in pivot_pct.columns]
+    pivot_pct.rename(columns=_PATH_LABELS, inplace=True)
+
     fig, ax = plt.subplots(figsize=(10, 6))
-    pivot_pct.plot.area(ax=ax, color=[_PATH_COLORS[c] for c in pivot_pct.columns], alpha=0.7)
+    pivot_pct.plot.area(ax=ax, color=colors, alpha=0.7)
     
-    ax.set_xlabel('Cell Rank (Radial Layer)')
+    ax.set_xlabel('Radial Distance (µm)')
     ax.set_ylabel('Pathway Contribution (%)')
     ax.set_title(f"Flow Pathway Breakdown - Mat {kwargs.get('maturity_idx', 0)}")
     ax.set_ylim(0, 100)
-    plt.legend(loc='lower left')
+    ax.legend(loc='lower left')
     plt.tight_layout()
-    plt.show()
-
-def plot_psi_distribution(obj, **kwargs):
-    """Histogram of water potentials."""
-    sol, _ = _get_result_data(obj, **kwargs)
-    if sol is None: return
-    
-    plt.figure(figsize=(8, 5))
-    plt.hist(sol, bins=50, color='#4ab5e0', alpha=0.7, edgecolor='black')
-    plt.xlabel('Psi (hPa)')
-    plt.ylabel('Count')
-    plt.title('Water Potential Distribution')
-    plt.grid(True, alpha=0.3)
-    plt.show()
-
-def plot_Q_distribution(obj, **kwargs):
-    """Histogram of edge flow magnitudes."""
-    graph = obj.network.graph
-    flows = [abs(d.get('Q', 0)) for _, _, d in graph.edges(data=True) if 'Q' in d]
-    
-    plt.figure(figsize=(8, 5))
-    plt.hist(np.log10(np.array(flows) + 1e-20), bins=50, color='#7be04a', alpha=0.7, edgecolor='black')
-    plt.xlabel('log10(|Q|)')
-    plt.ylabel('Count')
-    plt.title('Edge Flow Distribution')
-    plt.grid(True, alpha=0.3)
     plt.show()
 
 def _gather_edge_data(graph):

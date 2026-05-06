@@ -89,7 +89,7 @@ class HydraulicWall:
         "x", "y", "length", "thickness", "node_id", "is_border", "is_aerenchyma",
         "cells", "membranes",
         # Hydraulic properties
-        "kw",
+        "kw", "Q",
     )
 
     def __init__(
@@ -119,13 +119,22 @@ class HydraulicWall:
 
         # Hydraulic Cell-wall (apoplastic) conductivity [cm hPa⁻¹ d⁻¹]
         self.kw: Optional[float] = None
+        self.Q: Optional[float] = None
 
     def reset_hydraulics(self) -> None:
         """Reset all hydraulic fields to ``None``."""
         self.kw = None
+        self.Q = None
 
     def __repr__(self) -> str:
-        return f"HydraulicWall(node_id={self.node_id}, length={self.length:.1f})"
+        s = (
+            f"HydraulicWall(node_id={self.node_id}, length={self.length:.1f}, "
+            f"thickness={self.thickness:.1f}, is_border={self.is_border}, "
+            f"is_aerenchyma={self.is_aerenchyma}")
+        s += f", kw={self.kw:.1e}" if self.kw is not None else ", kw=None"
+        s += f", Q={self.Q:.1e}" if self.Q is not None else ", Q=None"
+        s += ")"
+        return s
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +167,7 @@ class HydraulicMembrane:
         "km",    # Total membrane conductivity  [cm hPa⁻¹ d⁻¹]
         "kaqp",  # Aquaporin contribution        [cm hPa⁻¹ d⁻¹]
         "K_computed",  # Effective conductance computed by HydraulicMatrixBuilder [cm³ hPa⁻¹ d⁻¹]
+        "Q",
     )
 
     def __init__(
@@ -177,17 +187,24 @@ class HydraulicMembrane:
         self.km: Optional[float] = None
         self.kaqp: Optional[float] = None
         self.K_computed: Optional[float] = None
+        self.Q: Optional[float] = None
 
     def reset_hydraulics(self) -> None:
         """Reset all hydraulic fields to ``None``."""
-        self.km = self.kaqp = self.K_computed = None
+        self.km = self.kaqp = self.K_computed = self.Q = None
 
     def __repr__(self) -> str:
-        return (
+        s = (
             f"HydraulicMembrane(wall={self.wall.node_id}, "
             f"cell={self.cell.node_id}, length={self.length:.1f}, "
-            f"dist={self.dist:.1f})"
+            f"dist={self.dist:.1f}"
         )
+        s += f", km={self.km:.1f}" if self.km is not None else ", km=None"
+        s += f", kaqp={self.kaqp:.1f}" if self.kaqp is not None else ", kaqp=None"
+        s += f", K_computed={self.K_computed:.1f}" if self.K_computed is not None else ", K_computed=None"
+        s += f", Q={self.Q:.1e}" if self.Q is not None else ", Q=None"
+        s += ")"
+        return s
 
 
 # ---------------------------------------------------------------------------
@@ -218,6 +235,7 @@ class HydraulicPlasmodesmata:
         "kpl",        # Plasmodesmata conductance [cm³ hPa⁻¹ d⁻¹]
         "fplxheight", # plasmodesmata height (default 8.0E5) [] UNITS ?
         "temp_factor",  # Tissue-specific frequency factor (dimensionless × µm)
+        "Q", #Flow rate through plasmodesmata [cm³ d⁻¹]
     )
 
     def __init__(
@@ -235,16 +253,23 @@ class HydraulicPlasmodesmata:
         self.kpl: Optional[float] = None
         self.fplxheight: Optional[float] = None
         self.temp_factor: Optional[float] = None
+        self.Q: Optional[float] = None
 
     def reset_hydraulics(self) -> None:
         """Reset all hydraulic fields to ``None``."""
-        self.kpl = self.fplxheight = self.temp_factor = None
+        self.kpl = self.fplxheight = self.temp_factor = self.Q = None
 
     def __repr__(self) -> str:
-        return (
+        s = (
             f"HydraulicPlasmodesmata(cell_i={self.cell_i.node_id}, "
-            f"cell_j={self.cell_j.node_id}, length={self.length:.1f})"
+            f"cell_j={self.cell_j.node_id}, length={self.length:.1f}"
         )
+        s += f", kpl={self.kpl:.1e}" if self.kpl is not None else ", kpl=None"
+        s += f", fplxheight={self.fplxheight:.1e}" if self.fplxheight is not None else ", fplxheight=None"
+        s += f", temp_factor={self.temp_factor:.1e}" if self.temp_factor is not None else ", temp_factor=None"
+        s += f", Q={self.Q:.1e}" if self.Q is not None else ", Q=None"
+        s += ")"
+        return s
 
 
 # ---------------------------------------------------------------------------
@@ -294,7 +319,7 @@ class HydraulicCell:
         # --- spatial polygon (Shapely Polygon, µm units) ---
         "polygon",
         # --- topology ---
-        "node_id", "cell_id", "cgroup", "rank", "walls",
+        "node_id", "cell_id", "cgroup", "rank", "walls", "plasmodesmata",
         # --- hydraulic configuration (apoplastic) ---
         "kw",
         # --- hydraulic configuration (symplastic / plasmodesmata) ---
@@ -304,7 +329,7 @@ class HydraulicCell:
         # --- hydraulic state (potentials) ---
         "os", "psi", "psi_p",
         # --- growth ---
-        "elongattion_rate",
+        "elongation_rate",
     )
 
     def __init__(
@@ -319,15 +344,16 @@ class HydraulicCell:
         cell_id: int,
         cgroup: int,
         rank: int = 0,
-        elongattion_rate: Optional[float] = 0.0,
+        elongation_rate: Optional[float] = 0.0,
         walls: Optional[List['HydraulicWall']] = None,
+        plasmodesmata: Optional[List['HydraulicPlasmodesmata']] = None,
         polygon: Optional[Polygon] = None,
     ) -> None:
         # Geometry
         self.x: float = x
         self.y: float = y
         self.area: float = area
-        self.elongattion_rate: float = 0.0
+        self.elongation_rate: float = elongation_rate if elongation_rate is not None else 0.0
         self.perimeter: float = perimeter
         self.cell_type: str = cell_type
         self.polygon: Optional[Polygon] = polygon
@@ -338,6 +364,7 @@ class HydraulicCell:
         self.cgroup: int = cgroup
         self.rank: int = rank
         self.walls: List['HydraulicWall'] = walls if walls is not None else []
+        self.plasmodesmata: List['HydraulicPlasmodesmata'] = plasmodesmata if plasmodesmata is not None else []
 
         # Hydraulic fields — all None until explicitly assigned
         # -------------------------------------------------------
@@ -370,11 +397,17 @@ class HydraulicCell:
         return Polygon()
 
     def __repr__(self) -> str:
-        return (
-            f"HydraulicCell(cell_id={self.cell_id}, node_id={self.node_id}, "
-            f"cgroup={self.cgroup}, rank={self.rank}, type='{self.cell_type}', "
-            f"x={self.x:.1f}, y={self.y:.1f}, area={self.area:.1f})"
-        )
+        s = (f"HydraulicCell(cell_id={self.cell_id}, node_id={self.node_id}, "
+             f"cgroup={self.cgroup}, rank={self.rank}, type='{self.cell_type}', "
+             f"x={self.x:.1f}, y={self.y:.1f}, area={self.area:.1f}")
+        if self.elongation_rate > 0:
+            s += f", elongation_rate={self.elongation_rate:.1f}"
+        if self.walls:
+            s += f", walls={self.walls}"
+        if self.plasmodesmata:
+            s += f", plasmodesmata={self.plasmodesmata}"
+        s += ")"
+        return s
 
 
 # ---------------------------------------------------------------------------
@@ -783,6 +816,10 @@ class HydraulicCellManager:
         self._plasmodesmata = []
         self._pd_by_edge = {}
 
+        # Clear existing plasmodesmata back-refs on cells
+        for cell in self._cells:
+            cell.plasmodesmata = []
+
         for u, v, eattr in network.graph.edges(data=True):
             if eattr.get("path") != "plasmodesmata":
                 continue
@@ -803,3 +840,9 @@ class HydraulicCellManager:
 
             key = (min(u, v), max(u, v))
             self._pd_by_edge[key] = pd
+
+            # Back-reference on the cells
+            if pd not in cell_i.plasmodesmata:
+                cell_i.plasmodesmata.append(pd)
+            if pd not in cell_j.plasmodesmata:
+                cell_j.plasmodesmata.append(pd)

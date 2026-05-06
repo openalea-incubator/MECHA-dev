@@ -1,5 +1,7 @@
 # Debug Parity: GRANAP vs. XML Matrix Divergence
 
+At the moment, *Mecha* has *Granap* as a dependencie. The idea behind is to have the generator anatomy directly in *Mecha*, but it is not mandatory. However it is not ideal to have too many dependecies.
+
 This document summarizes the attempts and findings to resolve the numerical discrepancies in the hydraulic matrix (`Matrix_W`) between network construction paths in MECHA:
 1.  **`mecha_ganache_1`**: Direct from a GRANAP generated graph (`NetworkExporter`).
 2.  **`mecha_ganache_2`**: From an XML file written by `AnatomyWriter.write_to_xml()`.

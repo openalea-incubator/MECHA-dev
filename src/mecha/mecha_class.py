@@ -1054,18 +1054,21 @@ class Mecha:
                 wall_obj = cm.get_wall_by_node_id(u) or cm.get_wall_by_node_id(v)
                 if wall_obj is not None and wall_obj.kw is None:
                     wall_obj.kw = K
+                    wall_obj.Q = Q
 
             # Back-propagate onto HydraulicMembrane
             elif path == 'membrane':
                 mb = cm.get_membrane_by_edge(u, v)
                 if mb is not None:
                     mb.K_computed = K
+                    mb.Q = Q
 
             # Back-propagate onto HydraulicPlasmodesmata
             elif path == 'plasmodesmata':
                 pd = cm.get_plasmodesmata_by_edge(u, v)
                 if pd is not None:
                     pd.kpl = K
+                    pd.Q = Q
                     tf = eattr.get('temp_factor')
                     if tf is not None:
                         pd.temp_factor = tf
