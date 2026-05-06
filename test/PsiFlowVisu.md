@@ -80,7 +80,7 @@ The solver (`hydraulic_solver.py`) fills `matrix_W` via three fill functions. Af
 - [x] **`HydraulicMembrane.km` / `kaqp`**: Populate `K_computed` (from `Kmb` in `build()`) after solver build.
   - `Kmb` array is already built per membrane during `HydraulicMatrixBuilder.build()` — expose it to cell manager.
 
-- [ ] **`HydraulicCell` flow aggregation**: Add `Q_in`, `Q_out` attributes to `HydraulicCell`, summed from all connected membrane edges post-solve.
+- [ ] **`HydraulicCell` flow aggregation**: Add `Q_in`, `Q_out` attributes to `HydraulicCell`, summed from all connected membrane and plasmodesmata edges post-solve.
 
 
 ---
@@ -88,8 +88,16 @@ The solver (`hydraulic_solver.py`) fills `matrix_W` via three fill functions. Af
 ## 3. Advanced Visualization & Export
 
 TO DO:
-- [ ] **Paraview Integration**: Full support for exporting results to `.vtp` or `.vtk` files for 3D visualization.
+- [ ] **Paraview Integration**: Full support for exporting results to `.vtk` files for 3D visualization.
+  -  [ ] **Thick Wall Visualization**: Incorporating wall thickness data into the `prep_geo` logic to make thick walls for visualization (representing walls as volumes rather than lines). Extrude the 2D polygons to 3D. 
+  -  [ ] **Flow and Pressure Visualization**: 
+    - [ ] Pressure potential in cell is represented by a single scalar value on cell surfaces (Cell.vtk is empty)
+    - [x] Plasmodesmata are represented by one line connecting the symplastic region of the two cells.
+    - [x] Membranes are represented by a flat rectangle between symplastic regions and cell walls.
+       - [] To be replace by vector representing the transmembrane Q and K. Find the orientation of the flux
+    - [ ] Cell walls are represented by a surface with thickness from thick wall visualization step. At the moment the walls are rectangular prisms that are not oriented properly 
+
 - [ ] **Interactive Exploration**: Creating interactive plots (e.g., using Plotly or ipywidgets) to browse potentials and flows across maturity stages.
 - [ ] **Temporal Dynamics**: If simulations are time-dependent, visual progress bars or animations of potential changes.
-- [ ] **Thick Wall Visualization**: Incorporating wall thickness data into the visual model (representing walls as volumes rather than lines).
+
 

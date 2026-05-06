@@ -19,7 +19,7 @@ def test_all_visu_types():
     print("--- Setting up MECHA ---")
     default_input = InData()
     # We'll use two maturity stages
-    default_input.geometry.set_maturity_stages([1, 3])
+    default_input.geometry.set_maturity_stages([1,3])
     
     network = NetworkBuilder(root)
     network.populate_from_network()
@@ -39,13 +39,14 @@ def test_all_visu_types():
     print("\n--- Testing Visualization Types ---")
     
     visu_types = [
-        "polygon",
-        "network",
-        "water_potential",
-        "conductance",
-        "flow",
-        "psi_profile",
-        "flow_pathway"
+        "paraview"
+        # "polygon",
+        # "network",
+        # "water_potential",
+        # "conductance",
+        # "psi_profile",
+        # "flow_pathway",
+        #"flow"
     ]
     
     for vt in visu_types:
@@ -53,7 +54,10 @@ def test_all_visu_types():
         try:
             # We use maturity_idx=1 (Mature zone)
             # scenario_idx='standard water flow' is the default
-            visualize(m, visu_type=vt, maturity_idx=1)
+            if vt == 'paraview':
+                visualize(m, visu_type=vt, maturity_idx=1, prefix='results/my_sim', extrude_z=50.0)
+            else:
+                visualize(m, visu_type=vt, maturity_idx=1)
         except Exception as e:
             print(f"  FAILED '{vt}': {e}")
             import traceback

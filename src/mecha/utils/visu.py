@@ -8,6 +8,7 @@ from shapely.geometry import LineString, Polygon
 from typing import Tuple, Dict, List, Any, Optional
 from mecha.utils.network_builder import NetworkBuilder
 from mecha.mecha_class import Mecha
+from mecha.utils.paraview_export import export_to_vtk
 import networkx as nx
 import pandas as pd
 
@@ -159,8 +160,26 @@ def plot_organ_section(organ_gdf: gpd.GeoDataFrame):
 def visualize(obj: Any,
               visu_type: str = 'polygon',
               **kwargs: Dict[str, Any]) -> None:
-    """Visualize cellset data using the functions above."""
+    """Dispatch to the appropriate visualization function.
 
+    Parameters
+    ----------
+    obj : Any
+        The object to visualize (Mecha, NetworkBuilder, GeoDataFrame, …).
+    visu_type : str
+        One of:
+        - ``'polygon'``        – cell cross-section polygons (matplotlib)
+        - ``'network'``        – hydraulic graph (networkx/matplotlib)
+        - ``'paraview'``       – export to ``.vtk`` files for ParaView
+        - ``'water_potential'``– water-potential choropleth map
+        - ``'conductance'``    – conductance K on graph edges (tri-panel)
+        - ``'flow'``           – flow Q arrows on graph edges
+        - ``'flow_pathway'``   – stacked area % by pathway vs. radius
+        - ``'psi_profile'``    – Psi vs. radial distance profile
+    **kwargs
+        Forwarded verbatim to the selected function.  See each function's
+        docstring for supported keyword arguments.
+    """
     if visu_type == 'polygon':
         _visualize_polygon(obj, **kwargs)
     elif visu_type == 'network':
@@ -178,7 +197,43 @@ def visualize(obj: Any,
     elif visu_type == 'psi_profile':
         _plot_psi_radial_profile(obj, **kwargs)
     else:
-        raise ValueError(f"Unknown visualization type: {visu_type}")
+        raise ValueError(
+            f"Unknown visualization type: '{visu_type}'. "
+            "Choose from: 'polygon', 'network', 'paraview', 'water_potential', "
+            "'conductance', 'flow', 'flow_pathway', 'psi_profile'."
+        )
+
+def _visualize_pv(
+    obj: Any,
+    **kwargs: Dict[str, Any]) -> None:
+    """Export to ParaView-readable VTK files via :func:`export_to_vtk`.
+
+    Parameters
+    ----------
+    obj : Mecha
+        A solved ``Mecha`` instance.
+    prefix : str, optional
+        File path prefix for generated ``.vtk`` files (default ``'mecha_pv'``).
+    maturity_idx : int, optional
+        Maturity stage index to export (default 0).
+    scenario_idx : str, optional
+        Scenario name to export (default ``'standard water flow'``).
+    extrude_z : float, optional
+        Z-extrusion depth in µm for 2-D geometry (default 5.0).
+    pd_radius : float, optional
+        Plasmodesmata cylinder radius in µm (default 0.05).
+    export_cells, export_walls, export_membranes,
+    export_plasmodesmata, export_flow_vectors : bool, optional
+        Toggle individual output files (all True by default).
+    """
+    if not isinstance(obj, Mecha):
+        raise ValueError(
+            "visu_type='paraview' requires a Mecha instance. "
+            f"Got {type(obj).__name__}."
+        )
+    prefix = kwargs.pop('prefix', 'mecha_pv')
+    export_to_vtk(obj, prefix=prefix, **kwargs)
+
 
 def _visualize_polygon(
     obj: Any,
@@ -1007,7 +1062,7 @@ def _plot_flow_pathway_breakdown(obj, **kwargs):
             pivot_df[p] = 0.0
             
     # Sort columns to match _PATH_COLORS order for consistent coloring
-    pivot_df = pivot_df[['wall', 'plasmodesmata', 'membrane']]
+    pivot_df = pivot_df[['plasmodesmata', 'membrane', 'wall']]
     
     # Convert to percentages
     row_sums = pivot_df.sum(axis=1)
