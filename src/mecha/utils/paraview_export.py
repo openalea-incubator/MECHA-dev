@@ -398,7 +398,7 @@ def _export_walls(
         Q = _safe(wall.Q)
         for _ in local_quads:
             K_vals.append(K)
-            Q_vals.append(Q)
+            Q_vals.append(abs(Q))
             is_border_vals.append(float(wall.is_border))
             is_aero_vals.append(float(wall.is_aerenchyma))
 
