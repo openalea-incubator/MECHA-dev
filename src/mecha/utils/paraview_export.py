@@ -55,7 +55,7 @@ Or via the unified ``visualize()`` dispatcher::
 
     from mecha.utils.visu import visualize
     visualize(mecha_obj, visu_type='paraview',
-              prefix='results/my_sim', extrude_z=5.0)
+              prefix='results/my_sim', extrude_z=50.0)
 
 Notes
 -----
@@ -74,7 +74,7 @@ from __future__ import annotations
 
 import math
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
@@ -94,6 +94,30 @@ _CGROUP_NAME: Dict[int, str] = {
     16: "pericycle",
 }
 
+DEFAULT_CELL_WALL_THICKNESS: Dict[str, float] = {
+    "epidermis": 2,
+    "exodermis": 2,
+    "hypodermis": 2,
+    "endodermis": 1.5,
+    "cortex": 1,
+    "mesophyll": 1,
+    "parenchyma": 1,
+    "stele": 1,
+    "pericycle": 1,
+    "phloem": 1,
+    "xylem": 1.5,
+    "protoxylem": 1.5,
+    "metaxylem": 2,
+    "cambium": 1,
+    "duct": 5,
+    "guard cell": 2,
+    "Strasburger cell": 1,
+    "outerwall": 2,
+    "air space": 0.001,
+    "pore": 0.001,
+    "aerenchyma": 0.001,
+}
+
 
 def _ensure_dir(path: str) -> None:
     d = os.path.dirname(path)
@@ -108,6 +132,14 @@ def _vtk_header(title: str) -> str:
         "ASCII\n"
         "DATASET POLYDATA\n"
     )
+
+def get_thickness(c_type: str, cell_wall_thickness: Union[float, Dict[str, float]] = DEFAULT_CELL_WALL_THICKNESS)-> float:
+    if isinstance(cell_wall_thickness, dict):
+        val = cell_wall_thickness.get(c_type, cell_wall_thickness.get("default", 1))
+    else:
+        val = cell_wall_thickness
+    # No conversion, assumed scaling to microns
+    return val
 
 
 def _write_points(f, pts: List[Tuple[float, float, float]]) -> None:
@@ -194,17 +226,12 @@ def _reconstruct_polygon_from_walls(cell) -> Optional[List[Tuple[float, float]]]
     Uses the midpoints of the connected walls as vertices and returns their
     convex hull.  Returns ``None`` if fewer than 3 wall midpoints are available.
     """
-    from shapely.geometry import MultiPoint
-
-    if not cell.walls:
+    polygon = cell.polygon
+    if polygon is None or polygon.is_empty:
         return None
-    pts = [(w.x, w.y) for w in cell.walls]
-    if len(pts) < 3:
+    if polygon.geom_type != 'Polygon':
         return None
-    hull = MultiPoint(pts).convex_hull
-    if hull.geom_type != 'Polygon' or hull.is_empty:
-        return None
-    return list(hull.exterior.coords)[:-1]  # drop closing duplicate
+    return list(polygon.exterior.coords)[:-1]
 
 
 def _export_cells(
@@ -231,7 +258,14 @@ def _export_cells(
     for cell in cm:
         # 1) Try stored Shapely polygon
         poly = cell.polygon
+        c_type = _CGROUP_NAME.get(cell.cgroup)
+        if c_type is None:
+            c_type = "default"
+        wt = get_thickness(c_type)
         if poly is not None and not poly.is_empty:
+            poly = poly.buffer(-wt/2)
+            if poly is None or poly.is_empty:
+                continue
             coords = list(poly.exterior.coords)[:-1]  # drop closing duplicate
         else:
             # 2) Reconstruct from connected wall midpoints (GRANAP path)
@@ -249,7 +283,7 @@ def _export_cells(
             points.append((x, y, 0.0))
         # Top ring (z=extrude_z)
         for x, y in coords:
-            points.append((x, y, extrude_z))
+            points.append((x, y, extrude_z/2))
 
         # Bottom face
         polygons.append(list(range(base_idx, base_idx + n)))

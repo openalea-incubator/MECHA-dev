@@ -616,10 +616,25 @@ class HydraulicCellManager:
 
         # Build polygon lookup from _cells_gdf (id_cell → Shapely Polygon)
         poly_dict: Dict[int, Optional[Polygon]] = {}
-        gdf = getattr(network, '_cells_gdf', None)
-        if gdf is not None and 'id_cell' in gdf.columns and 'geometry' in gdf.columns:
+        if hasattr(network, '_cells_gdf') and network._cells_gdf is not None:
+            gdf = network._cells_gdf
             for _, row in gdf.iterrows():
-                poly_dict[int(row['id_cell'])] = row['geometry']
+                if isinstance(row['geometry'], Polygon):
+                    poly = row['geometry']
+                    if poly.is_empty or not poly.is_valid:
+                        continue
+                    poly_dict[int(row['id_cell'])] = poly.buffer(0.0)
+        else:
+            # prep the geometry
+            from mecha.utils.visu import prep_section
+            gdf = prep_section(network.cellset_data) 
+            for _, row in gdf.iterrows():
+                if isinstance(row['geometry'], Polygon):
+                    poly = row['geometry']
+                    if poly.is_empty or not poly.is_valid:
+                        continue
+                    poly_dict[int(row['id_cell'])] = poly
+
 
         # Ensure network.wall_lengths is accessible via standard dict or array
         wall_lengths = getattr(network, "wall_lengths", {})

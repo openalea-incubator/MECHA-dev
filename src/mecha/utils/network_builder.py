@@ -519,8 +519,9 @@ class NetworkBuilder(AbstractNetwork):
 
         # Build cell connections for symplastic paths
         self._build_cell_connections_from_graph()
-        self._build_cell_manager()
         self._cells_gdf = self.prep_geo()
+        self._build_cell_manager()
+        
         
         # Build new wall connections to junctions
         self.build_wall_connections()
