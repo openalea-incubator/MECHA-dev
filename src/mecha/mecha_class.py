@@ -7,7 +7,7 @@
 #           Dilhan Ozturk, Adrien Heymans
 #
 #       File contributor(s):
-#           Tristan Gérault
+#           Tristan Gérault, Jonas Sonnenschein
 #
 #       File maintainer(s):
 #           Valentin Couvreur
@@ -40,6 +40,7 @@ from mecha.utils.network_builder import *
 from mecha.utils.prepare_paraview import prepare_geometrical_properties
 from mecha.hydraulic_solver import HydraulicMatrixBuilder
 from granap.network_base import AbstractNetwork
+from mecha.solute_transport import SoluteTransport
 
 class Mecha:
     """Main class of the library, encodes a hydraulic anatomy to solve.
@@ -971,17 +972,58 @@ class Mecha:
         return solution, matrix_W
 
 
-    def standard_solute_flux(self, h: int=0, i_maturity: int=0, i_scenario: int=0) -> tuple: 
-        """Calculate standard solute flux."""
+    def standard_solute_flux(
+        self,
+        h: int = 0,
+        i_maturity: int = 0,
+        i_scenario: int = 0,
+        diffusion_params: dict = None,
+        capacitance_params: dict = None,
+        mode: str = 'full',
+        rhs: np.ndarray = None,
+        boundary_conditions: dict = None,
+        c_prev: np.ndarray = None,
+        theta: float = 0.5,
+        operators: str = 'T',
+    ) -> np.ndarray:
+        """Solve convection-diffusion for solute concentrations.
 
-    
-                # Resets matrix_C and rhs_C to geometrical factor values
+        Parameters
+        ----------
+        h : int
+            Maturity-stage index for the HydraulicMatrixBuilder call.
+        i_maturity : int
+            Index into geometry.maturity_stages.
+        i_scenario : int
+            Index into edge_flux_list[i_maturity] (water-flow scenario).
+        diffusion_params : dict, optional
+            Keys: 'apo_wall', 'plasmodesmata', 'membrane' (all cm²/d), and
+            optionally 'sigma' ({cgroup: σ}).  Defaults to zero diffusion.
+        capacitance_params : dict, optional
+            Keys: 'dt' (days), 'C_wall', 'C_cell'.  None → steady-state.
+        mode : str
+            'full' | 'apo' | 'sym'
+        rhs : np.ndarray, optional
+            Source/sink vector [mol/d per node]; zeros if omitted.
+        boundary_conditions : dict, optional
+            {node_index: concentration} Dirichlet constraints.
+        c_prev : np.ndarray, optional
+            Concentration at previous time step (dynamic mode).
+        theta : float
+            CN weighting: 0 = explicit Euler, 0.5 = Crank-Nicolson, 1.0 = implicit Euler.
+        operators : str
+            'T' (default) D+A full transport, 'D' diffusion only, 'A' advection only.
 
-                # build C matricies and rhs_C
-
-                # solve system
-
-                # calculate solute flux
+        Returns
+        -------
+        np.ndarray
+            Nodal concentrations of size n_matrix (depends on mode).
+        """
+        solver = SoluteTransport(self, diffusion_params or {}, capacitance_params, mode)
+        if rhs is None:
+            rhs = np.zeros(solver._matrix_size)
+        return solver.solve(h, i_maturity, i_scenario, rhs,
+                            boundary_conditions, c_prev, theta, operators)
 
 
 
