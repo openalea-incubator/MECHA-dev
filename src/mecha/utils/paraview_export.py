@@ -407,7 +407,7 @@ def _export_walls(
     is_aero_vals: List[float] = []
 
     for wall in cm.walls:
-        half_thick = max(wall.thickness / 2.0, 0.5)
+        half_thick = max(wall.thickness / 2.0, 0.5)*0.95
         z0, z1 = 0.0, extrude_z
 
         jp = junction_positions.get(wall.node_id)
@@ -461,11 +461,31 @@ def _export_membranes(
     indice: Dict[int, int],
     extrude_z: float,
 ) -> None:
-    """Export membrane connections as flat quads between wall and cell."""
+    """Export membrane connections as flat quads lying ON the wall surface.
+
+    Each membrane is rendered as a rectangle whose long axis follows the
+    wall segment (junction endpoint A → junction endpoint B) and whose
+    height is ``extrude_z`` (from z=0 to z=extrude_z).  This places the
+    membrane physically on the wall face rather than bridging into the
+    cell lumen.
+
+    Geometry
+    --------
+    Given wall endpoints P1=(x1,y1) and P2=(x2,y2) at z=0 and z=extrude_z::
+
+        P1(z=0) ── P2(z=0)
+           |              |
+        P1(z=Z) ── P2(z=Z)
+
+    The quad is written in CCW order: [P1_bot, P2_bot, P2_top, P1_top].
+    """
 
     cm = obj.network.cell_manager
     if not cm:
         return
+
+    # Pre-fetch junction endpoint positions (wall_id → [x1, y1, x2, y2])
+    junction_positions = getattr(obj.network, 'junction_positions', {})
 
     points: List[Tuple[float, float, float]] = []
     polygons: List[List[int]] = []
@@ -474,39 +494,56 @@ def _export_membranes(
     km_vals: List[float] = []
     kaqp_vals: List[float] = []
 
-    # Graph edge attributes carry K and Q after solve
     graph = obj.network.graph
 
     for mb in cm.membranes:
-        wx, wy = mb.wall.x, mb.wall.y
-        cx, cy = mb.cell.x, mb.cell.y
+        wall = mb.wall
 
-        # Midpoint at z=0 and z=extrude_z
-        mid_z = extrude_z / 2.0
+        # Determine the wall-surface rectangle using real junction endpoints
+        jp = junction_positions.get(wall.node_id)
+        if jp is not None and len(jp) >= 4:
+            x1, y1, x2, y2 = jp[0], jp[1], jp[2], jp[3]
+        else:
+            # Fallback: +/- half-length along x from wall midpoint
+            half_len = max(wall.length / 2.0, 1.0)
+            x1, y1 = wall.x - half_len, wall.y
+            x2, y2 = wall.x + half_len, wall.y
+
+        # Offset the quad inward toward the connected cell by half the wall
+        # thickness.  Direction: wall midpoint -> cell centroid (unit) * (t/2).
+        ddx = mb.cell.x - wall.x
+        ddy = mb.cell.y - wall.y
+        dist = math.hypot(ddx, ddy)
+        if dist > 1e-9:
+            half_thick = (wall.thickness / 2.0)*1.05
+            ox = (ddx / dist) * half_thick
+            oy = (ddy / dist) * half_thick
+        else:
+            ox, oy = 0.0, 0.0
 
         base = len(points)
-        # Rectangle: 2 points on wall side, 2 on cell side, at two z levels
+        # Four corners of the rectangle, shifted inward by (ox, oy)
         points += [
-            (wx, wy, 0.0),
-            (cx, cy, 0.0),
-            (cx, cy, extrude_z),
-            (wx, wy, extrude_z),
+            (x1 + ox, y1 + oy, 0.0),        # 0 - endpoint-A, bottom
+            (x2 + ox, y2 + oy, 0.0),        # 1 - endpoint-B, bottom
+            (x2 + ox, y2 + oy, extrude_z),  # 2 - endpoint-B, top
+            (x1 + ox, y1 + oy, extrude_z),  # 3 - endpoint-A, top
         ]
         polygons.append([base, base + 1, base + 2, base + 3])
 
         # Retrieve K/Q from graph edge (wall_node_id ↔ cell_node_id)
         edge_data = graph.edges.get(
-            (mb.wall.node_id, mb.cell.node_id),
-            graph.edges.get((mb.cell.node_id, mb.wall.node_id), {}),
+            (wall.node_id, mb.cell.node_id),
+            graph.edges.get((mb.cell.node_id, wall.node_id), {}),
         )
         K_vals.append(_safe(edge_data.get("K", mb.K_computed)))
-        Q_vals.append(_safe(edge_data.get("Q")))
+        Q_vals.append(_safe(edge_data.get("Q", mb.Q)))
         km_vals.append(_safe(mb.km))
         kaqp_vals.append(_safe(mb.kaqp))
 
     _ensure_dir(filepath)
     with open(filepath, "w") as f:
-        f.write(_vtk_header("MECHA membrane connections"))
+        f.write(_vtk_header("MECHA membrane connections (on wall surface)"))
         _write_points(f, points)
         _write_polygons(f, polygons)
         _write_cell_data_header(f, len(polygons))
@@ -515,12 +552,49 @@ def _export_membranes(
         _write_scalar(f, "km", km_vals)
         _write_scalar(f, "kaqp", kaqp_vals)
 
-    print(f"[paraview_export] Membranes → {filepath}  ({len(polygons)} quads)")
+    print(f"[paraview_export] Membranes → {filepath}  ({len(polygons)} quads on wall surface)")
 
 
 # ---------------------------------------------------------------------------
 # 4. Plasmodesmata lines  →  _plasmodesmata.vtk
 # ---------------------------------------------------------------------------
+
+def _find_shared_wall_midpoint(
+    ci, cj, network
+) -> Optional[Tuple[float, float]]:
+    """Return the midpoint (x, y) of the wall shared between cell_i and cell_j.
+
+    Shared wall = a wall node that has membrane edges to **both** cells.
+    Falls back to the geometric midpoint between the two cell centroids if no
+    shared wall is found (e.g. when cells share a junction rather than a wall).
+    """
+    graph = network.graph
+    n_walls = network.n_walls
+
+    walls_i = {nbr for nbr in graph.neighbors(ci.node_id)
+               if nbr < n_walls
+               and graph.edges[ci.node_id, nbr].get("path") == "membrane"}
+    walls_j = {nbr for nbr in graph.neighbors(cj.node_id)
+               if nbr < n_walls
+               and graph.edges[cj.node_id, nbr].get("path") == "membrane"}
+
+    shared = walls_i & walls_j
+    if shared:
+        wid = next(iter(shared))  # take the first shared wall
+        pos = graph.nodes[wid].get("position", (0.0, 0.0))
+        return float(pos[0]), float(pos[1])
+
+    # Fallback: geometric midpoint between the two centroids
+    return (ci.x + cj.x) / 2.0, (ci.y + cj.y) / 2.0
+
+
+def _write_polylines(f, polylines: List[List[int]]) -> None:
+    """Write VTK LINES where each entry may have more than 2 points (polyline)."""
+    total = sum(len(pl) + 1 for pl in polylines)
+    f.write(f"LINES {len(polylines)} {total}\n")
+    for pl in polylines:
+        f.write(f"{len(pl)} " + " ".join(str(v) for v in pl) + "\n")
+
 
 def _export_plasmodesmata(
     obj: Any,
@@ -528,19 +602,31 @@ def _export_plasmodesmata(
     sol: Optional[np.ndarray],
     indice: Dict[int, int],
     pd_radius: float = 0.05,
+    extrude_z: float = 5.0,
 ) -> None:
     """
-    Export plasmodesmata connections as VTK_LINE segments.
+    Export plasmodesmata connections as VTK polylines routed through the shared
+    wall midpoint.
 
-    Each line runs from cell_i centroid to cell_j centroid at z = 0.
+    Geometry
+    --------
+    Each plasmodesmata is represented as a 3-point polyline::
+
+        cell_i centroid  →  shared-wall midpoint  →  cell_j centroid
+
+    All points sit at ``z = extrude_z / 2`` (the mid-plane of the section)
+    so that the lines visually thread through the wall face rather than
+    floating above or below it.
+
     Use ParaView's *Tube* filter (radius = ``pd_radius`` µm) to render
     cylinders.  ``pd_radius`` is embedded in the file comment header.
 
     Parameters
     ----------
     pd_radius : float
-        Cylinder radius (µm) — written as a comment for reference; apply via
-        the Tube filter in ParaView.
+        Cylinder radius (µm) — written as a comment for reference.
+    extrude_z : float
+        Section extrusion depth (µm); plasmodesmata sit at z = extrude_z/2.
     """
 
     cm = obj.network.cell_manager
@@ -548,30 +634,39 @@ def _export_plasmodesmata(
         return
 
     graph = obj.network.graph
+    network = obj.network
+    mid_z = extrude_z / 2.0
 
     points: List[Tuple[float, float, float]] = []
-    lines: List[Tuple[int, int]] = []
+    polylines: List[List[int]] = []
     K_vals: List[float] = []
     Q_vals: List[float] = []
     kpl_vals: List[float] = []
 
-    # Build a node_id → point index map
+    # node_id → point index (so cell centroids are shared across PDs)
     node_to_pt: Dict[int, int] = {}
 
     for pd in cm.plasmodesmata:
         ci, cj = pd.cell_i, pd.cell_j
 
-        # Register cell_i
+        # -- cell_i centroid --
         if ci.node_id not in node_to_pt:
             node_to_pt[ci.node_id] = len(points)
-            points.append((ci.x, ci.y, 0.0))
+            points.append((ci.x, ci.y, mid_z))
+        idx_i = node_to_pt[ci.node_id]
 
-        # Register cell_j
+        # -- shared wall midpoint (new intermediate point, always unique) --
+        wx, wy = _find_shared_wall_midpoint(ci, cj, network)
+        idx_w = len(points)
+        points.append((wx, wy, mid_z))
+
+        # -- cell_j centroid --
         if cj.node_id not in node_to_pt:
             node_to_pt[cj.node_id] = len(points)
-            points.append((cj.x, cj.y, 0.0))
+            points.append((cj.x, cj.y, mid_z))
+        idx_j = node_to_pt[cj.node_id]
 
-        lines.append((node_to_pt[ci.node_id], node_to_pt[cj.node_id]))
+        polylines.append([idx_i, idx_w, idx_j])
 
         # K / Q from graph edge
         edge_data = graph.edges.get(
@@ -582,7 +677,7 @@ def _export_plasmodesmata(
         Q_vals.append(_safe(edge_data.get("Q")))
         kpl_vals.append(_safe(pd.kpl))
 
-    if not lines:
+    if not polylines:
         print("[paraview_export] No plasmodesmata — skipping.")
         return
 
@@ -590,18 +685,21 @@ def _export_plasmodesmata(
     with open(filepath, "w") as f:
         f.write(
             "# vtk DataFile Version 3.0\n"
-            f"MECHA plasmodesmata  pd_radius={pd_radius:.4f} um\n"
+            f"MECHA plasmodesmata  pd_radius={pd_radius:.4f} um  z={mid_z:.2f} um\n"
             "ASCII\n"
             "DATASET POLYDATA\n"
         )
         _write_points(f, points)
-        _write_lines(f, lines)
-        _write_cell_data_header(f, len(lines))
+        _write_polylines(f, polylines)
+        _write_cell_data_header(f, len(polylines))
         _write_scalar(f, "K_pd", K_vals)
         _write_scalar(f, "Q_pd", Q_vals)
         _write_scalar(f, "kpl", kpl_vals)
 
-    print(f"[paraview_export] Plasmodesmata → {filepath}  ({len(lines)} lines)")
+    print(
+        f"[paraview_export] Plasmodesmata → {filepath}  "
+        f"({len(polylines)} polylines through wall midpoints, z={mid_z:.1f} µm)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -768,7 +866,8 @@ def export_to_vtk(
 
     if export_plasmodesmata:
         fp = f"{prefix}_plasmodesmata.vtk"
-        _export_plasmodesmata(obj, fp, sol, indice, pd_radius=pd_radius)
+        _export_plasmodesmata(obj, fp, sol, indice, pd_radius=pd_radius,
+                              extrude_z=extrude_z)
         written["plasmodesmata"] = fp
 
     if export_flow_vectors:

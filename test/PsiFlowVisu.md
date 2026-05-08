@@ -88,16 +88,13 @@ The solver (`hydraulic_solver.py`) fills `matrix_W` via three fill functions. Af
 ## 3. Advanced Visualization & Export
 
 TO DO:
-- [ ] **Paraview Integration**: Full support for exporting results to `.vtk` files for 3D visualization.
-  -  [ ] **Thick Wall Visualization**: Incorporating wall thickness data into the `prep_geo` logic to make thick walls for visualization (representing walls as volumes rather than lines). Extrude the 2D polygons to 3D. 
-  -  [ ] **Flow and Pressure Visualization**: 
-    - [ ] Pressure potential in cell is represented by a single scalar value on cell surfaces (Cell.vtk is empty)
-    - [x] Plasmodesmata are represented by one line connecting the symplastic region of the two cells.
-    - [x] Membranes are represented by a flat rectangle between symplastic regions and cell walls.
-       - [] To be replace by vector representing the transmembrane Q and K. Find the orientation of the flux
-    - [ ] Cell walls are represented by a surface with thickness from thick wall visualization step. At the moment the walls are rectangular prisms that are not oriented properly 
+- [x] **Paraview Integration**: Full support for exporting results to `.vtk` files for 3D visualization.
+  -  [x] **Thick Wall Visualization**: Incorporating wall thickness data into the `prep_geo` logic to make thick walls for visualization (representing walls as volumes rather than lines). Extrude the 2D polygons to 3D. 
+  -  [x] **Flow and Pressure Visualization**: 
+    - [x] Pressure potential in cell is represented by a single scalar value on cell surfaces (Cell.vtk is empty)
+    - [x] **Plasmodesmata**: Plasmodesmata are represented by one 3-point polyline routing through the shared wall midpoint (cell_i → wall midpoint → cell_j). All points sit at z = extrude_z/2 (mid-plane of the section). Use ParaView Tube filter.
+    - [x] Cell walls are represented by a surface with thickness from thick wall visualization step.
+    - [x] **Membrane**: Membrane is represented as a rectangle lying flat **on the wall surface** (endpoint-A → endpoint-B × [z=0 → z=extrude_z]), using real junction endpoints from `junction_positions`.
 
 - [ ] **Interactive Exploration**: Creating interactive plots (e.g., using Plotly or ipywidgets) to browse potentials and flows across maturity stages.
 - [ ] **Temporal Dynamics**: If simulations are time-dependent, visual progress bars or animations of potential changes.
-
-
