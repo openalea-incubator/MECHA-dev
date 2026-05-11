@@ -56,11 +56,11 @@ def test_all_visu_types():
             # We use maturity_idx=1 (Mature zone)
             # scenario_idx='standard water flow' is the default
             if vt == 'paraview':
-                visualize(m, visu_type=vt, maturity_idx=1, prefix='results/my_sim', extrude_z=50.0)
+                visualize(m, visu_type=vt, maturity_idx=1, prefix='outputs/my_sim', extrude_z=50.0)
             elif vt == 'network':
                 visualize(m, visu_type=vt, maturity_idx=1)
                 visualize(m, visu_type=vt, prop_name='psi')
-                export_to_graphml(m, "results/my_sim.graphml")
+                export_to_graphml(m, "outputs/my_sim.graphml")
             else:
                 visualize(m, visu_type=vt, maturity_idx=1)
         except Exception as e:

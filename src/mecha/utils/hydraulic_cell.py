@@ -641,7 +641,7 @@ class HydraulicCellManager:
         if wall_lengths is None:
             wall_lengths = {}
             
-        wall_thicknesses = getattr(network, "wall_thickness", {})
+        wall_thicknesses = getattr(network, "thickness", {})
         if wall_thicknesses is None:
             wall_thicknesses = {}
 
@@ -663,7 +663,7 @@ class HydraulicCellManager:
             if wall_id in wall_thicknesses:
                 thickness = float(wall_thicknesses[wall_id])
             else:
-                thickness = float(node_data.get("wall_thickness", 1.0))
+                thickness = float(node_data.get("thickness", 1.0))
 
             wall = HydraulicWall(
                 x=float(pos[0]),
