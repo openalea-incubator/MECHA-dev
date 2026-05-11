@@ -1073,6 +1073,10 @@ class Mecha:
                     if tf is not None:
                         pd.temp_factor = tf
 
+        for node in graph.nodes(data=True):
+            node_id = node[0]
+            graph.nodes[node_id]['psi'] = sol[self.indice[node_id]]
+
     
     def remove_xyl_phloem_BC(self, matrix_W, i_maturity: int, i_scenario: int = 0):
 

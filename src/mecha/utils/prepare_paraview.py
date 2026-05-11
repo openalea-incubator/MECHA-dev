@@ -1,7 +1,9 @@
 import numpy as np
 from numpy import empty, zeros, cos, sin, arctan, sign, inf, isnan, array
 
-# Never tried, was vibe coding this part
+# Work, but it was vibe-coded.
+# Should be refactored.
+# TODO: Refactor this. It's not use for paraview.
 
 def prepare_geometrical_properties(general, network, position, indice):
     """

@@ -52,7 +52,6 @@ epidermis layer : outer side (all outer nodes of epidermis)
 
 TO DO:
 - [ ] **Osmotic Potential (S)**: Information about the osmotic potential stored in the `HydraulicCell` objects.
-- [ ] **Matric Potential (M)**: Information about the matric potential stored in the `HydraulicCell` objects.
 - [ ] **Pressure Potential (P)**: Information about the pressure potential stored in the `HydraulicCell` objects.
 - [ ] **Total Water Potential (W)**: Information about the total water potential stored in the `HydraulicCell` objects.
 - [ ] **Node-based Visualization**: Visualizing water potential on the Graph nodes after running a MECHA simulation.
