@@ -69,6 +69,7 @@ import pandas as pd
 from mecha.utils.network_export import (
     _PATH_COLORS, _PATH_LABELS, _CONTINUOUS_PROPS,
     visualize_network, plot_flow_network, plot_K_network,
+    plot_velocity_network,
     plot_flow_pathway_breakdown, plot_psi_radial_profile
 )
 
@@ -246,11 +247,13 @@ def visualize(obj: Any,
         plot_flow_pathway_breakdown(obj, **kwargs)
     elif visu_type == 'psi_profile':
         plot_psi_radial_profile(obj, **kwargs)
+    elif visu_type == 'velocity':
+        plot_velocity_network(obj, **kwargs)
     else:
         raise ValueError(
             f"Unknown visualization type: '{visu_type}'. "
             "Choose from: 'polygon', 'network', 'paraview', 'water_potential', "
-            "'conductance', 'flow', 'flow_pathway', 'psi_profile'."
+            "'conductance', 'flow', 'flow_pathway', 'psi_profile', 'velocity'."
         )
 
 def _visualize_pv(

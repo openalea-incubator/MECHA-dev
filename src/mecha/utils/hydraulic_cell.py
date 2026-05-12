@@ -89,7 +89,7 @@ class HydraulicWall:
         "x", "y", "length", "thickness", "node_id", "is_border", "is_aerenchyma",
         "cells", "membranes",
         # Hydraulic properties
-        "kw", "Q",
+        "kw", "Q", "Q_in", "Q_out", "A", "velocity",
     )
 
     def __init__(
@@ -120,11 +120,19 @@ class HydraulicWall:
         # Hydraulic Cell-wall (apoplastic) conductivity [cm hPa⁻¹ d⁻¹]
         self.kw: Optional[float] = None
         self.Q: Optional[float] = None
+        self.Q_in: Optional[float] = None
+        self.Q_out: Optional[float] = None
+        self.A: Optional[float] = None
+        self.velocity: Optional[float] = None
 
     def reset_hydraulics(self) -> None:
         """Reset all hydraulic fields to ``None``."""
         self.kw = None
         self.Q = None
+        self.Q_in = None
+        self.Q_out = None
+        self.A = None
+        self.velocity = None
 
     def __repr__(self) -> str:
         s = (
@@ -167,7 +175,7 @@ class HydraulicMembrane:
         "km",    # Total membrane conductivity  [cm hPa⁻¹ d⁻¹]
         "kaqp",  # Aquaporin contribution        [cm hPa⁻¹ d⁻¹]
         "K_computed",  # Effective conductance computed by HydraulicMatrixBuilder [cm³ hPa⁻¹ d⁻¹]
-        "Q",
+        "Q", "A", "velocity",
     )
 
     def __init__(
@@ -188,10 +196,12 @@ class HydraulicMembrane:
         self.kaqp: Optional[float] = None
         self.K_computed: Optional[float] = None
         self.Q: Optional[float] = None
+        self.A: Optional[float] = None
+        self.velocity: Optional[float] = None
 
     def reset_hydraulics(self) -> None:
         """Reset all hydraulic fields to ``None``."""
-        self.km = self.kaqp = self.K_computed = self.Q = None
+        self.km = self.kaqp = self.K_computed = self.Q = self.A = self.velocity = None
 
     def __repr__(self) -> str:
         s = (
@@ -234,8 +244,9 @@ class HydraulicPlasmodesmata:
         # Hydraulic properties — None until solver assigns them
         "kpl",        # Plasmodesmata conductance [cm³ hPa⁻¹ d⁻¹]
         "fplxheight", # plasmodesmata height (default 8.0E5) [] UNITS ?
-        "temp_factor",  # Tissue-specific frequency factor (dimensionless × µm)
+        "temp_factor",  # Tissue-specific frequency factor (dimensionless × cm)
         "Q", #Flow rate through plasmodesmata [cm³ d⁻¹]
+        "A", "velocity",
     )
 
     def __init__(
@@ -254,10 +265,12 @@ class HydraulicPlasmodesmata:
         self.fplxheight: Optional[float] = None
         self.temp_factor: Optional[float] = None
         self.Q: Optional[float] = None
+        self.A: Optional[float] = None
+        self.velocity: Optional[float] = None
 
     def reset_hydraulics(self) -> None:
         """Reset all hydraulic fields to ``None``."""
-        self.kpl = self.fplxheight = self.temp_factor = self.Q = None
+        self.kpl = self.fplxheight = self.temp_factor = self.Q = self.A = self.velocity = None
 
     def __repr__(self) -> str:
         s = (
@@ -328,6 +341,8 @@ class HydraulicCell:
         "km", "kaqp",
         # --- hydraulic state (potentials) ---
         "os", "psi", "psi_p",
+        # --- flow balance ---
+        "Q_in", "Q_out",
         # --- growth ---
         "elongation_rate",
     )
@@ -383,6 +398,9 @@ class HydraulicCell:
         # Turgor / matric potential  [hPa]  (psi - os)
         self.psi_p: Optional[float] = None
 
+        self.Q_in: Optional[float] = None
+        self.Q_out: Optional[float] = None
+
     # ------------------------------------------------------------------
     # Convenience
     # ------------------------------------------------------------------
@@ -390,7 +408,7 @@ class HydraulicCell:
     def reset_hydraulics(self) -> None:
         """Reset all hydraulic fields to ``None``."""
         self.kw = self.kpl = self.km = self.kaqp = None
-        self.os = self.psi = self.psi_p = None
+        self.os = self.psi = self.psi_p = self.Q_in = self.Q_out = None
 
     def _polygon(self) -> Polygon:
         

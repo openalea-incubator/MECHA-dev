@@ -41,7 +41,7 @@ _PATH_LABELS = {
     'membrane':      'Transcellular (cell membrane)',
     'plasmodesmata': 'Symplastic (plasmodesmata)',
 }
-_CONTINUOUS_PROPS = ['psi', 'length', 'wall_thickness', 'Q_in', 'Q_out'] # Q_in, Q_out are not yet implemented 
+_CONTINUOUS_PROPS = ['psi', 'length', 'wall_thickness', 'Q_in', 'Q_out', 'Q', 'A', 'velocity'] 
 
 def export_to_graphml(obj: Any, filepath: str) -> None:
     """
@@ -503,10 +503,24 @@ def plot_edge_and_node_differences(net1, net2, title="Detailed Topology Differen
     plt.show()
 
 
-def plot_flow_network(obj, **kwargs):
-    """Draw arrows on edges proportional to |Q|, coloured by edge type.
+def plot_flow_network(obj: Any, **kwargs: Any) -> None:
+    """Draw arrows on edges proportional to flow magnitude |Q|, coloured by edge type.
 
     Arrow direction follows the sign of Q (u→v if Q>0, v→u if Q<0).
+    """
+    _plot_edge_vector_property(obj, prop_name='Q', unit='cm³ d⁻¹', **kwargs)
+
+
+def plot_velocity_network(obj: Any, **kwargs: Any) -> None:
+    """Draw arrows on edges proportional to velocity magnitude |v|, coloured by edge type.
+
+    Arrow direction follows the sign of velocity (same as Q).
+    """
+    _plot_edge_vector_property(obj, prop_name='velocity', unit='cm d⁻¹', **kwargs)
+
+
+def _plot_edge_vector_property(obj: Any, prop_name: str, unit: str = '', **kwargs: Any) -> None:
+    """Internal helper to draw arrows on edges proportional to a scalar property.
 
     Performance: uses ``LineCollection`` and ``ax.quiver`` (vectorised) instead
     of one ``ax.annotate`` call per edge, giving ~100× speedup on large graphs.
@@ -519,7 +533,7 @@ def plot_flow_network(obj, **kwargs):
     pos   = nx.get_node_attributes(graph, 'position')
 
     # ------------------------------------------------------------------ #
-    # 1. Compute Q for all edges in a single pass                         #
+    # 1. Compute Q for all edges in a single pass (needed for direction)  #
     # ------------------------------------------------------------------ #
     sol, _ = _get_result_data(obj, **kwargs)
     indices = getattr(obj, 'indice', {})
@@ -534,11 +548,15 @@ def plot_flow_network(obj, **kwargs):
                 eattr['Q'] = K * (float(sol[indices[u]]) - float(sol[indices[v]]))
 
     # ------------------------------------------------------------------ #
-    # 2. Gather all Q values for global normalisation                     #
+    # 2. Gather all property values for global normalisation             #
     # ------------------------------------------------------------------ #
-    all_Q = [abs(d['Q']) for _, _, d in graph.edges(data=True)
-             if d.get('Q') is not None]
-    q_max = max(all_Q) if all_Q else 1.0
+    all_vals = []
+    for _, _, d in graph.edges(data=True):
+        val = d.get(prop_name)
+        if val is not None:
+            all_vals.append(abs(float(val)))
+            
+    val_max = max(all_vals) if all_vals else 1.0
 
     # ------------------------------------------------------------------ #
     # 3. Collect segments per path type in one O(E) pass                 #
@@ -550,18 +568,22 @@ def plot_flow_network(obj, **kwargs):
         path = eattr.get('path')
         if path not in path_data:
             continue
-        Q = eattr.get('Q')
+            
+        val = eattr.get(prop_name)
         K = eattr.get('K')
-        if Q is None or K is None or K == 0:
+        if val is None or K is None or K == 0:
             continue
 
-        mag = abs(Q) / q_max
+        mag = abs(float(val)) / val_max
         if mag < 1e-12:
             continue
 
+        # Direction is always determined by Q
+        Q_sign = eattr.get('Q', 0.0)
+        
         pu = pos.get(u, (0.0, 0.0))
         pv = pos.get(v, (0.0, 0.0))
-        src, dst = (pu, pv) if Q >= 0 else (pv, pu)
+        src, dst = (pu, pv) if Q_sign >= 0 else (pv, pu)
         path_data[path].append((src, dst, mag))
 
     # ------------------------------------------------------------------ #
@@ -573,7 +595,7 @@ def plot_flow_network(obj, **kwargs):
     ax.set_facecolor('#0d0d1a')
     ax.set_aspect('equal')
     ax.set_title(
-        f"Water Flow Q – edges (Mat {kwargs.get('maturity_idx', 0)})",
+        f"{prop_name} {f'[{unit}]' if unit else ''} – edges (Mat {kwargs.get('maturity_idx', 0)})",
         color='white', fontsize=13,
     )
 

@@ -1013,30 +1013,58 @@ class Mecha:
             self.standard_water_flow(matrix_W, rhs_s, rhs_x, solution, height, i_maturity)
 
         self.standardized_results.append(solution)
-        self.compute_edge_flows(solution)
+        self.compute_edge_flows(solution, i_maturity=i_maturity)
         return solution, verification_1, matrix_W, Kmb, rhs_s
 
-    def compute_edge_flows(self, solution: np.ndarray) -> None:
-        """Compute and store flow Q = K*(Psi_i - Psi_j) on every graph edge.
+    def compute_edge_flows(self, solution: np.ndarray, i_maturity: int = 0) -> None:
+        """Compute and store flow Q, cross-section area A, and velocity v on every graph edge.
 
         Reads the conductance ``K`` written by ``HydraulicMatrixBuilder`` onto
-        each graph edge attribute during ``build_matrices()``, then computes the
-        signed flow ``Q`` (cm³ d⁻¹, positive from node *u* to node *v*) and
-        writes it back as ``graph.edges[u, v]['Q']``.
+        each graph edge attribute during ``build_matrices()``, then computes:
 
-        Also back-propagates relevant values onto the
-        :class:`~mecha.utils.hydraulic_cell.HydraulicMembrane` and
-        :class:`~mecha.utils.hydraulic_cell.HydraulicPlasmodesmata` objects
-        stored in ``network.cell_manager``.
+        * ``Q``  (cm³ d⁻¹) — signed flow, positive from node *u* to node *v*.
+        * ``A``  (cm²)     — cross-section area of the edge, path-dependent:
+
+          - *wall*          : ``((lateral_distance + height) × thickness − thickness²) × 1 × 10⁻⁸``
+          - *membrane*      : ``(height + dist) × length × 1 × 10⁻⁸``
+          - *plasmodesmata* : ``temp_factor × pd_section / thickness × 1 × 10⁻⁴``
+            (same as the diffusive area used in :class:`HydraulicMatrixBuilder`)
+
+        * ``velocity`` (cm d⁻¹) — ``Q / A``, set to ``NaN`` when ``A ≤ 0``.
+
+        Also computes per-node quantities and stores them on graph nodes:
+
+        * ``psi``   (hPa)   — water potential from the solution vector.
+        * ``Q_in``  (cm³ d⁻¹) — total flow entering  the node (sum of positive flows).
+        * ``Q_out`` (cm³ d⁻¹) — total flow leaving   the node (sum of negative flows, absolute value).
+
+        All values are also back-propagated onto the
+        :class:`~mecha.utils.hydraulic_cell.HydraulicMembrane`,
+        :class:`~mecha.utils.hydraulic_cell.HydraulicPlasmodesmata`, and
+        :class:`~mecha.utils.hydraulic_cell.HydraulicWall` objects stored in
+        ``network.cell_manager``.
 
         Parameters
         ----------
         solution : np.ndarray, shape (n_nodes, 1) or (n_nodes,)
             Node water-potential vector returned by :meth:`solve_W`.
+        i_maturity : int, optional
+            Maturity stage index, used to retrieve the correct height (µm).
         """
         sol = np.asarray(solution).ravel()
         graph = self.network.graph
         cm = self.network.cell_manager
+
+        # Retrieve geometry scalars needed for cross-section formulas.
+        thickness = float(getattr(self.geometry, 'thickness', 1.0))  # µm
+        height = 0.0
+        if self.geometry.maturity_stages and i_maturity < len(self.geometry.maturity_stages):
+            height = float(self.geometry.maturity_stages[i_maturity].get('height', 0.0))
+        pd_section = float(getattr(self.geometry, 'pd_section', 0.0))  # µm²
+
+        # Initialise per-node accumulators
+        Q_in  = {node_id: 0.0 for node_id in graph.nodes()}
+        Q_out = {node_id: 0.0 for node_id in graph.nodes()}
 
         for u, v, eattr in graph.edges(data=True):
             K = eattr.get('K')
@@ -1049,33 +1077,90 @@ class Mecha:
 
             path = eattr.get('path', '')
 
-            # Back-propagate onto HydraulicWall
+            # ----------------------------------------------------------------
+            # Cross-section area A (cm²) — path-dependent
+            # ----------------------------------------------------------------
+            A = 0.0
+            if path == 'wall':
+                # Cross section area of the cell wall
+                A = (height * thickness) * 1.0e-8  # µm² → cm²
+
+            elif path == 'membrane':
+                mb = cm.get_membrane_by_edge(u, v)
+                if mb is not None:
+                    # suface area of the membrane against the cell wall
+                    # height of section * length of the cell wall in contact with the membrane
+                    A = (height * mb.length) * 1.0e-8  # µm² → cm²
+
+            elif path == 'plasmodesmata':
+                # temp_factor is [#PD × µm²] (number of PD on the cell wall)
+                tf = eattr.get('temp_factor')
+                if tf is not None:
+                    A = (float(pd_section) * 1.0e-8) * float(tf)  # cm²
+
+            eattr['A'] = A
+            vel = Q / A if A > 0.0 else float('nan')
+            eattr['velocity'] = vel
+
+            # ----------------------------------------------------------------
+            # Accumulate Q_in / Q_out for both endpoints
+            # ----------------------------------------------------------------
+            if Q >= 0.0:
+                Q_in[u]  += Q
+                Q_out[v] += Q
+            else:
+                Q_out[u] += -Q
+                Q_in[v]  += -Q
+
+            # ----------------------------------------------------------------
+            # Back-propagate onto HydraulicCellManager objects
+            # ----------------------------------------------------------------
             if path == 'wall':
                 wall_obj = cm.get_wall_by_node_id(u) or cm.get_wall_by_node_id(v)
                 if wall_obj is not None and wall_obj.kw is None:
                     wall_obj.kw = K
-                    wall_obj.Q = Q
+                    wall_obj.Q  = Q
+                    wall_obj.A  = A
+                    wall_obj.velocity = vel
 
-            # Back-propagate onto HydraulicMembrane
             elif path == 'membrane':
                 mb = cm.get_membrane_by_edge(u, v)
                 if mb is not None:
                     mb.K_computed = K
-                    mb.Q = Q
+                    mb.Q          = Q
+                    mb.A          = A
+                    mb.velocity   = vel
 
-            # Back-propagate onto HydraulicPlasmodesmata
             elif path == 'plasmodesmata':
                 pd = cm.get_plasmodesmata_by_edge(u, v)
                 if pd is not None:
                     pd.kpl = K
-                    pd.Q = Q
+                    pd.Q   = Q
+                    pd.A   = A
+                    pd.velocity = vel
                     tf = eattr.get('temp_factor')
                     if tf is not None:
                         pd.temp_factor = tf
 
-        for node in graph.nodes(data=True):
-            node_id = node[0]
-            graph.nodes[node_id]['psi'] = sol[self.indice[node_id]]
+        # --------------------------------------------------------------------
+        # Store per-node quantities on graph nodes and in cell_manager
+        # --------------------------------------------------------------------
+        for node_id in graph.nodes():
+            graph.nodes[node_id]['psi']   = float(sol[self.indice[node_id]])
+            graph.nodes[node_id]['Q_in']  = Q_in[node_id]
+            graph.nodes[node_id]['Q_out'] = Q_out[node_id]
+
+            # Back-propagate onto HydraulicCell or HydraulicWall objects
+            cell_obj = cm.get_by_node_id(node_id)
+            if cell_obj is not None:
+                cell_obj.psi   = float(sol[self.indice[node_id]])
+                cell_obj.Q_in  = Q_in[node_id]
+                cell_obj.Q_out = Q_out[node_id]
+            
+            wall_obj = cm.get_wall_by_node_id(node_id)
+            if wall_obj is not None:
+                wall_obj.Q_in  = Q_in[node_id]
+                wall_obj.Q_out = Q_out[node_id]
 
     
     def remove_xyl_phloem_BC(self, matrix_W, i_maturity: int, i_scenario: int = 0):
