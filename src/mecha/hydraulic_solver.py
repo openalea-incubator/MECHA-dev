@@ -177,6 +177,9 @@ class HydraulicMatrixBuilder:
                 self._add_C(j, j, -DF)
                 self._add_C(j, i,  DF)
 
+        # Store K on graph edge for post-solve flow computation
+        eattr['K'] = float(K)
+
     def _fill_membrane(self, i, j, node, neighboor, eattr, kw, kw_config, height, thickness, barrier, kaqp_config, a_cortex, b_cortex):
         count_endo = self.network.graph.nodes[node].get('count_endo', 0)
         count_exo = self.network.graph.nodes[node].get('count_exo', 0)
@@ -263,6 +266,9 @@ class HydraulicMatrixBuilder:
         self._add_W(i, j,  K)
         self._add_W(j, i,  K)
         self._add_W(j, j, -K)
+
+        # Store K on graph edge for post-solve flow computation
+        eattr['K'] = float(K)
 
         return K
 
@@ -357,6 +363,10 @@ class HydraulicMatrixBuilder:
         self._add_W(j, i,  K)
         self._add_W(j, j, -K)
 
+        # Store K on graph edge for post-solve flow computation
+        eattr['K'] = float(K)
+        eattr['temp_factor'] = float(temp_factor)
+
         # Solute flux
         if self.boundary.c_flag and getattr(self.general, 'c_flag', False):
             DF = self.geometry.pd_section * temp_factor / thickness * 1.0E-04 * self.hormones.diff1_pd1
@@ -370,7 +380,6 @@ class HydraulicMatrixBuilder:
     def _apply_soil_boundary(self, x_contact, height, thickness, kw, barrier, boundary, rhs_s, rhs_C):
         wall_to_cell = self.geo_props['wall_to_cell']
         junction_wall_cell = self.geo_props['junction_wall_cell']
-
         for wall_id in self.network.border_walls:
             if (self.position[wall_id][0] >= x_contact) or ((wall_to_cell[wall_id][0] - self.network.n_wall_junction) in getattr(self.hormones, 'contact', [])):
                 temp = 1.0E-04 * (self.network.wall_lengths[wall_id] / 2 * height) / (thickness / 2)

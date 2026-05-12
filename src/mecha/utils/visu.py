@@ -1,11 +1,78 @@
+# -*- coding: utf-8 -*-
+#
+#       File author(s):
+#           Adrien Heymans
+#
+#       Copyright © by UCLouvain
+#       Distributed under the LGPL License.
+#       See accompanying file LICENSE.txt or copy at
+#           https://www.gnu.org/licenses/lgpl-3.0.en.html
+#
+# -----------------------------------------------------------------------
+"""
+Visualization utilities for MECHA.
+Includes polygon visualization, ParaView export, water potential mapping,
+and network-level visualization functions.
+
+Examples:
+    >>> from mecha.utils.visu import visualize
+    >>> from mecha import Mecha
+    
+    >>> # Basic visualization of the root organ section
+    >>> visualize(mecha_instance, visu_type='polygon')
+    
+    >>> # Visualize water potential map
+    >>> visualize(mecha_instance, visu_type='water_potential', 
+    ...           maturity_idx=0, scenario_idx='standard water flow')
+    
+    >>> # Export to ParaView-readable files
+    >>> visualize(mecha_instance, visu_type='paraview', 
+    ...           prefix='my_simulation', export_cells=True, 
+    ...           export_walls=False, export_plasmodesmata=True)
+    
+    >>> # Visualize flow pathways with custom colormap
+    >>> visualize(mecha_instance, visu_type='flow_pathway', 
+    ...           maturity_idx=0)
+    
+    >>> # Visualize xylem conductivity network
+    >>> visualize(mecha_instance, visu_type='conductance', 
+    ...           maturity_idx=0)
+    
+    >>> # Visualize water flow vectors
+    >>> visualize(mecha_instance, visu_type='flow', maturity_idx=0)
+    
+    >>> # View radial profile of water potential
+    >>> visualize(mecha_instance, visu_type='psi_profile', maturity_idx=0)
+    
+    >>> # Pass GeoDataFrame directly
+    >>> gdf = mecha_instance.network._cells_gdf
+    >>> visualize(gdf, visu_type='polygon')
+    
+"""
+
 import geopandas as gpd
 from shapely.ops import polygonize
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+import matplotlib.cm as cm
 import numpy as np
+
 from shapely.geometry import LineString, Polygon
-from typing import Tuple, Dict, List, Any
+from typing import Tuple, Dict, List, Any, Optional
 from mecha.utils.network_builder import NetworkBuilder
+from mecha.mecha_class import Mecha
+from mecha.utils.paraview_export import export_to_vtk
 import networkx as nx
+import pandas as pd
+
+# Network visualization functions
+from mecha.utils.network_export import (
+    _PATH_COLORS, _PATH_LABELS, _CONTINUOUS_PROPS,
+    visualize_network, plot_flow_network, plot_K_network,
+    plot_velocity_network,
+    plot_flow_pathway_breakdown, plot_psi_radial_profile
+)
+
 
 
 def prep_section(cellset_data) -> gpd.GeoDataFrame:
@@ -114,16 +181,16 @@ def prep_section(cellset_data) -> gpd.GeoDataFrame:
     gdf = gpd.GeoDataFrame(records, crs="EPSG:4326")
     return gdf
 
-def plot_root_section(root_gdf: gpd.GeoDataFrame):
-    """Display the root section as polygons using GeoPandas and Matplotlib."""
-    if root_gdf.empty:
+def plot_organ_section(organ_gdf: gpd.GeoDataFrame):
+    """Display the organ section as polygons using GeoPandas and Matplotlib."""
+    if organ_gdf.empty:
         print("GeoDataFrame is empty, cannot plot.")
         return
 
     # GeoPandas handles the figure creation and geometry plotting
     fig, ax = plt.subplots(figsize=(8, 8))
 
-    root_gdf.plot(
+    organ_gdf.plot(
         ax=ax,
         column='type',           # Color polygons by the 'type' column
         cmap='viridis',          # Use a nice color map
@@ -136,7 +203,7 @@ def plot_root_section(root_gdf: gpd.GeoDataFrame):
     ax.set_aspect("equal", "box")
     ax.set_xlabel("x (mm)")
     ax.set_ylabel("y (mm)")
-    ax.set_title("Cross Section Preview")
+    ax.set_title("Organ Cross Section")
     plt.tight_layout()
     plt.show()
     # plt.show() # Use this for local testing
@@ -144,18 +211,82 @@ def plot_root_section(root_gdf: gpd.GeoDataFrame):
 def visualize(obj: Any,
               visu_type: str = 'polygon',
               **kwargs: Dict[str, Any]) -> None:
-    """Visualize cellset data using the functions above."""
+    """Dispatch to the appropriate visualization function.
 
+    Parameters
+    ----------
+    obj : Any
+        The object to visualize (Mecha, NetworkBuilder, GeoDataFrame, …).
+    visu_type : str
+        One of:
+        - ``'polygon'``        – cell cross-section polygons (matplotlib)
+        - ``'network'``        – hydraulic graph (networkx/matplotlib)
+        - ``'paraview'``       – export to ``.vtk`` files for ParaView
+        - ``'water_potential'``– water-potential choropleth map
+        - ``'conductance'``    – conductance K on graph edges (tri-panel)
+        - ``'flow'``           – flow Q arrows on graph edges
+        - ``'flow_pathway'``   – stacked area % by pathway vs. radius
+        - ``'psi_profile'``    – Psi vs. radial distance profile
+    **kwargs
+        Forwarded verbatim to the selected function.  See each function's
+        docstring for supported keyword arguments.
+    """
     if visu_type == 'polygon':
         _visualize_polygon(obj, **kwargs)
     elif visu_type == 'network':
-        _visualize_network(obj, **kwargs)
+        visualize_network(obj, **kwargs)     
     elif visu_type == 'paraview':
         _visualize_pv(obj, **kwargs)
     elif visu_type == 'water_potential':
         _visualize_water_potential(obj, **kwargs)
+    elif visu_type == 'conductance':
+        plot_K_network(obj, **kwargs)
+    elif visu_type == 'flow':
+        plot_flow_network(obj, **kwargs)
+    elif visu_type == 'flow_pathway':
+        plot_flow_pathway_breakdown(obj, **kwargs)
+    elif visu_type == 'psi_profile':
+        plot_psi_radial_profile(obj, **kwargs)
+    elif visu_type == 'velocity':
+        plot_velocity_network(obj, **kwargs)
     else:
-        raise ValueError(f"Unknown visualization type: {visu_type}")
+        raise ValueError(
+            f"Unknown visualization type: '{visu_type}'. "
+            "Choose from: 'polygon', 'network', 'paraview', 'water_potential', "
+            "'conductance', 'flow', 'flow_pathway', 'psi_profile', 'velocity'."
+        )
+
+def _visualize_pv(
+    obj: Any,
+    **kwargs: Dict[str, Any]) -> None:
+    """Export to ParaView-readable VTK files via :func:`export_to_vtk`.
+
+    Parameters
+    ----------
+    obj : Mecha
+        A solved ``Mecha`` instance.
+    prefix : str, optional
+        File path prefix for generated ``.vtk`` files (default ``'mecha_pv'``).
+    maturity_idx : int, optional
+        Maturity stage index to export (default 0).
+    scenario_idx : str, optional
+        Scenario name to export (default ``'standard water flow'``).
+    extrude_z : float, optional
+        Z-extrusion depth in µm for 2-D geometry (default 5.0).
+    pd_radius : float, optional
+        Plasmodesmata cylinder radius in µm (default 0.05).
+    export_cells, export_walls, export_membranes,
+    export_plasmodesmata, export_flow_vectors : bool, optional
+        Toggle individual output files (all True by default).
+    """
+    if not isinstance(obj, Mecha):
+        raise ValueError(
+            "visu_type='paraview' requires a Mecha instance. "
+            f"Got {type(obj).__name__}."
+        )
+    prefix = kwargs.pop('prefix', 'mecha_pv')
+    export_to_vtk(obj, prefix=prefix, **kwargs)
+
 
 def _visualize_polygon(
     obj: Any,
@@ -171,104 +302,44 @@ def _visualize_polygon(
         Additional keyword arguments for customizing the plot.
     """
     if isinstance(obj, dict):
-        root_gdf = prep_section(obj)
-        plot_root_section(root_gdf)
+        cells_gdf = prep_section(obj)
+        plot_organ_section(cells_gdf)
     elif isinstance(obj, gpd.GeoDataFrame):
-        plot_root_section(obj)
+        plot_organ_section(obj)
+    elif isinstance(obj, Mecha):
+        if obj.network is None:
+            raise ValueError("Mecha object has no network.")
+        if obj.network._cells_gdf is None:
+            raise ValueError("Mecha object has no _cells_gdf.")
+        cells_gdf = obj.network._cells_gdf
+        plot_organ_section(cells_gdf)
     else:
         raise ValueError("Unsupported object type for polygon visualization.")
 
 
-def _visualize_network(
-    obj: Any,
-    **kwargs: Dict[str, Any]) -> None:
-    """
-    Visualize network data.
-
-    Parameters
-    ----------
-    obj : Any
-        Network object to visualize.
-    **kwargs : Dict[str, Any]
-        Additional keyword arguments for customizing the plot.
-    """
-    if isinstance(obj, NetworkBuilder):
-        graph = obj.graph
-    elif isinstance(obj, nx.Graph):
-        graph = obj
-    else:
-        raise ValueError("Unsupported object type for network visualization.")
-
-    position = kwargs.get('position', nx.get_node_attributes(graph, 'position'))
-    node_types = kwargs.get('node_types', nx.get_node_attributes(graph, 'type'))
-
-    # Default color map
-    default_color_map = {'apo': 'red', 'sym': 'yellow'}
-    node_color_map = kwargs.get('node_color_map', default_color_map)
-
-    default_edge_color_map = {'wall': 'purple', 'membrane': 'green', 'plasmodesmata': 'gray'}
-    edge_color_map = kwargs.get('edge_color_map', default_edge_color_map)
-
-    # Determine node colors
-    node_colors = []
-    for node in graph.nodes():
-        node_type = node_types.get(node, 'sym')  # Default to 'sym' if type is not found
-        node_colors.append(node_color_map.get(node_type, 'blue'))  # Default to 'blue' if color not found
-
-        # Determine edge colors
-    edge_colors = []
-    for u, v, edge_attrs in graph.edges(data=True):
-        edge_type = edge_attrs.get('path', 'wall')  # Default to 'wall' if path is not found
-        edge_colors.append(edge_color_map.get(edge_type, 'purple'))
-
-    # Draw the network
-    ax = kwargs.get('ax')
-    show_plot = False
-    if ax is None:
-        fig, ax = plt.subplots(figsize=kwargs.get('figsize', (10, 10)))
-        show_plot = True
-
-    nx.draw(
-        graph,
-        position,
-        ax=ax,
-        node_color=node_colors,
-        with_labels=kwargs.get('with_labels', False),
-        node_size=kwargs.get('node_size', 10),
-        edge_color=edge_colors,
-        width=kwargs.get('width', 1),
-        alpha=kwargs.get('alpha', 0.7)
-    )
-
-    ax.set_aspect("equal", "box")
-    ax.set_title(kwargs.get('title', 'Network Visualization'))
-    
-    if show_plot:
-        plt.tight_layout()
-        plt.show()
 
 
-def plot_water_potential_map(root_gdf: gpd.GeoDataFrame, title: str = "Water Potential"):
+def plot_water_potential_map(organ_gdf: gpd.GeoDataFrame, title: str = "Water Potential"):
     """Display the root section with water potential colormap."""
-    if root_gdf.empty:
+    if organ_gdf.empty:
         print("GeoDataFrame is empty, cannot plot.")
         return
-    if 'water_potential' not in root_gdf.columns:
+    if 'water_potential' not in organ_gdf.columns:
         print("water_potential column missing in GeoDataFrame")
         return
-    if np.isnan(root_gdf['water_potential']).all():
+    if np.isnan(organ_gdf['water_potential']).all():
         print("All water potential values are NaN, cannot plot.")
-        root_gdf['water_potential'] = 0
+        organ_gdf['water_potential'] = 0
 
     fig, ax = plt.subplots(figsize=(10, 8))
-    root_gdf.plot(
+    organ_gdf.plot(
         ax=ax,
         column='water_potential',
         cmap='viridis', 
         edgecolor='black',
         linewidth=0.5,
         legend=True,
-        legend_kwds={'label': 'Water Potential (MPa)', 'orientation': 'vertical'}
+        legend_kwds={'label': 'Water Potential (hPa)', 'orientation': 'vertical'}
     )
     ax.set_aspect("equal", "box")
     ax.set_title(title)
@@ -285,416 +356,49 @@ def _visualize_water_potential(obj: Any, **kwargs: Dict[str, Any]) -> None:
     ----------
     obj : Any
         Mecha object containing results and cellset_data.
-    **kwargs : Dict[str, Any]
-        maturity_idx : int, default 0
-        scenario_idx : int, default 0
+        results list: list of solutions, each solution is a numpy array of water potentials for each cell. It's obtained by the 
+        solve_W() or water_flow() method.
+
     """
-    if not hasattr(obj, 'results'):
-        print("Object does not have results attribute.")
-        return
+    # Use pre-computed _cells_gdf if available, else fall back to prep_section
+    if hasattr(obj.network, '_cells_gdf') and obj.network._cells_gdf is not None:
+        gdf = obj.network._cells_gdf.copy()
+    else:
+        gdf = prep_section(obj.cellset_data)
+    
+    # Check for network and indices
+    if not hasattr(obj, 'network') or not hasattr(obj, 'indice'):
+         print("Object does not have valid network structure or indice mapping.")
+         return
 
-    results = obj.results
-    if not results:
-        print("Results are empty.")
-        return
-
-    maturity_idx = kwargs.get('maturity_idx', 0)
-    scenario_idx = kwargs.get('scenario_idx', 0)
-
-    # Find the matching result
-    target_res = None
-    if isinstance(results, list):
-        for res in results:
+    nwj = obj.network.n_wall_junction
+    # Support results list or direct solution
+    if hasattr(obj, 'results') and obj.results:
+        standardized_results = kwargs.get('standardized_results', True)
+        maturity_idx = kwargs.get('maturity_idx', 0)
+        scenario_idx = kwargs.get('scenario_idx', "standard water flow")
+        target_res = None
+        for res in obj.results:
             if res.get('maturity stage') == maturity_idx and res.get('scenario') == scenario_idx:
                 target_res = res
                 break
-    
-    if target_res is None:
-        print(f"No results found for maturity {maturity_idx} and scenario {scenario_idx}")
-        print("Available results:", [(r.get('maturity stage'), r.get('scenario')) for r in results])
-        return
-
-    solution = target_res['solution']
-    
-    rhs = target_res.get('rhs')
-        
-    matrix_W = target_res.get('matrix_W')
-    if matrix_W is not None:
-         if hasattr(matrix_W, 'toarray') or hasattr(matrix_W, 'tocoo'):
-             # Sparse matrix
-             if hasattr(matrix_W, 'data'):
-                 mat_data = matrix_W.data
-                 print(f"DEBUG: MatrixW (sparse) stats - NaNs: {np.isnan(mat_data).sum()}, Min: {np.nanmin(mat_data)}, Max: {np.nanmax(mat_data)}")
-         else:
-             # Dense matrix
-             print(f"DEBUG: MatrixW (dense) stats - NaNs: {np.isnan(matrix_W).sum()}, Min: {np.nanmin(matrix_W)}, Max: {np.nanmax(matrix_W)}")
-
-    # Check for cellset_data
-    if not hasattr(obj, 'cellset_data'):
-        print("Object does not have cellset_data attribute.")
-        return
-        
-    gdf = prep_section(obj.cellset_data)
-    
-    # Check for network offset
-    if not hasattr(obj, 'network') or not hasattr(obj.network, 'n_wall_junction'):
-         print("Object does not have valid network structure.")
-         return
-
-    offset = obj.network.n_walls
-    offset += obj.network.n_wall_junction
-    
-    
-    def get_pot(cid):
-        idx = int(offset + cid)
-        try:
-             # solution is typically (n_nodes, 1) or (n_nodes,)
-             val = solution[idx]
-             if hasattr(val, '__getitem__') and hasattr(val, '__len__') and len(val) > 0:
-                  return float(val[0])
-             return float(val)
-        except (IndexError, TypeError):
-             print(f"DEBUG: Error retrieving pot for cid {cid} at idx {idx}")
-             return np.nan
-        print(f"DEBUG: Pot for cid {cid} at idx {idx}: {val}")
-
-    gdf['water_potential'] = gdf['id_cell'].apply(get_pot)
-    
-    plot_water_potential_map(gdf, title=f"Water Potential (Mat: {maturity_idx}, Scen: {scenario_idx})")
-
-
-def _visualize_standardized_results(obj: Any, **kwargs: Dict[str, Any]) -> None:
-    """
-    Visualize standardized results from a Mecha object.
-    
-    Parameters
-    ----------
-    obj : Any
-        Mecha object containing results and cellset_data.
-    """
-    if not hasattr(obj, 'standardized_results'):
-        print("Object does not have standardized_results attribute.")
-        return
-
-    results = obj.standardized_results[0]
-    if not results:
-        print("Results are empty.")
-        return
-
-    
-    solution = results['solution']
-    
-    # Check for cellset_data
-    if not hasattr(obj, 'cellset_data'):
-        print("Object does not have cellset_data attribute.")
-        return
-        
-    gdf = prep_section(obj.cellset_data)
-    
-    # Check for network offset
-    if not hasattr(obj, 'network') or not hasattr(obj.network, 'n_wall_junction'):
-         print("Object does not have valid network structure.")
-         return
-
-    def get_pot(cid):
-        
-        obj.network.graph.nodes[cid]['water_potential'] = solution[cid][0]
-        
-    for node, edges in obj.network.graph.adjacency() : #adjacency_iter returns an iterator of (node, adjacency dict) tuples for all nodes. This is the fastest way to look at every edge. For directed graphs, only outgoing adjacencies are included.
-        i = obj.network.indice[node] #Node ID number
-        if i<obj.network.n_walls: #wall ID 
-            psi = solution[i][0]
-
-
-
-    offset = obj.network.n_wall_junction
-    offset += obj.network.n_walls
-    
-    
-
-    gdf['water_potential'] = gdf['id_cell'].apply(get_pot)
-    
-    plot_water_potential_map(gdf, title=f"Water Potential (Mat: {maturity_idx}, Scen: {scenario_idx})")
-
-
-def plot_matrix_difference(m1, m2, title="Absolute Difference between Matrices", threshold=1e-12):
-    """
-    Plots the absolute difference between two matrices.
-    """
-    import matplotlib.pyplot as plt
-    import numpy as np
-    
-    # Convert sparse matrices to dense if needed
-    if hasattr(m1, 'toarray'): m1 = m1.toarray()
-    if hasattr(m2, 'toarray'): m2 = m2.toarray()
-
-    diff = np.abs(m1 - m2)
-
-    rows, cols = np.where(diff > threshold)
-    values = diff[rows, cols]
-
-    plt.figure(figsize=(10, 8))
-    if len(values) > 0:
-        plt.scatter(cols, rows, c=values, cmap='hot', s=50, alpha=0.8, vmin=np.min(values), vmax=np.max(values))
-        plt.colorbar(label='Absolute Difference')
+        if target_res:
+            sol = np.asarray(target_res['solution']).ravel()
+        else:
+            print(f"No results found for maturity {maturity_idx} and scenario {scenario_idx}")
+            return
     else:
-        plt.text(0.5, 0.5, 'No differences found', horizontalalignment='center', verticalalignment='center', transform=plt.gca().transAxes)
+        sol = np.asarray(obj.solution).ravel()
     
-    plt.title(title)
-    plt.xlabel('Column Index')
-    plt.ylabel('Row Index')
-    if hasattr(m1, 'shape'):
-        plt.xlim(-0.5, m1.shape[1]-0.5)
-        plt.ylim(m1.shape[0]-0.5, -0.5) # Invert y axis
-    plt.tight_layout()
-    plt.show()
+    def get_pot(cid):
+        """Map cell ID to water potential using the network indice mapping."""
+        node_id = nwj + cid
+        try:
+            idx = obj.indice[node_id]
+            return float(sol[idx])
+        except (KeyError, IndexError):
+             return np.nan
 
-
-def plot_edge_and_node_differences(net1, net2, title="Detailed Topology Differences", distance_threshold=1e-6):
-    """
-    Locates and plots differences between two networks: Code colored by type.
-    """
-    import matplotlib.pyplot as plt
-    import networkx as nx
-    import numpy as np
+    gdf['water_potential'] = gdf['id_cell'].apply(get_pot)
     
-    fig, ax = plt.subplots(figsize=(14, 14))
-    g1 = net1.graph if hasattr(net1, 'graph') else net1
-    g2 = net2.graph if hasattr(net2, 'graph') else net2
-    
-    pos1 = nx.get_node_attributes(g1, 'position')
-    pos2 = nx.get_node_attributes(g2, 'position')
-
-    # Defaults for positions
-    default_pos1 = {n: (0,0) for n in g1.nodes if n not in pos1}
-    pos1.update(default_pos1)
-    default_pos2 = {n: (0,0) for n in g2.nodes if n not in pos2}
-    pos2.update(default_pos2)
-
-    nodes1 = set(g1.nodes())
-    nodes2 = set(g2.nodes())
-
-    missing_in_2 = list(nodes1 - nodes2)
-    missing_in_1 = list(nodes2 - nodes1)
-
-    common_nodes = nodes1.intersection(nodes2)
-    moved_nodes = []
-    stable_nodes = []
-    
-    for n in common_nodes:
-        p1, p2 = pos1[n], pos2[n]
-        d = np.hypot(p1[0]-p2[0], p1[1]-p2[1])
-        if d > distance_threshold:
-            moved_nodes.append(n)
-        else:
-            stable_nodes.append(n)
-
-    # Convert edges to canonical forms (min, max) so direction doesn't matter
-    edges1 = set([tuple(sorted((u, v))) for u, v in g1.edges()])
-    edges2 = set([tuple(sorted((u, v))) for u, v in g2.edges()])
-
-    missing_edges_in_2 = list(edges1 - edges2)
-    missing_edges_in_1 = list(edges2 - edges1)
-    common_edges = list(edges1.intersection(edges2))
-
-    # Base plot (common stuff in light gray to provide context)
-    nx.draw_networkx_nodes(g1, pos1, nodelist=stable_nodes, node_color='lightgray', node_size=10, ax=ax, alpha=0.5)
-    nx.draw_networkx_edges(g1, pos1, edgelist=common_edges, edge_color='lightgray', width=1, ax=ax, alpha=0.5)
-
-    # Draw missing nodes in 2 (i.e., only in 1) -> Red
-    nx.draw_networkx_nodes(g1, pos1, nodelist=missing_in_2, node_color='red', node_size=30, ax=ax, label='Node only in net1')
-    
-    # Draw missing nodes in 1 (i.e., only in 2) -> Blue
-    nx.draw_networkx_nodes(g2, pos2, nodelist=missing_in_1, node_color='blue', node_size=30, ax=ax, label='Node only in net2')
-
-    # Draw moved nodes 
-    # Draw them in Net 1 position (Orange) and Net 2 position (Purple) with an arrow between them
-    nx.draw_networkx_nodes(g1, pos1, nodelist=moved_nodes, node_color='orange', node_size=50, ax=ax, label='Moved node (Net1 pos)')
-    nx.draw_networkx_nodes(g2, pos2, nodelist=moved_nodes, node_color='purple', node_size=20, ax=ax, label='Moved node (Net2 pos)')
-    for n in moved_nodes:
-        ax.annotate("", xy=pos2[n], xycoords='data', xytext=pos1[n], textcoords='data',
-                    arrowprops=dict(arrowstyle="->", color="black", shrinkA=0, shrinkB=0, alpha=0.5))
-
-    # Draw missing edges in 2 (i.e., only in net 1) -> Red edges
-    # Be careful some nodes might not exist in pos2 if they are only in 1, so use pos1
-    nx.draw_networkx_edges(g1, pos1, edgelist=missing_edges_in_2, edge_color='red', width=2, ax=ax, label='Edge only in net1')
-    
-    # Draw missing edges in 1 (i.e., only in net 2) -> Blue edges
-    nx.draw_networkx_edges(g2, pos2, edgelist=missing_edges_in_1, edge_color='blue', width=2, ax=ax, label='Edge only in net2')
-
-    ax.set_aspect("equal", "box")
-    ax.set_title(title)
-    
-    # Legend
-    from matplotlib.lines import Line2D
-    legend_elements = [
-        Line2D([0], [0], marker='o', color='w', label='Node only in net1', markerfacecolor='red', markersize=10),
-        Line2D([0], [0], marker='o', color='w', label='Node only in net2', markerfacecolor='blue', markersize=10),
-        Line2D([0], [0], marker='o', color='w', label='Moved node (Net1 pos)', markerfacecolor='orange', markersize=10),
-        Line2D([0], [0], marker='o', color='w', label='Moved node (Net2 pos)', markerfacecolor='purple', markersize=10),
-        Line2D([0], [0], color='red', lw=2, label='Edge only in net1'),
-        Line2D([0], [0], color='blue', lw=2, label='Edge only in net2'),
-    ]
-    ax.legend(handles=legend_elements, loc='upper right')
-    
-    plt.tight_layout()
-    plt.show()
-
-def _plot_network_property(network, prop_name, ax, title, node_size=30):
-    import networkx as nx
-    from matplotlib import colormaps
-    graph = network.graph if hasattr(network, 'graph') else network
-    
-    position = nx.get_node_attributes(graph, 'position')
-    default_pos = {n: (0,0) for n in graph.nodes if n not in position}
-    position.update(default_pos)
-    
-    props = nx.get_node_attributes(graph, prop_name)
-    has_props_in_graph = len(props) > 0
-    
-    if not has_props_in_graph and hasattr(network, 'cell_manager'):
-        props = {}
-        for c in network.cell_manager:
-            props[c.node_id] = getattr(c, prop_name, -1)
-            
-    # Extract unique properties
-    prop_values = list(props.values())
-    unique_props = list(set(prop_values))
-    cmap = colormaps.get_cmap('tab20')
-    color_map = {val: cmap(i / len(unique_props)) if len(unique_props) > 0 else 'gray' for i, val in enumerate(unique_props)}
-    
-    node_colors = []
-    for node in graph.nodes():
-        val = props.get(node, None) # None for non-cell nodes
-        if val is not None:
-            node_colors.append(color_map[val])
-        else:
-            node_colors.append('lightgray') # Juncs or walls
-            
-    nx.draw(
-        graph,
-        position,
-        ax=ax,
-        node_color=node_colors,
-        node_size=node_size,
-        edge_color='black',
-        alpha=0.7
-    )
-    ax.set_aspect("equal", "box")
-    ax.set_title(title)
-
-
-def plot_networks_interC(net1, net2, title1="Network 1", title2="Network 2"):
-    """
-    Plots two networks side by side colored by cgroup.
-    """
-    import matplotlib.pyplot as plt
-    
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10))
-    _plot_network_property(net1, 'count_interC', ax=ax1, title=title1 + ' interC')
-    _plot_network_property(net2, 'count_interC', ax=ax2, title=title2 + ' interC')
-    plt.tight_layout()
-    plt.show()
-
-def plot_networks_cgroup(net1, net2, title1="Network 1", title2="Network 2"):
-    """
-    Plots two networks side by side colored by cgroup.
-    """
-    import matplotlib.pyplot as plt
-    
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10))
-    _plot_network_property(net1, 'cgroup', ax=ax1, title=title1 + ' (cgroup)')
-    _plot_network_property(net2, 'cgroup', ax=ax2, title=title2 + ' (cgroup)')
-    plt.tight_layout()
-    plt.show()
-
-
-def plot_networks_rank(net1, net2, title1="Network 1", title2="Network 2"):
-    """
-    Plots two networks side by side colored by rank.
-    """
-    import matplotlib.pyplot as plt
-    
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10))
-    _plot_network_property(net1, 'rank', ax=ax1, title=title1 + ' (rank)', node_size=10)
-    _plot_network_property(net2, 'rank', ax=ax2, title=title2 + ' (rank)', node_size=10)
-    plt.tight_layout()
-    plt.show()
-
-
-def plot_network_difference(net1, net2, title="Network Spatial Difference"):
-    """
-    Plots two networks overplotted in different colors to highlight spatial and topological differences.
-    Red nodes/edges belong to Net1, Blue to Net2. Overlap appears as a mix.
-    """
-    import matplotlib.pyplot as plt
-    import networkx as nx
-    
-    fig, ax = plt.subplots(figsize=(12, 12))
-    g1 = net1.graph if hasattr(net1, 'graph') else net1
-    g2 = net2.graph if hasattr(net2, 'graph') else net2
-    
-    pos1 = nx.get_node_attributes(g1, 'position')
-    pos2 = nx.get_node_attributes(g2, 'position')
-    
-    # Plot net1 elements in red (alpha=0.5)
-    nx.draw(g1, pos1, ax=ax, node_color='red', edge_color='red', node_size=15, width=2, alpha=0.5, label='Net1')
-    
-    # Plot net2 elements in blue (alpha=0.5)
-    nx.draw(g2, pos2, ax=ax, node_color='blue', edge_color='blue', node_size=10, width=1, alpha=0.5, label='Net2')
-    
-    ax.set_aspect("equal", "box")
-    ax.set_title(title)
-    
-    # Create custom legend
-    from matplotlib.lines import Line2D
-    legend_elements = [
-        Line2D([0], [0], marker='o', color='w', label='Net1', markerfacecolor='red', markersize=10),
-        Line2D([0], [0], marker='o', color='w', label='Net2', markerfacecolor='blue', markersize=10)
-    ]
-    ax.legend(handles=legend_elements, loc='upper right')
-    
-    plt.tight_layout()
-    plt.show()
-
-def plot_intercellular_spaces(net1, net2, title1="Net 1", title2="Net 2"):
-    """
-    Plots two networks side by side and highlights the intercellular spaces.
-    """
-    import matplotlib.pyplot as plt
-    import networkx as nx
-
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10), sharex=True, sharey=True)
-
-    def _plot_intercellular(network, ax, title):
-        graph = network.graph if hasattr(network, 'graph') else network
-        pos = nx.get_node_attributes(graph, 'position')
-        
-        # Draw everything in light gray
-        nx.draw_networkx_nodes(graph, pos, node_color='lightgray', node_size=10, ax=ax, alpha=0.5)
-        nx.draw_networkx_edges(graph, pos, edge_color='lightgray', width=1, ax=ax, alpha=0.5)
-        
-        # Highlight intercellular nodes
-        if hasattr(network, 'intercellular_cells'):
-            intercellular_nodes = [network.n_wall_junction + cid for cid in network.intercellular_cells]
-        else:
-            intercellular_nodes = []
-            
-        nx.draw_networkx_nodes(graph, pos, nodelist=intercellular_nodes, node_color='blue', node_size=50, ax=ax, label='Intercellular Space')
-        
-        ax.set_aspect("equal", "box")
-        ax.set_title(title)
-        
-        from matplotlib.lines import Line2D
-        legend_elements = [
-            Line2D([0], [0], marker='o', color='w', label='Intercellular Space', markerfacecolor='blue', markersize=10),
-        ]
-        if intercellular_nodes:
-            ax.legend(handles=legend_elements, loc='upper right')
-
-    _plot_intercellular(net1, ax1, title1)
-    _plot_intercellular(net2, ax2, title2)
-    
-    plt.tight_layout()
-    plt.show()
-
+    plot_water_potential_map(gdf, title=kwargs.get('title', "Water Potential Map"))

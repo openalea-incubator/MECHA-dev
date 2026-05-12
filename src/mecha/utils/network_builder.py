@@ -155,6 +155,9 @@ class NetworkBuilder(AbstractNetwork):
         # Cell manager — populated after build_network / populate_from_network
         self.cell_manager: Optional[HydraulicCellManager] = None
 
+        # GeoDataFrame of cell polygons (id_cell, type, geometry) — µm units
+        self._cells_gdf = None
+
 
     def _build_anatnetwork(self) -> None:
         """
@@ -203,6 +206,7 @@ class NetworkBuilder(AbstractNetwork):
         self._calculate_xylem_area()
         self._calculate_phloem_area()
         self._build_cell_manager()
+        self._cells_gdf = self.prep_geo()
     
     def populate_from_network(self, type_mapper: Dict[str, int] = None) -> None:
         """
@@ -515,7 +519,9 @@ class NetworkBuilder(AbstractNetwork):
 
         # Build cell connections for symplastic paths
         self._build_cell_connections_from_graph()
+        self._cells_gdf = self.prep_geo()
         self._build_cell_manager()
+        
         
         # Build new wall connections to junctions
         self.build_wall_connections()
@@ -536,6 +542,71 @@ class NetworkBuilder(AbstractNetwork):
         manager = HydraulicCellManager()
         manager.sync_from_network(self)
         self.cell_manager = manager
+
+    def prep_geo(self):
+        """Build a GeoDataFrame of cell polygons (id_cell, type, geometry) in µm.
+
+        For the XML path this delegates to :func:`mecha.utils.visu.prep_section`.
+        For the GRANAP path it adapts polygons from the source network cells
+        (scaling from mm to µm).  Returns ``None`` when no geometry is available.
+
+        Returns
+        -------
+        gpd.GeoDataFrame or None
+            Columns: ``id_cell`` (int), ``type`` (str), ``geometry`` (Shapely Polygon, µm).
+        """
+        import geopandas as gpd
+        from shapely.affinity import scale as shapely_scale
+
+        # ---- XML path ------------------------------------------------
+        if hasattr(self, 'cellset') and self.cellset:
+            from mecha.utils.visu import prep_section
+            return prep_section(self.cellset)
+
+        # ---- GRANAP path ---------------------------------------------
+        src = self._source_network
+        if src is None:
+            return None
+
+        # Try source _cells_gdf (adapt columns)
+        src_gdf = getattr(src, '_cells_gdf', None)
+        if src_gdf is not None and 'geometry' in src_gdf.columns:
+            gdf = src_gdf.copy()
+            # Rename id column if needed
+            if 'id_cell' not in gdf.columns:
+                for candidate in ('cell_id', 'id', 'index'):
+                    if candidate in gdf.columns:
+                        gdf = gdf.rename(columns={candidate: 'id_cell'})
+                        break
+                else:
+                    gdf['id_cell'] = range(len(gdf))
+            if 'type' not in gdf.columns:
+                gdf['type'] = ''
+            # Scale from mm to µm
+            gdf['geometry'] = gdf['geometry'].apply(
+                lambda g: shapely_scale(g, xfact=1000, yfact=1000, origin=(0, 0))
+                if g is not None else g
+            )
+            return gdf[['id_cell', 'type', 'geometry']].reset_index(drop=True)
+
+        # Try source network cells directly
+        if hasattr(src, 'all_cells') and hasattr(src.all_cells, 'cells'):
+            records = []
+            for idx, cell in enumerate(src.all_cells.cells):
+                poly = getattr(cell, 'polygon', None)
+                if poly is not None:
+                    poly_um = shapely_scale(poly, xfact=1000, yfact=1000, origin=(0, 0))
+                else:
+                    poly_um = None
+                records.append({
+                    'id_cell': idx,
+                    'type': getattr(cell, 'type', ''),
+                    'geometry': poly_um,
+                })
+            if any(r['geometry'] is not None for r in records):
+                return gpd.GeoDataFrame(records, crs=None)
+
+        return None
 
     # ------------------------------------------------------------------
     # Graph-only helper methods (used by populate_from_network)
