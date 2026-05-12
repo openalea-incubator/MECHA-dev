@@ -1,9 +1,4 @@
 
-
-# Meeting notes — April 2026
-
----
-
 ## Organ generation using GRANAP + coupling with MECHA
 
 Two construction pathways exist to build a hydraulic network in MECHA: the **XML path** (legacy) and the **GRANAP path** (new). Both converge on a `NetworkBuilder` that feeds into `Mecha`.
@@ -291,11 +286,11 @@ The velocity field `u` appears in osmotic potential gradient calculations (`osmo
 
 **Proposal:** Extend `HydraulicMatrixBuilder` / add a thin `AdvectionDiffusionSolver` wrapper that:
 
-1. Calls `Mecha.build_matrices()` to get `matrix_W` and `matrix_C`
-2. Solves `W · ψ = rhs` → water potential
-3. Computes edge fluxes `q_ij = K_ij * (ψ_i - ψ_j)` → velocity field
-4. Assembles advection contribution into `matrix_C` (upwind scheme)
-5. Solves `C · c = rhs_C` → solute concentration
+1. [x] Calls `Mecha.build_matrices()` to get `matrix_W` and `matrix_C`
+2. [x] Solves `W · ψ = rhs` → water potential
+3. [x] Computes edge fluxes `q_ij = K_ij * (ψ_i - ψ_j)` → velocity field
+4. [ ] Assembles advection contribution into `matrix_C` (upwind scheme)
+5. [ ] Solves `C · c = rhs_C` → solute concentration
 
 The main open question is whether the coupling is **one-way** (ψ → c) or **iterative** (ψ ↔ c via osmotic feedback, `c_flag` loop).
 
