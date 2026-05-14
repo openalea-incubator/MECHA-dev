@@ -154,7 +154,7 @@ class Mecha:
         self._initialize_tropism_arrays(n_maturity, n_scenarios) # hydrotropism, hydropatterning
         self._initialize_osmotic_arrays(n_maturity, n_scenarios)# os, s, elong
 
-        self._initialize_stf_arrays(r_discret, n_maturity)
+        self._initialize_stf_arrays(r_discret, n_maturity, n_scenarios)
         self._initialize_layer_arrays(r_discret, n_maturity, n_scenarios)
         self._initialize_pressure_arrays(r_discret, n_maturity, n_scenarios)
         self.edge_flux_list = [[[] for _ in range(n_scenarios)] for _ in range(n_maturity)]
@@ -246,13 +246,13 @@ class Mecha:
         self.flow_sieve_layer = np.zeros((r_discret, n_maturity, n_scenarios))
         self.flow_elong_layer = np.zeros((r_discret, n_maturity, n_scenarios))
 
-    def _initialize_stf_arrays(self, r_discret: int, n_maturity: int) -> None:
+    def _initialize_stf_arrays(self, r_discret: int, n_maturity: int, n_scenarios: int) -> None:
         """Initialize STF (Specific Tissue Function) arrays."""
-        self.stf_mb = np.zeros((self.network.n_membrane, n_maturity))
-        self.stf_cell_plus = np.zeros((len(self.network.cell_manager), n_maturity))
-        self.stf_cell_minus = np.zeros((len(self.network.cell_manager), n_maturity))
-        self.stf_layer_plus = np.zeros((r_discret, n_maturity))
-        self.stf_layer_minus = np.zeros((r_discret, n_maturity))
+        self.stf_mb = np.zeros((self.network.n_membrane, n_maturity, n_scenarios))
+        self.stf_cell_plus = np.zeros((len(self.network.cell_manager), n_maturity, n_scenarios))
+        self.stf_cell_minus = np.zeros((len(self.network.cell_manager), n_maturity, n_scenarios))
+        self.stf_layer_plus = np.zeros((r_discret, n_maturity, n_scenarios))
+        self.stf_layer_minus = np.zeros((r_discret, n_maturity, n_scenarios))
 
     def _initialize_pressure_arrays(self, r_discret: int, n_maturity: int, n_scenarios: int) -> None:
         """Initialize pressure and osmotic arrays."""
@@ -637,7 +637,7 @@ class Mecha:
         elong_cell = self.elong_cell[i_maturity][i_scenario]
         elong_side = self.elong_cell_side_diff[i_maturity][i_scenario]
         thickness = self.geometry.thickness
-        x_rel = self.geo_props['x_rel']
+        _, x_rel = self.network.get_relative_positions()
         
         barrier = int(self.geometry.maturity_stages[i_maturity].get("barrier"))
 
@@ -667,12 +667,6 @@ class Mecha:
         rhs_x = np.zeros((n_nodes, 1))
         rhs_p = np.zeros((n_nodes, 1))
         rhs_o = np.zeros((n_nodes, 1))
-        
-        # Osmotic potentials and reflection coefficients
-        os_membranes = np.zeros((self.network.n_membrane, 2))
-        s_membranes = np.zeros((self.network.n_membrane, 1))
-        os_walls = np.zeros((self.network.n_walls, 1))
-        os_cells = np.zeros((len(self.network.cell_manager), 1))
         
         # Scenario parameters
         s_hetero = int(self.boundary.scenarios[i_scenario].get("s_hetero"))
@@ -711,22 +705,35 @@ class Mecha:
             vals = {k: base for k in ['epi', 'exo', 'endo', 'peri', 'stele'] + [f'c{i}' for i in range(1,9)]}
             vals['comp'] = (os_sieve + os_cortex)/2
         elif os_hetero == 1:
-             vals = {'epi': -5000, 'exo': -5700, 'endo': -6200, 'peri': -5000, 'stele': -7400}
-             vals.update({f'c{i}': v for i, v in enumerate([-6400, -7100, -7800, -8500, -9000, -9300, -9000, -8500], 1)})
-             vals['comp'] = (os_sieve - 7400)/2
+            vals = {'epi': -5000, 'exo': -5700, 'endo': -6200, 'peri': -5000, 'stele': -7400}
+            vals.update({f'c{i}': v for i, v in enumerate([-6400, -7100, -7800, -8500, -9000, -9300, -9000, -8500], 1)})
+            vals['comp'] = (os_sieve - 7400)/2
         elif os_hetero == 2:
-             vals = {'epi': -11200, 'exo': -11500, 'endo': -10500, 'peri': -9200, 'stele': -12100}
-             vals.update({f'c{i}': v for i, v in enumerate([-11800, -12100, -12400, -12700, -12850, -12950, -12850, -12700], 1)})
-             vals['comp'] = (os_sieve - 12100)/2
+            vals = {'epi': -11200, 'exo': -11500, 'endo': -10500, 'peri': -9200, 'stele': -12100}
+            vals.update({f'c{i}': v for i, v in enumerate([-11800, -12100, -12400, -12700, -12850, -12950, -12850, -12700], 1)})
+            vals['comp'] = (os_sieve - 12100)/2
         elif os_hetero == 3:
-             base = os_cortex
-             vals = {k: base for k in ['epi', 'exo'] + [f'c{i}' for i in range(1,9)]}
-             vals.update({'endo': (base - 5000.0)/2.0, 'peri': -5000.0, 'stele': -5000.0})
-             vals['comp'] = (os_sieve - 5000.0)/2
-             
+            base = os_cortex
+            vals = {k: base for k in ['epi', 'exo'] + [f'c{i}' for i in range(1,9)]}
+            vals.update({'endo': (base - 5000.0)/2.0, 'peri': -5000.0, 'stele': -5000.0})
+            vals['comp'] = (os_sieve - 5000.0)/2
+        # Ensure all values are numeric (no NaNs)
+        vals = {k: (float(v) if not np.isnan(v) else 0.0) for k, v in vals.items()}
+        s_vals = {k: (float(v) if not np.isnan(v) else 0.0) for k, v in s_vals.items()}
+
+        # print unique values
+        print(f"--- Debug Scen {i_scenario} Mat {i_maturity} ---")
+        print(f"os_cortex: {os_cortex}, os_sieve: {os_sieve}, s_factor: {s_factor}")
+        print(f"Unique osmotic values: {set(vals.values())}")
+        print(f"Unique sigma values: {set(s_vals.values())}")    
+        
+        if any(np.isnan(list(vals.values()))):
+            print(f"WARNING: NaNs found in osmotic vals dictionary!")
+        if any(np.isnan(list(s_vals.values()))):
+            print(f"WARNING: NaNs found in sigma s_vals dictionary!")
+
         # Extract props
-        x_rel = self.geo_props['x_rel']
-        r_rel = self.geo_props['r_rel']
+        r_rel, x_rel = self.network.get_relative_positions()
         L_diff = self.geo_props['L_diff']
         passage_cell_ids = np.array(self.geometry.passage_cell_ids)
         
@@ -849,15 +856,21 @@ class Mecha:
                                 sig = 0.0
                                 wall_os = os_xyl_local
                         
-                        os_membranes[jmb][0] = wall_os
-                        os_membranes[jmb][1] = cell_os
-                        s_membranes[jmb] = sig
-                        os_walls[i] = wall_os
-                        os_cells[int(j - self.network.n_wall_junction)] = cell_os
+                        wall_obj = self.network.cell_manager.get_wall_by_node_id(i)
+                        cell_obj = self.network.cell_manager.get_by_node_id(j)
+                        mb = self.network.cell_manager.get_membrane_by_edge(i, j)
+
+                        if wall_obj is not None:
+                            wall_obj.psi_os = wall_os
+                        if cell_obj is not None:
+                            cell_obj.psi_os = cell_os
+                        if mb is not None:
+                            mb.sigma = sig
                         
                         K = Kmb[jmb][0]
-                        rhs_o[i] += K * sig * (wall_os - cell_os)
-                        rhs_o[j] += K * sig * (cell_os - wall_os)
+                        if wall_obj is not None and cell_obj is not None and mb is not None:
+                            rhs_o[i] += K * mb.sigma * (wall_obj.psi_os - cell_obj.psi_os)
+                            rhs_o[j] += K * mb.sigma * (cell_obj.psi_os - wall_obj.psi_os)
                         
                         jmb += 1
 
@@ -887,6 +900,13 @@ class Mecha:
             for i, cid in enumerate(target_sieve):
                  rhs_p[cid][0] = self.distributed_flow_sieve[1][i+1][i_scenario]
 
+        # Final NaN check for return vectors
+        for name, vec in [("rhs", rhs), ("rhs_x", rhs_x), ("rhs_p", rhs_p), ("rhs_o", rhs_o)]:
+            if np.any(np.isnan(vec)):
+                print(f"CRITICAL: NaNs detected in {name} vector!")
+            else:
+                print(f"No NaNs detected in {name} vector!")
+                
         return rhs, rhs_x, rhs_p, rhs_o
 
     def water_flux(self, h: int=0) -> tuple: 
@@ -895,45 +915,68 @@ class Mecha:
         for i_maturity in range(self.geometry.n_maturity):
             solution, _, matrix_W, Kmb, rhs_s = self.solve_W(h = h, i_maturity = i_maturity)
             # Calculate standard transmembrane fractions
-            self.standard_transmembrane_fractions(solution, i_maturity, Kmb)
+            self.standard_transmembrane_fractions(solution, i_maturity, 0, Kmb)
 
             barrier = int(self.geometry.maturity_stages[i_maturity].get("barrier"))
             height_val = float(self.geometry.maturity_stages[i_maturity].get("height"))
             
-            x_rel = self.geo_props['x_rel']
+            _, x_rel = self.network.get_relative_positions()
 
             for i_scenario in range(1,self.boundary.n_scenarios):
                 rhs, rhs_x, rhs_p, rhs_o = self.initialize_scenarios(i_scenario, i_maturity, Kmb) # set and reset matrices for each scenario
                  
                 # Elongation BC
-                rhs_e = np.zeros_like(rhs)
                 if barrier==0:
                     rhs_e = self.elongation_BC(i_scenario, i_maturity)
+                    rhs += rhs_e
                     
                 # Adding up all BCs
-                rhs += rhs_e
+                print(f"Adding rhs_o for scenario {i_scenario}!")
                 rhs += rhs_o
+
+                # Critical check for NaNs in rhs before soil BC
+                if np.any(np.isnan(rhs)):
+                    print(f"CRITICAL: NaNs detected in rhs for scenario {i_scenario}!")
+                else:
+                    print(f"No NaNs detected in rhs for scenario {i_scenario}!")
                 
                 # Soil BC
-                # boundary.scenarios[count]['psi_soil_left']*(1-x_rel)+boundary.scenarios[count]['psi_soil_right']*x_rel
-                psi_soil_left = self.boundary.scenarios[i_scenario].get('psi_soil_left', 0.0)
+                # x_rel is NaN for non-border nodes (no membrane neighbours),
+                # but rhs_s is 0 there.  numpy evaluates 0*NaN=NaN, so we
+                # must sanitise x_rel before the element-wise multiply.
+                psi_soil_left  = self.boundary.scenarios[i_scenario].get('psi_soil_left', 0.0)
                 psi_soil_right = self.boundary.scenarios[i_scenario].get('psi_soil_right', 0.0)
-                
-                psi_soil_profile = psi_soil_left * (1 - x_rel) + psi_soil_right * x_rel
-                
+                x_rel_safe = np.nan_to_num(x_rel, nan=0.5)   # value irrelevant where rhs_s==0
+                psi_soil_profile = psi_soil_left * (1 - x_rel_safe) + psi_soil_right * x_rel_safe
+                print(f"[soil BC] scen={i_scenario}: psi_soil_left={psi_soil_left}, psi_soil_right={psi_soil_right}, "
+                      f"profile_range=[{np.nanmin(psi_soil_profile):.1f}, {np.nanmax(psi_soil_profile):.1f}]")
                 rhs += np.multiply(rhs_s, psi_soil_profile)
+
+                # Critical check for NaNs in rhs after soil BC
+                if np.any(np.isnan(rhs)):
+                    print(f"CRITICAL: NaNs detected in rhs for scenario {i_scenario}!")
+                else:
+                    print(f"No NaNs detected in rhs for scenario {i_scenario}!")
 
                 # Xylem BC
                 psi_xyl_val = self.psi_xyl[1][i_maturity][i_scenario]
                 flow_xyl_val = self.distributed_flow_xyl[1][0][i_scenario]
 
                 if barrier > 0:
-                     if not np.isnan(psi_xyl_val): # Pressure BC
-                         for cid in [c.node_id for c in self.network.cell_manager.xylem]:
-                             matrix_W[cid, cid] -= self.hydraulic.k_xyl
-                         rhs += rhs_x * psi_xyl_val
-                     elif not np.isnan(flow_xyl_val): # Flow BC
-                         rhs += rhs_x
+                    if not np.isnan(psi_xyl_val): # Pressure BC
+                        for cid in [c.node_id for c in self.network.cell_manager.xylem]:
+                            matrix_W[cid, cid] -= self.hydraulic.k_xyl
+                        rhs += rhs_x * psi_xyl_val
+                        print(f"Adding xylem BC for scenario {i_scenario}!")
+                    elif not np.isnan(flow_xyl_val): # Flow BC
+                        rhs += rhs_x
+                        print(f"Adding xylem BC for scenario {i_scenario}!")
+
+                # Critical check for NaNs in rhs after xylem BC
+                if np.any(np.isnan(rhs)):
+                    print(f"CRITICAL: NaNs detected in rhs for scenario {i_scenario}!")
+                else:
+                    print(f"No NaNs detected in rhs for scenario {i_scenario}!")
 
                 # Phloem BC
                 psi_sieve_val = self.psi_sieve[1][i_maturity][i_scenario]
@@ -951,8 +994,16 @@ class Mecha:
                          for cid in [c.node_id for c in self.network.cell_manager.sieve]:
                              matrix_W[cid, cid] -= self.hydraulic.k_sieve
                          rhs += rhs_p * psi_sieve_val
+                         print(f"Adding phloem BC for scenario {i_scenario}!")
                     elif not np.isnan(flow_sieve_val):
                          rhs += rhs_p
+                         print(f"Adding phloem BC for scenario {i_scenario}!")
+
+                # Critical check for NaNs in rhs after phloem BC
+                if np.any(np.isnan(rhs)):
+                    print(f"CRITICAL: NaNs detected in rhs for scenario {i_scenario}!")
+                else:
+                    print(f"No NaNs detected in rhs for scenario {i_scenario}!")
                 
                 # Solve Doussan equation, results in soln matrix 
                 solution, _ = self.solve(matrix=matrix_W, rhs=rhs, sparse_matrix=self.general.sparse_matrix)
@@ -966,7 +1017,10 @@ class Mecha:
                 self._calculate_interface_flows(i_maturity, solution, rhs, rhs_s, i_scenario)
 
                 # Calcul of fluxes between nodes and creation of the edge_flux_list
-                self._calculate_edge_fluxes(i_maturity, i_scenario, matrix_W, solution)
+                self.compute_edge_flows(solution, i_maturity, i_scenario)
+                
+                # Calculate standard transmembrane fractions for the scenario
+                self.standard_transmembrane_fractions(solution, i_maturity, i_scenario, Kmb)
     
         return solution, matrix_W
 
@@ -1016,42 +1070,30 @@ class Mecha:
         self.compute_edge_flows(solution, i_maturity=i_maturity)
         return solution, verification_1, matrix_W, Kmb, rhs_s
 
-    def compute_edge_flows(self, solution: np.ndarray, i_maturity: int = 0) -> None:
+    def compute_edge_flows(self, solution: np.ndarray, i_maturity: int = 0, i_scenario: Union[int, str] = 0) -> None:
         """Compute and store flow Q, cross-section area A, and velocity v on every graph edge.
 
         Reads the conductance ``K`` written by ``HydraulicMatrixBuilder`` onto
         each graph edge attribute during ``build_matrices()``, then computes:
 
         * ``Q``  (cm³ d⁻¹) — signed flow, positive from node *u* to node *v*.
-        * ``A``  (cm²)     — cross-section area of the edge, path-dependent:
-
-          - *wall*          : ``((lateral_distance + height) × thickness − thickness²) × 1 × 10⁻⁸``
-          - *membrane*      : ``(height + dist) × length × 1 × 10⁻⁸``
-          - *plasmodesmata* : ``temp_factor × pd_section / thickness × 1 × 10⁻⁴``
-            (same as the diffusive area used in :class:`HydraulicMatrixBuilder`)
-
-        * ``velocity`` (cm d⁻¹) — ``Q / A``, set to ``NaN`` when ``A ≤ 0``.
+        * ``A``  (cm²)     — cross-section area of the edge, path-dependent.
+        * ``velocity`` (cm d⁻¹) — ``Q / A``.
 
         Also computes per-node quantities and stores them on graph nodes:
+        * ``psi``, ``psi_p``, ``psi_os``, ``psi_total`` (hPa).
+        * ``Q_in``, ``Q_out`` (cm³ d⁻¹).
 
-        * ``psi``   (hPa)   — water potential from the solution vector.
-        * ``Q_in``  (cm³ d⁻¹) — total flow entering  the node (sum of positive flows).
-        * ``Q_out`` (cm³ d⁻¹) — total flow leaving   the node (sum of negative flows, absolute value).
-
-        All values are also back-propagated onto the
-        :class:`~mecha.utils.hydraulic_cell.HydraulicMembrane`,
-        :class:`~mecha.utils.hydraulic_cell.HydraulicPlasmodesmata`, and
-        :class:`~mecha.utils.hydraulic_cell.HydraulicWall` objects stored in
-        ``network.cell_manager``.
-
-        Parameters
-        ----------
-        solution : np.ndarray, shape (n_nodes, 1) or (n_nodes,)
-            Node water-potential vector returned by :meth:`solve_W`.
-        i_maturity : int, optional
-            Maturity stage index, used to retrieve the correct height (µm).
+        Values are also stored in ``self.edge_flux_list[i_maturity][i_scenario]``
+        and back-propagated onto the HydraulicCell/Wall objects.
         """
         sol = np.asarray(solution).ravel()
+        # Guard: replace NaN solution values with 0.0 to prevent propagation into Q
+        if np.any(np.isnan(sol)):
+            n_nan = int(np.sum(np.isnan(sol)))
+            print(f"[compute_edge_flows] WARNING: {n_nan} NaN(s) in solution "
+                  f"(mat={i_maturity}, scen={i_scenario}) — replacing with 0.0.")
+            sol = np.nan_to_num(sol, nan=0.0)
         graph = self.network.graph
         cm = self.network.cell_manager
 
@@ -1070,10 +1112,35 @@ class Mecha:
             K = eattr.get('K')
             if K is None:
                 continue
-            psi_u = float(sol[self.indice[u]])
-            psi_v = float(sol[self.indice[v]])
-            Q = K * (psi_u - psi_v)   # positive → flow from u to v
+            p_u = float(sol[self.indice[u]])
+            p_v = float(sol[self.indice[v]])
+            
+            path = eattr.get('path', '')
+            sigma = 1.0
+            os_u = 0.0
+            os_v = 0.0
+            
+            obj_u = cm.get_by_node_id(u) or cm.get_wall_by_node_id(u)
+            obj_v = cm.get_by_node_id(v) or cm.get_wall_by_node_id(v)
+            if obj_u is not None and obj_u.psi_os is not None:
+                os_u = float(obj_u.psi_os) if not np.isnan(obj_u.psi_os) else 0.0
+            if obj_v is not None and obj_v.psi_os is not None:
+                os_v = float(obj_v.psi_os) if not np.isnan(obj_v.psi_os) else 0.0
+
+            if path == 'membrane':
+                mb = cm.get_membrane_by_edge(u, v)
+                if mb is not None and mb.sigma is not None:
+                    sigma = mb.sigma
+            elif path == 'plasmodesmata':
+                pd = cm.get_plasmodesmata_by_edge(u, v)
+                if pd is not None and pd.sigma is not None:
+                    sigma = pd.sigma
+            else:
+                sigma = 0.0 # for walls/junctions, no reflection
+                
+            Q = K * ((p_u - p_v) - sigma * (os_u - os_v))
             eattr['Q'] = Q
+            eattr['sigma'] = sigma
 
             path = eattr.get('path', '')
 
@@ -1117,10 +1184,11 @@ class Mecha:
             # ----------------------------------------------------------------
             if path == 'wall':
                 wall_obj = cm.get_wall_by_node_id(u) or cm.get_wall_by_node_id(v)
-                if wall_obj is not None and wall_obj.kw is None:
-                    wall_obj.kw = K
-                    wall_obj.Q  = Q
-                    wall_obj.A  = A
+                if wall_obj is not None:
+                    if wall_obj.kw is None:  # K is set once by build_matrices
+                        wall_obj.kw = K
+                    wall_obj.Q = Q           # always update Q per scenario
+                    wall_obj.A = A
                     wall_obj.velocity = vel
 
             elif path == 'membrane':
@@ -1146,23 +1214,151 @@ class Mecha:
         # Store per-node quantities on graph nodes and in cell_manager
         # --------------------------------------------------------------------
         for node_id in graph.nodes():
-            graph.nodes[node_id]['psi']   = float(sol[self.indice[node_id]])
-            graph.nodes[node_id]['Q_in']  = Q_in[node_id]
-            graph.nodes[node_id]['Q_out'] = Q_out[node_id]
+            sol_val = float(sol[self.indice[node_id]])
+            obj = cm.get_by_node_id(node_id) or cm.get_wall_by_node_id(node_id)
+            os_val = obj.psi_os if obj is not None and obj.psi_os is not None else 0.0
+            
+            graph.nodes[node_id]['psi']       = sol_val
+            graph.nodes[node_id]['psi_p']     = sol_val
+            graph.nodes[node_id]['psi_os']    = os_val
+            graph.nodes[node_id]['psi_total'] = sol_val + os_val
+            graph.nodes[node_id]['Q_in']      = Q_in[node_id]
+            graph.nodes[node_id]['Q_out']     = Q_out[node_id]
 
             # Back-propagate onto HydraulicCell or HydraulicWall objects
             cell_obj = cm.get_by_node_id(node_id)
             if cell_obj is not None:
-                cell_obj.psi   = float(sol[self.indice[node_id]])
+                cell_obj.psi_p = sol_val
+                cell_obj.psi_os = os_val
+                cell_obj.psi   = sol_val + os_val
                 cell_obj.Q_in  = Q_in[node_id]
                 cell_obj.Q_out = Q_out[node_id]
             
             wall_obj = cm.get_wall_by_node_id(node_id)
             if wall_obj is not None:
+                wall_obj.psi_p = sol_val
+                wall_obj.psi_os = os_val
+                wall_obj.psi   = sol_val + os_val
                 wall_obj.Q_in  = Q_in[node_id]
                 wall_obj.Q_out = Q_out[node_id]
 
-    
+        # --------------------------------------------------------------------
+        # Store in edge_flux_list for results extraction
+        # --------------------------------------------------------------------
+        flux_records = []
+        for u, v, eattr in graph.edges(data=True):
+            if 'Q' in eattr:
+                flux_records.append({'source': u, 'target': v, 'flux': eattr['Q']})
+
+        if isinstance(i_scenario, int) and 0 <= i_scenario < len(self.edge_flux_list[i_maturity]):
+            self.edge_flux_list[i_maturity][i_scenario] = flux_records
+
+        # --------------------------------------------------------------------
+        # Save a full state snapshot so the exporter can restore it without
+        # re-running initialize_scenarios + compute_edge_flows.
+        # --------------------------------------------------------------------
+        snapshot = {
+            'node_attrs': {
+                nid: {
+                    'psi':       graph.nodes[nid].get('psi'),
+                    'psi_p':     graph.nodes[nid].get('psi_p'),
+                    'psi_os':    graph.nodes[nid].get('psi_os'),
+                    'psi_total': graph.nodes[nid].get('psi_total'),
+                    'Q_in':      graph.nodes[nid].get('Q_in'),
+                    'Q_out':     graph.nodes[nid].get('Q_out'),
+                }
+                for nid in graph.nodes()
+            },
+            'edge_attrs': {
+                (u, v): {
+                    'Q':        eattr.get('Q'),
+                    'sigma':    eattr.get('sigma'),
+                    'A':        eattr.get('A'),
+                    'velocity': eattr.get('velocity'),
+                }
+                for u, v, eattr in graph.edges(data=True)
+                if 'Q' in eattr
+            },
+            'wall_Q': {wall.node_id: wall.Q for wall in cm.walls},
+            'membrane_Q': {
+                (mb.wall.node_id, mb.cell.node_id): mb.Q for mb in cm.membranes
+            },
+        }
+
+        # Store snapshot and edge_fluxes in the matching results entry
+        for res in self.results:
+            if res.get('maturity stage') == i_maturity:
+                s = res.get('scenario')
+                match = (s == i_scenario) or \
+                        (i_scenario == 0 and s == 'standard water flow') or \
+                        (s == 0 and i_scenario == 'standard water flow')
+                if match:
+                    res['state_snapshot'] = snapshot
+                    res['edge_fluxes'] = flux_records
+                    break
+
+    def restore_scenario_state(self, i_maturity: int, i_scenario: Union[int, str] = 0) -> bool:
+        """Restore graph node/edge attributes from a saved state snapshot.
+
+        After ``compute_edge_flows`` runs for a scenario it saves a lightweight
+        snapshot inside the matching ``self.results`` entry.  Calling this
+        method re-applies that snapshot to the live graph so that export or
+        plotting functions always see the correct per-scenario potentials and
+        fluxes without having to re-solve the system.
+
+        Parameters
+        ----------
+        i_maturity : int
+            Maturity stage index.
+        i_scenario : int or str
+            Scenario key (int index, or ``'standard water flow'`` for scenario 0).
+
+        Returns
+        -------
+        bool
+            ``True`` if a snapshot was found and restored, ``False`` otherwise.
+        """
+        for res in self.results:
+            if res.get('maturity stage') != i_maturity:
+                continue
+            s = res.get('scenario')
+            match = (s == i_scenario) or \
+                    (i_scenario == 0 and s == 'standard water flow') or \
+                    (s == 0 and i_scenario == 'standard water flow')
+            if not match:
+                continue
+            snap = res.get('state_snapshot')
+            if snap is None:
+                return False
+
+            graph = self.network.graph
+            cm = self.network.cell_manager
+
+            # Restore graph node attributes
+            for nid, attrs in snap['node_attrs'].items():
+                graph.nodes[nid].update({k: v for k, v in attrs.items() if v is not None})
+
+            # Restore graph edge attributes
+            for (u, v), attrs in snap['edge_attrs'].items():
+                eattr = graph.edges.get((u, v), graph.edges.get((v, u)))
+                if eattr is not None:
+                    eattr.update({k: val for k, val in attrs.items() if val is not None})
+
+            # Restore HydraulicWall Q values
+            for wall in cm.walls:
+                q = snap['wall_Q'].get(wall.node_id)
+                if q is not None:
+                    wall.Q = q
+
+            # Restore HydraulicMembrane Q values
+            for mb in cm.membranes:
+                q = snap['membrane_Q'].get((mb.wall.node_id, mb.cell.node_id))
+                if q is not None:
+                    mb.Q = q
+
+            return True
+        return False
+
     def remove_xyl_phloem_BC(self, matrix_W, i_maturity: int, i_scenario: int = 0):
 
         barrier = int(self.geometry.maturity_stages[i_maturity].get("barrier"))
@@ -1232,6 +1428,8 @@ class Mecha:
 
         return q_soil, q_xyl, q_sieve
 
+
+    # To be removed if new edge flux calculator is working
     def _calculate_edge_fluxes(self, i_maturity: int, i_scenario: int, matrix_W: np.ndarray, solution: np.ndarray) -> None:
         """Calculate fluxes between nodes and store in edge_flux_list."""
         
@@ -1296,7 +1494,7 @@ class Mecha:
                 self.psi_sieve[1][i_maturity][0]+=solution[cid][0]/len(self.network.cell_manager.protosieve) #Average of protophloem water pressures
 
     #Calculation of standard transmembrane fractions
-    def standard_transmembrane_fractions(self, solution, i_maturity, Kmb):
+    def standard_transmembrane_fractions(self, solution, i_maturity, i_scenario, Kmb):
         """
         Calculates the standard transmembrane fractions for a given maturity stage.
 
@@ -1342,21 +1540,26 @@ class Mecha:
                             if any(passage_cell_ids==np.array(j-self.network.n_wall_junction)) and barrier==2:
                                 row += 1
                                 
-                        flow = K * (psi - psi_neigh) #Note that this is only valid because we are in the scenario 0 with no osmotic potentials
+                        mb = self.network.cell_manager.get_membrane_by_edge(node, neighboor)
+                        wall_obj = self.network.cell_manager.get_wall_by_node_id(node)
+                        cell_obj = self.network.cell_manager.get_by_node_id(neighboor)
+                        sigma = mb.sigma if mb is not None and mb.sigma is not None else 1.0
+                        os_wall = wall_obj.psi_os if wall_obj is not None and wall_obj.psi_os is not None else 0.0
+                        os_cell = cell_obj.psi_os if cell_obj is not None and cell_obj.psi_os is not None else 0.0
+                        
+                        flow = K * ((psi - psi_neigh) - sigma * (os_wall - os_cell))
                         if ((j-self.network.n_wall_junction not in self.geometry.intercellular_ids) and (j not in [c.node_id for c in self.network.cell_manager.xylem])) or barrier==0: #Not part of STF if crosses an intercellular space "membrane" or mature xylem "membrane" (that is no membrane though still labelled like one)
                             if flow > 0 :
-                                self.uptake_layer_plus[row][i_maturity][0] += flow #grouping membrane flow rates in cell layers
+                                self.uptake_layer_plus[row][i_maturity][i_scenario] += flow #grouping membrane flow rates in cell layers
                             else:
-                                self.uptake_layer_minus[row][i_maturity][0] += flow
-                            if flow/self.total_flow[i_maturity][0] > 0 :
-                                self.stf_layer_plus[row][i_maturity] += flow/self.total_flow[i_maturity][0] #Cell standard transmembrane fraction (positive)
-                                self.stf_cell_plus[j-self.network.n_wall_junction][i_maturity] += flow/self.total_flow[i_maturity][0] #Cell standard transmembrane fraction (positive)
-                                #STFmb[jmb-1][iMaturity] = Flow/Q_tot[iMaturity][0]
+                                self.uptake_layer_minus[row][i_maturity][i_scenario] += flow
+                            if flow/self.total_flow[i_maturity][i_scenario] > 0 :
+                                self.stf_layer_plus[row][i_maturity][i_scenario] += flow/self.total_flow[i_maturity][i_scenario] #Cell standard transmembrane fraction (positive)
+                                self.stf_cell_plus[j-self.network.n_wall_junction][i_maturity][i_scenario] += flow/self.total_flow[i_maturity][i_scenario] #Cell standard transmembrane fraction (positive)
                             else:
-                                self.stf_layer_minus[row][i_maturity] += flow/self.total_flow[i_maturity][0] #Cell standard transmembrane fraction (negative)
-                                self.stf_cell_minus[j-self.network.n_wall_junction][i_maturity] += flow/self.total_flow[i_maturity][0] #Cell standard transmembrane fraction (negative)
-                                #STFmb[jmb-1][iMaturity] = Flow/Q_tot[iMaturity][0]
-                            self.stf_mb[jmb-1][i_maturity] = flow/self.total_flow[i_maturity][0]
+                                self.stf_layer_minus[row][i_maturity][i_scenario] += flow/self.total_flow[i_maturity][i_scenario] #Cell standard transmembrane fraction (negative)
+                                self.stf_cell_minus[j-self.network.n_wall_junction][i_maturity][i_scenario] += flow/self.total_flow[i_maturity][i_scenario] #Cell standard transmembrane fraction (negative)
+                            self.stf_mb[jmb-1][i_maturity][i_scenario] = flow/self.total_flow[i_maturity][i_scenario]
 
     
 

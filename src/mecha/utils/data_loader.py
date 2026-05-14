@@ -21,7 +21,7 @@ import os
 import xml.etree.ElementTree as ET
 from lxml import etree 
 import numpy as np
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional, Tuple, Union
 from dataclasses import dataclass, field
 
 @dataclass
@@ -212,7 +212,7 @@ class BoundaryData:
             'flow_sieve_prox': np.nan,
             'flow_sieve_dist': np.nan,
             'delta_p_sieve': np.nan,
-            'osmotic_sieve': np.nan,
+            'osmotic_sieve': 0.0,
             's_hetero': 0,
             's_factor': 1.0,
             'os_hetero': 0,
@@ -226,6 +226,29 @@ class BoundaryData:
         """Add a scenario to the list of scenarios."""
         self.scenarios.append(scenario)
         self.n_scenarios = len(self.scenarios)
+
+    def set_os_hetero_scenarios(self, os_hetero_values: List[int]):
+        """
+        Quickly set new scenarios that change the osmotic potential (Os_hetero).
+        Keeps the first scenario as a base and adds new scenarios for each value in os_hetero_values.
+        
+        Parameters
+        ----------
+        os_hetero_values : List[int]
+            List of Os_hetero values to create scenarios for.
+        """
+        if not self.scenarios:
+            self._set_default_scenario()
+            
+        base_scenario = self.scenarios[0].copy()
+        self.scenarios = []
+        self._set_default_scenario()
+        for val in os_hetero_values:
+            new_scenario = base_scenario.copy()
+            new_scenario['os_hetero'] = val
+            new_scenario['osmotic_xyl'] = -1.5E3
+            new_scenario['osmotic_sieve'] = -8.0E3
+            self.add_scenario(new_scenario)
 
     def get_reflection_coefficients(self):
 

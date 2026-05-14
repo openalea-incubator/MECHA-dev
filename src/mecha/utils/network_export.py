@@ -41,7 +41,7 @@ _PATH_LABELS = {
     'membrane':      'Transcellular (cell membrane)',
     'plasmodesmata': 'Symplastic (plasmodesmata)',
 }
-_CONTINUOUS_PROPS = ['psi', 'length', 'wall_thickness', 'Q_in', 'Q_out', 'Q', 'A', 'velocity'] 
+_CONTINUOUS_PROPS = ['psi', 'psi_p', 'psi_os', 'psi_total', 'length', 'wall_thickness', 'Q_in', 'Q_out', 'Q', 'A', 'velocity'] 
 
 def export_to_graphml(obj: Any, filepath: str) -> None:
     """
@@ -958,3 +958,104 @@ def _gather_edge_data(graph):
         data[path]['Q'].append(Q if Q is not None else 0.0)
         data[path]['xy_mid'].append(mid)
     return data
+
+
+def plot_osmotic_radial_profile(obj, **kwargs):
+    """Plot average Psi_p, Psi_os, and Psi_total vs radial distance (rank).
+
+    Parameters
+    ----------
+    obj : Mecha
+        A solved Mecha instance.
+    maturity_idx : int, optional
+        Maturity stage index (default 0).
+    scenario_idx : int or str, optional
+        Scenario key to display.  When provided, the function restores that
+        scenario's saved state so the graph reflects the correct potentials.
+        Defaults to ``'current'`` (whatever is currently on the graph).
+    """
+    if hasattr(obj, 'network'):
+        graph = obj.network.graph
+        cm = obj.network.cell_manager
+    else:
+        print("Object must have a network attribute.")
+        return
+
+    maturity_idx = kwargs.get('maturity_idx', 0)
+    scenario_idx = kwargs.get('scenario_idx', 'current')
+
+    # Restore the correct scenario state when a specific scenario is requested
+    if scenario_idx != 'current' and hasattr(obj, 'restore_scenario_state'):
+        restored = obj.restore_scenario_state(maturity_idx, scenario_idx)
+        if not restored:
+            print(f"[plot_osmotic_radial_profile] WARNING: could not restore state "
+                  f"for mat={maturity_idx}, scen={scenario_idx}. "
+                  "Falling back to current graph state.")
+            # Try compute_edge_flows as last resort
+            sol, _ = _get_result_data(obj, **kwargs)
+            if sol is not None:
+                obj.compute_edge_flows(sol, i_maturity=maturity_idx,
+                                       i_scenario=0 if scenario_idx == 'standard water flow' else scenario_idx)
+
+    # We use the attributes stored in graph nodes
+    psi_p_attr = nx.get_node_attributes(graph, 'psi_p')
+    psi_os_attr = nx.get_node_attributes(graph, 'psi_os')
+    psi_total_attr = nx.get_node_attributes(graph, 'psi_total')
+
+    if not psi_p_attr:
+        # Fallback: run compute_edge_flows if no graph attributes exist yet
+        sol, _ = _get_result_data(obj, **kwargs)
+        if sol is not None:
+            obj.compute_edge_flows(sol, i_maturity=maturity_idx)
+            psi_p_attr = nx.get_node_attributes(graph, 'psi_p')
+            psi_os_attr = nx.get_node_attributes(graph, 'psi_os')
+            psi_total_attr = nx.get_node_attributes(graph, 'psi_total')
+    
+    if not psi_p_attr:
+        print("No osmotic potential data found in graph. Make sure compute_edge_flows() has been called.")
+        return
+
+    data = []
+    for cell in cm:
+        rc = np.hypot(cell.x, cell.y)
+        if rc < 1e-6: continue
+        
+        p = psi_p_attr.get(cell.node_id, 0.0)
+        os = psi_os_attr.get(cell.node_id, 0.0)
+        tot = psi_total_attr.get(cell.node_id, p + os)
+        
+        data.append({'rank': cell.rank, 'r': rc, 'psi_p': p, 'psi_os': os, 'psi_total': tot})
+
+    if not data:
+        print("No data collected for radial profile.")
+        return
+
+    df = pd.DataFrame(data)
+    profile = df.groupby('rank').agg({
+        'r': 'mean', 
+        'psi_p': ['mean', 'std'],
+        'psi_os': ['mean', 'std'],
+        'psi_total': ['mean', 'std']
+    }).reset_index()
+    
+    profile.columns = ['rank', 'r', 'psi_p_mean', 'psi_p_std', 'psi_os_mean', 'psi_os_std', 'psi_total_mean', 'psi_total_std']
+    profile = profile.sort_values('r')
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    ax.errorbar(profile['r'], profile['psi_p_mean'], yerr=profile['psi_p_std'], fmt='-o', 
+                capsize=3, color='blue', label='Hydrostatic (Psi_p)')
+                
+    ax.errorbar(profile['r'], profile['psi_os_mean'], yerr=profile['psi_os_std'], fmt='-s', 
+                capsize=3, color='red', label='Osmotic (Psi_os)')
+                
+    ax.errorbar(profile['r'], profile['psi_total_mean'], yerr=profile['psi_total_std'], fmt='-^', 
+                capsize=3, color='black', label='Total (Psi_total)')
+    
+    ax.set_xlabel('Radial Distance (µm)')
+    ax.set_ylabel('Water Potential (hPa)')
+    ax.set_title(f"Radial Osmotic Potential Profile - Mat {kwargs.get('maturity_idx', 0)}, Scen {kwargs.get('scenario_idx', 'current')}")
+    ax.legend(loc='best')
+    plt.grid(True, linestyle='--', alpha=0.5)
+    plt.tight_layout()
+    plt.show()

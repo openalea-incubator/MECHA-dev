@@ -205,8 +205,9 @@ class NetworkBuilder(AbstractNetwork):
         self.n_nodes = self.graph.number_of_nodes()
         self._calculate_xylem_area()
         self._calculate_phloem_area()
-        self._build_cell_manager()
         self._cells_gdf = self.prep_geo()
+        self._build_cell_manager()
+        
     
     def populate_from_network(self, type_mapper: Dict[str, int] = None) -> None:
         """

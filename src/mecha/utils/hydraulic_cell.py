@@ -89,7 +89,7 @@ class HydraulicWall:
         "x", "y", "length", "thickness", "node_id", "is_border", "is_aerenchyma",
         "cells", "membranes",
         # Hydraulic properties
-        "kw", "Q", "Q_in", "Q_out", "A", "velocity",
+        "kw", "Q", "Q_in", "Q_out", "A", "velocity", "psi_os", "psi", "psi_p",
     )
 
     def __init__(
@@ -124,6 +124,9 @@ class HydraulicWall:
         self.Q_out: Optional[float] = None
         self.A: Optional[float] = None
         self.velocity: Optional[float] = None
+        self.psi_os: Optional[float] = None
+        self.psi: Optional[float] = None
+        self.psi_p: Optional[float] = None
 
     def reset_hydraulics(self) -> None:
         """Reset all hydraulic fields to ``None``."""
@@ -133,6 +136,15 @@ class HydraulicWall:
         self.Q_out = None
         self.A = None
         self.velocity = None
+        self.psi_os = None
+        self.psi = None
+        self.psi_p = None
+
+    def get_effective_potential(self, sigma: float = 1.0) -> float:
+        """Calculate effective potential P - sigma * os."""
+        p = self.psi_p if self.psi_p is not None else 0.0
+        os_val = self.psi_os if self.psi_os is not None else 0.0
+        return p - sigma * os_val
 
     def __repr__(self) -> str:
         s = (
@@ -141,6 +153,14 @@ class HydraulicWall:
             f"is_aerenchyma={self.is_aerenchyma}")
         s += f", kw={self.kw:.1e}" if self.kw is not None else ", kw=None"
         s += f", Q={self.Q:.1e}" if self.Q is not None else ", Q=None"
+        if self.Q is not None:
+            s += f", velocity={self.velocity:.1e}"
+        if self.psi_p is not None:
+            s += f", psi_p={self.psi_p:.3f}"
+        if self.psi_os is not None:
+            s += f", psi_os={self.psi_os:.3f}"
+        if self.psi is not None:
+            s += f", psi={self.psi:.3f}"
         s += ")"
         return s
 
@@ -175,6 +195,7 @@ class HydraulicMembrane:
         "km",    # Total membrane conductivity  [cm hPa⁻¹ d⁻¹]
         "kaqp",  # Aquaporin contribution        [cm hPa⁻¹ d⁻¹]
         "K_computed",  # Effective conductance computed by HydraulicMatrixBuilder [cm³ hPa⁻¹ d⁻¹]
+        "sigma", # Reflection coefficient
         "Q", "A", "velocity",
     )
 
@@ -195,13 +216,14 @@ class HydraulicMembrane:
         self.km: Optional[float] = None
         self.kaqp: Optional[float] = None
         self.K_computed: Optional[float] = None
+        self.sigma: Optional[float] = None
         self.Q: Optional[float] = None
         self.A: Optional[float] = None
         self.velocity: Optional[float] = None
 
     def reset_hydraulics(self) -> None:
         """Reset all hydraulic fields to ``None``."""
-        self.km = self.kaqp = self.K_computed = self.Q = self.A = self.velocity = None
+        self.km = self.kaqp = self.K_computed = self.sigma = self.Q = self.A = self.velocity = None
 
     def __repr__(self) -> str:
         s = (
@@ -213,6 +235,10 @@ class HydraulicMembrane:
         s += f", kaqp={self.kaqp:.1f}" if self.kaqp is not None else ", kaqp=None"
         s += f", K_computed={self.K_computed:.1f}" if self.K_computed is not None else ", K_computed=None"
         s += f", Q={self.Q:.1e}" if self.Q is not None else ", Q=None"
+        if self.velocity is not None:
+            s += f", velocity={self.velocity:.1e}"
+        if self.sigma is not None:
+            s += f", sigma={self.sigma:.3f}"
         s += ")"
         return s
 
@@ -245,6 +271,7 @@ class HydraulicPlasmodesmata:
         "kpl",        # Plasmodesmata conductance [cm³ hPa⁻¹ d⁻¹]
         "fplxheight", # plasmodesmata height (default 8.0E5) [] UNITS ?
         "temp_factor",  # Tissue-specific frequency factor (dimensionless × cm)
+        "sigma",      # Reflection coefficient
         "Q", #Flow rate through plasmodesmata [cm³ d⁻¹]
         "A", "velocity",
     )
@@ -264,13 +291,14 @@ class HydraulicPlasmodesmata:
         self.kpl: Optional[float] = None
         self.fplxheight: Optional[float] = None
         self.temp_factor: Optional[float] = None
+        self.sigma: Optional[float] = None
         self.Q: Optional[float] = None
         self.A: Optional[float] = None
         self.velocity: Optional[float] = None
 
     def reset_hydraulics(self) -> None:
         """Reset all hydraulic fields to ``None``."""
-        self.kpl = self.fplxheight = self.temp_factor = self.Q = self.A = self.velocity = None
+        self.kpl = self.fplxheight = self.temp_factor = self.sigma = self.Q = self.A = self.velocity = None
 
     def __repr__(self) -> str:
         s = (
@@ -281,6 +309,10 @@ class HydraulicPlasmodesmata:
         s += f", fplxheight={self.fplxheight:.1e}" if self.fplxheight is not None else ", fplxheight=None"
         s += f", temp_factor={self.temp_factor:.1e}" if self.temp_factor is not None else ", temp_factor=None"
         s += f", Q={self.Q:.1e}" if self.Q is not None else ", Q=None"
+        if self.velocity is not None:
+            s += f", velocity={self.velocity:.1e}"
+        if self.sigma is not None:
+            s += f", sigma={self.sigma:.3f}"
         s += ")"
         return s
 
@@ -296,7 +328,7 @@ class HydraulicCell:
     **no inheritance dependency** on GRANAP — it is constructed purely from
     data already present in the ``NetworkBuilder`` graph.
 
-    Hydraulic fields (``kw``, ``kpl``, ``km``, ``kaqp``, ``os``, ``psi``,
+    Hydraulic fields (``kw``, ``kpl``, ``km``, ``kaqp``, ``psi_os``, ``psi``,
     ``psi_p``) are initialised to ``None`` and are meant to be populated later
     by ``Mecha._set_hydraulic_conductivities`` and post-solve routines.
 
@@ -340,7 +372,7 @@ class HydraulicCell:
         # --- hydraulic configuration (membrane) ---
         "km", "kaqp",
         # --- hydraulic state (potentials) ---
-        "os", "psi", "psi_p",
+        "psi_os", "psi", "psi_p",
         # --- flow balance ---
         "Q_in", "Q_out",
         # --- growth ---
@@ -392,7 +424,7 @@ class HydraulicCell:
         # Aquaporin contribution to membrane conductivity
         self.kaqp: Optional[float] = None
         # Osmotic potential  [hPa]
-        self.os: Optional[float] = None
+        self.psi_os: Optional[float] = None
         # Total water potential  [hPa]
         self.psi: Optional[float] = None
         # Turgor / matric potential  [hPa]  (psi - os)
@@ -405,10 +437,16 @@ class HydraulicCell:
     # Convenience
     # ------------------------------------------------------------------
 
+    def get_effective_potential(self, sigma: float = 1.0) -> float:
+        """Calculate effective potential P - sigma * os."""
+        p = self.psi_p if self.psi_p is not None else 0.0
+        os_val = self.psi_os if self.psi_os is not None else 0.0
+        return p - sigma * os_val
+
     def reset_hydraulics(self) -> None:
         """Reset all hydraulic fields to ``None``."""
         self.kw = self.kpl = self.km = self.kaqp = None
-        self.os = self.psi = self.psi_p = self.Q_in = self.Q_out = None
+        self.psi_os = self.psi = self.psi_p = self.Q_in = self.Q_out = None
 
     def _polygon(self) -> Polygon:
         
@@ -424,6 +462,16 @@ class HydraulicCell:
             s += f", walls={self.walls}"
         if self.plasmodesmata:
             s += f", plasmodesmata={self.plasmodesmata}"
+        if self.psi_os is not None:
+            s += f", psi_os={self.psi_os:.3f}"
+        if self.psi is not None:
+            s += f", psi={self.psi:.3f}"
+        if self.psi_p is not None:
+            s += f", psi_p={self.psi_p:.3f}"
+        if self.Q_in is not None:
+            s += f", Q_in={self.Q_in:.1e}"
+        if self.Q_out is not None:
+            s += f", Q_out={self.Q_out:.1e}"
         s += ")"
         return s
 
