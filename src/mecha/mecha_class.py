@@ -235,9 +235,6 @@ class Mecha:
         self.elong_cell = np.empty((n_maturity, n_scenarios))
         self.elong_cell_side_diff = np.empty((n_maturity, n_scenarios))
 
-        self.boundary.get_osmotic_potentials()
-        self.boundary.get_reflection_coefficients()
-
     def _initialize_layer_arrays(self, r_discret: int, n_maturity: int, n_scenarios: int) -> None:
         """Initialize layer-based arrays."""
         self.uptake_layer_plus = np.zeros((r_discret, n_maturity, n_scenarios))
@@ -693,9 +690,6 @@ class Mecha:
         os_hetero = int(self.boundary.scenarios[i_scenario].get("os_hetero"))
         os_cortex = float(self.boundary.scenarios[i_scenario].get("os_cortex"))
         os_sieve = float(self.boundary.scenarios[i_scenario].get("osmotic_sieve"))
-        self.os_hetero[i_maturity][i_scenario] = os_hetero
-        self.os_cortex[i_maturity][i_scenario] = os_cortex
-        self.os_sieve[i_maturity][i_scenario] = os_sieve
         
         # Determine specific osmotic values based on os_hetero
 
@@ -722,7 +716,7 @@ class Mecha:
         s_vals = {k: (float(v) if not np.isnan(v) else 0.0) for k, v in s_vals.items()}
 
         # print unique values
-        print(f"--- Debug Scen {i_scenario} Mat {i_maturity} ---")
+        print(f"--- Debug Scenario: {i_scenario}, Maturity: {i_maturity} ---")
         print(f"os_cortex: {os_cortex}, os_sieve: {os_sieve}, s_factor: {s_factor}")
         print(f"Unique osmotic values: {set(vals.values())}")
         print(f"Unique sigma values: {set(s_vals.values())}")    
@@ -869,8 +863,8 @@ class Mecha:
                         
                         K = Kmb[jmb][0]
                         if wall_obj is not None and cell_obj is not None and mb is not None:
-                            rhs_o[i] += K * mb.sigma * (wall_obj.psi_os - cell_obj.psi_os)
-                            rhs_o[j] += K * mb.sigma * (cell_obj.psi_os - wall_obj.psi_os)
+                            rhs_o[i] += K * mb.sigma * (cell_obj.psi_os - wall_obj.psi_os)
+                            rhs_o[j] += K * mb.sigma * (wall_obj.psi_os - cell_obj.psi_os)
                         
                         jmb += 1
 
@@ -904,8 +898,6 @@ class Mecha:
         for name, vec in [("rhs", rhs), ("rhs_x", rhs_x), ("rhs_p", rhs_p), ("rhs_o", rhs_o)]:
             if np.any(np.isnan(vec)):
                 print(f"CRITICAL: NaNs detected in {name} vector!")
-            else:
-                print(f"No NaNs detected in {name} vector!")
                 
         return rhs, rhs_x, rhs_p, rhs_o
 
@@ -1014,7 +1006,8 @@ class Mecha:
                 self.remove_xyl_phloem_BC(matrix_W, i_maturity, i_scenario)
 
                 # Calculate interface fluxes 
-                self._calculate_interface_flows(i_maturity, solution, rhs, rhs_s, i_scenario)
+                q_soil, _, _ = self._calculate_interface_flows(i_maturity, solution, rhs, rhs_s, i_scenario)
+                self.total_flow[i_maturity][i_scenario] = sum(q_soil)
 
                 # Calcul of fluxes between nodes and creation of the edge_flux_list
                 self.compute_edge_flows(solution, i_maturity, i_scenario)
@@ -1081,7 +1074,7 @@ class Mecha:
         * ``velocity`` (cm d⁻¹) — ``Q / A``.
 
         Also computes per-node quantities and stores them on graph nodes:
-        * ``psi``, ``psi_p``, ``psi_os``, ``psi_total`` (hPa).
+        * ``psi_p``, ``psi_os``, ``psi_total`` (hPa).
         * ``Q_in``, ``Q_out`` (cm³ d⁻¹).
 
         Values are also stored in ``self.edge_flux_list[i_maturity][i_scenario]``
@@ -1138,7 +1131,7 @@ class Mecha:
             else:
                 sigma = 0.0 # for walls/junctions, no reflection
                 
-            Q = K * ((p_u - p_v) - sigma * (os_u - os_v))
+            Q = K * ((p_u - p_v) + sigma * (os_u - os_v))
             eattr['Q'] = Q
             eattr['sigma'] = sigma
 
@@ -1218,7 +1211,6 @@ class Mecha:
             obj = cm.get_by_node_id(node_id) or cm.get_wall_by_node_id(node_id)
             os_val = obj.psi_os if obj is not None and obj.psi_os is not None else 0.0
             
-            graph.nodes[node_id]['psi']       = sol_val
             graph.nodes[node_id]['psi_p']     = sol_val
             graph.nodes[node_id]['psi_os']    = os_val
             graph.nodes[node_id]['psi_total'] = sol_val + os_val
@@ -1230,7 +1222,7 @@ class Mecha:
             if cell_obj is not None:
                 cell_obj.psi_p = sol_val
                 cell_obj.psi_os = os_val
-                cell_obj.psi   = sol_val + os_val
+                cell_obj.psi_total  = sol_val + os_val
                 cell_obj.Q_in  = Q_in[node_id]
                 cell_obj.Q_out = Q_out[node_id]
             
@@ -1238,7 +1230,7 @@ class Mecha:
             if wall_obj is not None:
                 wall_obj.psi_p = sol_val
                 wall_obj.psi_os = os_val
-                wall_obj.psi   = sol_val + os_val
+                wall_obj.psi_total  = sol_val + os_val
                 wall_obj.Q_in  = Q_in[node_id]
                 wall_obj.Q_out = Q_out[node_id]
 
@@ -1260,7 +1252,6 @@ class Mecha:
         snapshot = {
             'node_attrs': {
                 nid: {
-                    'psi':       graph.nodes[nid].get('psi'),
                     'psi_p':     graph.nodes[nid].get('psi_p'),
                     'psi_os':    graph.nodes[nid].get('psi_os'),
                     'psi_total': graph.nodes[nid].get('psi_total'),
@@ -1512,6 +1503,8 @@ class Mecha:
         jmb=0 #Index for membrane conductance vector
         passage_cell_ids = np.array(self.geometry.passage_cell_ids)
         barrier = int(self.geometry.maturity_stages[i_maturity].get("barrier"))
+        
+        # sol = np.asarray(solution).ravel()
             
         for node, edges in self.network.graph.adjacency() : #adjacency_iter returns an iterator of (node, adjacency dict) tuples for all nodes. This is the fastest way to look at every edge. For directed graphs, only outgoing adjacencies are included.
             i = self.indice[node] #Node ID number
@@ -1547,7 +1540,7 @@ class Mecha:
                         os_wall = wall_obj.psi_os if wall_obj is not None and wall_obj.psi_os is not None else 0.0
                         os_cell = cell_obj.psi_os if cell_obj is not None and cell_obj.psi_os is not None else 0.0
                         
-                        flow = K * ((psi - psi_neigh) - sigma * (os_wall - os_cell))
+                        flow = K * ((psi - psi_neigh) + sigma * (os_wall - os_cell))
                         if ((j-self.network.n_wall_junction not in self.geometry.intercellular_ids) and (j not in [c.node_id for c in self.network.cell_manager.xylem])) or barrier==0: #Not part of STF if crosses an intercellular space "membrane" or mature xylem "membrane" (that is no membrane though still labelled like one)
                             if flow > 0 :
                                 self.uptake_layer_plus[row][i_maturity][i_scenario] += flow #grouping membrane flow rates in cell layers

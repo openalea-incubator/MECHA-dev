@@ -89,7 +89,7 @@ class HydraulicWall:
         "x", "y", "length", "thickness", "node_id", "is_border", "is_aerenchyma",
         "cells", "membranes",
         # Hydraulic properties
-        "kw", "Q", "Q_in", "Q_out", "A", "velocity", "psi_os", "psi", "psi_p",
+        "kw", "Q", "Q_in", "Q_out", "A", "velocity", "psi_os", "psi_total", "psi_p",
     )
 
     def __init__(
@@ -125,7 +125,7 @@ class HydraulicWall:
         self.A: Optional[float] = None
         self.velocity: Optional[float] = None
         self.psi_os: Optional[float] = None
-        self.psi: Optional[float] = None
+        self.psi_total: Optional[float] = None
         self.psi_p: Optional[float] = None
 
     def reset_hydraulics(self) -> None:
@@ -137,7 +137,7 @@ class HydraulicWall:
         self.A = None
         self.velocity = None
         self.psi_os = None
-        self.psi = None
+        self.psi_total = None
         self.psi_p = None
 
     def get_effective_potential(self, sigma: float = 1.0) -> float:
@@ -159,8 +159,8 @@ class HydraulicWall:
             s += f", psi_p={self.psi_p:.3f}"
         if self.psi_os is not None:
             s += f", psi_os={self.psi_os:.3f}"
-        if self.psi is not None:
-            s += f", psi={self.psi:.3f}"
+        if self.psi_total is not None:
+            s += f", psi_total={self.psi_total:.3f}"
         s += ")"
         return s
 
@@ -372,7 +372,7 @@ class HydraulicCell:
         # --- hydraulic configuration (membrane) ---
         "km", "kaqp",
         # --- hydraulic state (potentials) ---
-        "psi_os", "psi", "psi_p",
+        "psi_os", "psi_total", "psi_p",
         # --- flow balance ---
         "Q_in", "Q_out",
         # --- growth ---
@@ -426,8 +426,8 @@ class HydraulicCell:
         # Osmotic potential  [hPa]
         self.psi_os: Optional[float] = None
         # Total water potential  [hPa]
-        self.psi: Optional[float] = None
-        # Turgor / matric potential  [hPa]  (psi - os)
+        self.psi_total: Optional[float] = None
+        # Pressure potential  [hPa]
         self.psi_p: Optional[float] = None
 
         self.Q_in: Optional[float] = None
@@ -446,7 +446,7 @@ class HydraulicCell:
     def reset_hydraulics(self) -> None:
         """Reset all hydraulic fields to ``None``."""
         self.kw = self.kpl = self.km = self.kaqp = None
-        self.psi_os = self.psi = self.psi_p = self.Q_in = self.Q_out = None
+        self.psi_os = self.psi_total = self.psi_p = self.Q_in = self.Q_out = None
 
     def _polygon(self) -> Polygon:
         
@@ -464,8 +464,8 @@ class HydraulicCell:
             s += f", plasmodesmata={self.plasmodesmata}"
         if self.psi_os is not None:
             s += f", psi_os={self.psi_os:.3f}"
-        if self.psi is not None:
-            s += f", psi={self.psi:.3f}"
+        if self.psi_total is not None:
+            s += f", psi_total={self.psi_total:.3f}"
         if self.psi_p is not None:
             s += f", psi_p={self.psi_p:.3f}"
         if self.Q_in is not None:

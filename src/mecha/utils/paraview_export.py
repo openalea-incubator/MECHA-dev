@@ -25,7 +25,7 @@ Generated files
 ---------------
 ``<prefix>_cells.vtk``
     One VTK polygon per cell, extruded along Z to represent wall thickness.
-    Point data: ``water_potential`` (hPa), ``psi_p`` (hPa), ``os`` (hPa).
+    Point data: ``psi_p`` (hPa), ``psi_os`` (hPa), ``psi_total`` (hPa).
     Cell data : ``cell_type`` (int cgroup), ``rank`` (int).
 
 ``<prefix>_walls.vtk``
@@ -255,6 +255,9 @@ def _export_cells(
     psi_p_vals: List[float] = []
     psi_os_vals: List[float] = []
     psi_total_vals: List[float] = []
+    Q_in_vals: List[float] = []
+    Q_out_vals: List[float] = []
+    Q_total_vals: List[float] = []
     cgroups: List[float] = []
     ranks: List[float] = []
 
@@ -308,18 +311,22 @@ def _export_cells(
         
         # Get potentials from graph nodes if available, fallback to solution
         node_data = graph.nodes[cell.node_id]
-        psi_val = _safe(node_data.get('psi', _node_psi(sol, cell.node_id, indice)))
-        psi_p   = _safe(node_data.get('psi_p', psi_val))
+        psi_p = _safe(node_data.get('psi_p', _node_psi(sol, cell.node_id, indice)))
         psi_os  = _safe(node_data.get('psi_os', 0.0))
         psi_tot = _safe(node_data.get('psi_total', psi_p + psi_os))
+        Q_in = _safe(node_data.get('Q_in', 0.0))
+        Q_out = _safe(node_data.get('Q_out', 0.0))
+        Q_total = Q_in - Q_out
 
         for _ in range(n_faces):
-            water_potentials.append(psi_val)
             psi_p_vals.append(psi_p)
             psi_os_vals.append(psi_os)
             psi_total_vals.append(psi_tot)
             cgroups.append(_safe(cell.cgroup))
             ranks.append(_safe(cell.rank))
+            Q_in_vals.append(Q_in)
+            Q_out_vals.append(Q_out)
+            Q_total_vals.append(Q_total)
 
     _ensure_dir(filepath)
     with open(filepath, "w") as f:
@@ -327,12 +334,14 @@ def _export_cells(
         _write_points(f, points)
         _write_polygons(f, polygons)
         _write_cell_data_header(f, len(polygons))
-        _write_scalar(f, "water_potential", water_potentials)
-        _write_scalar(f, "psi_p", psi_p_vals)
-        _write_scalar(f, "psi_os", psi_os_vals)
-        _write_scalar(f, "psi_total", psi_total_vals)
-        _write_scalar(f, "cgroup", cgroups)
-        _write_scalar(f, "rank", ranks)
+        _write_scalar(f, "Psi_total", psi_total_vals)
+        _write_scalar(f, "Psi_p", psi_p_vals)
+        _write_scalar(f, "Psi_os", psi_os_vals)
+        _write_scalar(f, "Cell_group", cgroups)
+        _write_scalar(f, "Cell_rank", ranks)
+        _write_scalar(f, "Q_in", Q_in_vals)
+        _write_scalar(f, "Q_out", Q_out_vals)
+        _write_scalar(f, "Q", Q_total_vals)
 
     print(f"[paraview_export] Cells → {filepath}  ({len(polygons)} polygons)")
 
@@ -555,7 +564,7 @@ def _export_membranes(
             graph.edges.get((mb.cell.node_id, wall.node_id), {}),
         )
         K_vals.append(_safe(edge_data.get("K", mb.K_computed)))
-        Q_vals.append(_safe(edge_data.get("Q", mb.Q)))
+        Q_vals.append(_safe(abs(edge_data.get("Q", mb.Q))))
         km_vals.append(_safe(mb.km))
         kaqp_vals.append(_safe(mb.kaqp))
 
