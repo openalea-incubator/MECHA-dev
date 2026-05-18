@@ -199,6 +199,43 @@ def _D_eff_network_msd(D_mat, Cm_diag, r_by_idx_cm: dict) -> float:
     return (num / den * 1e8) if den > 0 else float('nan')
 
 
+def _D_eff_pathway_breakdown(mecha, mode: str, dp: dict, cap_params: dict,
+                              r_by_idx_cm: dict, Cm_diag: np.ndarray) -> dict:
+    """
+    Decompose D_eff_theory by transport pathway.
+
+    The MSD formula is linear in the conductances K_ij, and K_ij = D_p * g_ij
+    where g_ij is a purely geometric factor.  Therefore the total D_eff_theory
+    can be written as a sum of per-pathway contributions:
+
+        D_eff_total = Σ_p D_p * D_eff_unit_p
+
+    where D_eff_unit_p is computed with D_p=1 and all other diffusivities = 0.
+
+    Returns
+    -------
+    dict with keys 'wall', 'membrane', 'plasmodesmata', 'total'  (µm²/d each)
+    """
+    from mecha.solute_transport import SoluteTransport
+
+    pathways = {
+        'wall':          ('apo_wall',      dict(apo_wall=1.0, membrane=0.0, plasmodesmata=0.0)),
+        'membrane':      ('membrane',      dict(apo_wall=0.0, membrane=1.0, plasmodesmata=0.0)),
+        'plasmodesmata': ('plasmodesmata', dict(apo_wall=0.0, membrane=0.0, plasmodesmata=1.0)),
+    }
+    result = {}
+    for name, (dp_key, unit_dp) in pathways.items():
+        D_val = float(dp.get(dp_key, 0.0))
+        if D_val == 0.0:
+            result[name] = 0.0
+            continue
+        st     = SoluteTransport(mecha, unit_dp, cap_params, mode)
+        G_unit = st.build_diffusion_matrix(0, 0)
+        result[name] = D_val * _D_eff_network_msd(G_unit, Cm_diag, r_by_idx_cm)
+    result['total'] = sum(v for k, v in result.items() if k != 'total')
+    return result
+
+
 # ── visualisation ─────────────────────────────────────────────────────────────
 
 def _plot_evolution(mecha, snap_data, r_lo, r_hi, cx, cy):
@@ -418,6 +455,16 @@ def test_diffusion_time_evolution():
 
     D_eff_theories = {'apo': D_theory_apo, 'sym': D_theory_sym}
 
+    # per-pathway decomposition of D_eff_theory (MSD formula is linear in K_ij)
+    breakdowns = {
+        'apo': _D_eff_pathway_breakdown(
+            mecha, 'full', CASES['apo']['dp'], CAP_PARAMS,
+            r_by_idx_apo, Cm_apo),
+        'sym': _D_eff_pathway_breakdown(
+            mecha, 'sym', CASES['sym']['dp'], CAP_PARAMS,
+            r_by_cellid, Cm_sym),
+    }
+
     # ── initial conditions & capacitance weights ──────────────────────────────
     ics = {}
     mass_weights = {}
@@ -509,17 +556,28 @@ def test_diffusion_time_evolution():
         R2s[key]     = R2
 
     # ── reduction factor report ───────────────────────────────────────────────
-    print('\n  ┌─────────────┬────────────┬──────────────┬────────────┬──────────────┐')
-    print(  '  │ Case        │ D_input    │ D_eff (fit)  │ f = D_eff/ │ D_eff theory │')
-    print(  '  │             │ (µm²/d)    │ (µm²/d)      │ D_input    │ (µm²/d)      │')
-    print(  '  ├─────────────┼────────────┼──────────────┼────────────┼──────────────┤')
+    print('\n  ┌─────────────┬────────────┬──────────────┬────────────┬──────────────┬────────────┐')
+    print(  '  │ Case        │ D_input    │ D_eff (fit)  │ f_fit      │ D_eff theory │ f_geom     │')
+    print(  '  │             │ (µm²/d)    │ (µm²/d)      │            │ (µm²/d)      │            │')
+    print(  '  ├─────────────┼────────────┼──────────────┼────────────┼──────────────┼────────────┤')
     for key, case in CASES.items():
         D_in  = case['D_ref'] * 1e8
         D_fit = D_effs[key]
         D_th  = D_eff_theories[key]
         f_fit = D_fit / D_in
-        print(f'  │ {case["label"][:11]:<11} │ {D_in:>10.1f} │ {D_fit:>12.1f} │ {f_fit:>10.4f} │ {D_th:>12.1f} │')
-    print(  '  └─────────────┴────────────┴──────────────┴────────────┴──────────────┘')
+        f_geo = D_th  / D_in
+        print(f'  │ {case["label"][:11]:<11} │ {D_in:>10.1f} │ {D_fit:>12.1f} │ {f_fit:>10.4f} │ {D_th:>12.1f} │ {f_geo:>10.4f} │')
+    print(  '  └─────────────┴────────────┴──────────────┴────────────┴──────────────┴────────────┘')
+
+    print('\n  Pathway breakdown of D_eff_theory (additive via MSD linearity):')
+    print(  '  ┌─────────────┬──────────────┬──────────────┬──────────────┬──────────────┐')
+    print(  '  │ Case        │ wall         │ membrane     │ PD           │ total        │')
+    print(  '  │             │ (µm²/d)      │ (µm²/d)      │ (µm²/d)      │ (µm²/d)      │')
+    print(  '  ├─────────────┼──────────────┼──────────────┼──────────────┼──────────────┤')
+    for key, case in CASES.items():
+        bkd = breakdowns[key]
+        print(f'  │ {case["label"][:11]:<11} │ {bkd["wall"]:>12.1f} │ {bkd["membrane"]:>12.1f} │ {bkd["plasmodesmata"]:>12.1f} │ {bkd["total"]:>12.1f} │')
+    print(  '  └─────────────┴──────────────┴──────────────┴──────────────┴──────────────┘')
 
     # ── visualisation ─────────────────────────────────────────────────────────
     os.makedirs(_OUT_DIR, exist_ok=True)

@@ -175,7 +175,13 @@ class SoluteTransport:
 
         nwj = self.n_wall_junction
         if self.mode == 'apo':
-            D = D[:nwj, :nwj]
+            # _fill_membrane adds wall→xylem-cell entries (diff1_pw1-scaled) for
+            # cgroup 13/19/20 nodes when barrier>0.  Slicing to [:nwj,:nwj] drops
+            # those off-diagonal columns but keeps the diagonal penalties → net
+            # outflow → broken mass conservation.  Restore row-sum=0 by adding
+            # the dropped column sums back onto the diagonal.
+            cross_sum = np.array(D[:nwj, nwj:].sum(axis=1)).ravel()
+            D = D[:nwj, :nwj] + sp.diags(cross_sum, format='csr')
         elif self.mode == 'sym':
             D = D[nwj:, nwj:]
 
@@ -300,7 +306,9 @@ class SoluteTransport:
             vols[network.n_wall_junction + cid] = (
                 network.cell_areas[cid] * height * 1e-12)
 
-        return vols
+        # Prevent zero-volume nodes from creating singular rows in Cm − A.
+        # Nodes with L=0 (degenerate walls) carry c_prev unchanged at eps→0.
+        return np.maximum(vols, 1e-30)
 
     def build_capacitance(self, i_maturity: int) -> sp.csr_matrix:
         """
@@ -435,7 +443,8 @@ class SoluteTransport:
         )
 
         if is_dynamic:
-            self._warn_peclet(D, A)
+            if theta < 1.0:   # IE (θ=1) is oscillation-free at any Pe
+                self._warn_peclet(D, A)
             # [C/dt − θ T] c_new = [C/dt + (1−θ) T] c_old + rhs
             lhs     = Cm - theta * T
             rhs_eff = (Cm + (1.0 - theta) * T).dot(c_prev) + rhs_eff
