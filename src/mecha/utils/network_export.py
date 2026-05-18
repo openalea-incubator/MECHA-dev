@@ -1018,39 +1018,74 @@ def plot_osmotic_radial_profile(obj, **kwargs):
     data = []
     for cell in cm:
         rc = np.hypot(cell.x, cell.y)
-        if rc < 1e-6: continue
+        if rc < 1e-6:
+            continue
+            
+        p_c = psi_p_attr.get(cell.node_id, 0.0)
+        os_c = psi_os_attr.get(cell.node_id, 0.0)
+        tot_c = psi_total_attr.get(cell.node_id, p_c + os_c)
+        if cell.node_id not in [i.node_id for i in cm.intercellular] and cell.node_id not in [s.node_id for s in cm.sieve] and cell.node_id not in [x.node_id for x in cm.xylem]:
+            data.append({'rank': cell.rank, 'side': 'mid', 'r': rc, 'psi_p': p_c, 'psi_os': os_c, 'psi_total': tot_c})
         
-        p = psi_p_attr.get(cell.node_id, 0.0)
-        os = psi_os_attr.get(cell.node_id, 0.0)
-        tot = psi_total_attr.get(cell.node_id, p + os)
+        vc_x, vc_y = cell.x, cell.y
+        norm_vc = rc
         
-        data.append({'rank': cell.rank, 'r': rc, 'psi_p': p, 'psi_os': os, 'psi_total': tot})
+        for w in cell.walls:
+            rw = np.hypot(w.x, w.y)
+            vw_x, vw_y = w.x - cell.x, w.y - cell.y
+            norm_vw = np.hypot(vw_x, vw_y)
+            if norm_vw < 1e-6:
+                continue
+                
+            # Angle between vector-to-cell-center and cell-to-wall vector
+            cos_theta = (vc_x * vw_x + vc_y * vw_y) / (norm_vc * norm_vw)
+            p_w = psi_p_attr.get(w.node_id, 0.0)
+            os_w = psi_os_attr.get(w.node_id, 0.0)
+            tot_w = psi_total_attr.get(w.node_id, p_w + os_w)
+            
+            if cos_theta > 0.4:
+                data.append({'rank': cell.rank, 'side': 'out', 'r': rw, 'psi_p': p_w, 'psi_os': os_w, 'psi_total': tot_w})
+            elif cos_theta < -0.4:
+                data.append({'rank': cell.rank, 'side': 'in', 'r': rw, 'psi_p': p_w, 'psi_os': os_w, 'psi_total': tot_w})
 
     if not data:
         print("No data collected for radial profile.")
         return
 
     df = pd.DataFrame(data)
-    profile = df.groupby('rank').agg({
+    profile = df.groupby(['rank', 'side']).agg({
         'r': 'mean', 
         'psi_p': ['mean', 'std'],
         'psi_os': ['mean', 'std'],
         'psi_total': ['mean', 'std']
     }).reset_index()
     
-    profile.columns = ['rank', 'r', 'psi_p_mean', 'psi_p_std', 'psi_os_mean', 'psi_os_std', 'psi_total_mean', 'psi_total_std']
-    profile = profile.sort_values('r')
+    profile.columns = ['rank', 'side', 'r', 'psi_p_mean', 'psi_p_std', 'psi_os_mean', 'psi_os_std', 'psi_total_mean', 'psi_total_std']
+    
+    sym_df = profile[profile['side'] == 'mid'].sort_values('r')
+    apo_df = profile[profile['side'].isin(['out', 'in'])].sort_values('r')
 
     fig, ax = plt.subplots(figsize=(10, 6))
     
-    ax.errorbar(profile['r'], profile['psi_p_mean'], yerr=profile['psi_p_std'], fmt='-o', 
-                capsize=3, color='blue', label='Hydrostatic (Psi_p)')
+    # Plot Symplastic (Solid lines, circles)
+    ax.errorbar(sym_df['r'], sym_df['psi_p_mean'], yerr=sym_df['psi_p_std'], fmt='-o', 
+                capsize=3, color='blue', label='Symplastic Hydrostatic (Psi_p)')
                 
-    ax.errorbar(profile['r'], profile['psi_os_mean'], yerr=profile['psi_os_std'], fmt='-s', 
-                capsize=3, color='red', label='Osmotic (Psi_os)')
+    ax.errorbar(sym_df['r'], sym_df['psi_os_mean'], yerr=sym_df['psi_os_std'], fmt='-o', 
+                capsize=3, color='red', label='Symplastic Osmotic (Psi_os)')
                 
-    ax.errorbar(profile['r'], profile['psi_total_mean'], yerr=profile['psi_total_std'], fmt='-^', 
-                capsize=3, color='black', label='Total (Psi_total)')
+    ax.errorbar(sym_df['r'], sym_df['psi_total_mean'], yerr=sym_df['psi_total_std'], fmt='-o', 
+                capsize=3, color='black', label='Symplastic Total (Psi_total)')
+                
+    # Plot Apoplastic (Dashed lines, squares)
+    ax.errorbar(apo_df['r'], apo_df['psi_p_mean'], yerr=apo_df['psi_p_std'], fmt='--s', 
+                capsize=3, color='blue', alpha=0.7, label='Apoplastic Hydrostatic (Psi_p)')
+                
+    ax.errorbar(apo_df['r'], apo_df['psi_os_mean'], yerr=apo_df['psi_os_std'], fmt='--s', 
+                capsize=3, color='red', alpha=0.7, label='Apoplastic Osmotic (Psi_os)')
+                
+    ax.errorbar(apo_df['r'], apo_df['psi_total_mean'], yerr=apo_df['psi_total_std'], fmt='--s', 
+                capsize=3, color='black', alpha=0.7, label='Apoplastic Total (Psi_total)')
     
     ax.set_xlabel('Radial Distance (µm)')
     ax.set_ylabel('Water Potential (hPa)')

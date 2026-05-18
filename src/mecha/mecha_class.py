@@ -729,7 +729,7 @@ class Mecha:
         # Extract props
         r_rel, x_rel = self.network.get_relative_positions()
         L_diff = self.geo_props['L_diff']
-        passage_cell_ids = np.array(self.geometry.passage_cell_ids)
+        intercellular_ids = np.array([c.cell_id for c in self.network.cell_manager.intercellular])
         
         # Calculate local soil/xyl osmotic potentials
         # Note: we calculate them during loop or pre-calculate? loop is easier for node dependence
@@ -752,21 +752,24 @@ class Mecha:
                 os_soil_local = 0.0
                 os_xyl_local = 0.0
                 
+                r_val = float(r_rel[i][0]) if not np.isnan(r_rel[i][0]) else 0.0
+                x_val = float(x_rel[i][0]) if not np.isnan(x_rel[i][0]) else 0.5
+                
                 if scenario_data['osmotic_symmetry_soil'] == 2:
-                     if scenario_data['osmotic_diffusivity_soil'] == 0:
-                         os_soil_local=float(scenario_data['osmotic_left_soil']+(scenario_data['osmotic_right_soil']-scenario_data['osmotic_left_soil'])*abs(r_rel[i])**scenario_data['osmotic_shape_soil'])
-                     else:
-                         if r_rel[i]>=0:
-                             os_soil_local=scenario_data['osmotic_left_soil']*np.exp(u[0][0]*abs(r_rel[i])*L_diff[0]/scenario_data['osmotic_diffusivity_soil'])
+                    if scenario_data['osmotic_diffusivity_soil'] == 0:
+                        os_soil_local=float(scenario_data['osmotic_left_soil']+(scenario_data['osmotic_right_soil']-scenario_data['osmotic_left_soil'])*abs(r_val)**scenario_data['osmotic_shape_soil'])
+                    else:
+                        if r_val>=0:
+                            os_soil_local=scenario_data['osmotic_left_soil']*np.exp(u[0][0]*abs(r_val)*L_diff[0]/scenario_data['osmotic_diffusivity_soil'])
                 elif scenario_data['osmotic_symmetry_soil'] == 1:
-                     os_soil_local=float(scenario_data['osmotic_left_soil']*(1-x_rel[i])+scenario_data['osmotic_right_soil']*x_rel[i])
+                    os_soil_local=float(scenario_data['osmotic_left_soil']*(1-x_val)+scenario_data['osmotic_right_soil']*x_val)
                      
                 if scenario_data['osmotic_symmetry_xyl'] == 2:
                      if scenario_data['osmotic_diffusivity_xyl'] == 0:
-                         os_xyl_local=float(scenario_data['osmotic_endo']+(scenario_data['osmotic_xyl']-scenario_data['osmotic_endo'])*(1-abs(r_rel[i]))**scenario_data['osmotic_shape_xyl'])
+                         os_xyl_local=float(scenario_data['osmotic_endo']+(scenario_data['osmotic_xyl']-scenario_data['osmotic_endo'])*(1-abs(r_val))**scenario_data['osmotic_shape_xyl'])
                      else:
-                         if r_rel[i]<0:
-                             os_xyl_local=scenario_data['osmotic_xyl']*np.exp(-u[1][0]*abs(r_rel[i])*L_diff[1]/scenario_data['osmotic_diffusivity_xyl'])
+                         if r_val<0:
+                             os_xyl_local=scenario_data['osmotic_xyl']*np.exp(-u[1][0]*abs(r_val)*L_diff[1]/scenario_data['osmotic_diffusivity_xyl'])
                 elif scenario_data['osmotic_symmetry_xyl'] == 1:
                      os_xyl_local=float((scenario_data['osmotic_xyl']+scenario_data['osmotic_endo'])/2)
 
@@ -774,7 +777,6 @@ class Mecha:
                 count_epi = self.network.graph.nodes[node]['count_epi']
                 count_endo = self.network.graph.nodes[node]['count_endo']
                 count_stele_overall = self.network.graph.nodes[node]['count_stele_overall']
-                count_passage = self.network.graph.nodes[node]['count_passage']
                 count_cortex = self.network.graph.nodes[node]['count_cortex']
 
                 # Second loop for membrane connections
@@ -812,14 +814,11 @@ class Mecha:
                                 wall_os = os_xyl_local if barrier > 0 else os_soil_local
                                 sig = s_vals['endo_peri']
                         elif 40 <= rank < 50: # Cortex
-                            if int(j - self.network.n_wall_junction) in self.geometry.intercellular_ids:
+                            if int(j - self.network.n_wall_junction) in intercellular_ids:
                                 cell_os = os_soil_local
                                 wall_os = os_soil_local
                                 sig = 0
                             else:
-                                # Row mapping for cortex layers
-                                c_idx = row - (self.network.row_outer_cortex - 8) # simplistic mapping
-                                # Using explicit row check from main.py is safer but simplified here
                                 c_key = f'c{max(1, min(8, 8 - (self.network.row_outer_cortex - row)))}'
                                 cell_os = vals.get(c_key, vals.get('c1', 1))
                                 sig = s_vals['cortex']
@@ -947,8 +946,6 @@ class Mecha:
                 # Critical check for NaNs in rhs after soil BC
                 if np.any(np.isnan(rhs)):
                     print(f"CRITICAL: NaNs detected in rhs for scenario {i_scenario}!")
-                else:
-                    print(f"No NaNs detected in rhs for scenario {i_scenario}!")
 
                 # Xylem BC
                 psi_xyl_val = self.psi_xyl[1][i_maturity][i_scenario]
@@ -967,8 +964,6 @@ class Mecha:
                 # Critical check for NaNs in rhs after xylem BC
                 if np.any(np.isnan(rhs)):
                     print(f"CRITICAL: NaNs detected in rhs for scenario {i_scenario}!")
-                else:
-                    print(f"No NaNs detected in rhs for scenario {i_scenario}!")
 
                 # Phloem BC
                 psi_sieve_val = self.psi_sieve[1][i_maturity][i_scenario]
@@ -1355,11 +1350,11 @@ class Mecha:
         barrier = int(self.geometry.maturity_stages[i_maturity].get("barrier"))
         #Removing xylem and phloem BC terms
         if barrier==0:
-            if not isnan(self.psi_sieve[1][i_maturity][i_scenario]):
+            if not np.isnan(self.psi_sieve[1][i_maturity][i_scenario]):
                 for cid in [c.node_id for c in self.network.cell_manager.protosieve]:
                     matrix_W[cid, cid] += self.hydraulic.k_sieve
         else:
-            if not isnan(self.psi_xyl[1][i_maturity][i_scenario]): #Pressure xylem BC
+            if not np.isnan(self.psi_xyl[1][i_maturity][i_scenario]): #Pressure xylem BC
                 for cid in [c.node_id for c in self.network.cell_manager.xylem]:
                     matrix_W[cid, cid] += self.hydraulic.k_xyl
             else:

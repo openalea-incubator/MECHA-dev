@@ -247,7 +247,7 @@ class BoundaryData:
             new_scenario = base_scenario.copy()
             new_scenario['os_hetero'] = val
             new_scenario['osmotic_xyl'] = -1.5E3
-            new_scenario['osmotic_sieve'] = -1.42E4
+            new_scenario['osmotic_sieve'] = -0.8E4
             self.add_scenario(new_scenario)
 
 

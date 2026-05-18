@@ -17,7 +17,7 @@ def test_osmotic():
 
     # prepare default inputs for mecha
     default_input = InData()
-    default_input.geometry.set_maturity_stages([4])
+    default_input.geometry.set_maturity_stages([3])
     
     # Use the new helper to set osmotic scenarios (0, 1, 2, 3)
     # The first scenario (0) is kept as base, then 1, 2, 3 are added.
