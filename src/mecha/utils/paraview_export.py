@@ -251,7 +251,6 @@ def _export_cells(
     polygons: List[List[int]] = []
 
     # Per-cell data arrays
-    water_potentials: List[float] = []
     psi_p_vals: List[float] = []
     psi_os_vals: List[float] = []
     psi_total_vals: List[float] = []

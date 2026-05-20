@@ -60,7 +60,7 @@ def test_all_visu_types():
                 visualize(m, visu_type=vt, maturity_idx=1, prefix='outputs/my_sim', extrude_z=50.0)
             elif vt == 'network':
                 visualize(m, visu_type=vt, maturity_idx=1)
-                visualize(m, visu_type=vt, prop_name='psi')
+                visualize(m, visu_type=vt, prop_name='psi_total')
                 export_to_graphml(m, "outputs/my_sim.graphml")
             else:
                 visualize(m, visu_type=vt, maturity_idx=1)

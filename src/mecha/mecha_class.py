@@ -280,7 +280,7 @@ class Mecha:
             for j in range(self.network.n_walls, self.network.n_wall_junction):
                 j_idx = j - self.network.n_walls
                 for cid in self.network.junction_wall_cell[j_idx]:
-                    if isnan(cid):
+                    if np.isnan(cid):
                         continue
                     cell_index = int(cid - self.network.n_wall_junction)
                     if cell_index in self.hormones.apo_zombie0:
