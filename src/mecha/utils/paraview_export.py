@@ -49,7 +49,7 @@ Usage
     from mecha.utils.paraview_export import export_to_vtk
     export_to_vtk(mecha_obj, prefix="results/my_sim",
                   maturity_idx=0, scenario_idx="standard water flow",
-                  extrude_z=5.0)
+                  extrude_z=50.0)
 
 Or via the unified ``visualize()`` dispatcher::
 
@@ -629,7 +629,7 @@ def _export_plasmodesmata(
     sol: Optional[np.ndarray],
     indice: Dict[int, int],
     pd_radius: float = 0.05,
-    extrude_z: float = 5.0,
+    extrude_z: float = 50.0,
 ) -> None:
     """
     Export plasmodesmata connections as VTK polylines routed through the shared
@@ -822,9 +822,9 @@ def _export_flow_vectors(
 def export_to_vtk(
     obj: Any,
     prefix: str = "mecha_export",
-    maturity_idx: Optional[int] = None,
-    scenario_idx: Optional[Union[str, int]] = None,
-    extrude_z: float = 5.0,
+    maturity_idx: int = 0,
+    scenario_idx: str = "standard water flow",
+    extrude_z: float = 50.0,
     pd_radius: float = 0.05,
     export_cells: bool = True,
     export_walls: bool = True,
