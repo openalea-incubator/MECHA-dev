@@ -136,7 +136,7 @@ def test_compare_granar_ganache():
     plotting = True
     if plotting:
         import matplotlib.pyplot as plt
-        from mecha.utils.visu import (
+        from mecha.utils.network_export import (
             plot_network_difference, plot_matrix_difference, 
             plot_networks_interC, plot_networks_rank, 
             plot_edge_and_node_differences,

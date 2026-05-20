@@ -25,7 +25,7 @@ Generated files
 ---------------
 ``<prefix>_cells.vtk``
     One VTK polygon per cell, extruded along Z to represent wall thickness.
-    Point data: ``water_potential`` (hPa), ``psi_p`` (hPa), ``os`` (hPa).
+    Point data: ``psi_p`` (hPa), ``psi_os`` (hPa), ``psi_total`` (hPa).
     Cell data : ``cell_type`` (int cgroup), ``rank`` (int).
 
 ``<prefix>_walls.vtk``
@@ -193,7 +193,7 @@ def _safe(v, default=0.0) -> float:
 # ---------------------------------------------------------------------------
 
 def _get_solution(obj: Any, maturity_idx: int = 0,
-                  scenario_idx: str = "standard water flow") -> Optional[np.ndarray]:
+                  scenario_idx: Union[str,int] = "standard water flow") -> Optional[np.ndarray]:
     """Return the flat solution array for the requested maturity/scenario."""
     if hasattr(obj, "results") and obj.results:
         for res in obj.results:
@@ -213,7 +213,7 @@ def _node_psi(sol: Optional[np.ndarray], node_id: int,
     idx = indice.get(node_id)
     if idx is None or idx >= len(sol):
         return 0.0
-    return float(sol[idx])
+    return _safe(sol[idx])
 
 
 # ---------------------------------------------------------------------------
@@ -252,8 +252,16 @@ def _export_cells(
 
     # Per-cell data arrays
     water_potentials: List[float] = []
-    cgroups: List[int] = []
-    ranks: List[int] = []
+    psi_p_vals: List[float] = []
+    psi_os_vals: List[float] = []
+    psi_total_vals: List[float] = []
+    Q_in_vals: List[float] = []
+    Q_out_vals: List[float] = []
+    Q_total_vals: List[float] = []
+    cgroups: List[float] = []
+    ranks: List[float] = []
+
+    graph = obj.network.graph
 
     for cell in cm:
         # 1) Try stored Shapely polygon
@@ -300,11 +308,25 @@ def _export_cells(
             ])
 
         n_faces = 2 + n  # bottom + top + sides
-        psi_val = _node_psi(sol, cell.node_id, indice)
+        
+        # Get potentials from graph nodes if available, fallback to solution
+        node_data = graph.nodes[cell.node_id]
+        psi_p = _safe(node_data.get('psi_p', _node_psi(sol, cell.node_id, indice)))
+        psi_os  = _safe(node_data.get('psi_os', 0.0))
+        psi_tot = _safe(node_data.get('psi_total', psi_p + psi_os))
+        Q_in = _safe(node_data.get('Q_in', 0.0))
+        Q_out = _safe(node_data.get('Q_out', 0.0))
+        Q_total = Q_in - Q_out
+
         for _ in range(n_faces):
-            water_potentials.append(psi_val)
-            cgroups.append(cell.cgroup)
-            ranks.append(cell.rank)
+            psi_p_vals.append(psi_p)
+            psi_os_vals.append(psi_os)
+            psi_total_vals.append(psi_tot)
+            cgroups.append(_safe(cell.cgroup))
+            ranks.append(_safe(cell.rank))
+            Q_in_vals.append(Q_in)
+            Q_out_vals.append(Q_out)
+            Q_total_vals.append(Q_total)
 
     _ensure_dir(filepath)
     with open(filepath, "w") as f:
@@ -312,9 +334,14 @@ def _export_cells(
         _write_points(f, points)
         _write_polygons(f, polygons)
         _write_cell_data_header(f, len(polygons))
-        _write_scalar(f, "water_potential", water_potentials)
-        _write_scalar(f, "cgroup", [float(v) for v in cgroups])
-        _write_scalar(f, "rank", [float(v) for v in ranks])
+        _write_scalar(f, "Psi_total", psi_total_vals)
+        _write_scalar(f, "Psi_p", psi_p_vals)
+        _write_scalar(f, "Psi_os", psi_os_vals)
+        _write_scalar(f, "Cell_group", cgroups)
+        _write_scalar(f, "Cell_rank", ranks)
+        _write_scalar(f, "Q_in", Q_in_vals)
+        _write_scalar(f, "Q_out", Q_out_vals)
+        _write_scalar(f, "Q", Q_total_vals)
 
     print(f"[paraview_export] Cells → {filepath}  ({len(polygons)} polygons)")
 
@@ -537,7 +564,7 @@ def _export_membranes(
             graph.edges.get((mb.cell.node_id, wall.node_id), {}),
         )
         K_vals.append(_safe(edge_data.get("K", mb.K_computed)))
-        Q_vals.append(_safe(edge_data.get("Q", mb.Q)))
+        Q_vals.append(_safe(abs(edge_data.get("Q", mb.Q))))
         km_vals.append(_safe(mb.km))
         kaqp_vals.append(_safe(mb.kaqp))
 
@@ -807,24 +834,24 @@ def export_to_vtk(
 ) -> Dict[str, str]:
     """Export a MECHA simulation result to a set of ParaView `.vtk` files.
 
+    If ``maturity_idx`` or ``scenario_idx`` are None (default), this function
+    will attempt to export all available results from ``obj.results``, adding
+    suffixes like ``_mat0_scen1`` to the file prefix.
+
     Parameters
     ----------
     obj : Mecha
-        A fully solved ``Mecha`` instance.  The network must have a populated
-        ``cell_manager`` with membranes and plasmodesmata synced.
+        A fully solved ``Mecha`` instance.
     prefix : str
-        Path prefix for output files.  Directories are created automatically.
-        Example: ``"results/my_sim"`` produces ``results/my_sim_cells.vtk``, etc.
-    maturity_idx : int
-        Maturity stage index (0-based) to extract the solution from.
-    scenario_idx : str
-        Scenario key (matches ``res['scenario']`` in ``obj.results``).
+        Path prefix for output files.
+    maturity_idx : int, optional
+        Maturity stage index. If None, exports all available.
+    scenario_idx : str or int, optional
+        Scenario key. If None, exports all available.
     extrude_z : float
-        Depth (µm) by which 2-D polygons are extruded in the Z direction.
-        Represents the approximate organ section thickness used for display.
+        Depth (µm) for extrusion.
     pd_radius : float
-        Plasmodesmata cylinder radius (µm) — embedded in the VTK header as a
-        comment.  Apply ParaView's *Tube* filter with this radius.
+        Plasmodesmata radius (µm).
     export_cells, export_walls, export_membranes, export_plasmodesmata,
     export_flow_vectors : bool
         Toggle individual output files.
@@ -832,50 +859,102 @@ def export_to_vtk(
     Returns
     -------
     dict
-        Mapping of output type → file path for each file written.
+        Mapping of output type → file path for the LAST export iteration.
     """
     if not hasattr(obj, "network") or obj.network is None:
         raise ValueError("obj must be a Mecha instance with a populated network.")
     if obj.network.cell_manager is None:
         raise ValueError("network.cell_manager is None — call build_network first.")
 
-    sol = _get_solution(obj, maturity_idx=maturity_idx, scenario_idx=scenario_idx)
-    if sol is None:
-        print(
-            f"[paraview_export] WARNING: No solution found for maturity={maturity_idx}"
-            f" / scenario='{scenario_idx}'.  Scalar fields will be zero."
-        )
+    # Determine what to export
+    to_export: List[Tuple[int, Union[str, int]]] = []
+    if hasattr(obj, "results") and obj.results:
+        for res in obj.results:
+            m = res.get("maturity stage")
+            s = res.get("scenario")
+            if (maturity_idx is None or m == maturity_idx) and \
+               (scenario_idx is None or s == scenario_idx):
+                to_export.append((m, s))
+
+    # Fallback to single export if no results list or no match found
+    if not to_export:
+        to_export = [(maturity_idx if maturity_idx is not None else 0,
+                      scenario_idx if scenario_idx is not None else "standard water flow")]
+
+    last_written: Dict[str, str] = {}
     indice: Dict[int, int] = getattr(obj, "indice", {})
 
-    written: Dict[str, str] = {}
+    for m_val, s_val in to_export:
+        # Determine prefix for this iteration
+        if len(to_export) > 1:
+            s_suffix = str(s_val).replace(" ", "_")
+            current_prefix = f"{prefix}_mat{m_val}_scen{s_suffix}"
+        else:
+            current_prefix = prefix
 
-    if export_cells:
-        fp = f"{prefix}_cells.vtk"
-        _export_cells(obj, fp, sol, indice, extrude_z)
-        written["cells"] = fp
+        # Find the result entry to get the specific solution and Kmb
+        res_entry = None
+        if hasattr(obj, "results") and obj.results:
+            for res in obj.results:
+                if (res.get("maturity stage") == m_val
+                        and res.get("scenario") == s_val):
+                    res_entry = res
+                    break
+        
+        if res_entry:
+            sol = np.asarray(res_entry["solution"]).ravel()
 
-    if export_walls:
-        fp = f"{prefix}_walls.vtk"
-        _export_walls(obj, fp, extrude_z)
-        written["walls"] = fp
+            # Restore the pre-computed graph state for this scenario.
+            # This is faster and avoids the overwriting bug that occurred when
+            # initialize_scenarios + compute_edge_flows modified shared graph/
+            # object attributes in the wrong order.
+            restored = False
+            if hasattr(obj, 'restore_scenario_state'):
+                restored = obj.restore_scenario_state(m_val, s_val)
 
-    if export_membranes:
-        fp = f"{prefix}_membranes.vtk"
-        _export_membranes(obj, fp, sol, indice, extrude_z)
-        written["membranes"] = fp
+            if not restored:
+                # Fallback: re-compute (for instances without saved snapshots)
+                Kmb = res_entry.get("Kmb")
+                s_idx = 0 if (isinstance(s_val, str) and s_val == "standard water flow") else s_val
+                if hasattr(obj, "initialize_scenarios") and Kmb is not None:
+                    obj.initialize_scenarios(s_idx, m_val, Kmb)
+                if hasattr(obj, "compute_edge_flows"):
+                    obj.compute_edge_flows(sol, i_maturity=m_val, i_scenario=s_idx)
+        else:
+            sol = _get_solution(obj, maturity_idx=m_val, scenario_idx=s_val)
+        
+        if sol is None and (maturity_idx is not None or scenario_idx is not None):
+             print(f"[paraview_export] WARNING: No solution found for mat={m_val} / scen={s_val}")
 
-    if export_plasmodesmata:
-        fp = f"{prefix}_plasmodesmata.vtk"
-        _export_plasmodesmata(obj, fp, sol, indice, pd_radius=pd_radius,
-                              extrude_z=extrude_z)
-        written["plasmodesmata"] = fp
+        written: Dict[str, str] = {}
 
-    if export_flow_vectors:
-        fp = f"{prefix}_flow_vectors.vtk"
-        _export_flow_vectors(obj, fp, sol, indice)
-        written["flow_vectors"] = fp
+        if export_cells:
+            fp = f"{current_prefix}_cells.vtk"
+            _export_cells(obj, fp, sol, indice, extrude_z)
+            written["cells"] = fp
 
-    print(
-        f"\n[paraview_export] Done — {len(written)} file(s) written with prefix '{prefix}'."
-    )
-    return written
+        if export_walls:
+            fp = f"{current_prefix}_walls.vtk"
+            _export_walls(obj, fp, extrude_z)
+            written["walls"] = fp
+
+        if export_membranes:
+            fp = f"{current_prefix}_membranes.vtk"
+            _export_membranes(obj, fp, sol, indice, extrude_z)
+            written["membranes"] = fp
+
+        if export_plasmodesmata:
+            fp = f"{current_prefix}_plasmodesmata.vtk"
+            _export_plasmodesmata(obj, fp, sol, indice, pd_radius=pd_radius,
+                                  extrude_z=extrude_z)
+            written["plasmodesmata"] = fp
+
+        if export_flow_vectors:
+            fp = f"{current_prefix}_flow_vectors.vtk"
+            _export_flow_vectors(obj, fp, sol, indice)
+            written["flow_vectors"] = fp
+        
+        last_written = written
+
+    print(f"\n[paraview_export] Done — {len(to_export)} scenario(s) exported.")
+    return last_written

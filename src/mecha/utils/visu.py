@@ -66,12 +66,7 @@ import networkx as nx
 import pandas as pd
 
 # Network visualization functions
-from mecha.utils.network_export import (
-    _PATH_COLORS, _PATH_LABELS, _CONTINUOUS_PROPS,
-    visualize_network, plot_flow_network, plot_K_network,
-    plot_velocity_network,
-    plot_flow_pathway_breakdown, plot_psi_radial_profile
-)
+from mecha.utils.network_export import *
 
 
 
@@ -249,6 +244,8 @@ def visualize(obj: Any,
         plot_psi_radial_profile(obj, **kwargs)
     elif visu_type == 'velocity':
         plot_velocity_network(obj, **kwargs)
+    elif visu_type == 'osmotic_profile':
+        plot_osmotic_radial_profile(obj, **kwargs)
     else:
         raise ValueError(
             f"Unknown visualization type: '{visu_type}'. "

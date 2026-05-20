@@ -34,8 +34,7 @@ def prepare_geometrical_properties(general, network, position, indice):
     border_link        = network.border_link
     x_min, x_max       = network.x_min, network.x_max
     xylem80            = network.xylem_80_percentile_distance
-    r_rel              = network.r_rel
-    x_rel              = network.x_rel
+    r_rel, x_rel       = network.get_relative_positions()
 
     use_thick = (
         general.paraview == 1 or general.par_track == 1 or
