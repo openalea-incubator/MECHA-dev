@@ -51,10 +51,17 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from mecha.mecha_class import Mecha
 from mecha.utils.data_loader import InData
+from mecha.utils.scenario_builder import ScenarioBuilder
 
-_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-_CELLSET   = os.path.join(_REPO_ROOT, 'extdata', 'current_root.xml')
-_OUT_DIR   = os.path.join(os.path.dirname(__file__), 'outputs')
+_OUT_DIR    = os.path.join(os.path.dirname(__file__), 'outputs')
+_CELLSET    = os.path.join(os.path.dirname(__file__), '..', 'extdata', 'current_root.xml')
+
+
+def _build_mecha() -> Mecha:
+    data  = InData(cellset_file=_CELLSET)
+    mecha = Mecha(data)
+    mecha.water_flux()
+    return mecha
 
 # ── diffusion parameters ──────────────────────────────────────────────────────
 
@@ -86,60 +93,6 @@ CASES = {
 CAP_PARAMS = {'dt': 1.0, 'C_wall': 1.0, 'C_cell': 1.0}
 N_STEPS    = 20             # after 20 days boundary effects start to become significant → diverging from a linear σ² ∝ t regime
 THETA      = 0.5
-
-
-# ── network helpers ───────────────────────────────────────────────────────────
-
-def _build_mecha() -> Mecha:
-    data  = InData(cellset_file=_CELLSET)
-    mecha = Mecha(data)
-    mecha.water_flux()
-    return mecha
-
-
-def _root_center(mecha: Mecha):
-    """Return (cx, cy) centroid of all cell nodes (µm)."""
-    nwj = mecha.network.n_wall_junction
-    xs, ys = [], []
-    for nd, d in mecha.network.graph.nodes(data=True):
-        if mecha.indice[nd] >= nwj and 'position' in d:
-            xs.append(d['position'][0])
-            ys.append(d['position'][1])
-    return float(np.mean(xs)), float(np.mean(ys))
-
-
-def _collect_cortex(mecha: Mecha, cx: float, cy: float):
-    """Return [(idx, r_µm, x, y), ...] for all cortex (cgroup=4) cells nodes.
-
-    r_µm is the radial distance from the root centre (cx, cy).
-    """
-    nwj = mecha.network.n_wall_junction
-    return [
-        (mecha.indice[nd],
-         np.hypot(d['position'][0] - cx, d['position'][1] - cy),
-         d['position'][0], d['position'][1])
-        for nd, d in mecha.network.graph.nodes(data=True)
-        if mecha.indice[nd] >= nwj and d.get('cgroup') == 4
-    ]
-
-
-def _middle_ring_ic(mecha: Mecha, cortex: list, mode: str):
-    """
-    Return c0 with c=1 in the 40th–60th percentile radial band of cortex cells.
-
-    For mode='full' shape = (n_total,);  for mode='sym' shape = (n_cells,).
-    """
-    nwj    = mecha.network.n_wall_junction
-    n_size = (mecha.network.graph.number_of_nodes() if mode == 'full'
-              else mecha.network.n_cells)
-    r_vals = np.array([e[1] for e in cortex])
-    r_lo, r_hi = np.percentile(r_vals, [40, 60])
-    c0 = np.zeros(n_size)
-    for idx, r, x, y in cortex:
-        if r_lo <= r <= r_hi:
-            matrix_idx = idx if mode == 'full' else idx - nwj
-            c0[matrix_idx] = 1.0
-    return c0, r_lo, r_hi
 
 
 # ── Gaussian fitting ──────────────────────────────────────────────────────────
@@ -310,13 +263,13 @@ def _plot_evolution(mecha, snap_data, r_lo, r_hi, cx, cy):
     print(f'  → {out}')
 
 
-def _plot_radial(cortex, snap_data, fits_data, r0, nwj):
+def _plot_radial(cortex, snap_data, fits_data, r0):
     """
     Radial concentration profiles — both cases on same subplots.
     snap_data: {case_key: [(c_vec, t), ...]}
     fits_data: {case_key: [(A, r0, sigma) or None, ...]}
     """
-    r_arr  = np.array([e[1] for e in cortex])
+    r_arr  = np.array([n.r for n in cortex])
     r_fit  = np.linspace(r_arr.min() - 50, r_arr.max() + 50, 400)
     n_snap = len(snap_data['apo'])
 
@@ -334,9 +287,9 @@ def _plot_radial(cortex, snap_data, fits_data, r0, nwj):
         for case_key, case in CASES.items():
             c_vec = snap_data[case_key][si][0]
             if case['mode'] == 'full':
-                c_arr = np.array([float(c_vec[e[0]]) for e in cortex])
+                c_arr = np.array([float(c_vec[n.node_id]) for n in cortex])
             else:
-                c_arr = np.array([float(c_vec[e[0] - nwj]) for e in cortex])
+                c_arr = np.array([float(c_vec[n.cell_id]) for n in cortex])
 
             ax.scatter(r_arr, c_arr, s=7, color=case['color'],
                        alpha=0.6, label=case['label'])
@@ -424,10 +377,9 @@ def test_diffusion_time_evolution():
     print('\n[test_diffusion] building Mecha...')
     mecha = _build_mecha()
 
-    nwj    = mecha.network.n_wall_junction
-    cx, cy = _root_center(mecha)
-    cortex = _collect_cortex(mecha, cx, cy)
-    r_vals = np.array([e[1] for e in cortex])
+    cx, cy = ScenarioBuilder.root_center(mecha)
+    cortex = ScenarioBuilder.collect_display_nodes(mecha, cx, cy, key='sym', filter_fn=lambda n: n.cgroup == 4)
+    r_vals = np.array([n.r for n in cortex])
 
     # ── build diffusion matrices once (for theory estimate) ──────────────────
     print('  building diffusion matrices...')
@@ -450,7 +402,7 @@ def test_diffusion_time_evolution():
     D_theory_apo = _D_eff_network_msd(D_mat_apo, Cm_apo, r_by_idx_apo)
 
     # SYM: cortex cells only (sym-mode indexing)
-    r_by_cellid = {e[0] - nwj: e[1] * 1e-4 for e in cortex}
+    r_by_cellid = {n.cell_id: n.r * 1e-4 for n in cortex}
     D_theory_sym = _D_eff_network_msd(D_mat_sym, Cm_sym, r_by_cellid)
 
     D_eff_theories = {'apo': D_theory_apo, 'sym': D_theory_sym}
@@ -470,7 +422,7 @@ def test_diffusion_time_evolution():
     mass_weights = {}
     ring_bounds  = {}
     for key, case in CASES.items():
-        c0, r_lo, r_hi = _middle_ring_ic(mecha, cortex, case['mode'])
+        c0, r_lo, r_hi = ScenarioBuilder.circular_ic(mecha, cortex, key=case['mode'])
         ics[key]          = c0
         ring_bounds[key]  = (r_lo, r_hi)
         st = st_apo if key == 'apo' else st_sym
@@ -493,10 +445,10 @@ def test_diffusion_time_evolution():
 
     def _record(key, c_vec, step):
         t = float(step) * CAP_PARAMS['dt']
-        if case['mode'] == 'full':
-            c_arr = np.array([float(c_vec[e[0]]) for e in cortex])
+        if CASES[key]['mode'] == 'full':
+            c_arr = np.array([float(c_vec[n.node_id]) for n in cortex])
         else:
-            c_arr = np.array([float(c_vec[e[0] - nwj]) for e in cortex])
+            c_arr = np.array([float(c_vec[n.cell_id]) for n in cortex])
         fit = _fit_gaussian(r_arr, c_arr, r0_init, sigma_init)
         if fit is not None:
             ts_sigma[key].append(t)
@@ -582,7 +534,7 @@ def test_diffusion_time_evolution():
     # ── visualisation ─────────────────────────────────────────────────────────
     os.makedirs(_OUT_DIR, exist_ok=True)
     _plot_evolution(mecha, snap_data, r_lo, r_hi, cx, cy)
-    _plot_radial(cortex, snap_data, fits_data, r0_init, nwj)
+    _plot_radial(cortex, snap_data, fits_data, r0_init)
     _plot_sigma(ts_sigma, sig_data, D_effs, D_eff_theories, sigma0s)
 
 # ── standalone ────────────────────────────────────────────────────────────────

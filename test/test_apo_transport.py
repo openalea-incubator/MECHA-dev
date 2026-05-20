@@ -31,8 +31,6 @@ Outputs
 import os
 import sys
 import numpy as np
-import scipy.sparse as sp
-import scipy.sparse.linalg as spla
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -42,47 +40,20 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 from mecha.mecha_class import Mecha
 from mecha.utils.data_loader import InData
 from mecha.solute_transport import SoluteTransport
+from mecha.utils.scenario_builder import ScenarioBuilder
 
-_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-_CELLSET   = os.path.join(_REPO_ROOT, 'extdata', 'current_root.xml')
-_OUT_DIR   = os.path.join(os.path.dirname(__file__), 'outputs')
+_OUT_DIR    = os.path.join(os.path.dirname(__file__), 'outputs')
+_CELLSET    = os.path.join(os.path.dirname(__file__), '..', 'extdata', 'current_root.xml')
 
-D_WALL    = 1e-5   # cm²/d  apoplastic diffusivity
-DP        = dict(apo_wall=D_WALL, membrane=0.0, plasmodesmata=0.0)
-CAP       = {'dt': 0.1, 'C_wall': 1.0, 'C_cell': 1.0}
-N_STEPS   = 200    # minimum; overridden in test body by transit-time estimate
-THETA     = 1.0
-
-# ── build helpers ─────────────────────────────────────────────────────────────
 
 def _build_mecha_homogeneous() -> Mecha:
-    """
-    Mecha with all apoplastic wall conductances equal (no Casparian strip).
-
-    Changes made to the INPUT parameters (not the builder code):
-      kw_endo_endo → kw_base  (was 1e-16; makes 46 endodermis wall nodes
-                                conduct equally to cortex nodes)
-      barrier stays 1         (no other code path changes; count_interC>=2
-                                nodes = 0 in this anatomy so the hardcoded
-                                K=1e-16 branch is never reached)
-      water_flux() re-run     produces a smooth radial pressure field
-      edge_flux_list filled   from the new hydraulic solution
-    """
     data  = InData(cellset_file=_CELLSET)
     mecha = Mecha(data)
-
-    h, i_mat = 0, 0
-    kw_base = float(mecha.hydraulic.get_kw_value(h))      # 2.4e-4
-    barrier = int(mecha.geometry.maturity_stages[i_mat].get('barrier'))  # 1
-
-    # Patch: make endodermis wall conductance equal to the cortex default
-    kw_config = mecha.hydraulic_conductivities[h, i_mat, barrier]['kw']
-    kw_config['kw_endo_endo'] = kw_base   # was 1e-16
-
-    # Re-solve hydraulics with the patched conductances
+    h, i_mat  = 0, 0
+    kw_base   = float(mecha.hydraulic.get_kw_value(h))
+    kw_config = mecha.hydraulic_conductivities[h, i_mat, 1]['kw']
+    kw_config['kw_endo_endo'] = kw_base
     sol, mat_W = mecha.water_flux()
-
-    # Fill edge_flux_list (workaround for known edge_flux_list bugs)
     fluxes = []
     coo = mat_W.tocoo()
     for i, j, v in zip(coo.row, coo.col, coo.data):
@@ -92,86 +63,16 @@ def _build_mecha_homogeneous() -> Mecha:
     mecha.edge_flux_list[0][0] = fluxes
     return mecha
 
-
-def _root_center(mecha: Mecha):
-    nwj = mecha.network.n_wall_junction
-    xs, ys = [], []
-    for nd, d in mecha.network.graph.nodes(data=True):
-        if mecha.indice[nd] >= nwj and 'position' in d:
-            xs.append(d['position'][0])
-            ys.append(d['position'][1])
-    return float(np.mean(xs)), float(np.mean(ys))
-
-
-def _stele_bc_nodes(mecha: Mecha) -> dict:
-    """
-    Indices of wall nodes deep in the stele (count_stele_overall > 0 and
-    count_cortex == 0 and count_endo == 0).  These are pure sinks in mode='apo':
-    water exits here via membranes, not wall-to-wall edges.  Setting c=0 there
-    is an absorbing BC (mass removed when it reaches the stele) and prevents
-    numerical blow-up from tiny capacitance.
-    """
-    nwj = mecha.network.n_wall_junction
-    bc = {}
-    for nd, d in mecha.network.graph.nodes(data=True):
-        idx = mecha.indice[nd]
-        if idx < nwj:
-            if (d.get('count_stele_overall', 0) > 0
-                    and d.get('count_cortex', 0) == 0
-                    and d.get('count_endo', 0) == 0):
-                bc[idx] = 0.0
-    return bc
-
-
-def _collect_display_nodes(mecha: Mecha, cx: float, cy: float):
-    """
-    Wall nodes with L>0 (physical wall segments, not connectivity-only junctions).
-    Returns [(idx, r_µm, x, y, count_cortex), ...].
-    """
-    nwj = mecha.network.n_wall_junction
-    wl  = mecha.network.wall_lengths
-    result = []
-    for nd, d in mecha.network.graph.nodes(data=True):
-        idx = mecha.indice[nd]
-        if idx < nwj and 'position' in d and wl.get(idx, 0.0) > 0:
-            r = np.hypot(d['position'][0] - cx, d['position'][1] - cy)
-            cc = d.get('count_cortex', 0)
-            result.append((idx, r, d['position'][0], d['position'][1], cc))
-    return result
-
-
-def _cortex_wall_ic(display_nodes: list, nwj: int):
-    """c=1 in displayed cortex wall nodes (count_cortex≥1) at 40–60 % of r."""
-    cortex = [(idx, r) for idx, r, *_, cc in display_nodes if cc >= 1]
-    if not cortex:
-        raise RuntimeError('No cortex wall nodes (count_cortex>=1) with L>0 found')
-    r_vals = [r for _, r in cortex]
-    r_lo, r_hi = np.percentile(r_vals, [40, 60])
-    c0 = np.zeros(nwj)
-    for idx, r in cortex:
-        if r_lo <= r <= r_hi:
-            c0[idx] = 1.0
-    return c0, r_lo, r_hi
-
-
-def _r_cm(c_apo, disp_idxs, r_disp_um):
-    """
-    Concentration-weighted mean radius over displayed (L>0) wall nodes only.
-
-    Unweighted by node volume so that r_cm is insensitive to the radial
-    gradient in wall-segment size (outer cortex walls are longer).
-    Returns µm.
-    """
-    c_d = c_apo[disp_idxs]
-    tot = float(c_d.sum())
-    if tot < 1e-30:
-        return float('nan')
-    return float(np.dot(r_disp_um, c_d)) / tot
+D_WALL  = 1e-5   # cm²/d  apoplastic diffusivity
+DP      = dict(apo_wall=D_WALL, membrane=0.0, plasmodesmata=0.0)
+CAP     = {'dt': 0.1, 'C_wall': 1.0, 'C_cell': 1.0}
+N_STEPS = 200    # minimum; overridden in test body by transit-time estimate
+THETA   = 1.0
 
 
 # ── visualisation ─────────────────────────────────────────────────────────────
 
-def _plot_evolution(display_nodes, snap_data, r_lo, r_hi, cx, cy, nwj):
+def _plot_evolution(display_nodes, snap_data, r_lo, r_hi, cx, cy):
     cases  = ('diff', 'adv', 'total')
     labels = {'diff': 'Diffusion (D)', 'adv': 'Advection (A)', 'total': 'Full (T=A+D)'}
     n_snap = len(snap_data['diff'])
@@ -179,9 +80,9 @@ def _plot_evolution(display_nodes, snap_data, r_lo, r_hi, cx, cy, nwj):
                              figsize=(3.0 * n_snap, 9.5), squeeze=False,
                              layout='constrained')
     theta_ring = np.linspace(0, 2 * np.pi, 300)
-    xs   = np.array([e[2] for e in display_nodes])
-    ys   = np.array([e[3] for e in display_nodes])
-    idxs = np.array([e[0] for e in display_nodes], dtype=int)
+    xs   = np.array([n.x for n in display_nodes])
+    ys   = np.array([n.y for n in display_nodes])
+    idxs = np.array([n.node_id for n in display_nodes], dtype=int)
 
     for row_i, key in enumerate(cases):
         snaps  = snap_data[key]
@@ -222,8 +123,8 @@ def _plot_evolution(display_nodes, snap_data, r_lo, r_hi, cx, cy, nwj):
 
 
 def _plot_radial(display_nodes, snap_data):
-    idxs  = np.array([e[0] for e in display_nodes], dtype=int)
-    r_arr = np.array([e[1] for e in display_nodes])
+    idxs  = np.array([n.node_id for n in display_nodes], dtype=int)
+    r_arr = np.array([n.r for n in display_nodes])
     n     = len(snap_data['diff'])
     show_idx = list(range(n))
     n_show   = len(show_idx)
@@ -315,8 +216,8 @@ def test_apo_transport():
     mecha = _build_mecha_homogeneous()
     nwj   = mecha.network.n_wall_junction
 
-    cx, cy = _root_center(mecha)
-    display_nodes = _collect_display_nodes(mecha, cx, cy)
+    cx, cy = ScenarioBuilder.root_center(mecha)
+    display_nodes = ScenarioBuilder.collect_display_nodes(mecha, cx, cy, key='apo')
     print(f'  wall nodes total: {nwj}  |  displayed (L>0): {len(display_nodes)}')
 
     # ── scale fluxes for global Pe = 1; choose dt and N_STEPS from transit time ─
@@ -327,37 +228,28 @@ def test_apo_transport():
     A_tmp = st_pe.build_advection_matrix(0, 0)
     D_tmp = st_pe.build_diffusion_matrix(0, 0)
 
-    c0_tmp, r_lo_tmp, _ = _cortex_wall_ic(display_nodes, nwj)
+    c0_tmp, r_lo_tmp, _ = ScenarioBuilder.circular_ic(mecha, display_nodes, key='apo')
     ring_idxs_tmp = np.where(c0_tmp > 0)[0]
 
-    height_cm = float(mecha.geometry.maturity_stages[0].get('height')) * 1e-4
-    thick_cm  = mecha.geometry.thickness * 1e-4
-    r_lo_cm   = r_lo_tmp * 1e-4
+    r_lo_cm = r_lo_tmp * 1e-4
 
-    Ad_ring = np.abs(A_tmp.diagonal())[ring_idxs_tmp]
-    valid_v = Ad_ring > 0
-    v_raw   = float(Ad_ring[valid_v].mean()) / (height_cm * thick_cm)  # cm/d (unscaled)
-    v_tgt   = D_WALL / r_lo_cm            # cm/d, global Pe=1
-    flux_scale = v_tgt / v_raw if v_raw > 0 else 1.0
-    for f in mecha.edge_flux_list[0][0]:
-        f['flux'] *= flux_scale
-
-    T_transit = r_lo_cm / v_tgt           # d = r_lo² / D_wall (same for ADV and DIFF)
+    flux_scale, v_tgt, T_transit = ScenarioBuilder.scale_fluxes_pe1(
+        mecha, A_tmp, ring_idxs_tmp, D_WALL, r_lo_cm)
     dt_use    = max(0.1, round(T_transit / 100.0, 1))    # ~100 steps per transit
     CAP['dt'] = dt_use
-    T_steps   = int(np.ceil(T_transit / dt_use))         # steps per transit
-    # Run to 5×T_transit so DIFF reaches near-equilibrium (boundary effects gone)
+    T_steps   = int(np.ceil(T_transit / dt_use))
     N_STEPS   = max(200, min(2000, 5 * T_steps))
 
+    Ad_ring    = np.abs(A_tmp.diagonal())[ring_idxs_tmp]
     Dd_ring    = np.abs(D_tmp.diagonal())[ring_idxs_tmp]
-    valid_both = valid_v & (Dd_ring > 0)
+    valid_both = (Ad_ring > 0) & (Dd_ring > 0)
     pe_ring    = float((Ad_ring[valid_both] * flux_scale / Dd_ring[valid_both]).mean()) \
                  if valid_both.any() else float('nan')
     print(f'  global Pe=1: v={v_tgt*1e4:.3f}µm/d  T_transit={T_transit:.1f}d'
           f'  dt={dt_use}d  N_STEPS={N_STEPS}  pe_ring≈{pe_ring:.3f}'
           f'  (total {N_STEPS * dt_use:.1f}d)')
 
-    bc_stele = _stele_bc_nodes(mecha)
+    bc_stele = ScenarioBuilder.solute_bc(display_nodes, key='apo')
     print(f'  absorbing BC at {len(bc_stele)} stele wall nodes (ADV and T; DIFF is mass-conserving)')
 
     # ── build capacitance, initial condition, r array ─────────────────────────
@@ -365,12 +257,9 @@ def test_apo_transport():
     Cm   = st.build_capacitance(0)
     Cm_d = Cm.diagonal()
 
-    c0, r_lo, r_hi = _cortex_wall_ic(display_nodes, nwj)
+    c0, r_lo, r_hi = ScenarioBuilder.circular_ic(mecha, display_nodes, key='apo')
     n_ic = int(c0.sum())
     print(f'  IC: cortex ring  r=[{r_lo:.1f}, {r_hi:.1f}] µm  ({n_ic} nodes)')
-
-    disp_idxs = np.array([e[0] for e in display_nodes], dtype=int)
-    r_disp_um = np.array([e[1] for e in display_nodes])   # already in µm
 
     # ── time loop ─────────────────────────────────────────────────────────────
     # DIFF:  no absorbing BC — mass conserved; D is bidirectional so stele
@@ -391,7 +280,7 @@ def test_apo_transport():
     def _record(key, c_vec, step):
         t = float(step) * CAP['dt']
         ts_rcm[key].append(t)
-        rcm_data[key].append(_r_cm(c_vec, disp_idxs, r_disp_um))
+        rcm_data[key].append(ScenarioBuilder.r_cm(c_vec, display_nodes, key='apo'))
         mass_data[key].append(float(np.dot(Cm_d, c_vec)))
         if step in snap_at:
             snap_data[key].append((c_vec.copy(), t))
@@ -449,7 +338,7 @@ def test_apo_transport():
 
     # ── plots ─────────────────────────────────────────────────────────────────
     os.makedirs(_OUT_DIR, exist_ok=True)
-    _plot_evolution(display_nodes, snap_data, r_lo, r_hi, cx, cy, nwj)
+    _plot_evolution(display_nodes, snap_data, r_lo, r_hi, cx, cy)
     _plot_radial(display_nodes, snap_data)
     _plot_rcm(ts_rcm, rcm_data, mass_data, M0s, T_transit=T_transit)
 
