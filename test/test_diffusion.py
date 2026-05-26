@@ -472,6 +472,7 @@ def test_diffusion_time_evolution():
                 mode               = case['mode'],
                 c_prev             = c_current[key],
                 theta              = THETA,
+                operators          = 'D',
             )
             _record(key, c_current[key], step)
 

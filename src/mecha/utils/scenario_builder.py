@@ -216,7 +216,7 @@ class ScenarioBuilder:
                 _filter = lambda n: n.r < r_thresh
             else:
                 _filter = filter_fn
-            return {n.cell_id: c_value for n in nodes if _filter(n)}
+            return {n.node_id: c_value for n in nodes if _filter(n)}
 
         else:
             raise ValueError(f"key must be 'apo' or 'sym', got {key!r}")
