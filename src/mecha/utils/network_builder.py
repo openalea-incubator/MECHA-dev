@@ -135,12 +135,9 @@ class NetworkBuilder(AbstractNetwork):
         self.perimeter: float = 0.0
 
         # Cell surface computation
-        self.len_outer_cortex: float = 0.0
-        self.len_cortex_cortex: float = 0.0
-        self.len_cortex_endo: float = 0.0
-        self.cross_section_outer_cortex: float = 0.0
-        self.cross_section_cortex_cortex: float = 0.0
-        self.cross_section_cortex_endo: float = 0.0
+        self.concentrated_outer_cortex: float = 0.0
+        self.concentrated_cortex_cortex: float = 0.0
+        self.concentrated_cortex_endo: float = 0.0
         self.plasmodesmata_indice: List[int] = []
 
         # list of contagion parameters
@@ -1188,12 +1185,12 @@ class NetworkBuilder(AbstractNetwork):
         indice = nx.get_node_attributes(self.graph,'indice') #Node indices (walls, junctions and cells)
         
         # Initialize counters
-        self.len_outer_cortex = 0
-        self.len_cortex_cortex = 0
-        self.len_cortex_endo = 0
-        self.cross_section_outer_cortex = 0
-        self.cross_section_cortex_cortex = 0
-        self.cross_section_cortex_endo = 0
+        len_outer_cortex = 0
+        len_cortex_cortex = 0
+        len_cortex_endo = 0
+        cross_section_outer_cortex = 0
+        cross_section_cortex_cortex = 0
+        cross_section_cortex_endo = 0
         self.plasmodesmata_indice = []
         
         for node, edges in self.graph.adjacency():
@@ -1229,19 +1226,23 @@ class NetworkBuilder(AbstractNetwork):
                 
                 # Exodermis/hypodermis or epidermis if no exodermis outer layer - cortex
                 if {node_group, j_group} == {self.outercortex_connec_rank, 4}:
-                    self.len_outer_cortex += length
+                    len_outer_cortex += length
                     if is_not_intercellular:
-                        self.cross_section_outer_cortex += length
+                        cross_section_outer_cortex += length
                 # Cortex - cortex
                 elif node_group == j_group == 4:
-                    self.len_cortex_cortex += length
+                    len_cortex_cortex += length
                     if is_not_intercellular:
-                        self.cross_section_cortex_cortex += length
+                        cross_section_cortex_cortex += length
                 # Cortex - endodermis
                 elif {node_group, j_group} == {3, 4}:
-                    self.len_cortex_endo += length
+                    len_cortex_endo += length
                     if is_not_intercellular:
-                        self.cross_section_cortex_endo += length
+                        cross_section_cortex_endo += length
+
+        self.concentrated_outer_cortex = len_outer_cortex/cross_section_outer_cortex
+        self.concentrated_cortex_cortex = len_cortex_cortex/cross_section_cortex_cortex
+        self.concentrated_cortex_endo = len_cortex_endo/cross_section_cortex_endo
 
 
     def rank_cells(self, geometry: GeometryData):

@@ -241,11 +241,9 @@ def visualize(obj: Any,
     elif visu_type == 'flow_pathway':
         plot_flow_pathway_breakdown(obj, **kwargs)
     elif visu_type == 'psi_profile':
-        plot_psi_radial_profile(obj, **kwargs)
+        plot_radial_profile(obj, **kwargs)
     elif visu_type == 'velocity':
         plot_velocity_network(obj, **kwargs)
-    elif visu_type == 'osmotic_profile':
-        plot_osmotic_radial_profile(obj, **kwargs)
     else:
         raise ValueError(
             f"Unknown visualization type: '{visu_type}'. "

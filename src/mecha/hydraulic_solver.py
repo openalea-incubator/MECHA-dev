@@ -37,10 +37,9 @@ class HydraulicMatrixBuilder:
 
         kw = self.hydraulic.get_kw_value(h)
         kpl = kpl_config['kpl']
+        self.hydraulic.set_pd_interface(self.network)
 
         n_nodes = self.network.graph.number_of_nodes()
-        n_walls = self.network.n_walls
-        n_wall_junction = self.network.n_wall_junction
         thickness = self.geometry.thickness
 
         # Initialize COO triplet lists for matrix_W
@@ -78,7 +77,7 @@ class HydraulicMatrixBuilder:
                         Kmb[jmb] = K_mem
                         jmb += 1
                     elif path == 'plasmodesmata':
-                        self._fill_plasmodesmata(i, j, node, neighboor, eattr, kpl, kpl_config, height, thickness, barrier)
+                        self._fill_plasmodesmata(i, j, eattr, kpl_config, thickness, barrier)
 
         # 2. Add soil-wall connections
         self._apply_soil_boundary(x_contact, height, thickness, kw, barrier, boundary, rhs_s, rhs_C)
@@ -272,89 +271,127 @@ class HydraulicMatrixBuilder:
 
         return K
 
-    def _fill_plasmodesmata(self, i, j, node, neighboor, eattr, kpl, kpl_config, height, thickness, barrier):
-        cgroupi = self.network.graph.nodes[node].get('cgroup')
-        cgroupj = self.network.graph.nodes[neighboor].get('cgroup')
+    @staticmethod
+    def _get_kpl_factor(kpl_config: dict, factor_key) -> float:
+        """Resolve an interface factor key against *kpl_config*.
 
-        def map_cgroup(cg):
-            if cg in [19, 20]: return 13
-            elif cg == 21: return 16
-            elif cg == 23: return 11
-            elif cg == 26: return 12
-            return cg
+        Parameters
+        ----------
+        kpl_config : dict
+            Plasmodesmata conductance configuration dictionary returned by
+            ``HydraulicData.get_plasmodesmatal_conductance()``.
+        factor_key : str | Tuple[str, str] | None
+            Value stored in ``HydraulicData.interface_kpl_factor_map``:
 
-        cgroupi = map_cgroup(cgroupi)
-        cgroupj = map_cgroup(cgroupj)
+            * ``None``           – interface not listed → factor = 1.0.
+            * ``str``            – single key look-up in *kpl_config*.
+            * ``(str, str)``     – harmonic mean of two *kpl_config* values,
+                                   reflecting the series resistance of two
+                                   different tissue-side membranes.
 
+        Returns
+        -------
+        float
+            The resolved dimensionless conductance factor.
+        """
+        if factor_key is None:
+            return 1.0
+        if isinstance(factor_key, tuple):
+            f1 = float(kpl_config.get(factor_key[0], 1.0))
+            f2 = float(kpl_config.get(factor_key[1], 1.0))
+            denom = f1 + f2
+            return 2.0 * f1 * f2 / denom if denom > 0.0 else 0.0
+        return float(kpl_config.get(factor_key, 1.0))
+
+    def _fill_plasmodesmata(
+        self, i: int, j: int, eattr: dict,
+        kpl_config: dict, thickness: float, barrier: int
+    ) -> None:
+        """Fill matrix entries for a plasmodesmata connection.
+
+        The per-interface conductance factor is resolved entirely through
+        ``HydraulicData.interface_kpl_factor_map`` via the ``_get_kpl_factor``
+        helper, eliminating the previous long if/elif chain over tissue-type
+        combinations.  This also fixes the bug where ``endo_in_factor`` and
+        ``endo_out_factor`` were loaded from XML but never actually consulted.
+
+        Parameters
+        ----------
+        i, j : int
+            Matrix indices for the two connected nodes.
+        eattr : dict
+            Edge attribute dict (mutated in-place with ``K``, ``fplxheight``,
+            and ``temp_factor``).
+        kpl_config : dict
+            Plasmodesmata conductance config from
+            ``HydraulicData.get_plasmodesmatal_conductance()``.
+        thickness : float
+            Cross-section thickness (µm).
+        barrier : int
+            Maturity barrier level (0 = no strip).
+        """
+        cm = self.network.cell_manager
+        pd = cm.get_plasmodesmata_by_edge(i, j)
+        kpl = float(kpl_config.get('kpl', 5.3E-12))
+        pd.kpl = kpl
+
+        # Cell-type groups and symmetric interface key
+        cgroupi: int = pd.cell_i.cgroup
+        cgroupj: int = pd.cell_j.cgroup
+        interface: tuple = tuple(sorted((cgroupi, cgroupj)))
+
+        # Precompute shared quantities
         n_wall_junction = self.network.n_wall_junction
-        intercellular_ids = np.array([c.cell_id for c in self.network.cell_manager.intercellular])
+        intercellular_ids = np.array(
+            [c.cell_id for c in self.network.cell_manager.intercellular]
+        )
+        is_intercellular = (
+            (j - n_wall_junction) in intercellular_ids
+            or (i - n_wall_junction) in intercellular_ids
+        )
+        length = pd.length
+        fplxheight = self.hydraulic.fplxheight_map.get(interface, 8.0E5)
+        pd.fplxheight = fplxheight
+        base_area = fplxheight * 1.0E-04 * length
 
-        temp_factor = 1.0
+        # --- Per-interface conductance factor (replaces elif chain) --------
+        # Looks up the factor key in interface_kpl_factor_map; single str keys
+        # are resolved directly, Tuple[str, str] keys yield the harmonic mean.
+        factor_key = self.hydraulic.interface_kpl_factor_map.get(interface)
+        temp = self._get_kpl_factor(kpl_config, factor_key)
 
-        if (((j - n_wall_junction) in intercellular_ids) or ((i - n_wall_junction) in intercellular_ids)) and barrier > 0:
-            temp_factor = 0.0
-        elif cgroupj == 13 and cgroupi == 13:
-            temp_factor = 10000 * self.hydraulic.fplxheight * 1.0E-04 * eattr['length']
-        elif barrier > 0 and (cgroupj == 13 or cgroupi == 13):
-            temp_factor = 0.0
-        elif (cgroupi == 2 and cgroupj == 1) or (cgroupj == 2 and cgroupi == 1):
-            temp_factor = self.hydraulic.fplxheight_epi_exo * 1.0E-04 * eattr['length']
-        elif (cgroupi == self.network.outercortex_connec_rank and cgroupj == 4) or (cgroupj == self.network.outercortex_connec_rank and cgroupi == 4):
-            temp = float(kpl_config['cortex_factor'])
-            if barrier > 0:
-                temp_factor = 2 * temp / (temp + 1) * self.hydraulic.fplxheight_outer_cortex * 1.0E-04 * eattr['length'] * self.network.len_outer_cortex / self.network.cross_section_outer_cortex
-            else:
-                temp_factor = 2 * temp / (temp + 1) * self.hydraulic.fplxheight_outer_cortex * 1.0E-04 * eattr['length']
-        elif (cgroupi == 4 and cgroupj == 4):
-            temp = float(kpl_config['cortex_factor'])
-            if barrier > 0:
-                temp_factor = temp * self.hydraulic.fplxheight_cortex_cortex * 1.0E-04 * eattr['length'] * self.network.len_cortex_cortex / self.network.cross_section_cortex_cortex
-            else:
-                temp_factor = temp * self.hydraulic.fplxheight_cortex_cortex * 1.0E-04 * eattr['length']
-        elif (cgroupi == 3 and cgroupj == 4) or (cgroupj == 3 and cgroupi == 4):
-            temp = float(kpl_config['cortex_factor'])
-            if barrier > 0:
-                temp_factor = 2 * temp / (temp + 1) * self.hydraulic.fplxheight_cortex_endo * 1.0E-04 * eattr['length'] * self.network.len_cortex_endo / self.network.cross_section_cortex_endo
-            else:
-                temp_factor = 2 * temp / (temp + 1) * self.hydraulic.fplxheight_cortex_endo * 1.0E-04 * eattr['length']
-        elif (cgroupi == 3 and cgroupj == 3):
-            temp_factor = self.hydraulic.fplxheight_endo_endo * 1.0E-04 * eattr['length']
-        elif (cgroupi == 3 and cgroupj == 16) or (cgroupj == 3 and cgroupi == 16):
-            if ((i - n_wall_junction) in self.network.plasmodesmata_indice) or ((j - n_wall_junction) in self.network.plasmodesmata_indice):
-                temp = float(kpl_config['phloem_pericycle_pole_factor'])
-            else: temp = 1
-            temp_factor = 2 * temp / (temp + 1) * self.hydraulic.fplxheight_endo_peri * 1.0E-04 * eattr['length']
-        elif (cgroupi == 16 and (cgroupj == 5 or cgroupj == 13)) or (cgroupj == 16 and (cgroupi == 5 or cgroupi == 13)):
-            if ((i - n_wall_junction) in self.network.plasmodesmata_indice) or ((j - n_wall_junction) in self.network.plasmodesmata_indice):
-                temp = float(kpl_config['phloem_pericycle_pole_factor'])
-            else: temp = 1
-            temp_factor = 2 * temp / (temp + 1) * self.hydraulic.fplxheight_peri_stele * 1.0E-04 * eattr['length']
-        elif ((cgroupi == 5 or cgroupi == 13) and cgroupj == 12) or (cgroupi == 12 and (cgroupj == 5 or cgroupj == 13)):
-            temp = float(kpl_config['phloem_companion_cell_factor'])
-            temp_factor = 2 * temp / (temp + 1) * self.hydraulic.fplxheight_stele_comp * 1.0E-04 * eattr['length']
-        elif (cgroupi == 16 and cgroupj == 12) or (cgroupi == 12 and cgroupj == 16):
-            temp1 = float(kpl_config['phloem_companion_cell_factor'])
-            if ((i - n_wall_junction) in self.network.plasmodesmata_indice) or ((j - n_wall_junction) in self.network.plasmodesmata_indice):
-                temp2 = float(kpl_config['phloem_pericycle_pole_factor'])
-            else: temp2 = 1
-            temp_factor = 2 * temp1 * temp2 / (temp1 + temp2) * self.hydraulic.fplxheight_peri_comp * 1.0E-04 * eattr['length']
-        elif (cgroupi == 12 and cgroupj == 12):
-            temp = float(kpl_config['phloem_companion_cell_factor'])
-            temp_factor = temp * self.hydraulic.fplxheight_comp_comp * 1.0E-04 * eattr['length']
-        elif (cgroupi == 12 and cgroupj == 11) or (cgroupi == 11 and cgroupj == 12):
-            temp = float(kpl_config['phloem_companion_cell_factor'])
-            temp_factor = 2 * temp / (temp + 1) * self.hydraulic.fplxheight_comp_sieve * 1.0E-04 * eattr['length']
-        elif (cgroupi == 16 and cgroupj == 11) or (cgroupi == 11 and cgroupj == 16):
-            if ((i - n_wall_junction) in self.network.plasmodesmata_indice) or ((j - n_wall_junction) in self.network.plasmodesmata_indice):
-                temp = float(kpl_config['phloem_pericycle_pole_factor'])
-            else: temp = 1
-            temp_factor = 2 * temp / (temp + 1) * self.hydraulic.fplxheight_peri_sieve * 1.0E-04 * eattr['length']
-        elif ((cgroupi == 5 or cgroupi == 13) and cgroupj == 11) or (cgroupi == 11 and (cgroupj == 5 or cgroupj == 13)):
-            temp_factor = self.hydraulic.fplxheight_stele_sieve * 1.0E-04 * eattr['length']
-        elif ((cgroupi == 5 or cgroupi == 13) and (cgroupj == 5 or cgroupj == 13)):
-            temp_factor = self.hydraulic.fplxheight_stele_stele * 1.0E-04 * eattr['length']
-        else:
-            temp_factor = self.hydraulic.fplxheight * 1.0E-04 * eattr['length']
+        # Aperture coefficient: same-tissue → temp; cross-tissue → harmonic
+        # mean of temp and 1.0, modelling the series resistance of both sides.
+        same_tissue = cgroupi == cgroupj
+        aperture_coef = temp if same_tissue else 2.0 * temp / (temp + 1.0)
+        pd.aperture_coef = aperture_coef
+
+        # --- Air-space / cortex barrier modifier (dict lookup) -------------
+        # Adjusts PD frequency at cortex interfaces when barrier > 0.
+        barrier_modifier = (
+            {
+                (self.network.outercortex_connec_rank, 4): self.network.concentrated_outer_cortex,
+                (4, 4): self.network.concentrated_cortex_cortex,
+                (3, 4): self.network.concentrated_cortex_endo,
+            }.get(interface, 1.0)
+            if barrier > 0 else 1.0
+        )
+
+        # --- Special-case temp_factor overrides (priority list + next()) ---
+        # Evaluated in order; first matching condition wins.
+        # Replaces the previous if/elif block over xylem / intercellular cases.
+        _special_cases = [
+            # Intercellular spaces have no PD
+            (is_intercellular and barrier > 0,           0.0),
+            # Xylem-xylem connection acts as a high-conductance apoplastic path
+            (interface == (13, 13),                      10000.0 * base_area),
+            # Any xylem edge blocked by hydrophobic barriers
+            (barrier > 0 and 13 in interface,            0.0),
+        ]
+        temp_factor = next(
+            (val for cond, val in _special_cases if cond),
+            aperture_coef * base_area * barrier_modifier,  # default
+        )
 
         K = kpl * temp_factor
 
@@ -365,11 +402,15 @@ class HydraulicMatrixBuilder:
 
         # Store K on graph edge for post-solve flow computation
         eattr['K'] = float(K)
+        eattr['fplxheight'] = float(fplxheight)
         eattr['temp_factor'] = float(temp_factor)
 
         # Solute flux
         if self.boundary.c_flag and getattr(self.general, 'c_flag', False):
-            DF = self.geometry.pd_section * temp_factor / thickness * 1.0E-04 * self.hormones.diff1_pd1
+            DF = (
+                self.geometry.pd_section * temp_factor
+                / thickness * 1.0E-04 * self.hormones.diff1_pd1
+            )
             if (i - n_wall_junction) not in self.hormones.sym_zombie0:
                 self._add_C(i, i, -DF)
                 self._add_C(i, j,  DF)

@@ -142,6 +142,7 @@ def visualize_network(
         graph = obj
         network = None
     elif isinstance(obj, Mecha):
+        _get_result_data(obj, **kwargs)
         graph = obj.network.graph
         network = obj.network
     else:
@@ -508,6 +509,8 @@ def plot_flow_network(obj: Any, **kwargs: Any) -> None:
 
     Arrow direction follows the sign of Q (u→v if Q>0, v→u if Q<0).
     """
+    # get the right solution to display
+
     _plot_edge_vector_property(obj, prop_name='Q', unit='cm³ d⁻¹', **kwargs)
 
 
@@ -531,6 +534,14 @@ def _plot_edge_vector_property(obj: Any, prop_name: str, unit: str = '', **kwarg
 
     graph = obj.network.graph
     pos   = nx.get_node_attributes(graph, 'position')
+
+    maturity_idx: int = kwargs.get('maturity_idx', 0)
+    scenario_idx = kwargs.get('scenario_idx', 'current')
+
+    # --- 0. Restore scenario state when a specific scenario is requested ----
+    if scenario_idx != 'current' and hasattr(obj, 'restore_scenario_state'):
+        print(f"Restoring scenario state for maturity={maturity_idx}, scenario={scenario_idx}")
+        _ = obj.restore_scenario_state(maturity_idx, scenario_idx)
 
     # ------------------------------------------------------------------ #
     # 1. Compute Q for all edges in a single pass (needed for direction)  #
@@ -557,6 +568,8 @@ def _plot_edge_vector_property(obj: Any, prop_name: str, unit: str = '', **kwarg
             all_vals.append(abs(float(val)))
             
     val_max = max(all_vals) if all_vals else 1.0
+    # summary of val_max, val_min, mean, median, std
+    print(f"Summary of {prop_name}: val_max={val_max}, val_min={min(all_vals)}, mean={np.mean(all_vals)}, median={np.median(all_vals)}, std={np.std(all_vals)}")
 
     # ------------------------------------------------------------------ #
     # 3. Collect segments per path type in one O(E) pass                 #
@@ -591,11 +604,14 @@ def _plot_edge_vector_property(obj: Any, prop_name: str, unit: str = '', **kwarg
     # ------------------------------------------------------------------ #
     save_path = kwargs.get('save_path', None)
 
-    fig, ax = plt.subplots(figsize=(12, 12), facecolor='#0d0d1a')
+    if kwargs.get('ax') is not None:
+        ax = kwargs['ax']
+    else:
+        fig, ax = plt.subplots(figsize=(12, 12), facecolor='#0d0d1a')
     ax.set_facecolor('#0d0d1a')
     ax.set_aspect('equal')
     ax.set_title(
-        f"{prop_name} {f'[{unit}]' if unit else ''} – edges (Mat {kwargs.get('maturity_idx', 0)})",
+        f"{prop_name} {f'[{unit}]' if unit else ''} – edges (Mat {kwargs.get('maturity_idx', 0)}) ",
         color='white', fontsize=13,
     )
 
@@ -658,11 +674,13 @@ def _plot_edge_vector_property(obj: Any, prop_name: str, unit: str = '', **kwarg
     # Auto-scale axes to data (LineCollection doesn't do this automatically)
     ax.autoscale_view()
 
-    plt.tight_layout()
+    show_plot = kwargs.get('show_plot', True)
     if save_path is not None:
+        plt.tight_layout()
         plt.savefig(save_path, dpi=150, bbox_inches='tight', facecolor='#0d0d1a')
         print(f"Saved → {save_path}")
-    else:
+    elif show_plot:
+        plt.tight_layout()
         plt.show()
 
 
@@ -765,72 +783,238 @@ def plot_K_network(obj, **kwargs):
         plt.show()
 
 
-def plot_psi_radial_profile(obj, **kwargs):
-    """Plot average Psi vs radial distance (rank)."""
-    sol, _ = _get_result_data(obj, **kwargs)
-    if sol is None:
-        print("No solution found for specified maturity/scenario.")
+def plot_radial_profile(obj: Any, **kwargs: Any) -> None:
+    """Plot radial water potential profile including osmotic components and xylem/phloem.
+
+    Merges the former ``plot_psi_radial_profile`` and ``plot_osmotic_radial_profile``
+    into a single function.  When osmotic data (``psi_p``, ``psi_os``,
+    ``psi_total``) is present in the graph node attributes the function plots
+    all three components; otherwise it falls back to the raw solution vector
+    (hydrostatic potential only).
+
+    Xylem and sieve-tube (phloem) cells are excluded from the main
+    symplastic/apoplastic radial bands and rendered instead as scatter-plot
+    overlays with a dedicated colour scale so that their typically large
+    potential values do not distort the cortex/endodermis profiles.
+
+    Parameters
+    ----------
+    obj : Any
+        A solved ``Mecha`` instance.
+    maturity_idx : int, optional
+        Maturity stage index (default ``0``).
+    scenario_idx : int or str, optional
+        Scenario key to display.  When provided the function restores that
+        scenario's saved state via ``restore_scenario_state`` so that the
+        graph reflects the correct potentials.  Defaults to ``'current'``
+        (whatever is currently on the graph).
+    **kwargs : Any
+        Additional keyword arguments passed through.
+    """
+    if not hasattr(obj, 'network'):
+        print("Object must have a network attribute.")
         return
 
+    graph = obj.network.graph
     cm = obj.network.cell_manager
-    data = []
-    
-    # 1) Collect node potentials and assign to 'out', 'mid', or 'in' for each cell rank
+
+    maturity_idx: int = kwargs.get('maturity_idx', 0)
+    scenario_idx = kwargs.get('scenario_idx', 'current')
+    show_plot: bool = kwargs.get('show_plot', True)
+    ax: Optional[Axes] = kwargs.get('ax', None)
+
+    # --- 1. Restore scenario state when a specific scenario is requested ----
+    if scenario_idx != 'current' and hasattr(obj, 'restore_scenario_state'):
+        print(f"Restoring scenario state for maturity={maturity_idx}, scenario={scenario_idx}")
+        restored = obj.restore_scenario_state(maturity_idx, scenario_idx)
+        if not restored:
+            print(
+                f"[plot_radial_profile] WARNING: could not restore state for "
+                f"mat={maturity_idx}, scen={scenario_idx}. "
+                "Falling back to current graph state."
+            )
+            sol, _ = _get_result_data(obj, **kwargs)
+            if sol is not None and hasattr(obj, 'compute_edge_flows'):
+                obj.compute_edge_flows(
+                    sol,
+                    i_maturity=maturity_idx,
+                    i_scenario=0 if scenario_idx == 'standard water flow' else scenario_idx,
+                )
+
+    # --- 2. Try to read osmotic data from graph attributes ------------------
+    psi_p_attr: Dict[int, float] = nx.get_node_attributes(graph, 'psi_p')
+    psi_os_attr: Dict[int, float] = nx.get_node_attributes(graph, 'psi_os')
+    psi_total_attr: Dict[int, float] = nx.get_node_attributes(graph, 'psi_total')
+    has_osmotic: bool = bool(psi_p_attr)
+
+    # Fallback: run compute_edge_flows if no graph attributes exist yet
+    if not has_osmotic:
+        sol, _ = _get_result_data(obj, **kwargs)
+        if sol is not None and hasattr(obj, 'compute_edge_flows'):
+            obj.compute_edge_flows(sol, i_maturity=maturity_idx)
+            psi_p_attr = nx.get_node_attributes(graph, 'psi_p')
+            psi_os_attr = nx.get_node_attributes(graph, 'psi_os')
+            psi_total_attr = nx.get_node_attributes(graph, 'psi_total')
+            has_osmotic = bool(psi_p_attr)
+
+    # Hydrostatic-only fallback
+    sol, _ = _get_result_data(obj, **kwargs)
+    hydrostatic_only: bool = (not has_osmotic) and (sol is not None)
+
+    if not has_osmotic and sol is None:
+        print(
+            "No potential data found.  Make sure compute_edge_flows() has been called."
+        )
+        return
+
+    # --- 3. Build per-node identifiers for special cell types ---------------
+    xylem_ids: set = {x.node_id for x in cm.xylem} if hasattr(cm, 'xylem') else set()
+    sieve_ids: set = {s.node_id for s in cm.sieve} if hasattr(cm, 'sieve') else set()
+    inter_ids: set = (
+        {i.node_id for i in cm.intercellular} if hasattr(cm, 'intercellular') else set()
+    )
+    special_ids: set = xylem_ids | sieve_ids | inter_ids
+
+    # --- 4. Collect data ----------------------------------------------------
+    data: List[Dict] = []
+    xylem_data: List[Dict] = []
+    sieve_data: List[Dict] = []
+
+    def _psi_p(node_id: int) -> float:
+        if has_osmotic:
+            return float(psi_p_attr.get(node_id, 0.0))
+        return float(sol[node_id]) if sol is not None else 0.0
+
+    def _psi_os(node_id: int) -> float:
+        return float(psi_os_attr.get(node_id, 0.0)) if has_osmotic else 0.0
+
+    def _psi_tot(node_id: int) -> float:
+        if has_osmotic:
+            p = psi_p_attr.get(node_id, 0.0)
+            o = psi_os_attr.get(node_id, 0.0)
+            return float(psi_total_attr.get(node_id, p + o))
+        return float(sol[node_id]) if sol is not None else 0.0
+
     for cell in cm:
         rc = np.hypot(cell.x, cell.y)
         if rc < 1e-6:
             continue
-            
-        psi_c = sol[cell.node_id]
-        data.append({'rank': cell.rank, 'side': 'mid', 'r': rc, 'psi': psi_c})
-        
-        vc_x, vc_y = cell.x, cell.y
-        norm_vc = rc
-        
-        for w in cell.walls:
-            rw = np.hypot(w.x, w.y)
-            vw_x, vw_y = w.x - cell.x, w.y - cell.y
-            norm_vw = np.hypot(vw_x, vw_y)
-            if norm_vw < 1e-6:
-                continue
-                
-            # Angle between vector-to-cell-center and cell-to-wall vector
-            cos_theta = (vc_x * vw_x + vc_y * vw_y) / (norm_vc * norm_vw)
-            psi_w = sol[w.node_id]
-            
-            if cos_theta > 0.4:
-                data.append({'rank': cell.rank, 'side': 'out', 'r': rw, 'psi': psi_w})
-            elif cos_theta < -0.4:
-                data.append({'rank': cell.rank, 'side': 'in', 'r': rw, 'psi': psi_w})
-    
-    df = pd.DataFrame(data)
-    df = df.dropna(subset=['psi'])
-    
-    # Group by rank and side to get the 3 mean radial distances and potentials per row
-    profile = df.groupby(['rank', 'side']).agg({'r': 'mean', 'psi': ['mean', 'std']}).reset_index()
-    profile.columns = ['rank', 'side', 'r', 'psi_mean', 'psi_std']
-    
-    # Separate Symplastic (mid/cell nodes) and Apoplastic (out/in/wall nodes)
+
+        row = {
+            'rank': cell.rank, 'side': 'mid', 'r': rc,
+            'psi_p': _psi_p(cell.node_id),
+            'psi_os': _psi_os(cell.node_id),
+            'psi_total': _psi_tot(cell.node_id),
+        }
+
+        if cell.node_id in xylem_ids:
+            xylem_data.append(row)
+        elif cell.node_id in sieve_ids:
+            sieve_data.append(row)
+        elif cell.node_id not in special_ids:
+            data.append(row)
+
+            # Wall nodes (apoplastic sides)
+            vc_x, vc_y = cell.x, cell.y
+            norm_vc = rc
+            for w in cell.walls:
+                rw = np.hypot(w.x, w.y)
+                vw_x = w.x - cell.x
+                vw_y = w.y - cell.y
+                norm_vw = np.hypot(vw_x, vw_y)
+                if norm_vw < 1e-6:
+                    continue
+                cos_theta = (vc_x * vw_x + vc_y * vw_y) / (norm_vc * norm_vw)
+                side = None
+                if cos_theta > 0.4:
+                    side = 'out'
+                elif cos_theta < -0.4:
+                    side = 'in'
+                if side is not None:
+                    data.append({
+                        'rank': cell.rank, 'side': side, 'r': rw,
+                        'psi_p': _psi_p(w.node_id),
+                        'psi_os': _psi_os(w.node_id),
+                        'psi_total': _psi_tot(w.node_id),
+                    })
+
+    if not data:
+        print("No data collected for radial profile.")
+        return
+
+    # --- 5. Aggregate -------------------------------------------------------
+    df = pd.DataFrame(data).dropna(subset=['psi_p'])
+    agg_cols = {'r': 'mean', 'psi_p': ['mean', 'std'],
+                'psi_os': ['mean', 'std'], 'psi_total': ['mean', 'std']}
+    profile = df.groupby(['rank', 'side']).agg(agg_cols).reset_index()
+    profile.columns = [
+        'rank', 'side', 'r',
+        'psi_p_mean', 'psi_p_std',
+        'psi_os_mean', 'psi_os_std',
+        'psi_total_mean', 'psi_total_std',
+    ]
+
     sym_df = profile[profile['side'] == 'mid'].sort_values('r')
     apo_df = profile[profile['side'].isin(['out', 'in'])].sort_values('r')
+
+    # --- 6. Plot ------------------------------------------------------------
+    if show_plot:
+        fig, ax = plt.subplots(figsize=(12, 7))
     
-    fig, ax = plt.subplots(figsize=(10, 6))
-    
-    # Plot Symplastic
-    ax.errorbar(sym_df['r'], sym_df['psi_mean'], yerr=sym_df['psi_std'], fmt='-o', 
-                capsize=3, color='#7be04a', ecolor='#7be04a', alpha=0.8, label='Symplastic')
-                
-    # Plot Apoplastic
-    ax.errorbar(apo_df['r'], apo_df['psi_mean'], yerr=apo_df['psi_std'], fmt='-s', 
-                capsize=3, color='#e07b4a', ecolor='#e07b4a', alpha=0.8, label='Apoplastic')
-    
+    if has_osmotic:
+        # Symplastic — solid lines / circle markers
+        ax.errorbar(sym_df['r'], sym_df['psi_p_mean'], yerr=sym_df['psi_p_std'],
+                    fmt='-o', capsize=3, color='#4a90d9', label='Symplastic Ψ_p')
+        ax.errorbar(sym_df['r'], sym_df['psi_os_mean'], yerr=sym_df['psi_os_std'],
+                    fmt='-o', capsize=3, color='#e04a4a', label='Symplastic Ψ_os')
+        ax.errorbar(sym_df['r'], sym_df['psi_total_mean'], yerr=sym_df['psi_total_std'],
+                    fmt='-o', capsize=3, color='#222222', label='Symplastic Ψ_total')
+        # Apoplastic — dashed lines / square markers
+        ax.errorbar(apo_df['r'], apo_df['psi_p_mean'], yerr=apo_df['psi_p_std'],
+                    fmt='--s', capsize=3, color='#4a90d9', alpha=0.6,
+                    label='Apoplastic Ψ_p')
+        ax.errorbar(apo_df['r'], apo_df['psi_os_mean'], yerr=apo_df['psi_os_std'],
+                    fmt='--s', capsize=3, color='#e04a4a', alpha=0.6,
+                    label='Apoplastic Ψ_os')
+        ax.errorbar(apo_df['r'], apo_df['psi_total_mean'], yerr=apo_df['psi_total_std'],
+                    fmt='--s', capsize=3, color='#222222', alpha=0.6,
+                    label='Apoplastic Ψ_total')
+        y_label = 'Water Potential (hPa)'
+    else:
+        # Hydrostatic only
+        ax.errorbar(sym_df['r'], sym_df['psi_p_mean'], yerr=sym_df['psi_p_std'],
+                    fmt='-o', capsize=3, color='#7be04a', ecolor='#7be04a',
+                    alpha=0.8, label='Symplastic Ψ')
+        ax.errorbar(apo_df['r'], apo_df['psi_p_mean'], yerr=apo_df['psi_p_std'],
+                    fmt='-s', capsize=3, color='#e07b4a', ecolor='#e07b4a',
+                    alpha=0.8, label='Apoplastic Ψ')
+        y_label = 'Hydrostatic Potential (hPa)'
+
+    # Xylem overlay — cyan diamonds
+    if xylem_data:
+        xdf = pd.DataFrame(xylem_data).sort_values('r')
+        col = 'psi_p' if has_osmotic else 'psi_total'
+        ax.scatter(xdf['r'], xdf[col], marker='D', color='#00c8ff',
+                   zorder=5, s=60, label='Xylem Ψ_p')
+
+    # Phloem / sieve overlay — magenta triangles
+    if sieve_data:
+        sdf = pd.DataFrame(sieve_data).sort_values('r')
+        col = 'psi_p' if has_osmotic else 'psi_total'
+        ax.scatter(sdf['r'], sdf[col], marker='^', color='#d048c8',
+                   zorder=5, s=60, label='Phloem Ψ_p')
+
     ax.set_xlabel('Radial Distance (µm)')
-    ax.set_ylabel('Water Potential (hPa)')
-    ax.set_title(f"Radial Psi Profile - Mat {kwargs.get('maturity_idx', 0)}, Scen {kwargs.get('scenario_idx', 'standard')}")
-    ax.legend(loc='best')
-    plt.grid(True, linestyle='--', alpha=0.5)
-    plt.tight_layout()
-    plt.show()
+    ax.set_ylabel(y_label)
+    ax.set_title(
+        f"Radial Profile — Mat {maturity_idx}, Scen {scenario_idx}"
+    )
+    ax.legend(loc='best', fontsize=8)
+
+    if show_plot:
+        plt.grid(True, linestyle='--', alpha=0.5)
+        plt.tight_layout()
+        plt.show()
 
 
 def plot_flow_pathway_breakdown(obj, **kwargs):
@@ -959,138 +1143,3 @@ def _gather_edge_data(graph):
         data[path]['xy_mid'].append(mid)
     return data
 
-
-def plot_osmotic_radial_profile(obj, **kwargs):
-    """Plot average Psi_p, Psi_os, and Psi_total vs radial distance (rank).
-
-    Parameters
-    ----------
-    obj : Mecha
-        A solved Mecha instance.
-    maturity_idx : int, optional
-        Maturity stage index (default 0).
-    scenario_idx : int or str, optional
-        Scenario key to display.  When provided, the function restores that
-        scenario's saved state so the graph reflects the correct potentials.
-        Defaults to ``'current'`` (whatever is currently on the graph).
-    """
-    if hasattr(obj, 'network'):
-        graph = obj.network.graph
-        cm = obj.network.cell_manager
-    else:
-        print("Object must have a network attribute.")
-        return
-
-    maturity_idx = kwargs.get('maturity_idx', 0)
-    scenario_idx = kwargs.get('scenario_idx', 'current')
-
-    # Restore the correct scenario state when a specific scenario is requested
-    if scenario_idx != 'current' and hasattr(obj, 'restore_scenario_state'):
-        restored = obj.restore_scenario_state(maturity_idx, scenario_idx)
-        if not restored:
-            print(f"[plot_osmotic_radial_profile] WARNING: could not restore state "
-                  f"for mat={maturity_idx}, scen={scenario_idx}. "
-                  "Falling back to current graph state.")
-            # Try compute_edge_flows as last resort
-            sol, _ = _get_result_data(obj, **kwargs)
-            if sol is not None:
-                obj.compute_edge_flows(sol, i_maturity=maturity_idx,
-                                       i_scenario=0 if scenario_idx == 'standard water flow' else scenario_idx)
-
-    # We use the attributes stored in graph nodes
-    psi_p_attr = nx.get_node_attributes(graph, 'psi_p')
-    psi_os_attr = nx.get_node_attributes(graph, 'psi_os')
-    psi_total_attr = nx.get_node_attributes(graph, 'psi_total')
-
-    if not psi_p_attr:
-        # Fallback: run compute_edge_flows if no graph attributes exist yet
-        sol, _ = _get_result_data(obj, **kwargs)
-        if sol is not None:
-            obj.compute_edge_flows(sol, i_maturity=maturity_idx)
-            psi_p_attr = nx.get_node_attributes(graph, 'psi_p')
-            psi_os_attr = nx.get_node_attributes(graph, 'psi_os')
-            psi_total_attr = nx.get_node_attributes(graph, 'psi_total')
-    
-    if not psi_p_attr:
-        print("No osmotic potential data found in graph. Make sure compute_edge_flows() has been called.")
-        return
-
-    data = []
-    for cell in cm:
-        rc = np.hypot(cell.x, cell.y)
-        if rc < 1e-6:
-            continue
-            
-        p_c = psi_p_attr.get(cell.node_id, 0.0)
-        os_c = psi_os_attr.get(cell.node_id, 0.0)
-        tot_c = psi_total_attr.get(cell.node_id, p_c + os_c)
-        if cell.node_id not in [i.node_id for i in cm.intercellular] and cell.node_id not in [s.node_id for s in cm.sieve] and cell.node_id not in [x.node_id for x in cm.xylem]:
-            data.append({'rank': cell.rank, 'side': 'mid', 'r': rc, 'psi_p': p_c, 'psi_os': os_c, 'psi_total': tot_c})
-        
-        vc_x, vc_y = cell.x, cell.y
-        norm_vc = rc
-        
-        for w in cell.walls:
-            rw = np.hypot(w.x, w.y)
-            vw_x, vw_y = w.x - cell.x, w.y - cell.y
-            norm_vw = np.hypot(vw_x, vw_y)
-            if norm_vw < 1e-6:
-                continue
-                
-            # Angle between vector-to-cell-center and cell-to-wall vector
-            cos_theta = (vc_x * vw_x + vc_y * vw_y) / (norm_vc * norm_vw)
-            p_w = psi_p_attr.get(w.node_id, 0.0)
-            os_w = psi_os_attr.get(w.node_id, 0.0)
-            tot_w = psi_total_attr.get(w.node_id, p_w + os_w)
-            
-            if cos_theta > 0.4:
-                data.append({'rank': cell.rank, 'side': 'out', 'r': rw, 'psi_p': p_w, 'psi_os': os_w, 'psi_total': tot_w})
-            elif cos_theta < -0.4:
-                data.append({'rank': cell.rank, 'side': 'in', 'r': rw, 'psi_p': p_w, 'psi_os': os_w, 'psi_total': tot_w})
-
-    if not data:
-        print("No data collected for radial profile.")
-        return
-
-    df = pd.DataFrame(data)
-    profile = df.groupby(['rank', 'side']).agg({
-        'r': 'mean', 
-        'psi_p': ['mean', 'std'],
-        'psi_os': ['mean', 'std'],
-        'psi_total': ['mean', 'std']
-    }).reset_index()
-    
-    profile.columns = ['rank', 'side', 'r', 'psi_p_mean', 'psi_p_std', 'psi_os_mean', 'psi_os_std', 'psi_total_mean', 'psi_total_std']
-    
-    sym_df = profile[profile['side'] == 'mid'].sort_values('r')
-    apo_df = profile[profile['side'].isin(['out', 'in'])].sort_values('r')
-
-    fig, ax = plt.subplots(figsize=(10, 6))
-    
-    # Plot Symplastic (Solid lines, circles)
-    ax.errorbar(sym_df['r'], sym_df['psi_p_mean'], yerr=sym_df['psi_p_std'], fmt='-o', 
-                capsize=3, color='blue', label='Symplastic Hydrostatic (Psi_p)')
-                
-    ax.errorbar(sym_df['r'], sym_df['psi_os_mean'], yerr=sym_df['psi_os_std'], fmt='-o', 
-                capsize=3, color='red', label='Symplastic Osmotic (Psi_os)')
-                
-    ax.errorbar(sym_df['r'], sym_df['psi_total_mean'], yerr=sym_df['psi_total_std'], fmt='-o', 
-                capsize=3, color='black', label='Symplastic Total (Psi_total)')
-                
-    # Plot Apoplastic (Dashed lines, squares)
-    ax.errorbar(apo_df['r'], apo_df['psi_p_mean'], yerr=apo_df['psi_p_std'], fmt='--s', 
-                capsize=3, color='blue', alpha=0.7, label='Apoplastic Hydrostatic (Psi_p)')
-                
-    ax.errorbar(apo_df['r'], apo_df['psi_os_mean'], yerr=apo_df['psi_os_std'], fmt='--s', 
-                capsize=3, color='red', alpha=0.7, label='Apoplastic Osmotic (Psi_os)')
-                
-    ax.errorbar(apo_df['r'], apo_df['psi_total_mean'], yerr=apo_df['psi_total_std'], fmt='--s', 
-                capsize=3, color='black', alpha=0.7, label='Apoplastic Total (Psi_total)')
-    
-    ax.set_xlabel('Radial Distance (µm)')
-    ax.set_ylabel('Water Potential (hPa)')
-    ax.set_title(f"Radial Osmotic Potential Profile - Mat {kwargs.get('maturity_idx', 0)}, Scen {kwargs.get('scenario_idx', 'current')}")
-    ax.legend(loc='best')
-    plt.grid(True, linestyle='--', alpha=0.5)
-    plt.tight_layout()
-    plt.show()
