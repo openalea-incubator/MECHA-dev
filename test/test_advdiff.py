@@ -45,34 +45,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 from mecha.mecha_class import Mecha
 from mecha.utils.data_loader import InData
 from mecha.solute_transport import SoluteTransport
+from mecha.utils.scenario_builder import ScenarioBuilder
 
-_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-_CELLSET   = os.path.join(_REPO_ROOT, 'extdata', 'current_root.xml')
-_OUT_DIR   = os.path.join(os.path.dirname(__file__), 'outputs')
+_OUT_DIR    = os.path.join(os.path.dirname(__file__), 'outputs')
+_CELLSET    = os.path.join(os.path.dirname(__file__), '..', 'extdata', 'current_root.xml')
 
-D_WALL = 1e-5   # cm²/d  apoplastic wall diffusivity
-D_PD   = 1e-4   # cm²/d  plasmodesmata diffusivity
-
-DP_APO = dict(apo_wall=D_WALL, membrane=0.0, plasmodesmata=0.0)
-DP_SYM = dict(apo_wall=0.0,   membrane=0.0, plasmodesmata=D_PD)
-
-THETA = 1.0
-
-CASES  = ['diff', 'adv', 'total']
-COLORS = {'diff': '#2166ac', 'adv': '#d6604d', 'total': '#4dac26'}
-LABELS = {'diff': 'Diffusion (D)', 'adv': 'Advection (A)', 'total': 'Full (T=A+D)'}
-OPS    = {'diff': 'D', 'adv': 'A', 'total': 'T'}
-
-_NONPARENCHYMA_CGROUPS = frozenset({13, 19, 20, 11, 12})
-
-
-# ── shared build helpers ───────────────────────────────────────────────────────
 
 def _build_mecha_homogeneous() -> Mecha:
-    """Homogeneous apoplast: kw_endo_endo = kw_base, water_flux() re-solved."""
     data  = InData(cellset_file=_CELLSET)
     mecha = Mecha(data)
-    h, i_mat = 0, 0
+    h, i_mat  = 0, 0
     kw_base   = float(mecha.hydraulic.get_kw_value(h))
     kw_config = mecha.hydraulic_conductivities[h, i_mat, 1]['kw']
     kw_config['kw_endo_endo'] = kw_base
@@ -86,102 +68,18 @@ def _build_mecha_homogeneous() -> Mecha:
     mecha.edge_flux_list[0][0] = fluxes
     return mecha
 
+D_WALL = 1e-5   # cm²/d  apoplastic wall diffusivity
+D_PD   = 1e-4   # cm²/d  plasmodesmata diffusivity
 
-def _root_center(mecha: Mecha):
-    nwj = mecha.network.n_wall_junction
-    xs, ys = [], []
-    for nd, d in mecha.network.graph.nodes(data=True):
-        if mecha.indice[nd] >= nwj and 'position' in d:
-            xs.append(d['position'][0])
-            ys.append(d['position'][1])
-    return float(np.mean(xs)), float(np.mean(ys))
+DP_APO = dict(apo_wall=D_WALL, membrane=0.0, plasmodesmata=0.0)
+DP_SYM = dict(apo_wall=0.0,   membrane=0.0, plasmodesmata=D_PD)
 
+THETA = 1.0
 
-def _r_cm(c, disp_vals_fn, disp_r_um):
-    vals = disp_vals_fn(c)
-    tot  = float(vals.sum())
-    if tot < 1e-30:
-        return float('nan')
-    return float(np.dot(disp_r_um, vals)) / tot
-
-
-# ── APO helpers ───────────────────────────────────────────────────────────────
-
-def _stele_bc_nodes(mecha: Mecha) -> dict:
-    nwj = mecha.network.n_wall_junction
-    bc  = {}
-    for nd, d in mecha.network.graph.nodes(data=True):
-        idx = mecha.indice[nd]
-        if idx < nwj:
-            if (d.get('count_stele_overall', 0) > 0
-                    and d.get('count_cortex', 0) == 0
-                    and d.get('count_endo', 0) == 0):
-                bc[idx] = 0.0
-    return bc
-
-
-def _collect_display_nodes(mecha: Mecha, cx, cy):
-    nwj = mecha.network.n_wall_junction
-    wl  = mecha.network.wall_lengths
-    result = []
-    for nd, d in mecha.network.graph.nodes(data=True):
-        idx = mecha.indice[nd]
-        if idx < nwj and 'position' in d and wl.get(idx, 0.0) > 0:
-            r  = np.hypot(d['position'][0] - cx, d['position'][1] - cy)
-            cc = d.get('count_cortex', 0)
-            result.append((idx, r, d['position'][0], d['position'][1], cc))
-    return result
-
-
-def _cortex_wall_ic(display_nodes, nwj):
-    cortex = [(idx, r) for idx, r, *_, cc in display_nodes if cc >= 1]
-    r_vals = [r for _, r in cortex]
-    r_lo, r_hi = np.percentile(r_vals, [40, 60])
-    c0 = np.zeros(nwj)
-    for idx, r in cortex:
-        if r_lo <= r <= r_hi:
-            c0[idx] = 1.0
-    return c0, r_lo, r_hi
-
-
-# ── SYM helpers ───────────────────────────────────────────────────────────────
-
-def _collect_display_cells(mecha: Mecha, cx, cy):
-    nwj = mecha.network.n_wall_junction
-    result = []
-    for nd, d in mecha.network.graph.nodes(data=True):
-        idx = mecha.indice[nd]
-        if idx < nwj or 'position' not in d:
-            continue
-        cell_id = idx - nwj
-        ca   = mecha.network.cell_areas
-        area = float(ca[cell_id]) if cell_id < len(ca) else 0.0
-        if area > 0:
-            r  = np.hypot(d['position'][0] - cx, d['position'][1] - cy)
-            cg = d.get('cgroup', -1)
-            result.append((idx, cell_id, r, d['position'][0], d['position'][1], cg))
-    return result
-
-
-def _cortex_cell_ic(display_cells, n_cells):
-    cands = [(cell_id, r)
-             for _, cell_id, r, _, _, cg in display_cells
-             if cg not in _NONPARENCHYMA_CGROUPS]
-    if not cands:
-        cands = [(cell_id, r) for _, cell_id, r, *_ in display_cells]
-    r_vals = [r for _, r in cands]
-    r_lo, r_hi = np.percentile(r_vals, [48, 52])
-    c0 = np.zeros(n_cells)
-    for cell_id, r in cands:
-        if r_lo <= r <= r_hi:
-            c0[cell_id] = 1.0
-    return c0, r_lo, r_hi
-
-
-def _inner_stele_bc(display_cells, r_thresh_um) -> dict:
-    return {node_id: 0.0
-            for node_id, _, r, *_ in display_cells
-            if r < r_thresh_um}
+CASES  = ['diff', 'adv', 'total']
+COLORS = {'diff': '#2166ac', 'adv': '#d6604d', 'total': '#4dac26'}
+LABELS = {'diff': 'Diffusion (D)', 'adv': 'Advection (A)', 'total': 'Full (T=A+D)'}
+OPS    = {'diff': 'D', 'adv': 'A', 'total': 'T'}
 
 
 # ── generic evolution plot ─────────────────────────────────────────────────────
@@ -237,8 +135,8 @@ def _plot_radial(apo_nodes, apo_get_vals, snap_apo,
     2-row × n_snap radial scatter.  Top row: APO; bottom row: SYM.
     Both rows share the same number of panels (n_snap must be identical).
     """
-    r_apo = np.array([e[1] for e in apo_nodes])
-    r_sym = np.array([e[2] for e in sym_cells])
+    r_apo = np.array([n.r for n in apo_nodes])
+    r_sym = np.array([n.r for n in sym_cells])
     n     = len(snap_apo[CASES[0]])
     fig, axes = plt.subplots(2, n, figsize=(4.0 * n, 7.0), squeeze=False)
 
@@ -340,13 +238,13 @@ def test_advdiff():
     mecha   = _build_mecha_homogeneous()
     nwj     = mecha.network.n_wall_junction
     n_cells = mecha.network.n_cells
-    cx, cy  = _root_center(mecha)
+    cx, cy  = ScenarioBuilder.root_center(mecha)
 
     # Save raw fluxes; each mode will rescale them independently
     raw_fluxes = [f['flux'] for f in mecha.edge_flux_list[0][0]]
 
-    display_nodes = _collect_display_nodes(mecha, cx, cy)
-    display_cells = _collect_display_cells(mecha, cx, cy)
+    display_nodes = ScenarioBuilder.collect_display_nodes(mecha, cx, cy, key='apo')
+    display_cells = ScenarioBuilder.collect_display_nodes(mecha, cx, cy, key='sym')
     print(f'  wall nodes (L>0): {len(display_nodes)}  |  '
           f'cell nodes (area>0): {len(display_cells)}')
 
@@ -365,48 +263,39 @@ def test_advdiff():
     A_tmp  = st_pe.build_advection_matrix(0, 0)
     D_tmp  = st_pe.build_diffusion_matrix(0, 0)
 
-    c0_tmp, r_lo_tmp, _ = _cortex_wall_ic(display_nodes, nwj)
+    c0_tmp, r_lo_tmp, _ = ScenarioBuilder.circular_ic(mecha, display_nodes, key='apo')
     ring_w  = np.where(c0_tmp > 0)[0]
 
-    height_cm = float(mecha.geometry.maturity_stages[0].get('height')) * 1e-4
-    thick_cm  = mecha.geometry.thickness * 1e-4
-    r_lo_cm   = r_lo_tmp * 1e-4
+    r_lo_cm = r_lo_tmp * 1e-4
 
-    Ad_ring  = np.abs(A_tmp.diagonal())[ring_w]
-    valid_v  = Ad_ring > 0
-    v_raw    = float(Ad_ring[valid_v].mean()) / (height_cm * thick_cm)
-    v_tgt    = D_WALL / r_lo_cm            # Pe=1 target velocity
-    apo_scale = v_tgt / v_raw if v_raw > 0 else 1.0
-    for f in mecha.edge_flux_list[0][0]:
-        f['flux'] *= apo_scale
-
-    T_tr_apo  = r_lo_cm / v_tgt           # d
+    apo_scale, v_tgt, T_tr_apo = ScenarioBuilder.scale_fluxes_pe1(
+        mecha, A_tmp, ring_w, D_WALL, r_lo_cm)
     dt_apo    = max(0.1, round(T_tr_apo / 100.0, 1))
     cap_apo['dt'] = dt_apo
     T_steps_apo   = int(np.ceil(T_tr_apo / dt_apo))
     N_apo         = max(200, min(2000, 5 * T_steps_apo))
 
+    Ad_ring    = np.abs(A_tmp.diagonal())[ring_w]
     Dd_ring    = np.abs(D_tmp.diagonal())[ring_w]
-    valid_both = valid_v & (Dd_ring > 0)
+    valid_both = (Ad_ring > 0) & (Dd_ring > 0)
     pe_ring_apo = float((Ad_ring[valid_both] * apo_scale / Dd_ring[valid_both]).mean()) \
                   if valid_both.any() else float('nan')
     print(f'  v={v_tgt*1e4:.3f}µm/d  T_transit={T_tr_apo:.1f}d  '
           f'dt={dt_apo}d  N={N_apo}  pe_ring≈{pe_ring_apo:.3f}')
 
-    bc_apo_stele = _stele_bc_nodes(mecha)
+    bc_apo_stele = ScenarioBuilder.solute_bc(display_nodes, key='apo')
     print(f'  absorbing BC at {len(bc_apo_stele)} stele wall nodes')
 
     st_apo   = SoluteTransport(mecha, DP_APO, cap_apo, mode='apo')
     Cm_apo   = st_apo.build_capacitance(0)
     Cm_d_apo = Cm_apo.diagonal()
 
-    c0_apo, r_lo_apo, r_hi_apo = _cortex_wall_ic(display_nodes, nwj)
+    c0_apo, r_lo_apo, r_hi_apo = ScenarioBuilder.circular_ic(mecha, display_nodes, key='apo')
     print(f'  IC: cortex ring r=[{r_lo_apo:.1f}, {r_hi_apo:.1f}] µm  '
           f'({int(c0_apo.sum())} wall nodes)')
 
-    disp_idxs = np.array([e[0] for e in display_nodes], dtype=int)
-    r_disp_apo = np.array([e[1] for e in display_nodes])
-    apo_get_vals = lambda c: c[disp_idxs]
+    _apo_idxs    = np.array([n.node_id for n in display_nodes], dtype=int)
+    apo_get_vals = lambda c: c[_apo_idxs]
 
     apo_bc   = {'diff': {}, 'adv': bc_apo_stele, 'total': bc_apo_stele}
     snap_at_apo = {0, T_steps_apo // 4, T_steps_apo // 2, T_steps_apo, N_apo}
@@ -420,7 +309,7 @@ def test_advdiff():
     def _rec_apo(key, c_vec, step):
         t = float(step) * cap_apo['dt']
         ts_apo[key].append(t)
-        rcm_apo[key].append(_r_cm(c_vec, apo_get_vals, r_disp_apo))
+        rcm_apo[key].append(ScenarioBuilder.r_cm(c_vec, display_nodes, key='apo'))
         mass_apo[key].append(float(np.dot(Cm_d_apo, c_vec)))
         if step in snap_at_apo:
             snap_apo[key].append((c_vec.copy(), t))
@@ -457,39 +346,29 @@ def test_advdiff():
     A_tmp_s = st_pe_s.build_advection_matrix(0, 0)
     D_tmp_s = st_pe_s.build_diffusion_matrix(0, 0)
 
-    c0_tmp_s, r_lo_tmp_s, _ = _cortex_cell_ic(display_cells, n_cells)
+    c0_tmp_s, r_lo_tmp_s, _ = ScenarioBuilder.circular_ic(
+        mecha, display_cells, key='sym', percentile=(48, 52))
     ring_c   = np.where(c0_tmp_s > 0)[0]
     r_lo_cm_s = r_lo_tmp_s * 1e-4
 
-    Ad_diag_s = np.abs(A_tmp_s.diagonal())
-    has_adv_s = Ad_diag_s.max() > 0 and len(ring_c) > 0 and Ad_diag_s[ring_c].max() > 0
-
-    Dd_ring_s = np.abs(D_tmp_s.diagonal())[ring_c]
-    vols_all  = st_pe_s._compute_node_volumes(0)
-    V_ring    = vols_all[nwj + ring_c]
-    mask_tau  = (Dd_ring_s > 0) & (V_ring > 0)
-    tau_cell  = float(np.mean(V_ring[mask_tau] / Dd_ring_s[mask_tau]))
+    has_adv_s  = ScenarioBuilder.has_advection(A_tmp_s, ring_c)
+    tau_cell   = ScenarioBuilder.cell_timescale(st_pe_s, D_tmp_s, ring_c, nwj)
+    dt_sym     = ScenarioBuilder.auto_dt(tau_cell)
 
     ca        = mecha.network.cell_areas
     areas_ring = np.array([float(ca[cid]) for cid in ring_c if cid < len(ca)])
     L_cell_cm = float(np.sqrt(np.mean(areas_ring[areas_ring > 0]))) * 1e-4
     N_hops    = r_lo_cm_s / L_cell_cm
 
-    dt_raw    = tau_cell / 10.0
-    mag       = 10.0 ** np.floor(np.log10(max(dt_raw, 1e-10)))
-    dt_sym    = max(1e-4, round(dt_raw / mag) * mag)
-
     T_diff_steps = max(10, int(np.ceil(N_hops ** 2 * tau_cell / dt_sym)))
 
     if has_adv_s:
-        Ad_ring_s  = Ad_diag_s[ring_c]
-        valid_vs   = Ad_ring_s > 0
-        v_raw_s    = float(Ad_ring_s[valid_vs].mean()) / (height_cm * thick_cm)
-        v_tgt_s    = D_PD / r_lo_cm_s
-        sym_scale  = v_tgt_s / v_raw_s if v_raw_s > 0 else 1.0
-        for f in mecha.edge_flux_list[0][0]:
-            f['flux'] *= sym_scale
-        valid_bs   = valid_vs & (Dd_ring_s > 0)
+        sym_scale, v_tgt_s, _ = ScenarioBuilder.scale_fluxes_pe1(
+            mecha, A_tmp_s, ring_c, D_PD, r_lo_cm_s)
+
+        Ad_ring_s  = np.abs(A_tmp_s.diagonal())[ring_c]
+        Dd_ring_s  = np.abs(D_tmp_s.diagonal())[ring_c]
+        valid_bs   = (Ad_ring_s > 0) & (Dd_ring_s > 0)
         pe_ring_sym = float((Ad_ring_s[valid_bs] * sym_scale / Dd_ring_s[valid_bs]).mean()) \
                       if valid_bs.any() else 1.0
         T_adv_steps = max(5, int(np.ceil(N_hops * tau_cell / (pe_ring_sym * dt_sym))))
@@ -505,22 +384,21 @@ def test_advdiff():
     print(f'  τ_cell={tau_cell:.1f}d  L_cell={L_cell_cm*1e4:.1f}µm  N_hops={N_hops:.1f}  '
           f'dt={dt_sym}d  T_adv≈{T_tr_sym:.0f}d ({T_adv_steps}st)  run={N_sym}st')
 
-    r_all_sym = np.array([r for _, _, r, *_ in display_cells])
-    r_inner   = float(np.percentile(r_all_sym, 20))
-    bc_sym_stele = _inner_stele_bc(display_cells, r_inner) if has_adv_s else {}
+    bc_sym_stele = ScenarioBuilder.solute_bc(display_cells, key='sym') if has_adv_s else {}
+    r_inner      = float(np.percentile([n.r for n in display_cells], 20))
     print(f'  absorbing BC at {len(bc_sym_stele)} innermost cells (r < {r_inner:.1f} µm)')
 
     st_sym   = SoluteTransport(mecha, DP_SYM, cap_sym, mode='sym')
     Cm_sym   = st_sym.build_capacitance(0)
     Cm_d_sym = Cm_sym.diagonal()
 
-    c0_sym, r_lo_sym, r_hi_sym = _cortex_cell_ic(display_cells, n_cells)
+    c0_sym, r_lo_sym, r_hi_sym = ScenarioBuilder.circular_ic(
+        mecha, display_cells, key='sym', percentile=(48, 52))
     print(f'  IC: cortex cell ring r=[{r_lo_sym:.1f}, {r_hi_sym:.1f}] µm  '
           f'({int((c0_sym > 0).sum())} cells)')
 
-    disp_cids  = np.array([e[1] for e in display_cells], dtype=int)
-    r_disp_sym = np.array([e[2] for e in display_cells])
-    sym_get_vals = lambda c: c[disp_cids]
+    _sym_cids    = np.array([n.cell_id for n in display_cells], dtype=int)
+    sym_get_vals = lambda c: c[_sym_cids]
 
     sym_bc = {'diff': {}, 'adv': bc_sym_stele, 'total': bc_sym_stele}
     snap_at_sym = {0, T_adv_steps // 4, T_adv_steps // 2, T_adv_steps, N_sym}
@@ -534,7 +412,7 @@ def test_advdiff():
     def _rec_sym(key, c_vec, step):
         t = float(step) * cap_sym['dt']
         ts_sym[key].append(t)
-        rcm_sym[key].append(_r_cm(c_vec, sym_get_vals, r_disp_sym))
+        rcm_sym[key].append(ScenarioBuilder.r_cm(c_vec, display_cells, key='sym'))
         mass_sym[key].append(float(np.dot(Cm_d_sym, c_vec)))
         if step in snap_at_sym:
             snap_sym[key].append((c_vec.copy(), t))
@@ -605,8 +483,8 @@ def test_advdiff():
     # ── plots ─────────────────────────────────────────────────────────────────
     os.makedirs(_OUT_DIR, exist_ok=True)
 
-    xs_apo = np.array([e[2] for e in display_nodes])
-    ys_apo = np.array([e[3] for e in display_nodes])
+    xs_apo = np.array([n.x for n in display_nodes])
+    ys_apo = np.array([n.y for n in display_nodes])
     _plot_evolution(
         xs_apo, ys_apo, apo_get_vals, snap_apo,
         r_lo_apo, r_hi_apo, cx, cy,
@@ -616,8 +494,8 @@ def test_advdiff():
         out_name='advdiff_apo_evolution.png',
     )
 
-    xs_sym = np.array([e[3] for e in display_cells])
-    ys_sym = np.array([e[4] for e in display_cells])
+    xs_sym = np.array([n.x for n in display_cells])
+    ys_sym = np.array([n.y for n in display_cells])
     _plot_evolution(
         xs_sym, ys_sym, sym_get_vals, snap_sym,
         r_lo_sym, r_hi_sym, cx, cy,
