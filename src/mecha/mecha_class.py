@@ -719,6 +719,8 @@ class Mecha:
         
         # Determine specific osmotic values based on os_hetero
 
+        # self.boundary.get_osmotic_values()
+
         vals = {}
         if os_hetero == 0:
             base = os_cortex
@@ -889,8 +891,8 @@ class Mecha:
                         
                         K = Kmb[jmb][0]
                         if wall_obj is not None and cell_obj is not None and mb is not None:
-                            rhs_o[i] += K * mb.sigma * (cell_obj.psi_os - wall_obj.psi_os)
-                            rhs_o[j] += K * mb.sigma * (wall_obj.psi_os - cell_obj.psi_os)
+                            rhs_o[i] += K * mb.sigma * (wall_obj.psi_os - cell_obj.psi_os)
+                            rhs_o[j] += K * mb.sigma * (cell_obj.psi_os - wall_obj.psi_os)
                         
                         jmb += 1
 

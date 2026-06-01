@@ -198,7 +198,7 @@ class BoundaryData:
             'osmotic_shape_soil': 1.0,
             'osmotic_diffusivity_soil': 0.0,
             'osmotic_xyl': -1.80E3,
-            'osmotic_endo': -1.80E3,
+            'osmotic_endo': -4.80E3,
             'osmotic_symmetry_xyl': 1.0,
             'osmotic_shape_xyl': 1.0,
             'osmotic_diffusivity_xyl': 0.5,
@@ -216,7 +216,7 @@ class BoundaryData:
             's_hetero': 0,
             's_factor': 1.0,
             'os_hetero': 0,
-            'os_cortex': -1.8E3,
+            'os_cortex': -4.8E3,
             'elongation_midpoint_rate': 2.8,
             'elongation_side_rate_difference': 0.0,
         }
@@ -815,6 +815,7 @@ class HydraulicData:
     # PD height (Fplxheight) parameters for different tissue interfaces
     fplxheight_map: Dict[Tuple[int, int], float] = field(default_factory=lambda: {
         # Symmetric interfaces 
+        (0, 0): 8.0E5,
         (1, 1): 8.0E5,           # default (fallback) or hypodermis-hypodermis
         (2, 2): 8.0E5,           # default (fallback) or epi-epi
         (1, 2): 1.08E6,          # epi-exo/hypo
@@ -836,8 +837,8 @@ class HydraulicData:
         (5, 5): 6.4E5,           # stele-stele
 
         (5, 17): 6.4E5,         # stele-transfusion parenchyma
-        (5, 18): 0.0,            # stele-transfusion tracheid 
-
+        (5, 18): 0.0,            # stele-transfusion tracheid
+        
         (11, 12): 1.76E6,        # sieve-comp
         (11, 16): 7.2E5,         # sieve-peri
         (11, 13): 0.0,           # sieve-xylem
@@ -858,7 +859,9 @@ class HydraulicData:
         (13, 17): 1.08E6,        # xylem-transfusion parenchyma
         (13, 18): 1.76E6,        # xylem-transfusion tracheid
 
-        (17, 18): 0.0,        # transfusion parenchyma-transfusion tracheid
+        (17, 17): 8.0e5,         # transfusion parenchyma-transfusion parenchyma
+        (17, 18): 0.0,           # transfusion parenchyma-transfusion tracheid
+        (18, 18): 0.0,           # transfusion tracheid - transfusion tracheid
         # Add other mappings as needed
     })
 
@@ -891,6 +894,7 @@ class HydraulicData:
             (11, 16): 'phloem_sieve_tube_factor',  # sieve–peri
             (11, 13): 'phloem_sieve_tube_factor',  # sieve–xylem
             (5, 11):  'phloem_sieve_tube_factor',  # stele–sieve
+            (11, 11): 'phloem_phloem_tube_factor', # Inter phloem factor
 
             # Companion–pericycle: harmonic mean of the two pole factors
             (12, 16): 'pericycle_phloem_pole_factor',  # companion–peri
@@ -919,6 +923,8 @@ class HydraulicData:
             (1, 4):  'kw_exo_cortex',     # exo–cortex
 
             # ── Cortex tangential walls ─────────────────────────────────────
+            # TODO: Implement the phi thickning as inner cortex (how many layers?)
+            # TODO: Implement the MSC (outer cortex, how many layers?)
             (4, 4):  'kw_cortex_cortex',  # cortex–cortex
 
             # ── Passage-cell and septa walls are handled as special cases ───
