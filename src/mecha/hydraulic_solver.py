@@ -105,68 +105,188 @@ class HydraulicMatrixBuilder:
         self._cols_C.append(j)
         self._data_C.append(val)
 
-    def _fill_wall(self, i, j, node, eattr, kw, kw_config, height, thickness, barrier):
-        count_interC = self.network.graph.nodes[node].get('count_interC', 0)
-        count_xyl = self.network.graph.nodes[node].get('count_xyl', 0)
-        count_cortex = self.network.graph.nodes[node].get('count_cortex', 0)
-        count_endo = self.network.graph.nodes[node].get('count_endo', 0)
-        count_stele_overall = self.network.graph.nodes[node].get('count_stele_overall', 0)
-        count_passage = self.network.graph.nodes[node].get('count_passage', 0)
-        count_exo = self.network.graph.nodes[node].get('count_exo', 0)
+    def _get_cells_for_wall_node(
+        self, node_id: int
+    ) -> list:
+        """Return the :class:`HydraulicCell` objects flanking *node_id*.
 
-        temp = 1.0E-04 * ((eattr['lateral_distance'] + height) * thickness - thickness**2) / eattr['length']
-        temp_factor = 1.0
+        Abstracts the two possible states of a wall-path node:
 
-        xylem_pieces = self.geometry.xylem_pieces if hasattr(self.geometry, 'xylem_pieces') else False
+        * **Mid-wall node** (``node_id < network.n_walls``): a
+          :class:`HydraulicWall` object exists in :attr:`HydraulicCellManager`;
+          ``wall.cells`` already holds the 0–2 flanking cells.
+        * **Junction node** (``n_walls ≤ node_id < n_wall_junction``): no
+          :class:`HydraulicWall` object exists; the flanking cells are found
+          by iterating over the graph neighbours with ``path='membrane'`` and
+          looking them up in :attr:`HydraulicCellManager`.
 
-        if (count_interC >= 2 and barrier > 0) or (count_xyl == 2 and xylem_pieces):
-            K = 1.0E-16
+        Parameters
+        ----------
+        node_id : int
+            Graph node index of the wall or junction node.
+
+        Returns
+        -------
+        list of HydraulicCell
+            The cells connected to *node_id* via ``path='membrane'`` edges.
+            Typically 2 for an interior mid-wall node, 1 for a border node,
+            3–4 for a junction node.
+        """
+        cm = self.network.cell_manager
+        wall = cm.get_wall_by_node_id(node_id)
+        if wall is not None:
+            # Mid-wall node: use the pre-built HydraulicWall.cells list
+            return list(wall.cells)
+        # Junction node: query the graph for membrane-connected cell neighbours
+        cells = []
+        for nbr in self.network.graph.neighbors(node_id):
+            edata = self.network.graph.edges[node_id, nbr]
+            if edata.get('path') == 'membrane':
+                cell = cm.get_by_node_id(nbr)
+                if cell is not None:
+                    cells.append(cell)
+        return cells
+
+    def _fill_wall(
+        self,
+        i: int,
+        j: int,
+        node: int,
+        eattr: dict,
+        kw: float,
+        kw_config: dict,
+        height: float,
+        thickness: float,
+        barrier: int,
+    ) -> None:
+        """Fill matrix entries for an apoplastic wall–wall (or wall–junction) edge.
+
+        Uses the same interface-between-tissue approach as
+        :meth:`_fill_plasmodesmata`:
+
+        1. The flanking :class:`HydraulicCell` objects are retrieved via the
+           new :meth:`_get_cells_for_wall_node` helper, which consults
+           :attr:`HydraulicCellManager` and handles both mid-wall and junction
+           nodes transparently — replacing the previous dependency on
+           ``count_*`` graph attributes set by ``_count_surrounding_cells``.
+        2. A canonical ``interface = tuple(sorted((cgroup_i, cgroup_j)))`` key
+           is built from the two flanking cell cgroups.
+        3. The interface is resolved against
+           :attr:`HydraulicData.interface_kw_key_map` to select the correct
+           ``kw_config`` key string, eliminating the previous long
+           ``if/elif`` chain.
+        4. Named special-case guards (ghost walls, passage cells) are evaluated
+           *before* the map lookup and short-circuit the generic path.
+        5. ``wall.kw`` is stored on the :class:`HydraulicWall` object for
+           post-solve inspection.
+
+        Parameters
+        ----------
+        i, j : int
+            Matrix indices of the two connected wall/junction nodes.
+        node : int
+            The graph node corresponding to index *i*.
+        eattr : dict
+            Edge attribute dict (mutated in-place with ``K``).
+        kw : float
+            Base cell-wall conductivity [cm hPa⁻¹ d⁻¹].
+        kw_config : dict
+            Wall conductivity configuration dict for the current barrier level,
+            as returned by :meth:`HydraulicData.get_wall_conductivities`.
+        height : float
+            Cross-section height (µm).
+        thickness : float
+            Cell-wall half-thickness (µm).
+        barrier : int
+            Maturity barrier level (0 = no strip).
+        """
+        cm = self.network.cell_manager
+        xylem_pieces: bool = getattr(self.geometry, 'xylem_pieces', False)
+
+        # Shared geometric conductance factor
+        temp: float = (
+            1.0E-04
+            * ((eattr['lateral_distance'] + height) * thickness - thickness ** 2)
+            / eattr['length']
+        )
+        temp_factor: float = 1.0
+
+        # Get the flanking cells for this wall node via HydraulicCellManager
+        cells_i = self._get_cells_for_wall_node(i)
+
+        # --- Classify flanking cells ----------------------------------------
+        intercellular_cids = {c.cell_id for c in cm.intercellular}
+        xylem_cgroups = {13, 19, 20}
+        passage_cids = {c.cell_id for c in cm.passage}
+
+        n_interc = sum(1 for c in cells_i if c.cell_id in intercellular_cids)
+        n_xyl = sum(1 for c in cells_i if c.cgroup in xylem_cgroups)
+        has_passage = any(c.cell_id in passage_cids for c in cells_i)
+
+        # ── Guard 1: Ghost wall (aerenchyma septa or xylem-piece septa) ──────
+        # Both flanking cells are intercellular (aerenchyma) or both are xylem
+        # when xylem_pieces is active.  These walls carry near-zero conductance
+        # and trigger the ghost-junction book-keeping.
+        if (n_interc >= 2 and barrier > 0) or (n_xyl >= 2 and xylem_pieces):
+            K: float = 1.0E-16
             temp_factor = 1.0E-16
-            # ghost junction logic
-            # n_walls = self.network.n_walls
+            # Ghost-junction book-keeping (unchanged from original logic)
             if j not in self.network.list_ghostjunctions:
                 fakeJ = True
-                for ind in range(int(self.network.n_junction_to_wall[j])): # why j? and no -n_walls? old code: for ind in range(int(self.network.n_junction_to_wall[j - n_walls])):
-                    if self.network.junction_to_wall[j][ind] not in self.network.list_ghostwalls: # why j? and no -n_walls? old code: if self.network.junction_to_wall[j - n_walls][ind] not in self.network.list_ghostwalls:
+                for ind in range(int(self.network.n_junction_to_wall[j])):
+                    if (
+                        self.network.junction_to_wall[j][ind]
+                        not in self.network.list_ghostwalls
+                    ):
                         fakeJ = False
                 if fakeJ:
                     self.network.list_ghostjunctions.append(j)
-                    self.network.n_ghost_junction2wall += int(self.network.n_junction_to_wall[j]) + 2
-                elif count_interC >= 2: # septa walls
-                    K = kw_config['kw_septa'] * temp
-                    if kw > 0: temp_factor = kw_config['kw_septa'] / kw
-        elif count_cortex >= 2:
-            K = kw_config['kw_cortex_cortex'] * temp
-            if kw > 0: temp_factor = kw_config['kw_cortex_cortex'] / kw
-        elif count_endo >= 2:
-            K = kw_config['kw_endo_endo'] * temp
-            if kw > 0: temp_factor = kw_config['kw_endo_endo'] / kw
-        elif count_stele_overall > 0 and count_endo > 0:
-            if count_passage > 0:
-                K = kw_config['kw_passage'] * temp
-                if kw > 0: temp_factor = kw_config['kw_passage'] / kw
+                    self.network.n_ghost_junction2wall += (
+                        int(self.network.n_junction_to_wall[j]) + 2
+                    )
+                elif n_interc >= 2:  # septa wall between aerenchyma cells
+                    K = kw_config.get('kw_septa', kw) * temp
+                    if kw > 0:
+                        temp_factor = kw_config.get('kw_septa', kw) / kw
+
+        # ── Guard 2: Passage-cell wall ────────────────────────────────────────
+        # At least one flanking cell is a passage cell → always use kw_passage.
+        elif has_passage:
+            kw_val = kw_config.get('kw_passage', kw)
+            K = kw_val * temp
+            if kw > 0:
+                temp_factor = kw_val / kw
+
+        # ── Interface-based lookup (mirrors _fill_plasmodesmata) ──────────────
+        # Two known living cells → build canonical interface tuple, look up map.
+        elif len(cells_i) == 2:
+            interface = tuple(sorted((cells_i[0].cgroup, cells_i[1].cgroup)))
+            kw_key = self.hydraulic.interface_kw_key_map.get(interface)
+            if kw_key is not None:
+                kw_val = kw_config.get(kw_key, kw)
+                K = kw_val * temp
+                if kw > 0:
+                    temp_factor = kw_val / kw
             else:
-                K = kw_config['kw_endo_peri'] * temp
-                if kw > 0: temp_factor = kw_config['kw_endo_peri'] / kw
-        elif count_stele_overall == 0 and count_endo == 1:
-            if count_passage > 0:
-                K = kw_config['kw_passage'] * temp
-                if kw > 0: temp_factor = kw_config['kw_passage'] / kw
-            else:
-                K = kw_config['kw_endo_cortex'] * temp
-                if kw > 0: temp_factor = kw_config['kw_endo_cortex'] / kw
-        elif count_exo >= 2:
-            K = kw_config['kw_exo_exo'] * temp
-            if kw > 0: temp_factor = kw_config['kw_exo_exo'] / kw
+                # Interface not in map → plain kw (e.g. stele–stele,
+                # pericycle–stele, or any unlisted same-tissue interface)
+                K = kw * temp
+
+        # ── Fallback: border/exterior wall or junction with >2 cells ─────────
         else:
             K = kw * temp
+
+        # Store K on the HydraulicWall object for post-solve inspection
+        wall = cm.get_wall_by_node_id(i)
+        if wall is not None:
+            wall.kw = float(K)
 
         self._add_W(i, i, -K)
         self._add_W(i, j,  K)
         self._add_W(j, i,  K)
         self._add_W(j, j, -K)
 
-        # Solute flux
+        # Solute flux (unchanged)
         if self.boundary.c_flag and self.general.c_flag:
             DF = temp * temp_factor * self.hormones.diff1_pw1
             if i not in self.network.apo_wall_zombies0:
@@ -179,18 +299,25 @@ class HydraulicMatrixBuilder:
         # Store K on graph edge for post-solve flow computation
         eattr['K'] = float(K)
 
-    def _fill_membrane(self, i, j, node, neighboor, eattr, kw, kw_config, height, thickness, barrier, kaqp_config, a_cortex, b_cortex):
-        count_endo = self.network.graph.nodes[node].get('count_endo', 0)
-        count_exo = self.network.graph.nodes[node].get('count_exo', 0)
-        count_stele_overall = self.network.graph.nodes[node].get('count_stele_overall', 0)
-        count_passage = self.network.graph.nodes[node].get('count_passage', 0)
-        count_epi = self.network.graph.nodes[node].get('count_epi', 0)
+    def _fill_membrane(
+        self, i: int, j: int, node: int, neighboor: int, eattr: dict,
+        kw: float, kw_config: dict, height: float, thickness: float,
+        barrier: int, kaqp_config: dict, a_cortex: float, b_cortex: float
+    ) -> float:
+        """Fill matrix entries for a wall–cell membrane connection.
 
+        Uses the same interface-between-tissue approach as ``_fill_wall``:
+        retrieves flanking cells via ``_get_cells_for_wall_node`` to determine
+        the membrane conductivity key from ``interface_kw_key_map`` (with passage
+        overrides) and assigns properties directly to the ``HydraulicMembrane``
+        connection object.
+        """
+        cm = self.network.cell_manager
         cgroup = self.network.graph.nodes[neighboor]['cgroup']
         n_wall_junction = self.network.n_wall_junction
+        intercellular_ids = np.array([c.cell_id for c in cm.intercellular])
 
-        intercellular_ids = np.array([c.cell_id for c in self.network.cell_manager.intercellular])
-
+        # ── Solute flux logic (unchanged) ─────────────────────────────────────
         if self.boundary.c_flag and self.general.c_flag:
             for carrier in getattr(self.hormones, 'carrier_elems', []):
                 if int(carrier.get("tissue")) == cgroup:
@@ -209,10 +336,14 @@ class HydraulicMatrixBuilder:
                             if i not in self.network.apo_wall_zombies0:
                                 self._add_C(i, j,  temp_c)
 
+        # ── Aquaporin contribution kaqp_curr (unchanged logic) ───────────────
         kaqp_curr = 0.0
-        if cgroup == 1: kaqp_curr = kaqp_config['kaqp_exo']
-        elif cgroup == 2: kaqp_curr = kaqp_config['kaqp_epi']
-        elif cgroup == 3: kaqp_curr = kaqp_config['kaqp_endo']
+        if cgroup == 1:
+            kaqp_curr = kaqp_config['kaqp_exo']
+        elif cgroup == 2:
+            kaqp_curr = kaqp_config['kaqp_epi']
+        elif cgroup == 3:
+            kaqp_curr = kaqp_config['kaqp_endo']
         elif cgroup in [13, 19, 20]:
             if barrier > 0:
                 kaqp_curr = kaqp_config['kaqp_stele'] * 10000
@@ -235,40 +366,51 @@ class HydraulicMatrixBuilder:
             if kaqp_curr < 0:
                 print('Error, negative kaqp in cortical cell, adjust Paqp_cortex')
 
-        # Conductance
-        K = 0.0
-        kw_endo_endo = kw_config['kw_endo_endo']
-        kw_exo_exo = kw_config['kw_exo_exo']
-        kw_passage = kw_config['kw_passage']
-        kw_endo_peri = kw_config['kw_endo_peri']
-        kw_endo_cortex = kw_config['kw_endo_cortex']
+        # ── Flanking cells information ────────────────────────────────────────
+        cells_i = self._get_cells_for_wall_node(i)
+        passage_cids = {c.cell_id for c in cm.passage}
 
-        def calc_K(kw_val):
-            if kw_val == 0.0: return 0.0
-            return 1 / (1 / (kw_val / (thickness / 2 * 1.0E-04)) + 1 / (self.hydraulic.kmb + kaqp_curr)) * 1.0E-08 * (height + eattr['dist']) * eattr['length']
+        n_endo = sum(1 for c in cells_i if c.cgroup == 3)
+        n_exo = sum(1 for c in cells_i if c.cgroup == 1)
+        n_stele = sum(1 for c in cells_i if c.cgroup > 4)
+        n_passage = sum(1 for c in cells_i if c.cell_id in passage_cids)
 
-        if count_endo >= 2: K = calc_K(kw_endo_endo)
-        elif count_exo >= 2: K = calc_K(kw_exo_exo)
-        elif count_stele_overall > 0 and count_endo > 0:
-            if count_passage > 0: K = calc_K(kw_passage)
-            else: K = calc_K(kw_endo_peri)
-        elif count_stele_overall == 0 and count_endo == 1:
-            if kaqp_curr == 0.0: K = 1.00E-16
-            else:
-                if count_passage > 0: K = calc_K(kw_passage)
-                else: K = calc_K(kw_endo_cortex)
+        # ── Select kw_key via interface map ──────────────────────────────────
+        kw_key = None
+        if len(cells_i) == 2:
+            interface = tuple(sorted((cells_i[0].cgroup, cells_i[1].cgroup)))
+            kw_key = self.hydraulic.interface_kw_key_map.get(interface, None)
+
+        # Passage-cell override (only if endodermis is present)
+        if n_endo > 0 and n_passage > 0:
+            kw_key = 'kw_passage'
+
+        kw_val = kw_config.get(kw_key, kw) if kw_key is not None else kw
+
+        # ── Membrane conductance calculation ──────────────────────────────────
+        is_barrier_interface = (n_endo >= 2) or (n_exo >= 2) or (n_stele > 0 and n_endo > 0)
+
+        if (not is_barrier_interface) and kaqp_curr == 0.0:
+            K = 1.00E-16
         else:
-            if kaqp_curr == 0.0: K = 1.00E-16
-            else: K = calc_K(kw)
+            if kw_val == 0.0:
+                K = 0.0
+            else:
+                K = 1 / (1 / (kw_val / (thickness / 2 * 1.0E-04)) + 1 / (self.hydraulic.kmb + kaqp_curr)) * 1.0E-08 * (height + eattr['dist']) * eattr['length']
 
         self._add_W(i, i, -K)
         self._add_W(i, j,  K)
         self._add_W(j, i,  K)
         self._add_W(j, j, -K)
 
-        # Store K on graph edge for post-solve flow computation
-        eattr['K'] = float(K)
+        # ── Record on HydraulicMembrane object ────────────────────────────────
+        mb = cm.get_membrane_by_edge(i, j)
+        if mb is not None:
+            mb.km = float(kw_val)
+            mb.kaqp = float(kaqp_curr)
+            mb.K_computed = float(K)
 
+        eattr['K'] = float(K)
         return K
 
     @staticmethod
@@ -394,6 +536,7 @@ class HydraulicMatrixBuilder:
         )
 
         K = kpl * temp_factor
+        pd.n_pd = int(np.round(base_area * barrier_modifier))
 
         self._add_W(i, i, -K)
         self._add_W(i, j,  K)

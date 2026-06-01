@@ -414,7 +414,7 @@ class GeometryData:
     thickness : float, optional
         Thickness of the cell walls in microns (default is 0.0).
     pd_section : float, optional
-        Plasmodesmata section area in square microns (default is 0.0).
+        Plasmodesmata section area in square microns (default is 7.47E-5 µm² or 45 nm radius).
     xylem_pieces : bool, optional
         Flag indicating whether xylem is modeled as separate pieces (default is False).
 
@@ -448,8 +448,12 @@ class GeometryData:
     diffusion_length: np.ndarray = field(default_factory=lambda: np.zeros((2, 1))) # not used
 
     # Geometry parameters
-    thickness: float = 1.5
-    pd_section: float = 7.47E-5
+    thickness: float = 1.5 # µm
+    # 7.47E-5 µm²: historical value used in MECHA simulations (Couvreur et al.)
+    # 1.79E-4 µm²: PD type I width = 22 nm, desmotubule diameter = 16 nm --> cytoplasmic sleeve thickness = 3 nm (Nicolas et al. 2017)
+    # 8.16E-4 µm²: PD type II + spokes: 36 nm, desmotubule diameter = 16 nm --> sleeve thick=10 nm (Nicolas et al. 2017)
+    # 1.92E-3 µm²: PD type II - spokes: 52 nm, desmotubule diameter = 16 nm --> sleeve thick=18 nm (Nicolas et al. 2017)   
+    pd_section: float = 1.92E-3 # µm² 
     xylem_pieces: bool = False
 
     # Additional parameters
@@ -698,83 +702,91 @@ class HydraulicData:
 
     Attributes
     ----------
-    hydraulics_file : str
-        Path to the hydraulic configuration XML file.
-    kw_elems : List[Any], optional
-        List of raw cell wall hydraulic conductivity elements from the XML file (default is an empty list).
-    kw_barrier_elems : List[Any], optional
-        List of raw cell wall barrier hydraulic conductivity elements from the XML file (default is an empty list).
-    kaqp_elems : List[Any], optional
-        List of raw aquaporin hydraulic conductivity elements from the XML file (default is an empty list).
-    kpl_elems : List[Any], optional
-        List of raw plasmodesmata hydraulic conductivity elements from the XML file (default is an empty list).
-    xcontactrange : List[Any], optional
-        List of raw xylem contact range elements from the XML file (default is an empty list).
-    path_hydraulics : List[Any], optional
-        List of output paths for hydraulic scenarios (default is an empty list).
-    n_kw : int, optional
-        Number of cell wall hydraulic conductivity elements (default is 0).
-    n_kw_barrier : int, optional
-        Number of cell wall barrier hydraulic conductivity elements (default is 0).
-    n_kaqp : int, optional
-        Number of aquaporin hydraulic conductivity elements (default is 0).
-    n_kpl : int, optional
-        Number of plasmodesmata hydraulic conductivity elements (default is 0).
-    n_xcontact : int, optional
-        Number of xylem contact range elements (default is 0).
-    n_hydraulics : int, optional
+    hydraulics_file : str, optional
+        Path to the hydraulic configuration XML file (default is None).
+    kw_elems : List[Any]
+        List of raw cell wall hydraulic conductivity elements from the XML file.
+    kw_septa_elems : List[Any]
+        List of raw cell wall septa hydraulic conductivity elements from the XML file.
+    kw_barrier_elems : List[Any]
+        List of raw cell wall barrier hydraulic conductivity elements from the XML file.
+    kaqp_elems : List[Any]
+        List of raw aquaporin hydraulic conductivity elements from the XML file.
+    kpl_elems : List[Any]
+        List of raw plasmodesmata hydraulic conductivity elements from the XML file.
+    xcontactrange : List[Any]
+        List of raw xylem contact range elements from the XML file.
+    path_hydraulics : List[Any]
+        List of output paths for hydraulic scenarios.
+    n_kw : int
+        Number of cell wall hydraulic conductivity elements (default is 1).
+    n_kw_septa : int
+        Number of cell wall septa hydraulic conductivity elements (default is 1).
+    n_kw_barrier : int
+        Number of cell wall barrier hydraulic conductivity elements (default is 1).
+    n_kaqp : int
+        Number of aquaporin hydraulic conductivity elements (default is 1).
+    n_kpl : int
+        Number of plasmodesmata hydraulic conductivity elements (default is 1).
+    n_xcontact : int
+        Number of xylem contact range elements (default is 1).
+    n_hydraulics : int
         Number of hydraulic scenarios (default is 1).
-    kmb : float, optional
-        Membrane hydraulic conductivity (default is 0.0).
-    ratio_cortex : float, optional
-        Ratio related to cortex hydraulic properties (default is 0.0).
-    fplxheight : float, optional
-        Default plasmodesmata height (default is 0.0).
-    fplxheight_epi_exo : float, optional
-        Plasmodesmata height for epidermis-exodermis interface (default is 0.0).
-    fplxheight_outer_cortex : float, optional
-        Plasmodesmata height for outer cortex interface (default is 0.0).
-    fplxheight_cortex_cortex : float, optional
-        Plasmodesmata height for cortex-cortex interface (default is 0.0).
-    fplxheight_cortex_endo : float, optional
-        Plasmodesmata height for cortex-endodermis interface (default is 0.0).
-    fplxheight_endo_endo : float, optional
-        Plasmodesmata height for endodermis-endodermis interface (default is 0.0).
-    fplxheight_endo_peri : float, optional
-        Plasmodesmata height for endodermis-pericycle interface (default is 0.0).
-    fplxheight_peri_peri : float, optional
-        Plasmodesmata height for pericycle-pericycle interface (default is 0.0).
-    fplxheight_peri_stele : float, optional
-        Plasmodesmata height for pericycle-stele interface (default is 0.0).
-    fplxheight_stele_stele : float, optional
-        Plasmodesmata height for stele-stele interface (default is 0.0).
-    fplxheight_stele_comp : float, optional
-        Plasmodesmata height for stele-companion cell interface (default is 0.0).
-    fplxheight_peri_comp : float, optional
-        Plasmodesmata height for pericycle-companion cell interface (default is 0.0).
-    fplxheight_comp_comp : float, optional
-        Plasmodesmata height for companion cell-companion cell interface (default is 0.0).
-    fplxheight_comp_sieve : float, optional
-        Plasmodesmata height for companion cell-sieve tube interface (default is 0.0).
-    fplxheight_peri_sieve : float, optional
-        Plasmodesmata height for pericycle-sieve tube interface (default is 0.0).
-    fplxheight_stele_sieve : float, optional
-        Plasmodesmata height for stele-sieve tube interface (default is 0.0).
-    
-    k_sieve : float, optional
-        Sieve tube hydraulic conductance (default is 0.0).
-
-    k_xyl : float, optional
-        Xylem vessel axial hydraulic conductance (default is 0.0).
-    kw : List[float], optional
-        Processed list of cell wall hydraulic conductivity values (default is an empty list).
-    kw_barrier : List[float], optional
-        Processed list of cell wall barrier hydraulic conductivity values (default is an empty list).
+    kmb : float
+        Membrane hydraulic conductivity (default is 3.0E-5).
+    ratio_cortex : float
+        Ratio related to cortex hydraulic properties (default is 1.0).
+    fplxheight_map : Dict[Tuple[int, int], float]
+        Dictionary mapping tissue interface ID pairs to plasmodesmata height values (number per unit height).
+    interface_map : Dict[str, Any]
+        Dictionary mapping XML tag names to lists of tissue interfaces.
+    interface_kpl_factor_map : Dict[Tuple[int, int], Union[str, Tuple[str, str]]]
+        Dictionary mapping tissue interfaces to specific plasmodesmata conductance configuration factor keys.
+    axial_conductance_source : int
+        Source type for axial conductance (1 for area-based Poiseuille law; 2 for prescribed values) (default is 1).
+    k_sieve_elems : List[Any]
+        List of raw sieve tube axial conductance elements from the XML file.
+    k_xyl_elems : List[Any]
+        List of raw xylem vessel axial conductance elements from the XML file.
+    k_sieve : Union[float, List[float]]
+        Sieve tube hydraulic conductance value(s) (default is 1.0E-6).
+    K_axial : np.ndarray, optional
+        Axial conductance matrix (default is None).
+    k_xyl : Union[float, List[float]]
+        Xylem vessel axial hydraulic conductance value(s) (default is 1.0E-6).
+    K_xyl_spec : float
+        Specific xylem vessel axial hydraulic conductance (default is 1.0E-6).
+    conductivities : List[Dict[str, Any]]
+        List of root conductivity results.
+    kw : List[float]
+        Processed list of cell wall hydraulic conductivity values.
+    kw_barrier : List[float]
+        Processed list of cell wall barrier hydraulic conductivity values.
+    kw_septa : List[float]
+        Processed list of cell wall septa hydraulic conductivity values.
+    kaqp : List[Dict[str, float]]
+        Processed list of aquaporin hydraulic conductivity parameter configurations.
+    kpl : List[Dict[str, float]]
+        Processed list of plasmodesmata hydraulic conductivity parameter configurations.
 
     Methods
     -------
     _load_hydraulics()
         Load hydraulic configuration parameters from the XML file.
+    set_pd_interface(network)
+        Define mapping of XML tags to tissue interface ID pairs using network info.
+    get_kw_value(h)
+        Get cell wall hydraulic conductivity for the scenario index h.
+    get_kw_septa_value(h)
+        Get cell wall septa hydraulic conductivity for the scenario index h.
+    get_kw_barrier_values(h)
+        Get casparian and suberin cell wall barrier conductivities for scenario h.
+    get_wall_conductivities(barrier, h)
+        Get dictionary of wall conductivities for a specific barrier type and scenario h.
+    get_plasmodesmatal_conductance(h)
+        Get plasmodesmata conductance configuration dict for scenario h.
+    get_aquaporin_contributions(h)
+        Get aquaporin contributions configuration dict for scenario h.
     """
     # File paths
     hydraulics_file: Optional[str] = None
@@ -806,7 +818,7 @@ class HydraulicData:
         (1, 1): 8.0E5,           # default (fallback) or hypodermis-hypodermis
         (2, 2): 8.0E5,           # default (fallback) or epi-epi
         (1, 2): 1.08E6,          # epi-exo/hypo
-        (1, 4): 8.0E5,           # exo/hypo-cortex/mesophyll
+        (1, 4): 2.28E6,           # exo/hypo-cortex/mesophyll
 
         (4, 4): 8.6E5,           # cortex-cortex/mesophyll-mesophyll
         (3, 4): 8.8E5,           # cortex-endo/mesophyll-endo
@@ -885,6 +897,35 @@ class HydraulicData:
         }
     )
 
+    # Maps a sorted (cgroup_i, cgroup_j) tissue-interface pair to the kw_config
+    # key that _fill_wall() should use for that apoplastic wall edge.
+    # Used by HydraulicMatrixBuilder._fill_wall() to replace the previous
+    # if/elif chain over count_* node attributes.
+    # The lookup falls back to plain `kw` for any interface not listed here.
+    interface_kw_key_map: Dict[Tuple[int, int], str] = field(
+        default_factory=lambda: {
+            # ── Endodermis radial walls ─────────────────────────────────────
+            (3, 3):  'kw_endo_endo',      # endo–endo (Casparian strip)
+            (3, 4):  'kw_endo_cortex',    # endo–cortex (outer face, suberin)
+            (3, 5):  'kw_endo_peri',      # endo–stele  (inner face, suberin)
+            (3, 11): 'kw_endo_peri',      # endo–phloem sieve (inner face)
+            (3, 12): 'kw_endo_peri',      # endo–companion   (inner face)
+            (3, 13): 'kw_endo_peri',      # endo–xylem       (inner face)
+            (3, 16): 'kw_endo_peri',      # endo–pericycle   (inner face)
+
+            # ── Exodermis radial walls ──────────────────────────────────────
+            (1, 1):  'kw_exo_exo',        # exo–exo  (Casparian strip)
+            (1, 2):  'kw_exo_epi',        # exo–epidermis
+            (1, 4):  'kw_exo_cortex',     # exo–cortex
+
+            # ── Cortex tangential walls ─────────────────────────────────────
+            (4, 4):  'kw_cortex_cortex',  # cortex–cortex
+
+            # ── Passage-cell and septa walls are handled as special cases ───
+            # before the map lookup in _fill_wall() and are not listed here.
+        }
+    )
+
     # Conductance parameters
     axial_conductance_source: int = 1
     k_sieve_elems: List[Any] = field(default_factory=list)
@@ -897,19 +938,6 @@ class HydraulicData:
     # Root conductivities
     conductivities: List[Dict[str, Any]] = field(default_factory=list)
 
-    # Matrices for Doussan calculations
-    matrix_W: Optional[np.ndarray] = None
-    matrix_C: Optional[np.ndarray] = None
-    matrix_ApoC: Optional[np.ndarray] = None
-    matrix_SymC: Optional[np.ndarray] = None
-    rhs_C: Optional[np.ndarray] = None
-    rhs_ApoC: Optional[np.ndarray] = None
-    rhs_SymC: Optional[np.ndarray] = None
-    rhs: Optional[np.ndarray] = None
-    rhs_s: Optional[np.ndarray] = None
-    rhs_x: Optional[np.ndarray] = None
-    rhs_p: Optional[np.ndarray] = None
-    
     # Processed parameter arrays
     kw: List[float] = field(default_factory=lambda: [0.00024])
     kw_barrier: List[float] = field(default_factory=lambda: [1.00E-16])

@@ -1,4 +1,5 @@
 
+from mecha.utils import paraview_export
 from mecha.mecha_class import Mecha
 from mecha.utils.data_loader import InData
 from mecha.utils.network_builder import NetworkBuilder
@@ -18,7 +19,7 @@ def test_osmotic():
 
     # prepare default inputs for mecha
     default_input = InData()
-    default_input.geometry.set_maturity_stages([1,3])
+    default_input.geometry.set_maturity_stages([1,8])
     
     # Use the new helper to set osmotic scenarios (0, 1, 2, 3)
     # The first scenario (0) is kept as base, then 1, 2, 3 are added.
@@ -37,27 +38,29 @@ def test_osmotic():
 
     print(f'Number of solutions in results: {len(m.results)}')
 
-    # _, ax = plt.subplots(1, 2, figsize=(15, 6))
-    # visualize(m, visu_type="flow", maturity_idx= 0, scenario_idx="standard water flow", ax=ax[0], show_plot=False)
-    # visualize(m, visu_type="flow", maturity_idx= 1, scenario_idx=1, ax=ax[1], show_plot=False)
-    # plt.tight_layout()
-    # plt.show()
+    _, ax = plt.subplots(1, 2, figsize=(15, 6))
+    visualize(m, visu_type="flow", maturity_idx= 0, scenario_idx="standard water flow", ax=ax[0], show_plot=False)
+    visualize(m, visu_type="flow", maturity_idx= 1, scenario_idx=1, ax=ax[1], show_plot=False)
+    plt.tight_layout()
+    plt.show()
+
+    visualize(m, visu_type="flow_pathway", maturity_idx=1, scenario_idx="standard water flow", show_plot=True)
 
     _, ax = plt.subplots(1, 2, figsize=(15, 6))
-    visualize(m, visu_type="velocity", maturity_idx=0, scenario_idx=2, ax=ax[0], show_plot=False)
+    visualize(m, visu_type="velocity", maturity_idx=0, scenario_idx="standard water flow", ax=ax[0], show_plot=False)
     visualize(m, visu_type="velocity", maturity_idx=1, scenario_idx=2, ax=ax[1], show_plot=False)
     plt.tight_layout()
     plt.show()
     
-    # visualize(m, visu_type='paraview', 
-    #     prefix='outputs/osmotic',
-    #     extrude_z= 50)
+    visualize(m, visu_type='paraview', 
+        prefix='outputs/osmotic',
+        extrude_z= 50)
 
     # two subplots to compare osmotic scenarios
     _, ax = plt.subplots(1, 3, figsize=(15, 6))
-    visualize(m, visu_type='psi_profile', maturity_idx= 0, scenario_idx="standard water flow", ax=ax[0], show_plot=False)
+    visualize(m, visu_type='psi_profile', maturity_idx= 1, scenario_idx="standard water flow", ax=ax[0], show_plot=False)
     visualize(m, visu_type='psi_profile', maturity_idx= 0, scenario_idx=1, ax=ax[1], show_plot=False)
-    visualize(m, visu_type='psi_profile', maturity_idx= 0, scenario_idx=2, ax=ax[2], show_plot=False)
+    visualize(m, visu_type='psi_profile', maturity_idx= 1, scenario_idx=2, ax=ax[2], show_plot=False)
     # share the same x and y axis
     ax[1].sharex(ax[0])
     ax[2].sharex(ax[0])

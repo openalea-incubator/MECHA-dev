@@ -276,6 +276,7 @@ class HydraulicPlasmodesmata:
         "sigma",      # Reflection coefficient
         "Q", #Flow rate through plasmodesmata [cm³ d⁻¹]
         "A", "velocity",
+        "n_pd", # number of plasmodesmata per interface
     )
 
     def __init__(
@@ -288,6 +289,7 @@ class HydraulicPlasmodesmata:
         self.cell_i: 'HydraulicCell' = cell_i
         self.cell_j: 'HydraulicCell' = cell_j
         self.length: float = length
+        self.n_pd: int = 0
 
         # Hydraulic fields — None until explicitly assigned
         self.kpl: Optional[float] = 0.0
@@ -303,7 +305,7 @@ class HydraulicPlasmodesmata:
     def reset_hydraulics(self) -> None:
         """Reset all hydraulic fields to 0.0."""
         self.kpl = self.fplxheight = self.temp_factor = self.sigma = self.Q = self.A = self.velocity = 0.0
-        self.K_computed = self.apeture_coef = 0.0
+        self.K_computed = self.aperture_coef = self.n_pd = 0.0
 
     def __repr__(self) -> str:
         s = (
@@ -529,6 +531,26 @@ class HydraulicCellManager:
         # Plasmodesmata connections (cell ↔ cell, path='plasmodesmata')
         self._plasmodesmata: List[HydraulicPlasmodesmata] = []
         self._pd_by_edge: Dict[Tuple[int, int], HydraulicPlasmodesmata] = {}
+
+    # ------------------------------------------------------------------
+    # Reset hydraulic properties
+    # ------------------------------------------------------------------
+
+    def reset_hydraulic_properties(self) -> None:
+        """
+        Reset hydraulic properties for all walls, membranes, plasmodesmata and cells.
+        """
+        for wall in self._walls:
+            wall.reset_hydraulics()
+
+        for membrane in self._membranes:
+            membrane.reset_hydraulics()
+
+        for pd in self._plasmodesmata:
+            pd.reset_hydraulics()
+
+        for cell in self._cells:
+            cell.reset_hydraulics()
 
     # ------------------------------------------------------------------
     # Collection protocol

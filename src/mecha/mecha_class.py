@@ -1124,6 +1124,7 @@ class Mecha:
         height = float(maturity_stages[i_maturity].get("height"))
 
         # Build matrices (COO) and convert to CSR for in-place diagonal modifications
+        self.network.cell_manager.reset_hydraulic_properties()
         matrix_W, matrix_C, rhs_C, rhs_p, rhs_x, rhs_s, rhs, Kmb =\
             self.build_matrices(h = h, i_maturity = i_maturity)
         matrix_W = matrix_W.tocsr()
@@ -1175,7 +1176,8 @@ class Mecha:
         height = 0.0
         if self.geometry.maturity_stages and i_maturity < len(self.geometry.maturity_stages):
             height = float(self.geometry.maturity_stages[i_maturity].get('height', 0.0))
-        pd_section = float(getattr(self.geometry, 'pd_section', 0.0))  # µm²
+            barrier = self.geometry.maturity_stages[i_maturity].get('barrier', 0)
+        pd_section = float(getattr(self.geometry, 'pd_section', 7.47E-5))  # µm²
 
         # Initialise per-node accumulators
         Q_in  = {node_id: 0.0 for node_id in graph.nodes()}
@@ -1226,17 +1228,25 @@ class Mecha:
                 A = (height * thickness) * 1.0e-8  # µm² → cm²
 
             elif path == 'membrane':
-                mb = cm.get_membrane_by_edge(u, v)
-                if mb is not None:
-                    # suface area of the membrane against the cell wall
-                    # height of section * length of the cell wall in contact with the membrane
-                    A = (height * mb.length) * 1.0e-8  # µm² → cm²
+                    mb = cm.get_membrane_by_edge(u, v)
+                    if mb is not None:
+                        # suface area of the membrane against the cell wall
+                        # height of section * length of the cell wall in contact with the membrane
+                        A = (height * mb.length) * 1.0e-8  # µm² → cm²
 
             elif path == 'plasmodesmata':
                 pd = cm.get_plasmodesmata_by_edge(u, v)
-                if pd is not None:
-                    tf=pd.fplxheight*pd.length*1.0e4 # frequecy of plasmodesmata per membrane area in cm²
-                    A = (float(pd_section) * 1.0e-8) * float(tf)*pd.aperture_coef  # cm²
+                
+                is_xylem_interface = False
+                if barrier > 0:
+                    interface = (pd.cell_i.cgroup, pd.cell_j.cgroup)
+                    if interface == (13,13):
+                        is_xylem_interface = True
+                
+                if is_xylem_interface:
+                    A = 0.0
+                else:
+                    A = float(pd.n_pd) * float(pd_section*pd.aperture_coef) * 1.0E-08 # µm² → cm²
 
             eattr['A'] = A
             vel = Q / A if A > 0.0 else 0.0
@@ -1354,6 +1364,7 @@ class Mecha:
             'membrane_Q': {
                 (mb.wall.node_id, mb.cell.node_id): mb.Q for mb in cm.membranes
             },
+            'cell_manager': cm,
         }
 
         # Store snapshot and edge_fluxes in the matching results entry
@@ -1403,6 +1414,7 @@ class Mecha:
                 return False
 
             graph = self.network.graph
+            self.network.cell_manager = snap['cell_manager']
             cm = self.network.cell_manager
 
             # Restore graph node attributes
