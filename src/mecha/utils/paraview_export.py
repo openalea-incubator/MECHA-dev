@@ -768,9 +768,9 @@ def _export_flow_vectors(
 
     # Initialize collections for each category
     data_by_cat = {
-        "apoplastic": {"points": [], "vectors": [], "K_vals": [], "Q_vals": [], "path_ids": []},
-        "symplastic": {"points": [], "vectors": [], "K_vals": [], "Q_vals": [], "path_ids": []},
-        "transmembrane": {"points": [], "vectors": [], "K_vals": [], "Q_vals": [], "path_ids": []},
+        "apoplastic": {"points": [], "vectors": [], "K_vals": [], "Q_vals": [], "velocity_vals": [], "path_ids": []},
+        "symplastic": {"points": [], "vectors": [], "K_vals": [], "Q_vals": [], "velocity_vals": [], "path_ids": []},
+        "transmembrane": {"points": [], "vectors": [], "K_vals": [], "Q_vals": [], "velocity_vals": [], "path_ids": []},
     }
 
     _PATH_ID = {"wall": 0.0, "membrane": 1.0, "plasmodesmata": 2.0}
@@ -783,6 +783,7 @@ def _export_flow_vectors(
     for u, v, eattr in graph.edges(data=True):
         K = eattr.get("K")
         Q = eattr.get("Q")
+        velocity = eattr.get("velocity")
         path = eattr.get("path", "wall")
 
         if K is None:
@@ -811,6 +812,7 @@ def _export_flow_vectors(
         data_by_cat[cat]["vectors"].append((vx, vy, 0.0))
         data_by_cat[cat]["K_vals"].append(_safe(K))
         data_by_cat[cat]["Q_vals"].append(q_val)
+        data_by_cat[cat]["velocity_vals"].append(_safe(velocity))
         data_by_cat[cat]["path_ids"].append(_PATH_ID.get(path, -1.0))
 
     base, ext = os.path.splitext(filepath)
@@ -839,6 +841,7 @@ def _export_flow_vectors(
             _write_vector(f, "flow_Q", data["vectors"])
             _write_scalar(f, "K", data["K_vals"])
             _write_scalar(f, "Q_magnitude", [abs(q) for q in data["Q_vals"]])
+            _write_scalar(f, 'velocity', [abs(v) for v in data['velocity_vals']])
             _write_scalar(f, "path_id", data["path_ids"])
 
         print(f"[paraview_export] Flow vectors ({cat}) → {cat_filepath}  ({len(points)} points)")

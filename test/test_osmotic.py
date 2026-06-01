@@ -40,7 +40,9 @@ def test_osmotic():
 
     _, ax = plt.subplots(1, 2, figsize=(15, 6))
     visualize(m, visu_type="flow", maturity_idx= 0, scenario_idx="standard water flow", ax=ax[0], show_plot=False)
+    ax[0].set_title("Flow - Mat 0 - Std Water Flow", color='black', bbox=dict(facecolor='white', alpha=0.5, edgecolor='none'))
     visualize(m, visu_type="flow", maturity_idx= 1, scenario_idx=1, ax=ax[1], show_plot=False)
+    ax[1].set_title("Flow - Mat 1 - Scenario 1", color='black', bbox=dict(facecolor='white', alpha=0.5, edgecolor='none'))
     plt.tight_layout()
     plt.show()
 
@@ -48,19 +50,22 @@ def test_osmotic():
 
     _, ax = plt.subplots(1, 2, figsize=(15, 6))
     visualize(m, visu_type="velocity", maturity_idx=0, scenario_idx="standard water flow", ax=ax[0], show_plot=False)
+    ax[0].set_title("Velocity - Mat 0 - Std Water Flow", color='black', bbox=dict(facecolor='white', alpha=0.5, edgecolor='none'))
     visualize(m, visu_type="velocity", maturity_idx=1, scenario_idx=2, ax=ax[1], show_plot=False)
+    ax[1].set_title("Velocity - Mat 1 - Scenario 2", color='black', bbox=dict(facecolor='white', alpha=0.5, edgecolor='none'))
     plt.tight_layout()
     plt.show()
-    
-    visualize(m, visu_type='paraview', 
-        prefix='outputs/osmotic',
-        extrude_z= 50)
+
+    # visualize(m, visu_type="paraview", prefix='outputs/my_sim')
 
     # two subplots to compare osmotic scenarios
     _, ax = plt.subplots(1, 3, figsize=(15, 6))
     visualize(m, visu_type='psi_profile', maturity_idx= 1, scenario_idx="standard water flow", ax=ax[0], show_plot=False)
+    ax[0].set_title("Psi Profile - Mat 1 - Std Water Flow", color='black', bbox=dict(facecolor='white', alpha=0.5, edgecolor='none'))
     visualize(m, visu_type='psi_profile', maturity_idx= 0, scenario_idx=1, ax=ax[1], show_plot=False)
+    ax[1].set_title("Psi Profile - Mat 0 - Scenario 1", color='black', bbox=dict(facecolor='white', alpha=0.5, edgecolor='none'))
     visualize(m, visu_type='psi_profile', maturity_idx= 1, scenario_idx=2, ax=ax[2], show_plot=False)
+    ax[2].set_title("Psi Profile - Mat 1 - Scenario 2", color='black', bbox=dict(facecolor='white', alpha=0.5, edgecolor='none'))
     # share the same x and y axis
     ax[1].sharex(ax[0])
     ax[2].sharex(ax[0])

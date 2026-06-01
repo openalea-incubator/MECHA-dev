@@ -567,12 +567,33 @@ def _plot_edge_vector_property(obj: Any, prop_name: str, unit: str = '', **kwarg
         if val is not None:
             all_vals.append(abs(float(val)))
             
-    val_max = max(all_vals) if all_vals else 1.0
+    val_max_raw = max(all_vals) if all_vals else 1.0
+    
+    if prop_name == 'velocity' and all_vals:
+        log_vals = np.log10(np.array(all_vals) + 1)
+        val_min = log_vals.min()
+        val_max = log_vals.max() - val_min
+        if val_max == 0:
+            val_max = 1.0
+    else:
+        val_min = 0.0
+        val_max = val_max_raw
     
     # summary of val_max, val_min, mean, median, std
     summary = kwargs.get('summary', False)
     if summary:
-        print(f"Summary of {prop_name}: val_max={val_max:.2e}, val_min={min(all_vals):.2e}, mean={np.mean(all_vals):.2e}, median={np.median(all_vals):.2e}, std={np.std(all_vals):.2e}")
+        print(f"Summary of {prop_name}: val_max={val_max_raw:.2e}, val_min={min(all_vals) if all_vals else 0.0:.2e}, mean={np.mean(all_vals) if all_vals else 0.0:.2e}, median={np.median(all_vals) if all_vals else 0.0:.2e}, std={np.std(all_vals) if all_vals else 0.0:.2e}")
+        if all_vals:
+            plt.figure(figsize=(6, 4))
+            if prop_name == 'velocity':
+                plt.hist(np.log10(np.array(all_vals) + 1), bins=50, color='skyblue', edgecolor='black')
+                plt.xlabel(f"log10({prop_name})")
+            else:
+                plt.hist(all_vals, bins=50, color='skyblue', edgecolor='black')
+                plt.xlabel(f"{prop_name}")
+            plt.ylabel("Frequency")
+            plt.title(f"Histogram of edge {prop_name}")
+            plt.tight_layout()
 
     # ------------------------------------------------------------------ #
     # 3. Collect segments per path type in one O(E) pass                 #
@@ -589,7 +610,12 @@ def _plot_edge_vector_property(obj: Any, prop_name: str, unit: str = '', **kwarg
         if val is None or K is None or K == 0:
             continue
 
-        mag = abs(float(val)) / val_max
+        if prop_name == 'velocity':
+            log_v = np.log10(abs(float(val)) + 1)
+            mag = (log_v - val_min) / val_max
+        else:
+            mag = abs(float(val)) / val_max
+
         if mag < 1e-12:
             continue
 
