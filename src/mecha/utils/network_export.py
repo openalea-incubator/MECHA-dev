@@ -568,8 +568,11 @@ def _plot_edge_vector_property(obj: Any, prop_name: str, unit: str = '', **kwarg
             all_vals.append(abs(float(val)))
             
     val_max = max(all_vals) if all_vals else 1.0
+    
     # summary of val_max, val_min, mean, median, std
-    print(f"Summary of {prop_name}: val_max={val_max}, val_min={min(all_vals)}, mean={np.mean(all_vals)}, median={np.median(all_vals)}, std={np.std(all_vals)}")
+    summary = kwargs.get('summary', False)
+    if summary:
+        print(f"Summary of {prop_name}: val_max={val_max:.2e}, val_min={min(all_vals):.2e}, mean={np.mean(all_vals):.2e}, median={np.median(all_vals):.2e}, std={np.std(all_vals):.2e}")
 
     # ------------------------------------------------------------------ #
     # 3. Collect segments per path type in one O(E) pass                 #
@@ -581,7 +584,6 @@ def _plot_edge_vector_property(obj: Any, prop_name: str, unit: str = '', **kwarg
         path = eattr.get('path')
         if path not in path_data:
             continue
-            
         val = eattr.get(prop_name)
         K = eattr.get('K')
         if val is None or K is None or K == 0:
