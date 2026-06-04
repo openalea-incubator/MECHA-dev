@@ -1,0 +1,20 @@
+Conifer needle — diurnal dynamic sucrose transport
+============================================================
+
+Simulation parameters:
+  T_SIM        = 3.0 d  (3 diurnal cycles)
+  DT           = 0.5 h  (144 steps)
+  N_SNAP       = 8 per last cycle
+
+Diurnal forcing:
+  PSI_MEAN=1000  PSI_AMP=400  [hPa]
+  C_MEAN=50.0  C_AMP=20.0  [µM]
+
+Capacitance multipliers:
+  C_CAP_MESO   = 1.0
+  C_CAP_TRANSF = 2.0
+
+Last-cycle statistics (non-finite values excluded):
+  Q_load   (pmol/d): mean=1.695e+283  amp=4.115e+284  [range 9.175e+186…8.23e+284]
+  c_transf (µM):     mean=-6.091e+280  amp=1.479e+282  [range -2.957e+282…-3.297e+184]
+  c_endo   (µM):     mean=3.843e+285  amp=9.33e+286  [range 2.08e+189…1.866e+287]

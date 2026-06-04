@@ -1,0 +1,72 @@
+Conifer needle — symplastic sucrose transport with Casparian strip
+======================================================================
+
+Geometry: GRANAP NeedleAnatomy (default Pinus-like params)
+  Barrier configuration : barrier=1 (Casparian strip at endo radial walls)
+    kw_endo_endo = kw_barrier_casparian (≈ 1e-16 cm/d/hPa)
+    kw_endo tangential walls = kw (normal; membrane path open)
+  Note: barrier=3 (full suberisation) additionally closes tangential walls;
+        it is numerically challenging in MECHA and is the more extreme state.
+
+Cell counts:
+  Mesophyll                     : 230
+  Endodermis (cgroup 3)         : 49
+  Transfusion parenchyma (living): 303
+  Transfusion tracheids  (dead) : 44
+  Strasburger cells (cgroup 12) : 38
+  Phloem sieve cells (cgroup 11): 310
+  Xylem (cgroup 13)             : 270
+
+Fixed inputs:
+  C_MESO   = 50.0 µM   (mesophyll sucrose, Dirichlet BC)
+  C_PHLOEM = 0.0 µM   (phloem loading complex, reference sink)
+  PSI_XYL  = 1000.0 hPa  (Dirichlet BC at xylem cells)
+  PSI_ATM  = 0.0 hPa  (Dirichlet BC at substomatal air spaces)
+  X_CONTACT= 1e+10 µm  (outer-boundary soil contact disabled)
+
+Transport parameters (full operator):
+  D_PD          = 1.00e-04 cm²/d  (plasmodesmatal diffusivity for sucrose)
+  D_APO         = 1.00e-01 cm²/d  (apoplastic wall diffusivity)
+  D_MEM         = 1.00e-06 cm²/d  (passive transmembrane diffusivity)
+  σ_sucrose     = 0.9       (membrane reflection coefficient; 10% of water flow carries sucrose)
+
+Transpirational flow path (from hydraulic solve):
+  Dirichlet BCs: xylem = 1000 hPa → stomatal air spaces = 0 hPa
+  Expected: xylem → transfusion parenchyma → endodermis (CS barrier)
+            → mesophyll → substomatal chambers
+  Net water flux per tissue (positive = net inflow, negative = net outflow):
+    xylem                         : -3.635e-14 cm³/d
+    transfusion parenchyma        : +5.743e-21 cm³/d
+    endodermis                    : -5.745e-19 cm³/d
+    mesophyll / airspace          : -2.428e-18 cm³/d
+    Strasburger cell              : -3.270e-19 cm³/d
+    phloem sieve                  : +2.937e-19 cm³/d
+    epidermis                     : +0.000e+00 cm³/d
+    apoplast                      : +3.636e-14 cm³/d
+
+  Top PD (symplastic) water fluxes:
+    xylem                     → xylem                      2.157e-13 cm³/d
+    mesophyll / airspace      → mesophyll / airspace       8.047e-15 cm³/d
+    endodermis                → mesophyll / airspace       2.113e-15 cm³/d
+    mesophyll / airspace      → endodermis                 1.566e-15 cm³/d
+    phloem sieve              → phloem sieve               1.102e-15 cm³/d
+
+  Top transmembrane water fluxes:
+    xylem                      (cell→apo    )  2.142e-13 cm³/d
+    xylem                      (apo→cell    )  1.779e-13 cm³/d
+    mesophyll / airspace       (cell→apo    )  1.131e-14 cm³/d
+    mesophyll / airspace       (apo→cell    )  1.104e-14 cm³/d
+    endodermis                 (apo→cell    )  4.534e-15 cm³/d
+
+Concentration profile (tissue means):
+  c_meso          =     50.000 µM   (imposed: 50.0 µM)
+  c_endodermis    =     36.427 µM
+  c_transfusion   =      0.083 µM
+  c_strasburger   =      0.000 µM
+  c_phloem (BC)   =      0.000 µM   (reference sink)
+
+Output variables:
+  Q_load (full operator)       = 0.4899 pmol/d
+  Δc_load (transfusion→Strasburger) = 0.08 µM
+    (driving force across the last step into the phloem loading complex)
+  Global mesh Pe (full)        = 0.0000
