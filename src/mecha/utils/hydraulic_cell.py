@@ -61,6 +61,21 @@ if TYPE_CHECKING:
     # Avoid circular import at runtime; only used for type hints.
     from mecha.utils.network_builder import NetworkBuilder
 
+CGROUP_TO_TYPE = {
+    1: "exodermis",
+    2: "epidermis",
+    3: "endodermis",
+    4: "cortex",
+    5: "stele",
+    16: "pericycle",
+    11: "phloem",
+    12: "companion",
+    13: "xylem",
+    19: "xylem",
+    20: "xylem",
+    17: "transfusion parenchyma",
+    18: "transfusion tracheid"
+}
 
 # ---------------------------------------------------------------------------
 # HydraulicWall
@@ -197,6 +212,7 @@ class HydraulicMembrane:
         "K_computed",  # Effective conductance computed by HydraulicMatrixBuilder [cm³ hPa⁻¹ d⁻¹]
         "sigma", # Reflection coefficient
         "Q", "A", "velocity",
+        "diffusion_coeff", # Diffusion coefficient
     )
 
     def __init__(
@@ -220,6 +236,7 @@ class HydraulicMembrane:
         self.Q: Optional[float] = None
         self.A: Optional[float] = None
         self.velocity: Optional[float] = None
+        self.diffusion_coeff: Optional[float] = None
 
     def reset_hydraulics(self) -> None:
         """Reset all hydraulic fields to ``None``."""
@@ -626,6 +643,7 @@ class HydraulicCellManager:
         result = []
         for key in type:
             result.extend(self._by_type.get(key, []))
+
         return result
 
     @property
@@ -850,7 +868,9 @@ class HydraulicCellManager:
                 cell_type = "passage"
             else:
                 cell_type = node_data.get("cell_type", "")
-
+                if cell_type == "":
+                    # use key 'cgroup'
+                    cell_type = CGROUP_TO_TYPE[cgroup]
             # --- Rank ------------------------------------------------------
             rank = (
                 int(network.cell_ranks[cell_id])

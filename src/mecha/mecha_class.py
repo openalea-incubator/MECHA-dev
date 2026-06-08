@@ -480,11 +480,11 @@ class Mecha:
                     cellnumber=int(K_sieve.get("id"))
                     K_axial[cellnumber+network.n_wall_junction]=float(K_sieve.get("value"))
             else: #K_xyl_spec calculated from Poiseuille law (cm^3/hPa/d)
-                for cid in [c.node_id for c in network.cell_manager.xylem]:
-                    K_axial[cid]=network.cell_areas[cid-network.n_wall_junction]**2/(8*3.141592*height*1.0E-05/3600/24)*1.0E-12 #(micron^4/micron)->(cm^3) & (1.0E-3 Pa.s)->(1.0E-05/3600/24 hPa.d) 
+                for c in [c for c in network.cell_manager.xylem]:
+                    K_axial[c.node_id]=c.area**2/(8*3.141592*height*1.0E-05/3600/24)*1.0E-12 #(micron^4/micron)->(cm^3) & (1.0E-3 Pa.s)->(1.0E-05/3600/24 hPa.d) 
                 K_xyl_spec=sum(K_axial)*height/1.0E04
-                for cid in [c.node_id for c in network.cell_manager.sieve]:
-                    K_axial[cid]=network.cell_areas[cid-network.n_wall_junction]**2/(8*3.141592*height*1.0E-05/3600/24)*1.0E-12 #(micron^4/micron)->(cm^3) & (1.0E-3 Pa.s)->(1.0E-05/3600/24 hPa.d) 
+                for c in [c for c in network.cell_manager.sieve]:
+                    K_axial[c.node_id]=c.area**2/(8*3.141592*height*1.0E-05/3600/24)*1.0E-12 #(micron^4/micron)->(cm^3) & (1.0E-3 Pa.s)->(1.0E-05/3600/24 hPa.d) 
         else: # barrier=0
             if hydraulic.axial_conductance_source==2:
                 for K_sieve in hydraulic.k_sieve_elems:
@@ -492,8 +492,8 @@ class Mecha:
                     if cellnumber+network.n_wall_junction in network.listprotosieve:
                         K_axial[cellnumber+network.n_wall_junction]=float(K_sieve.get("value"))
             else: #Calculated from Poiseuille law (cm^3/hPa/d)
-                for cid in network.listprotosieve:
-                    K_axial[cid]=network.cell_areas[cid-network.n_wall_junction]**2/(8*math.pi*height*1.0E-05/3600/24)*1.0E-12 #(micron^4/micron)->(cm^3) & (1.0E-3 Pa.s)->(1.0E-05/3600/24 hPa.d)
+                for c in [c for c in network.cell_manager.protosieve]:
+                    K_axial[c.node_id]=c.area**2/(8*3.141592*height*1.0E-05/3600/24)*1.0E-12 #(micron^4/micron)->(cm^3) & (1.0E-3 Pa.s)->(1.0E-05/3600/24 hPa.d)
 
         return K_axial, K_xyl_spec
 

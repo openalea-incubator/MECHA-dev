@@ -1,3 +1,4 @@
+from mecha.utils import hydraulic_cell
 import numpy as np
 import math
 from scipy.sparse import coo_matrix
@@ -596,9 +597,9 @@ class HydraulicMatrixBuilder:
                 if not np.isnan(psi_xyl[0][i_maturity][0]):
                     print('Distal xylem pressure BC not accounted for in kr estimation')
 
-            elif not np.isnan(distributed_flow_xyl[1][1][0]):
+            elif not np.isnan(distributed_flow_xyl[1][i_maturity][0]):
                 for i, cid in enumerate(self.network.xylem_cells):
-                    rhs_x[cid][0] = distributed_flow_xyl[1][i+1][0]
+                    rhs_x[cid][0] = distributed_flow_xyl[0][i+1][0]
                 rhs[:] = rhs_s * boundary.scenarios[0]['psi_soil_left'] + rhs_x
             else:
                 rhs[:] = rhs_s * boundary.scenarios[0]['psi_soil_left']
@@ -609,7 +610,7 @@ class HydraulicMatrixBuilder:
                     rhs_p[cid][0] = -self.hydraulic.k_sieve
                     self._add_W(cid, cid, -self.hydraulic.k_sieve)
                 rhs[:] = rhs_s * boundary.scenarios[0]['psi_soil_left'] + rhs_p * psi_sieve[1][i_maturity][0]
-            elif not np.isnan(distributed_flow_sieve[1][1][0]):
+            elif not np.isnan(distributed_flow_sieve[1][i_maturity][0]):
                 for i, cid in enumerate(getattr(self.network, 'protosieve_list', [])):
                     rhs_p[cid][0] = distributed_flow_sieve[1][i+1][0]
                 rhs[:] = rhs_s * boundary.scenarios[0]['psi_soil_left'] + rhs_p
