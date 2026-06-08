@@ -194,12 +194,12 @@ class BoundaryData:
             'psi_soil_right': 0.0,
             'osmotic_left_soil': -0.5E3,
             'osmotic_right_soil': -0.5E3,
-            'osmotic_symmetry_soil': 1.0,
+            'osmotic_symmetry_soil': 1,
             'osmotic_shape_soil': 1.0,
-            'osmotic_diffusivity_soil': 0.0,
+            'osmotic_diffusivity_soil': 1,
             'osmotic_xyl': -1.80E3,
             'osmotic_endo': -4.80E3,
-            'osmotic_symmetry_xyl': 1.0,
+            'osmotic_symmetry_xyl': 2,
             'osmotic_shape_xyl': 1.0,
             'osmotic_diffusivity_xyl': 0.5,
             'pressure_xyl_prox': -5.0E3,
@@ -207,7 +207,7 @@ class BoundaryData:
             'flow_xyl_prox': np.nan,
             'flow_xyl_dist': np.nan,
             'delta_p_xyl_prox': np.nan,
-            'pressure_sieve_prox': 1.0E2,
+            'pressure_sieve_prox': np.nan,
             'pressure_sieve_dist': np.nan,
             'flow_sieve_prox': np.nan,
             'flow_sieve_dist': np.nan,
@@ -1038,7 +1038,7 @@ class HydraulicData:
 
     def _set_default_values(self):
         """Set default values if no file is provided."""
-        self.kw_barrier_elems = [{'value': 1.00E-16, 'Casp': 1.00E-16, 'Sub': 1.00E-16, 'Sub_in': 1.00E-16, 'Sub_out': 1.00E-16}]
+        self.kw_barrier_elems = [{'value': 1.00E-16, 'Casp': 1.00E-16, 'Sub': 1.00E-16, 'Sub_in': 1.00E-16, 'Sub_out': 1.00E-16, 'Lig': 1.00E-16}]
         self.kw_elems = [{'value': 0.00024}]
         self.kw_septa_elems = [{'value': 0.00012}]
     
@@ -1090,33 +1090,38 @@ class HydraulicData:
             kw_barrier_suberin = float(self.kw_barrier_elems[h].get("Sub"))
             kw_barrier_suberin_in = float(self.kw_barrier_elems[h].get("Sub_in"))
             kw_barrier_suberin_out = float(self.kw_barrier_elems[h].get("Sub_out"))
+            kw_barrier_lignin = float(self.kw_barrier_elems[h].get("Lig"))
         elif self.n_kw_barrier == 1:
             kw_barrier_casparian = float(self.kw_barrier_elems[0].get("Casp"))
             kw_barrier_suberin = float(self.kw_barrier_elems[0].get("Sub"))
             kw_barrier_suberin_in = float(self.kw_barrier_elems[0].get("Sub_in"))
             kw_barrier_suberin_out = float(self.kw_barrier_elems[0].get("Sub_out"))
+            kw_barrier_lignin = float(self.kw_barrier_elems[0].get("Lig"))
         else:
             index = int(h/(self.n_kaqp*self.n_kpl*self.n_kw))%self.n_kw_barrier
             kw_barrier_casparian = float(self.kw_barrier_elems[index].get("Casp"))
             kw_barrier_suberin = float(self.kw_barrier_elems[index].get("Sub"))
             kw_barrier_suberin_in = float(self.kw_barrier_elems[index].get("Sub_in"))
             kw_barrier_suberin_out = float(self.kw_barrier_elems[index].get("Sub_out"))
+            kw_barrier_lignin = float(self.kw_barrier_elems[index].get("Lig"))
 
         # Use the general 'suberin' value if specific ones are missing
         if kw_barrier_suberin_in is None:
             kw_barrier_suberin_in = float(kw_barrier_suberin) if kw_barrier_suberin is not None else 1E-16
         if kw_barrier_suberin_out is None:
             kw_barrier_suberin_out = float(kw_barrier_suberin) if kw_barrier_suberin is not None else 1E-16
+        if kw_barrier_lignin is None:
+            kw_barrier_lignin = float(kw_barrier_lignin) if kw_barrier_lignin is not None else 1E-16
 
         kw_barrier_suberin_all = [float(kw_barrier_suberin_in), float(kw_barrier_suberin_out)]
 
-        return kw_barrier_casparian, kw_barrier_suberin_all
+        return kw_barrier_casparian, kw_barrier_suberin_all, kw_barrier_lignin
 
     def get_wall_conductivities(self, barrier: int, h: int) -> Dict[str, float]:
         """Get wall conductivities based on barrier type."""
         kw =  self.get_kw_value(h)
         kw_septa = self.get_kw_septa_value(h)
-        kw_barrier_casparian, kw_barrier_suberin = self.get_kw_barrier_values(h)
+        kw_barrier_casparian, kw_barrier_suberin, kw_barrier_lignin = self.get_kw_barrier_values(h)
         barrier_configs = {
             0: {  # No Casparian strip
                 'kw_endo_endo': kw,
@@ -1221,7 +1226,7 @@ class HydraulicData:
             9: {  # Lignin Cap
                 'kw_endo_endo': kw_barrier_casparian,
                 'kw_exo_exo': kw_barrier_casparian,
-                'kw_exo_epi': kw_barrier_suberin[1],
+                'kw_exo_epi': kw_barrier_lignin,
                 'kw_exo_cortex': kw,
                 'kw_septa': kw_septa,
                 'kw_cortex_cortex': kw,

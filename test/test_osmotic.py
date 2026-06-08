@@ -46,7 +46,8 @@ def test_osmotic():
     plt.tight_layout()
     plt.show()
 
-    visualize(m, visu_type="flow_pathway", maturity_idx=1, scenario_idx="standard water flow", show_plot=True)
+    visualize(m, visu_type="flow_pathway", maturity_idx=0, scenario_idx=3, show_plot=True)
+    visualize(m, visu_type="flow_pathway", maturity_idx=1, scenario_idx=3, show_plot=True)
 
     _, ax = plt.subplots(1, 2, figsize=(15, 6))
     visualize(m, visu_type="velocity", maturity_idx=0, scenario_idx="standard water flow", ax=ax[0], show_plot=False)
@@ -56,20 +57,20 @@ def test_osmotic():
     plt.tight_layout()
     plt.show()
 
-    visualize(m, visu_type="paraview", prefix='outputs/my_sim')
+    # visualize(m, visu_type="paraview", prefix='outputs/my_sim')
 
     # two subplots to compare osmotic scenarios
     _, ax = plt.subplots(1, 5, figsize=(20, 6))
-    visualize(m, visu_type='psi_profile', maturity_idx= 1, scenario_idx="standard water flow", ax=ax[0], show_plot=False)
-    ax[0].set_title("Psi Profile - Mat 1 - Std Water Flow", color='black', bbox=dict(facecolor='white', alpha=0.5, edgecolor='none'))
+    visualize(m, visu_type='psi_profile', maturity_idx= 0, scenario_idx="standard water flow", ax=ax[0], show_plot=False)
+    ax[0].set_title("Psi Profile - Mat 0 - Std Water Flow", color='black', bbox=dict(facecolor='white', alpha=0.5, edgecolor='none'))
     visualize(m, visu_type='psi_profile', maturity_idx= 0, scenario_idx=1, ax=ax[1], show_plot=False)
     ax[1].set_title("Psi Profile - Mat 0 - Scenario 1", color='black', bbox=dict(facecolor='white', alpha=0.5, edgecolor='none'))
-    visualize(m, visu_type='psi_profile', maturity_idx= 1, scenario_idx=2, ax=ax[2], show_plot=False)
-    ax[2].set_title("Psi Profile - Mat 1 - Scenario 2", color='black', bbox=dict(facecolor='white', alpha=0.5, edgecolor='none'))
-    visualize(m, visu_type='psi_profile', maturity_idx= 1, scenario_idx=3, ax=ax[3], show_plot=False)
-    ax[3].set_title("Psi Profile - Mat 1 - Scenario 3", color='black', bbox=dict(facecolor='white', alpha=0.5, edgecolor='none'))
-    visualize(m, visu_type='psi_profile', maturity_idx= 1, scenario_idx=4, ax=ax[4], show_plot=False)
-    ax[4].set_title("Psi Profile - Mat 1 - Scenario 4", color='black', bbox=dict(facecolor='white', alpha=0.5, edgecolor='none'))
+    visualize(m, visu_type='psi_profile', maturity_idx= 0, scenario_idx=2, ax=ax[2], show_plot=False)
+    ax[2].set_title("Psi Profile - Mat 0 - Scenario 2", color='black', bbox=dict(facecolor='white', alpha=0.5, edgecolor='none'))
+    visualize(m, visu_type='psi_profile', maturity_idx= 0, scenario_idx=3, ax=ax[3], show_plot=False)
+    ax[3].set_title("Psi Profile - Mat 0 - Scenario 3", color='black', bbox=dict(facecolor='white', alpha=0.5, edgecolor='none'))
+    visualize(m, visu_type='psi_profile', maturity_idx= 0, scenario_idx=4, ax=ax[4], show_plot=False)
+    ax[4].set_title("Psi Profile - Mat 0 - Scenario 4", color='black', bbox=dict(facecolor='white', alpha=0.5, edgecolor='none'))
     # share the same x and y axis
     ax[1].sharex(ax[0])
     ax[2].sharex(ax[0])

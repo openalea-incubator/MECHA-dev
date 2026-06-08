@@ -659,7 +659,7 @@ class Mecha:
                     
         return rhs_e
         
-    def initialize_scenarios(self, i_scenario: int, i_maturity: int, Kmb: np.ndarray, verbose: bool=False) -> tuple:
+    def initialize_scenarios(self, i_scenario: int, i_maturity: int, Kmb: np.ndarray, verbose: bool=True) -> tuple:
         """
         Initialize vectors and matrices for a specific scenario.
         
@@ -739,6 +739,16 @@ class Mecha:
             vals = {k: base for k in ['epi', 'exo'] + [f'c{i}' for i in range(1,9)]}
             vals.update({'endo': (base - 5000.0)/2.0, 'peri': -5000.0, 'stele': -5000.0})
             vals['comp'] = (os_sieve - 5000.0)/2
+        elif os_hetero == 4:
+            os_epi = float(self.boundary.scenarios[i_scenario].get("osmotic_epi"))
+            os_exo = float(self.boundary.scenarios[i_scenario].get("osmotic_exo"))
+            os_endo = float(self.boundary.scenarios[i_scenario].get("osmotic_endo"))
+            os_peri = float(self.boundary.scenarios[i_scenario].get("osmotic_peri"))
+            os_stele = float(self.boundary.scenarios[i_scenario].get("osmotic_stele"))
+            
+            vals = {'epi': os_epi, 'exo': os_exo, 'endo': os_endo, 'peri': os_peri, 'stele': os_stele, 'cortex': os_cortex}
+            vals.update({f'c{i}': os_cortex for i in range(1,9)})
+            vals['comp'] = (os_sieve + os_stele)/2
         # Ensure all values are numeric (no NaNs)
         vals = {k: (float(v) if not np.isnan(v) else 0.0) for k, v in vals.items()}
         s_vals = {k: (float(v) if not np.isnan(v) else 0.0) for k, v in s_vals.items()}
@@ -895,6 +905,11 @@ class Mecha:
                             rhs_o[j] += K * mb.sigma * (cell_obj.psi_os - wall_obj.psi_os)
                         
                         jmb += 1
+        
+         # print unique values
+        if verbose:
+            print(f"--- Debug Scenario: {i_scenario}, Maturity: {i_maturity} ---")
+            print(f"os_soil: {os_soil_local}, os_xyl: {os_xyl_local}")
 
         # Calculate rhs_x (Xylem BC)
         if barrier > 0:
@@ -918,6 +933,7 @@ class Mecha:
         if not np.isnan(psi_p):
             for cid in target_sieve:
                 rhs_p[cid][0] = -k_sieve
+                print(self.network.cell_manager.get_by_node_id(cid))
         elif not np.isnan(flow_p):
             for i, cid in enumerate(target_sieve):
                  rhs_p[cid][0] = self.distributed_flow_sieve[1][i+1][i_scenario]
@@ -929,7 +945,7 @@ class Mecha:
                 
         return rhs, rhs_x, rhs_p, rhs_o
 
-    def water_flux(self, h: int=0, verbose:bool=False) -> tuple: 
+    def water_flux(self, h: int=0, verbose:bool=True) -> tuple: 
         """
         Solve the hydraulic system for all maturity stages
         it then get the transmembrane fractions for the maturation stages
