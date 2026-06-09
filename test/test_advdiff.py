@@ -139,7 +139,7 @@ def _plot_radial(apo_nodes, apo_get_vals, snap_apo,
     """
     r_apo = np.array([n.r for n in apo_nodes])
     r_sym = np.array([n.r for n in sym_cells])
-    n     = len(snap_apo[CASES[0]])
+    n     = min(len(snap_apo[CASES[0]]), len(snap_sym[CASES[0]]))
     fig, axes = plt.subplots(2, n, figsize=(4.0 * n, 7.0), squeeze=False)
 
     for col_j in range(n):
