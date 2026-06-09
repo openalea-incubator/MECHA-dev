@@ -183,7 +183,8 @@ class SoluteTransport:
             cross_sum = np.array(D[:nwj, nwj:].sum(axis=1)).ravel()
             D = D[:nwj, :nwj] + sp.diags(cross_sum, format='csr')
         elif self.mode == 'sym':
-            D = D[nwj:, nwj:]
+            cross_sum = np.array(D[nwj:, :nwj].sum(axis=1)).ravel()
+            D = D[nwj:, nwj:] + sp.diags(cross_sum, format='csr')
 
         self._D_cache[cache_key] = D
         return D
@@ -197,21 +198,29 @@ class SoluteTransport:
           1e-4 converts (µm²/µm = µm) to cm: 1 µm = 1e-4 cm
         """
         height = float(self.mecha.geometry.maturity_stages[i_maturity].get('height'))
+        cm = self.mecha.network.cell_manager
         nwj    = self.n_wall_junction
         n      = self.n_total
         rows, cols, data = [], [], []
 
         for node, edges in self.network.graph.adjacency():
             i = self.indice[node]
+            
             if i >= nwj:
                 continue
             for neighbor, eattr in edges.items():
                 j = self.indice[neighbor]
+                mb = cm.get_membrane_by_edge(i, j)
+
                 if j <= i or eattr.get('path') != 'membrane':
                     continue
                 L  = eattr.get('length', 1.0)
                 d  = eattr.get('dist',   1.0)
                 DF = self.D_mem * L * height * 1e-4 / d
+                eattr['membrane_diffusivity'] = DF
+                if mb is not None:
+                    mb.diffusion_coeff  = self.D_mem
+                
                 for r, c, v in ((i, i, -DF), (i, j, DF), (j, j, -DF), (j, i, DF)):
                     rows.append(r); cols.append(c); data.append(v)
 

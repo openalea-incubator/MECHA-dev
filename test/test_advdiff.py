@@ -58,7 +58,9 @@ def _build_mecha_homogeneous() -> Mecha:
     kw_base   = float(mecha.hydraulic.get_kw_value(h))
     kw_config = mecha.hydraulic_conductivities[h, i_mat, 1]['kw']
     kw_config['kw_endo_endo'] = kw_base
-    sol, mat_W = mecha.water_flux()
+    mecha.water_flux()
+    sol = mecha.results[0]['solution']
+    mat_W = mecha.results[0]['matrix_W']
     fluxes = []
     coo = mat_W.tocoo()
     for i, j, v in zip(coo.row, coo.col, coo.data):
@@ -137,7 +139,7 @@ def _plot_radial(apo_nodes, apo_get_vals, snap_apo,
     """
     r_apo = np.array([n.r for n in apo_nodes])
     r_sym = np.array([n.r for n in sym_cells])
-    n     = len(snap_apo[CASES[0]])
+    n     = min(len(snap_apo[CASES[0]]), len(snap_sym[CASES[0]]))
     fig, axes = plt.subplots(2, n, figsize=(4.0 * n, 7.0), squeeze=False)
 
     for col_j in range(n):

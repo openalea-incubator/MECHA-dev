@@ -61,6 +61,21 @@ if TYPE_CHECKING:
     # Avoid circular import at runtime; only used for type hints.
     from mecha.utils.network_builder import NetworkBuilder
 
+CGROUP_TO_TYPE = {
+    1: "exodermis",
+    2: "epidermis",
+    3: "endodermis",
+    4: "cortex",
+    5: "stele",
+    16: "pericycle",
+    11: "phloem",
+    12: "companion",
+    13: "xylem",
+    19: "xylem",
+    20: "xylem",
+    17: "transfusion parenchyma",
+    18: "transfusion tracheid"
+}
 
 # ---------------------------------------------------------------------------
 # HydraulicWall
@@ -197,6 +212,7 @@ class HydraulicMembrane:
         "K_computed",  # Effective conductance computed by HydraulicMatrixBuilder [cm³ hPa⁻¹ d⁻¹]
         "sigma", # Reflection coefficient
         "Q", "A", "velocity",
+        "diffusion_coeff", # Diffusion coefficient
     )
 
     def __init__(
@@ -220,6 +236,7 @@ class HydraulicMembrane:
         self.Q: Optional[float] = None
         self.A: Optional[float] = None
         self.velocity: Optional[float] = None
+        self.diffusion_coeff: Optional[float] = None
 
     def reset_hydraulics(self) -> None:
         """Reset all hydraulic fields to ``None``."""
@@ -268,12 +285,15 @@ class HydraulicPlasmodesmata:
         # Geometry
         "length",
         # Hydraulic properties — None until solver assigns them
-        "kpl",        # Plasmodesmata conductance [cm³ hPa⁻¹ d⁻¹]
+        "kpl",        # Plasmodesmata conductance of a single unit [cm³ hPa⁻¹ d⁻¹]
+        "K_computed", # Computed conductance of whole plasmodesmata [cm³ hPa⁻¹ d⁻¹]
         "fplxheight", # plasmodesmata height (default 8.0E5) [] UNITS ?
         "temp_factor",  # Tissue-specific frequency factor (dimensionless × cm)
+        "aperture_coef", # interface specific for the aperture of the plasmodesmata
         "sigma",      # Reflection coefficient
         "Q", #Flow rate through plasmodesmata [cm³ d⁻¹]
         "A", "velocity",
+        "n_pd", # number of plasmodesmata per interface
     )
 
     def __init__(
@@ -286,19 +306,23 @@ class HydraulicPlasmodesmata:
         self.cell_i: 'HydraulicCell' = cell_i
         self.cell_j: 'HydraulicCell' = cell_j
         self.length: float = length
+        self.n_pd: int = 0
 
         # Hydraulic fields — None until explicitly assigned
-        self.kpl: Optional[float] = None
-        self.fplxheight: Optional[float] = None
-        self.temp_factor: Optional[float] = None
-        self.sigma: Optional[float] = None
-        self.Q: Optional[float] = None
-        self.A: Optional[float] = None
-        self.velocity: Optional[float] = None
+        self.kpl: Optional[float] = 0.0
+        self.fplxheight: Optional[float] = 0.0
+        self.temp_factor: Optional[float] = 0.0
+        self.aperture_coef: Optional[float] = 0.0
+        self.sigma: Optional[float] = 0.0
+        self.Q: Optional[float] = 0.0
+        self.A: Optional[float] = 0.0
+        self.velocity: Optional[float] = 0.0
+        self.K_computed: Optional[float] = 0.0
 
     def reset_hydraulics(self) -> None:
-        """Reset all hydraulic fields to ``None``."""
-        self.kpl = self.fplxheight = self.temp_factor = self.sigma = self.Q = self.A = self.velocity = None
+        """Reset all hydraulic fields to 0.0."""
+        self.kpl = self.fplxheight = self.temp_factor = self.sigma = self.Q = self.A = self.velocity = 0.0
+        self.K_computed = self.aperture_coef = self.n_pd = 0.0
 
     def __repr__(self) -> str:
         s = (
@@ -526,6 +550,26 @@ class HydraulicCellManager:
         self._pd_by_edge: Dict[Tuple[int, int], HydraulicPlasmodesmata] = {}
 
     # ------------------------------------------------------------------
+    # Reset hydraulic properties
+    # ------------------------------------------------------------------
+
+    def reset_hydraulic_properties(self) -> None:
+        """
+        Reset hydraulic properties for all walls, membranes, plasmodesmata and cells.
+        """
+        for wall in self._walls:
+            wall.reset_hydraulics()
+
+        for membrane in self._membranes:
+            membrane.reset_hydraulics()
+
+        for pd in self._plasmodesmata:
+            pd.reset_hydraulics()
+
+        for cell in self._cells:
+            cell.reset_hydraulics()
+
+    # ------------------------------------------------------------------
     # Collection protocol
     # ------------------------------------------------------------------
 
@@ -594,19 +638,56 @@ class HydraulicCellManager:
     # ------------------------------------------------------------------
 
     @property
-    def xylem(self) -> List[HydraulicCell]:
+    def xylem(self, type=["protoxylem", "metaxylem", "xylem"]) -> List[HydraulicCell]:
         """Proto- and meta-xylem cells (cgroup 13, 19, 20)."""
-        return [c for c in self._cells if c.cgroup in (13, 19, 20)]
+        result = []
+        for key in type:
+            result.extend(self._by_type.get(key, []))
+
+        return result
 
     @property
-    def sieve(self) -> List[HydraulicCell]:
+    def sieve(self, type=["sieve", "phloem"] ) -> List[HydraulicCell]:
         """Phloem sieve-tube cells (cgroup 11, 23)."""
-        return [c for c in self._cells if c.cgroup in (11, 23)]
+        result = []
+        for key in type:
+            result.extend(self._by_type.get(key, []))
+        return result
+
+    # ! same as sieve !  
+    @property
+    def protosieve(self, type=["protosieve", "phloem"] ) -> List[HydraulicCell]:
+        """Phloem sieve-tube cells (cgroup 11, 23)."""
+        result = []
+        for key in type:
+            result.extend(self._by_type.get(key, []))
+        return result
 
     @property
-    def epidermis(self) -> List[HydraulicCell]:
+    def epidermis(self, type="epidermis") -> List[HydraulicCell]:
         """Epidermis cells (cgroup 2)."""
-        return [c for c in self._cells if c.cgroup == 2]
+        return [c for c in self._cells if c.cell_type == type or c.cgroup == 2]
+
+    @property
+    def exodermis(self, type="exodermis") -> List[HydraulicCell]:
+        """Exodermis cells (cgroup 1)."""
+        return [c for c in self._cells if c.cell_type == type or c.cgroup == 1]
+
+    @property
+    def cortex(self, type=["cortex", "outercortex", "innercortex"]) -> List[HydraulicCell]:
+        """Cortex cells (cgroup 4)."""
+        result = []
+        for key in type:
+            result.extend(self._by_type.get(key, []))
+        return result
+    
+    @property
+    def mesophyll(self, type=["mesophyll", "spongy", "palisade"]) -> List[HydraulicCell]:
+        """Mesophyll cells (cgroup 4)."""
+        result = []
+        for key in type:
+            result.extend(self._by_type.get(key, []))
+        return result
 
     @property
     def passage(self) -> List[HydraulicCell]:
@@ -614,10 +695,23 @@ class HydraulicCellManager:
         return self._by_type.get("passage", [])
 
     @property
-    def intercellular(self) -> List[HydraulicCell]:
+    def endodermis(self) -> List[HydraulicCell]:
+        """Endodermis cells."""
+        return [c for c in self._cells if c.cgroup == 3]
+
+    @property
+    def intercellular(self, type=["intercellular", "air space", "aerenchyma"]) -> List[HydraulicCell]:
         """Intercellular / air-space cells."""
         result = []
-        for key in ("intercellular", "air space", "aerenchyma"):
+        for key in type:
+            result.extend(self._by_type.get(key, []))
+        return result
+    
+    @property
+    def transfusion_tissue(self, type=["tracheid", "parenchyma"]) -> List[HydraulicCell]:
+        """Transfusion tissue cells (cgroup 17, 18)."""
+        result = []
+        for key in type:
             result.extend(self._by_type.get(key, []))
         return result
 
@@ -774,7 +868,9 @@ class HydraulicCellManager:
                 cell_type = "passage"
             else:
                 cell_type = node_data.get("cell_type", "")
-
+                if cell_type == "":
+                    # use key 'cgroup'
+                    cell_type = CGROUP_TO_TYPE[cgroup]
             # --- Rank ------------------------------------------------------
             rank = (
                 int(network.cell_ranks[cell_id])

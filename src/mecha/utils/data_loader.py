@@ -192,31 +192,31 @@ class BoundaryData:
         scenario = {
             'psi_soil_left': 0.0,
             'psi_soil_right': 0.0,
-            'osmotic_left_soil': 0.0,
-            'osmotic_right_soil': 0.0,
-            'osmotic_symmetry_soil': 1.0,
+            'osmotic_left_soil': -0.5E3,
+            'osmotic_right_soil': -0.5E3,
+            'osmotic_symmetry_soil': 1,
             'osmotic_shape_soil': 1.0,
-            'osmotic_diffusivity_soil': 0.0,
-            'osmotic_xyl': 0.0,
-            'osmotic_endo': 0.0,
-            'osmotic_symmetry_xyl': 1.0,
+            'osmotic_diffusivity_soil': 1,
+            'osmotic_xyl': -1.80E3,
+            'osmotic_endo': -4.80E3,
+            'osmotic_symmetry_xyl': 2,
             'osmotic_shape_xyl': 1.0,
-            'osmotic_diffusivity_xyl': 0.0,
+            'osmotic_diffusivity_xyl': 0.5,
             'pressure_xyl_prox': -5.0E3,
             'pressure_xyl_dist': np.nan,
             'flow_xyl_prox': np.nan,
             'flow_xyl_dist': np.nan,
             'delta_p_xyl_prox': np.nan,
-            'pressure_sieve_prox': 1.1E4,
+            'pressure_sieve_prox': np.nan,
             'pressure_sieve_dist': np.nan,
             'flow_sieve_prox': np.nan,
             'flow_sieve_dist': np.nan,
             'delta_p_sieve': np.nan,
-            'osmotic_sieve': 0.0,
+            'osmotic_sieve': -1.0E4,
             's_hetero': 0,
             's_factor': 1.0,
             'os_hetero': 0,
-            'os_cortex': 0.0,
+            'os_cortex': -4.8E3,
             'elongation_midpoint_rate': 2.8,
             'elongation_side_rate_difference': 0.0,
         }
@@ -227,7 +227,10 @@ class BoundaryData:
         self.scenarios.append(scenario)
         self.n_scenarios = len(self.scenarios)
 
-    def set_os_hetero_scenarios(self, os_hetero_values: List[int]):
+    def set_os_hetero_scenarios(self, os_hetero_values: List[int], 
+                                os_cortex_values: List[float]=None, 
+                                osmotic_xyl_values: List[float]=None, 
+                                osmotic_sieve_values: List[float]=None):
         """
         Quickly set new scenarios that change the osmotic potential (Os_hetero).
         Keeps the first scenario as a base and adds new scenarios for each value in os_hetero_values.
@@ -243,11 +246,21 @@ class BoundaryData:
         base_scenario = self.scenarios[0].copy()
         self.scenarios = []
         self._set_default_scenario()
-        for val in os_hetero_values:
+        for i, val in enumerate(os_hetero_values):
             new_scenario = base_scenario.copy()
             new_scenario['os_hetero'] = val
-            new_scenario['osmotic_xyl'] = -1.5E3
-            new_scenario['osmotic_sieve'] = -0.8E4
+            if os_cortex_values is not None:
+                new_scenario['os_cortex'] = os_cortex_values[i]
+            else:
+                new_scenario['os_cortex'] = base_scenario['os_cortex']
+            if osmotic_xyl_values is not None:
+                new_scenario['osmotic_xyl'] = osmotic_xyl_values[i]
+            else:
+                new_scenario['osmotic_xyl'] = base_scenario['osmotic_xyl']
+            if osmotic_sieve_values is not None:
+                new_scenario['osmotic_sieve'] = osmotic_sieve_values[i]
+            else:
+                new_scenario['osmotic_sieve'] = base_scenario['osmotic_sieve']
             self.add_scenario(new_scenario)
 
 
@@ -401,7 +414,7 @@ class GeometryData:
     thickness : float, optional
         Thickness of the cell walls in microns (default is 0.0).
     pd_section : float, optional
-        Plasmodesmata section area in square microns (default is 0.0).
+        Plasmodesmata section area in square microns (default is 7.47E-5 µm² or 45 nm radius).
     xylem_pieces : bool, optional
         Flag indicating whether xylem is modeled as separate pieces (default is False).
 
@@ -435,8 +448,12 @@ class GeometryData:
     diffusion_length: np.ndarray = field(default_factory=lambda: np.zeros((2, 1))) # not used
 
     # Geometry parameters
-    thickness: float = 1.5
-    pd_section: float = 7.47E-5
+    thickness: float = 1.5 # µm
+    # 7.47E-5 µm²: historical value used in MECHA simulations (Couvreur et al.)
+    # 1.79E-4 µm²: PD type I width = 22 nm, desmotubule diameter = 16 nm --> cytoplasmic sleeve thickness = 3 nm (Nicolas et al. 2017)
+    # 8.16E-4 µm²: PD type II + spokes: 36 nm, desmotubule diameter = 16 nm --> sleeve thick=10 nm (Nicolas et al. 2017)
+    # 1.92E-3 µm²: PD type II - spokes: 52 nm, desmotubule diameter = 16 nm --> sleeve thick=18 nm (Nicolas et al. 2017)   
+    pd_section: float = 1.92E-3 # µm² 
     xylem_pieces: bool = False
 
     # Additional parameters
@@ -685,83 +702,91 @@ class HydraulicData:
 
     Attributes
     ----------
-    hydraulics_file : str
-        Path to the hydraulic configuration XML file.
-    kw_elems : List[Any], optional
-        List of raw cell wall hydraulic conductivity elements from the XML file (default is an empty list).
-    kw_barrier_elems : List[Any], optional
-        List of raw cell wall barrier hydraulic conductivity elements from the XML file (default is an empty list).
-    kaqp_elems : List[Any], optional
-        List of raw aquaporin hydraulic conductivity elements from the XML file (default is an empty list).
-    kpl_elems : List[Any], optional
-        List of raw plasmodesmata hydraulic conductivity elements from the XML file (default is an empty list).
-    xcontactrange : List[Any], optional
-        List of raw xylem contact range elements from the XML file (default is an empty list).
-    path_hydraulics : List[Any], optional
-        List of output paths for hydraulic scenarios (default is an empty list).
-    n_kw : int, optional
-        Number of cell wall hydraulic conductivity elements (default is 0).
-    n_kw_barrier : int, optional
-        Number of cell wall barrier hydraulic conductivity elements (default is 0).
-    n_kaqp : int, optional
-        Number of aquaporin hydraulic conductivity elements (default is 0).
-    n_kpl : int, optional
-        Number of plasmodesmata hydraulic conductivity elements (default is 0).
-    n_xcontact : int, optional
-        Number of xylem contact range elements (default is 0).
-    n_hydraulics : int, optional
+    hydraulics_file : str, optional
+        Path to the hydraulic configuration XML file (default is None).
+    kw_elems : List[Any]
+        List of raw cell wall hydraulic conductivity elements from the XML file.
+    kw_septa_elems : List[Any]
+        List of raw cell wall septa hydraulic conductivity elements from the XML file.
+    kw_barrier_elems : List[Any]
+        List of raw cell wall barrier hydraulic conductivity elements from the XML file.
+    kaqp_elems : List[Any]
+        List of raw aquaporin hydraulic conductivity elements from the XML file.
+    kpl_elems : List[Any]
+        List of raw plasmodesmata hydraulic conductivity elements from the XML file.
+    xcontactrange : List[Any]
+        List of raw xylem contact range elements from the XML file.
+    path_hydraulics : List[Any]
+        List of output paths for hydraulic scenarios.
+    n_kw : int
+        Number of cell wall hydraulic conductivity elements (default is 1).
+    n_kw_septa : int
+        Number of cell wall septa hydraulic conductivity elements (default is 1).
+    n_kw_barrier : int
+        Number of cell wall barrier hydraulic conductivity elements (default is 1).
+    n_kaqp : int
+        Number of aquaporin hydraulic conductivity elements (default is 1).
+    n_kpl : int
+        Number of plasmodesmata hydraulic conductivity elements (default is 1).
+    n_xcontact : int
+        Number of xylem contact range elements (default is 1).
+    n_hydraulics : int
         Number of hydraulic scenarios (default is 1).
-    kmb : float, optional
-        Membrane hydraulic conductivity (default is 0.0).
-    ratio_cortex : float, optional
-        Ratio related to cortex hydraulic properties (default is 0.0).
-    fplxheight : float, optional
-        Default plasmodesmata height (default is 0.0).
-    fplxheight_epi_exo : float, optional
-        Plasmodesmata height for epidermis-exodermis interface (default is 0.0).
-    fplxheight_outer_cortex : float, optional
-        Plasmodesmata height for outer cortex interface (default is 0.0).
-    fplxheight_cortex_cortex : float, optional
-        Plasmodesmata height for cortex-cortex interface (default is 0.0).
-    fplxheight_cortex_endo : float, optional
-        Plasmodesmata height for cortex-endodermis interface (default is 0.0).
-    fplxheight_endo_endo : float, optional
-        Plasmodesmata height for endodermis-endodermis interface (default is 0.0).
-    fplxheight_endo_peri : float, optional
-        Plasmodesmata height for endodermis-pericycle interface (default is 0.0).
-    fplxheight_peri_peri : float, optional
-        Plasmodesmata height for pericycle-pericycle interface (default is 0.0).
-    fplxheight_peri_stele : float, optional
-        Plasmodesmata height for pericycle-stele interface (default is 0.0).
-    fplxheight_stele_stele : float, optional
-        Plasmodesmata height for stele-stele interface (default is 0.0).
-    fplxheight_stele_comp : float, optional
-        Plasmodesmata height for stele-companion cell interface (default is 0.0).
-    fplxheight_peri_comp : float, optional
-        Plasmodesmata height for pericycle-companion cell interface (default is 0.0).
-    fplxheight_comp_comp : float, optional
-        Plasmodesmata height for companion cell-companion cell interface (default is 0.0).
-    fplxheight_comp_sieve : float, optional
-        Plasmodesmata height for companion cell-sieve tube interface (default is 0.0).
-    fplxheight_peri_sieve : float, optional
-        Plasmodesmata height for pericycle-sieve tube interface (default is 0.0).
-    fplxheight_stele_sieve : float, optional
-        Plasmodesmata height for stele-sieve tube interface (default is 0.0).
-    
-    k_sieve : float, optional
-        Sieve tube hydraulic conductance (default is 0.0).
-
-    k_xyl : float, optional
-        Xylem vessel axial hydraulic conductance (default is 0.0).
-    kw : List[float], optional
-        Processed list of cell wall hydraulic conductivity values (default is an empty list).
-    kw_barrier : List[float], optional
-        Processed list of cell wall barrier hydraulic conductivity values (default is an empty list).
+    kmb : float
+        Membrane hydraulic conductivity (default is 3.0E-5).
+    ratio_cortex : float
+        Ratio related to cortex hydraulic properties (default is 1.0).
+    fplxheight_map : Dict[Tuple[int, int], float]
+        Dictionary mapping tissue interface ID pairs to plasmodesmata height values (number per unit height).
+    interface_map : Dict[str, Any]
+        Dictionary mapping XML tag names to lists of tissue interfaces.
+    interface_kpl_factor_map : Dict[Tuple[int, int], Union[str, Tuple[str, str]]]
+        Dictionary mapping tissue interfaces to specific plasmodesmata conductance configuration factor keys.
+    axial_conductance_source : int
+        Source type for axial conductance (1 for area-based Poiseuille law; 2 for prescribed values) (default is 1).
+    k_sieve_elems : List[Any]
+        List of raw sieve tube axial conductance elements from the XML file.
+    k_xyl_elems : List[Any]
+        List of raw xylem vessel axial conductance elements from the XML file.
+    k_sieve : Union[float, List[float]]
+        Sieve tube hydraulic conductance value(s) (default is 1.0E-6).
+    K_axial : np.ndarray, optional
+        Axial conductance matrix (default is None).
+    k_xyl : Union[float, List[float]]
+        Xylem vessel axial hydraulic conductance value(s) (default is 1.0E-6).
+    K_xyl_spec : float
+        Specific xylem vessel axial hydraulic conductance (default is 1.0E-6).
+    conductivities : List[Dict[str, Any]]
+        List of root conductivity results.
+    kw : List[float]
+        Processed list of cell wall hydraulic conductivity values.
+    kw_barrier : List[float]
+        Processed list of cell wall barrier hydraulic conductivity values.
+    kw_septa : List[float]
+        Processed list of cell wall septa hydraulic conductivity values.
+    kaqp : List[Dict[str, float]]
+        Processed list of aquaporin hydraulic conductivity parameter configurations.
+    kpl : List[Dict[str, float]]
+        Processed list of plasmodesmata hydraulic conductivity parameter configurations.
 
     Methods
     -------
     _load_hydraulics()
         Load hydraulic configuration parameters from the XML file.
+    set_pd_interface(network)
+        Define mapping of XML tags to tissue interface ID pairs using network info.
+    get_kw_value(h)
+        Get cell wall hydraulic conductivity for the scenario index h.
+    get_kw_septa_value(h)
+        Get cell wall septa hydraulic conductivity for the scenario index h.
+    get_kw_barrier_values(h)
+        Get casparian and suberin cell wall barrier conductivities for scenario h.
+    get_wall_conductivities(barrier, h)
+        Get dictionary of wall conductivities for a specific barrier type and scenario h.
+    get_plasmodesmatal_conductance(h)
+        Get plasmodesmata conductance configuration dict for scenario h.
+    get_aquaporin_contributions(h)
+        Get aquaporin contributions configuration dict for scenario h.
     """
     # File paths
     hydraulics_file: Optional[str] = None
@@ -788,23 +813,125 @@ class HydraulicData:
     ratio_cortex: float = 1.0
     
     # PD height (Fplxheight) parameters for different tissue interfaces
-    fplxheight: float = 8.0E5
-    fplxheight_epi_exo: float = 1.08E6
-    fplxheight_outer_cortex: float = 2.28E6
-    fplxheight_cortex_cortex: float = 8.6E5
-    fplxheight_cortex_endo: float = 8.8E5
-    fplxheight_endo_endo: float = 6.4E5
-    fplxheight_endo_peri: float = 9.6E5
-    fplxheight_peri_peri: float = 7.0E5 # not use
-    fplxheight_peri_stele: float = 1.08E6
-    fplxheight_stele_stele: float = 6.4E5
-    fplxheight_stele_comp: float = 9.8E5
-    fplxheight_peri_comp: float = 7.0E5
-    fplxheight_comp_comp: float = 6.8E5
-    fplxheight_comp_sieve: float = 1.76E6
-    fplxheight_peri_sieve: float = 7.2E5
-    fplxheight_stele_sieve: float = 9.0E5
-    
+    fplxheight_map: Dict[Tuple[int, int], float] = field(default_factory=lambda: {
+        # Symmetric interfaces 
+        (0, 0): 8.0E5,
+        (1, 1): 8.0E5,           # default (fallback) or hypodermis-hypodermis
+        (2, 2): 8.0E5,           # default (fallback) or epi-epi
+        (1, 2): 1.08E6,          # epi-exo/hypo
+        (1, 4): 2.28E6,           # exo/hypo-cortex/mesophyll
+
+        (4, 4): 8.6E5,           # cortex-cortex/mesophyll-mesophyll
+        (3, 4): 8.8E5,           # cortex-endo/mesophyll-endo
+        (3, 3): 6.4E5,           # endo-endo
+        (3, 16): 9.6E5,          # endo-peri
+        (3, 5): 9.6E5,           # endo-stele 
+
+        (3, 17): 1.08E6,         # endo-transfusion parenchyma
+        (3, 18): 0.0,            # endo-transfusion tracheid
+
+        (5, 16): 1.08E6,         # stele-peri
+        (5, 11): 9.0E5,          # stele-phloem
+        (5, 12): 9.8E5,          # stele-comp
+        (5, 13): 6.4E5,          # stele-xylem
+        (5, 5): 6.4E5,           # stele-stele
+
+        (5, 17): 6.4E5,         # stele-transfusion parenchyma
+        (5, 18): 0.0,            # stele-transfusion tracheid
+        
+        (11, 12): 1.76E6,        # sieve-comp
+        (11, 16): 7.2E5,         # sieve-peri
+        (11, 13): 0.0,           # sieve-xylem
+        (11, 11): 0.0,           # sieve-sieve
+        (11, 17): 6.4E5,         # sieve-transfusion parenchyma
+        (11, 18): 0.0,           # sieve-transfusion tracheid
+
+        (12, 13): 9.8E5,         # comp-xylem
+        (12, 16): 7.0E5,         # comp-peri
+        (12, 12): 6.8E5,         # comp-comp
+
+        (12, 17): 1.08E6,        # Strasburger cell-transfusion parenchyma
+        (12, 18): 0.0,           # Strasburger cell -transfusion tracheid
+
+        (13, 16): 1.08E6,        # xylem-peri   
+        (13, 13): 6.4E5,         # xylem-xylem
+
+        (13, 17): 1.08E6,        # xylem-transfusion parenchyma
+        (13, 18): 1.76E6,        # xylem-transfusion tracheid
+
+        (17, 17): 8.0e5,         # transfusion parenchyma-transfusion parenchyma
+        (17, 18): 0.0,           # transfusion parenchyma-transfusion tracheid
+        (18, 18): 0.0,           # transfusion tracheid - transfusion tracheid
+        # Add other mappings as needed
+    })
+
+    interface_map: Dict[str, Any] = field(default_factory=dict)
+
+    # Maps a sorted (cgroup_i, cgroup_j) interface tuple to a kpl_config key (str)
+    # or a pair of keys (Tuple[str, str]) whose harmonic mean is used.
+    # Used by HydraulicMatrixBuilder._fill_plasmodesmata() to look up the
+    # per-interface conductance factor without a long if/elif chain.
+    # Fixes the bug where endo_in_factor / endo_out_factor were defined in
+    # the XML but never consulted by the solver.
+    interface_kpl_factor_map: Dict[Tuple[int, int], Union[str, Tuple[str, str]]] = field(
+        default_factory=lambda: {
+            # Same-tissue interfaces (single factor)
+            (4, 4):   'cortex_factor',                # cortex–cortex
+            (12, 12): 'phloem_companion_cell_factor',  # companion–companion
+            (11, 11): 'phloem_sieve_tube_factor',      # sieve–sieve
+
+            # Cross-tissue: inner endodermis (peri/stele side)
+            (3, 5):   'endo_in_factor',                # endo–stele
+            (3, 16):  'endo_in_factor', # endo–peri 
+
+            # Cross-tissue: outer endodermis (cortex side)
+            (3, 4):   'endo_out_factor',  # endo–cortex (harmonic mean)
+
+            # Stele / pericycle / phloem interfaces (single factor)
+            (5, 12):  'pericycle_phloem_pole_factor',  # stele–companion
+            (12, 13): 'pericycle_phloem_pole_factor',  # companion–xylem
+            (11, 12): 'phloem_companion_cell_factor',  # sieve–companion
+            (11, 16): 'phloem_sieve_tube_factor',  # sieve–peri
+            (11, 13): 'phloem_sieve_tube_factor',  # sieve–xylem
+            (5, 11):  'phloem_sieve_tube_factor',  # stele–sieve
+            (11, 11): 'phloem_phloem_tube_factor', # Inter phloem factor
+
+            # Companion–pericycle: harmonic mean of the two pole factors
+            (12, 16): 'pericycle_phloem_pole_factor',  # companion–peri
+        }
+    )
+
+    # Maps a sorted (cgroup_i, cgroup_j) tissue-interface pair to the kw_config
+    # key that _fill_wall() should use for that apoplastic wall edge.
+    # Used by HydraulicMatrixBuilder._fill_wall() to replace the previous
+    # if/elif chain over count_* node attributes.
+    # The lookup falls back to plain `kw` for any interface not listed here.
+    interface_kw_key_map: Dict[Tuple[int, int], str] = field(
+        default_factory=lambda: {
+            # ── Endodermis radial walls ─────────────────────────────────────
+            (3, 3):  'kw_endo_endo',      # endo–endo (Casparian strip)
+            (3, 4):  'kw_endo_cortex',    # endo–cortex (outer face, suberin)
+            (3, 5):  'kw_endo_peri',      # endo–stele  (inner face, suberin)
+            (3, 11): 'kw_endo_peri',      # endo–phloem sieve (inner face)
+            (3, 12): 'kw_endo_peri',      # endo–companion   (inner face)
+            (3, 13): 'kw_endo_peri',      # endo–xylem       (inner face)
+            (3, 16): 'kw_endo_peri',      # endo–pericycle   (inner face)
+
+            # ── Exodermis radial walls ──────────────────────────────────────
+            (1, 1):  'kw_exo_exo',        # exo–exo  (Casparian strip)
+            (1, 2):  'kw_exo_epi',        # exo–epidermis
+            (1, 4):  'kw_exo_cortex',     # exo–cortex
+
+            # ── Cortex tangential walls ─────────────────────────────────────
+            # TODO: Implement the phi thickning as inner cortex (how many layers?)
+            # TODO: Implement the MSC (outer cortex, how many layers?)
+            (4, 4):  'kw_cortex_cortex',  # cortex–cortex
+
+            # ── Passage-cell and septa walls are handled as special cases ───
+            # before the map lookup in _fill_wall() and are not listed here.
+        }
+    )
+
     # Conductance parameters
     axial_conductance_source: int = 1
     k_sieve_elems: List[Any] = field(default_factory=list)
@@ -817,25 +944,12 @@ class HydraulicData:
     # Root conductivities
     conductivities: List[Dict[str, Any]] = field(default_factory=list)
 
-    # Matrices for Doussan calculations
-    matrix_W: Optional[np.ndarray] = None
-    matrix_C: Optional[np.ndarray] = None
-    matrix_ApoC: Optional[np.ndarray] = None
-    matrix_SymC: Optional[np.ndarray] = None
-    rhs_C: Optional[np.ndarray] = None
-    rhs_ApoC: Optional[np.ndarray] = None
-    rhs_SymC: Optional[np.ndarray] = None
-    rhs: Optional[np.ndarray] = None
-    rhs_s: Optional[np.ndarray] = None
-    rhs_x: Optional[np.ndarray] = None
-    rhs_p: Optional[np.ndarray] = None
-    
     # Processed parameter arrays
     kw: List[float] = field(default_factory=lambda: [0.00024])
     kw_barrier: List[float] = field(default_factory=lambda: [1.00E-16])
     kw_septa: List[float] = field(default_factory=lambda: [0.00012])
     kaqp: List[Dict[str, float]] = field(default_factory=lambda: [{'value': 0.000430, 'cortex_factor': 1.0, 'endo_factor': 1.0, 'epi_factor': 1.0, 'exo_factor': 1.0, 'stele_factor': 1.0}])
-    kpl: List[Dict[str, float]] = field(default_factory=lambda: [{'value': 5.3E-12, 'phloem_companion_cell_factor': 1.0, 'pericycle_phloem_pole_factor': 1.0, 'phloem_sieve_tube_factor': 1.0, 'cortex_factor': 1.0}])
+    kpl: List[Dict[str, float]] = field(default_factory=lambda: [{'value': 5.3E-12, 'phloem_companion_cell_factor': 0.0, 'pericycle_phloem_pole_factor': 0.0, 'phloem_sieve_tube_factor': 0.0, 'cortex_factor': 1.0}])
 
     def __post_init__(self):
         """Post-initialization method to load hydraulic configuration parameters."""
@@ -871,23 +985,14 @@ class HydraulicData:
         self.ratio_cortex = float(root.xpath('ratio_cortex')[0].get("value"))
         
         # PD height parameters
-        self.fplxheight = float(root.xpath('Fplxheight')[0].get("value"))
-        self.fplxheight_epi_exo = float(root.xpath('Fplxheight_epi_exo')[0].get("value"))
-        self.fplxheight_outer_cortex = float(root.xpath('Fplxheight_outer_cortex')[0].get("value"))
-        self.fplxheight_cortex_cortex = float(root.xpath('Fplxheight_cortex_cortex')[0].get("value"))
-        self.fplxheight_cortex_endo = float(root.xpath('Fplxheight_cortex_endo')[0].get("value"))
-        self.fplxheight_endo_endo = float(root.xpath('Fplxheight_endo_endo')[0].get("value"))
-        self.fplxheight_endo_peri = float(root.xpath('Fplxheight_endo_peri')[0].get("value"))
-        self.fplxheight_peri_peri = float(root.xpath('Fplxheight_peri_peri')[0].get("value"))
-        self.fplxheight_peri_stele = float(root.xpath('Fplxheight_peri_stele')[0].get("value"))
-        self.fplxheight_stele_stele = float(root.xpath('Fplxheight_stele_stele')[0].get("value"))
-        self.fplxheight_stele_comp = float(root.xpath('Fplxheight_stele_comp')[0].get("value"))
-        self.fplxheight_peri_comp = float(root.xpath('Fplxheight_peri_comp')[0].get("value"))
-        self.fplxheight_comp_comp = float(root.xpath('Fplxheight_comp_comp')[0].get("value"))
-        self.fplxheight_comp_sieve = float(root.xpath('Fplxheight_comp_sieve')[0].get("value"))
-        self.fplxheight_peri_sieve = float(root.xpath('Fplxheight_peri_sieve')[0].get("value"))
-        self.fplxheight_stele_sieve = float(root.xpath('Fplxheight_stele_sieve')[0].get("value"))
-        
+        # Populate the map from XML
+        for xml_tag, interfaces in self.interface_map.items():
+            elem = root.xpath(xml_tag) # might not work
+            if elem:
+                value = float(elem[0].get("value"))
+                for interface in interfaces:
+                    self.fplxheight_map[interface] = value
+           
         # Conductance parameters
         # 1: Poiseuille law (based on cross-section area); 2: Prescribed here below (for all sieve tubes, and vessel per vessel)
         self.axial_conductance_source = int(root.xpath('Kax_source')[0].get("value")) if root.xpath('Kax_source') else 1
@@ -920,7 +1025,7 @@ class HydraulicData:
             self.kaqp.append(kaqp_dict)
 
         self.kpl = []
-        for kpl_elem in self.kpl_elems if self.kpl_elems else [{'value': 5.3E-12, 'PCC_factor': 1.0, 'PPP_factor': 1.0, 'cortex_factor': 1.0}]:
+        for kpl_elem in self.kpl_elems if self.kpl_elems else [{'value': 5.3E-12, 'PCC_factor': 0.0, 'PPP_factor': 0.0, 'PST_factor':0.0, 'cortex_factor': 1.0}]:
             kpl_dict = {'value': float(kpl_elem.get("value"))}
             kpl_dict['phloem_companion_cell_factor'] = float(kpl_elem.get("PCC_factor")) # 
             kpl_dict['pericycle_phloem_pole_factor'] = float(kpl_elem.get("PPP_factor")) # 
@@ -933,9 +1038,32 @@ class HydraulicData:
 
     def _set_default_values(self):
         """Set default values if no file is provided."""
-        self.kw_barrier_elems = [{'value': 1.00E-16, 'Casp': 1.00E-16, 'Sub': 1.00E-16, 'Sub_in': 1.00E-16, 'Sub_out': 1.00E-16}]
+        self.kw_barrier_elems = [{'value': 1.00E-16, 'Casp': 1.00E-16, 'Sub': 1.00E-16, 'Sub_in': 1.00E-16, 'Sub_out': 1.00E-16, 'Lig': 1.00E-16}]
         self.kw_elems = [{'value': 0.00024}]
         self.kw_septa_elems = [{'value': 0.00012}]
+    
+    def set_pd_interface(self, network):
+        self.interface_map = {
+            'Fplxheight': [(1, 1)],
+            'Fplxheight_epi_exo': [(1, 2)],
+            'Fplxheight_outer_cortex': [
+                (network.outercortex_connec_rank, 4),
+                (4, network.outercortex_connec_rank)
+            ],
+            'Fplxheight_cortex_cortex': [(4, 4)],
+            'Fplxheight_cortex_endo': [(3, 4)],
+            'Fplxheight_endo_endo': [(3, 3)],
+            'Fplxheight_endo_peri': [(3, 16)],
+            'Fplxheight_peri_peri': [(16, 16)],
+            'Fplxheight_peri_stele': [(5, 16), (13, 16)],
+            'Fplxheight_stele_stele': [(5, 5), (5, 13), (13, 13)],
+            'Fplxheight_stele_comp': [(5, 12), (12, 13)],
+            'Fplxheight_peri_comp': [(12, 16)],
+            'Fplxheight_comp_comp': [(12, 12)],
+            'Fplxheight_comp_sieve': [(11, 12)],
+            'Fplxheight_peri_sieve': [(11, 16)],
+            'Fplxheight_stele_sieve': [(5, 11), (11, 13)],
+        }
 
     def get_kw_value(self, h: int) -> float:
         """Get the kw value based on the scenario index."""
@@ -962,33 +1090,38 @@ class HydraulicData:
             kw_barrier_suberin = float(self.kw_barrier_elems[h].get("Sub"))
             kw_barrier_suberin_in = float(self.kw_barrier_elems[h].get("Sub_in"))
             kw_barrier_suberin_out = float(self.kw_barrier_elems[h].get("Sub_out"))
+            kw_barrier_lignin = float(self.kw_barrier_elems[h].get("Lig"))
         elif self.n_kw_barrier == 1:
             kw_barrier_casparian = float(self.kw_barrier_elems[0].get("Casp"))
             kw_barrier_suberin = float(self.kw_barrier_elems[0].get("Sub"))
             kw_barrier_suberin_in = float(self.kw_barrier_elems[0].get("Sub_in"))
             kw_barrier_suberin_out = float(self.kw_barrier_elems[0].get("Sub_out"))
+            kw_barrier_lignin = float(self.kw_barrier_elems[0].get("Lig"))
         else:
             index = int(h/(self.n_kaqp*self.n_kpl*self.n_kw))%self.n_kw_barrier
             kw_barrier_casparian = float(self.kw_barrier_elems[index].get("Casp"))
             kw_barrier_suberin = float(self.kw_barrier_elems[index].get("Sub"))
             kw_barrier_suberin_in = float(self.kw_barrier_elems[index].get("Sub_in"))
             kw_barrier_suberin_out = float(self.kw_barrier_elems[index].get("Sub_out"))
+            kw_barrier_lignin = float(self.kw_barrier_elems[index].get("Lig"))
 
         # Use the general 'suberin' value if specific ones are missing
         if kw_barrier_suberin_in is None:
             kw_barrier_suberin_in = float(kw_barrier_suberin) if kw_barrier_suberin is not None else 1E-16
         if kw_barrier_suberin_out is None:
             kw_barrier_suberin_out = float(kw_barrier_suberin) if kw_barrier_suberin is not None else 1E-16
+        if kw_barrier_lignin is None:
+            kw_barrier_lignin = float(kw_barrier_lignin) if kw_barrier_lignin is not None else 1E-16
 
         kw_barrier_suberin_all = [float(kw_barrier_suberin_in), float(kw_barrier_suberin_out)]
 
-        return kw_barrier_casparian, kw_barrier_suberin_all
+        return kw_barrier_casparian, kw_barrier_suberin_all, kw_barrier_lignin
 
     def get_wall_conductivities(self, barrier: int, h: int) -> Dict[str, float]:
         """Get wall conductivities based on barrier type."""
         kw =  self.get_kw_value(h)
         kw_septa = self.get_kw_septa_value(h)
-        kw_barrier_casparian, kw_barrier_suberin = self.get_kw_barrier_values(h)
+        kw_barrier_casparian, kw_barrier_suberin, kw_barrier_lignin = self.get_kw_barrier_values(h)
         barrier_configs = {
             0: {  # No Casparian strip
                 'kw_endo_endo': kw,
@@ -1093,7 +1226,7 @@ class HydraulicData:
             9: {  # Lignin Cap
                 'kw_endo_endo': kw_barrier_casparian,
                 'kw_exo_exo': kw_barrier_casparian,
-                'kw_exo_epi': kw_barrier_suberin[1],
+                'kw_exo_epi': kw_barrier_lignin,
                 'kw_exo_cortex': kw,
                 'kw_septa': kw_septa,
                 'kw_cortex_cortex': kw,
@@ -1152,30 +1285,29 @@ class HydraulicData:
         if self.kpl[iPD].get('phloem_companion_cell_factor') is not None:
             phloem_companion_cell_factor = float(self.kpl[iPD].get('phloem_companion_cell_factor'))
         else:
-            phloem_companion_cell_factor = 1.0
+            phloem_companion_cell_factor = 0.0
 
         if self.kpl[iPD].get('phloem_pericycle_pole_factor') is not None:
             phloem_pericycle_pole_factor = float(self.kpl[iPD].get('phloem_pericycle_pole_factor'))
         else:
-            phloem_pericycle_pole_factor = 1.0
+            phloem_pericycle_pole_factor = 0.0
 
         if self.kpl[iPD].get('phloem_sieve_tube_factor') is not None:
             phloem_sieve_tube_factor = float(self.kpl[iPD].get('phloem_sieve_tube_factor'))
         else:
-            phloem_sieve_tube_factor = 1.0
+            phloem_sieve_tube_factor = 0.0
 
         config = {
             'kpl': kpl,
-            'kpl_stele': kpl * stele_factor,
-            'kpl_endo_in': kpl * endo_in_factor,
-            'kpl_endo_out': kpl * endo_out_factor,
-            'kpl_exo': kpl * exo_factor,
-            'kpl_epi': kpl * epi_factor,
-            'kpl_cortex': kpl * cortex_factor,
+            'stele': stele_factor,
+            'endo_in': endo_in_factor,
+            'endo_out': endo_out_factor,
+            'exo': exo_factor,
+            'epi': epi_factor,
+            'cortex': cortex_factor,
             'phloem_companion_cell_factor': phloem_companion_cell_factor, # PCC
             'phloem_pericycle_pole_factor': phloem_pericycle_pole_factor, # PPP
-            'phloem_sieve_tube_factor': phloem_sieve_tube_factor, # PST
-            'cortex_factor':cortex_factor
+            'phloem_sieve_tube_factor': phloem_sieve_tube_factor # PST
         }
         return config
 
