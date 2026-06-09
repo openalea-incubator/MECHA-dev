@@ -183,7 +183,8 @@ class SoluteTransport:
             cross_sum = np.array(D[:nwj, nwj:].sum(axis=1)).ravel()
             D = D[:nwj, :nwj] + sp.diags(cross_sum, format='csr')
         elif self.mode == 'sym':
-            D = D[nwj:, nwj:]
+            cross_sum = np.array(D[nwj:, :nwj].sum(axis=1)).ravel()
+            D = D[nwj:, nwj:] + sp.diags(cross_sum, format='csr')
 
         self._D_cache[cache_key] = D
         return D
