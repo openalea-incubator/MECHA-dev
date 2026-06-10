@@ -23,7 +23,10 @@ mamba activate mecha
 
 For source to be recognized in the environment, run the following at the root of the MECHA-env directory
 ```bash
-pip install -e ../GRANAP-dev && pip install -e .
+cd MECHA-dev
+pip install -e .
+cd ../GRANAP-dev
+pip install -e .
 ```
 
 ## Usage
