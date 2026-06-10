@@ -256,22 +256,30 @@ class HydraulicMatrixBuilder:
             kw_val = kw_config.get('kw_passage', kw)
             K = kw_val * temp
             if kw > 0:
-                temp_factor = kw_val / kw
+                temp_factor = kw_val / kw 
 
         # ── Interface-based lookup (mirrors _fill_plasmodesmata) ──────────────
         # Two known living cells → build canonical interface tuple, look up map.
         elif len(cells_i) == 2:
             interface = tuple(sorted((cells_i[0].cgroup, cells_i[1].cgroup)))
-            kw_key = self.hydraulic.interface_kw_key_map.get(interface)
-            if kw_key is not None:
-                kw_val = kw_config.get(kw_key, kw)
+
+            # Check for phi_thick walls
+            if (tuple(sorted((cells_i[0].phi_thick, cells_i[1].phi_thick))) == (1,1) and cells_i[0].rank == cells_i[1].rank):
+                kw_val = kw_config.get('kw_phi_thick', kw)
                 K = kw_val * temp
                 if kw > 0:
                     temp_factor = kw_val / kw
-            else:
-                # Interface not in map → plain kw (e.g. stele–stele,
-                # pericycle–stele, or any unlisted same-tissue interface)
-                K = kw * temp
+            else: 
+                kw_key = self.hydraulic.interface_kw_key_map.get(interface)
+                if kw_key is not None:
+                    kw_val = kw_config.get(kw_key, kw)
+                    K = kw_val * temp
+                    if kw > 0:
+                        temp_factor = kw_val / kw
+                else:
+                    # Interface not in map → plain kw (e.g. stele–stele,
+                    # pericycle–stele, or any unlisted same-tissue interface)
+                    K = kw * temp
 
         # ── Fallback: border/exterior wall or junction with >2 cells ─────────
         else:

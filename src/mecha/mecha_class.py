@@ -148,6 +148,11 @@ class Mecha:
         n_maturity = self.geometry.n_maturity
         n_scenarios = self.boundary.n_scenarios
         r_discret = self._get_r_discret()
+        
+        # phi tags
+        phi_type = self.network.phi_type
+        n_phi_layers = self.network.n_phi_layers
+        self.network.cell_manager.tag_phi_thick_cells(phi_type, n_phi_layers)
 
         # Initialize solution arrays
         
@@ -162,6 +167,7 @@ class Mecha:
 
         # Set initial conditions for each maturity stage
         self._set_maturity_initial_conditions()
+        
 
     def _get_r_discret(self) -> int:
         """Get the radial discretization value."""

@@ -41,7 +41,7 @@ _PATH_LABELS = {
     'membrane':      'Transcellular (cell membrane)',
     'plasmodesmata': 'Symplastic (plasmodesmata)',
 }
-_CONTINUOUS_PROPS = ['psi', 'psi_p', 'psi_os', 'psi_total', 'length', 'wall_thickness', 'Q_in', 'Q_out', 'Q', 'A', 'velocity'] 
+_CONTINUOUS_PROPS = ['psi', 'psi_p', 'psi_os', 'psi_total', 'length', 'wall_thickness', 'Q_in', 'Q_out', 'Q', 'A', 'velocity', 'rank'] 
 
 def export_to_graphml(obj: Any, filepath: str) -> None:
     """

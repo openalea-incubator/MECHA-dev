@@ -799,6 +799,9 @@ class HydraulicData:
     xcontactrange: List[Any] = field(default_factory=lambda: [-15E9])
     path_hydraulics: List[Any] = field(default_factory=list)
 
+    # φ-thickening           
+    kw_phi_thick: List[float] = field(default_factory=lambda: [1.0E-16])
+
     # Counts
     n_kw: int = 1
     n_kw_septa: int = 1
@@ -923,7 +926,6 @@ class HydraulicData:
             (1, 4):  'kw_exo_cortex',     # exo–cortex
 
             # ── Cortex tangential walls ─────────────────────────────────────
-            # TODO: Implement the phi thickning as inner cortex (how many layers?)
             # TODO: Implement the MSC (outer cortex, how many layers?)
             (4, 4):  'kw_cortex_cortex',  # cortex–cortex
 
@@ -979,6 +981,10 @@ class HydraulicData:
         self.n_kw_barrier = len(self.kw_barrier_elems)
         self.n_kaqp = len(self.kaqp_elems)
         self.n_kpl = len(self.kpl_elems)
+
+        # φ-thickening configuration
+        phi_elem = root.xpath('phi_thick')
+        self.kw_phi_thick = [float(kw.get("value")) for kw in phi_elem] if phi_elem else [1E-16]
 
         # Extract single-value parameters
         self.kmb = float(root.xpath('km')[0].get("value"))
@@ -1133,7 +1139,8 @@ class HydraulicData:
                 'kw_cortex_cortex': kw,
                 'kw_endo_peri': kw,
                 'kw_endo_cortex': kw,
-                'kw_passage': kw
+                'kw_passage': kw,
+                'kw_phi_thick': kw_barrier_lignin
             },
             1: {  # Endodermis radial walls
                 'kw_endo_endo': kw_barrier_casparian,
@@ -1144,7 +1151,8 @@ class HydraulicData:
                 'kw_cortex_cortex': kw,
                 'kw_endo_peri': kw,
                 'kw_endo_cortex': kw,
-                'kw_passage': kw
+                'kw_passage': kw,
+                'kw_phi_thick': kw_barrier_lignin
             },
             2: {  # Endodermis with passage cells
                 'kw_endo_endo': kw_barrier_casparian,
@@ -1155,7 +1163,8 @@ class HydraulicData:
                 'kw_cortex_cortex': kw,
                 'kw_endo_peri': kw_barrier_suberin[0],
                 'kw_endo_cortex': kw_barrier_suberin[1],
-                'kw_passage': kw
+                'kw_passage': kw,
+                'kw_phi_thick': kw_barrier_lignin
             },
             3: {  # Endodermis full
                 'kw_endo_endo': kw_barrier_casparian,
@@ -1166,7 +1175,8 @@ class HydraulicData:
                 'kw_cortex_cortex': kw,
                 'kw_endo_peri': kw_barrier_suberin[0],
                 'kw_endo_cortex': kw_barrier_suberin[1],
-                'kw_passage': kw_barrier_suberin[0]
+                'kw_passage': kw_barrier_suberin[0],
+                'kw_phi_thick': kw_barrier_lignin
             },
             4: {  # Endodermis full and exodermis radial walls
                 'kw_endo_endo': kw_barrier_casparian,
@@ -1177,7 +1187,8 @@ class HydraulicData:
                 'kw_cortex_cortex': kw,
                 'kw_endo_peri': kw_barrier_suberin[0],
                 'kw_endo_cortex': kw_barrier_suberin[1],
-                'kw_passage': kw_barrier_suberin[0]
+                'kw_passage': kw_barrier_suberin[0],
+                'kw_phi_thick': kw_barrier_lignin
             },
             5: {  # Endodermal & exodermal Casparian strips
                 'kw_endo_endo': kw_barrier_casparian,
@@ -1188,7 +1199,8 @@ class HydraulicData:
                 'kw_cortex_cortex': kw,
                 'kw_endo_peri': kw,
                 'kw_endo_cortex': kw,
-                'kw_passage': kw
+                'kw_passage': kw,
+                'kw_phi_thick': kw_barrier_lignin
             },
             6: {  # Exodermis full and endodermis radial walls
                 'kw_endo_endo': kw_barrier_casparian,
@@ -1199,7 +1211,8 @@ class HydraulicData:
                 'kw_cortex_cortex': kw,
                 'kw_endo_peri': kw,
                 'kw_endo_cortex': kw,
-                'kw_passage': kw
+                'kw_passage': kw,
+                'kw_phi_thick': kw_barrier_lignin
             },
             7: {  # Exodermis radial walls
                 'kw_endo_endo': kw,
@@ -1210,7 +1223,8 @@ class HydraulicData:
                 'kw_cortex_cortex': kw,
                 'kw_endo_peri': kw,
                 'kw_endo_cortex': kw,
-                'kw_passage': kw
+                'kw_passage': kw,
+                'kw_phi_thick': kw_barrier_lignin
             },
             8: {  # Exodermis full suberized and endodermis full suberized
                 'kw_endo_endo': kw_barrier_casparian,
@@ -1221,7 +1235,8 @@ class HydraulicData:
                 'kw_cortex_cortex': kw,
                 'kw_endo_peri': kw_barrier_suberin[0],
                 'kw_endo_cortex': kw_barrier_suberin[1],
-                'kw_passage': kw
+                'kw_passage': kw,
+                'kw_phi_thick': kw_barrier_lignin
             },
             9: {  # Lignin Cap
                 'kw_endo_endo': kw_barrier_casparian,
@@ -1232,7 +1247,8 @@ class HydraulicData:
                 'kw_cortex_cortex': kw,
                 'kw_endo_peri': kw,
                 'kw_endo_cortex': kw,
-                'kw_passage': kw
+                'kw_passage': kw,
+                'kw_phi_thick': kw_barrier_lignin
             }
         }
 

@@ -115,6 +115,10 @@ class NetworkBuilder(AbstractNetwork):
         self.distance_from_center: Optional[np.ndarray] = None
         self.row_outer_cortex: Optional[np.ndarray] = None
 
+        # phi parameters
+        self.n_phi_layers: int = 0
+        self.phi_type: int = 1  # 1=inner, 2=outer, 3=middle range
+
         # Relative positions for walls
         self.r_rel: Optional[np.ndarray] = None
         self.x_rel: Optional[np.ndarray] = None
