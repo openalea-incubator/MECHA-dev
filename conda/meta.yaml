@@ -48,7 +48,6 @@ test:
 
   source_files:
     - test/**
-    - test/data/**
 
   commands:
     - cd test
