@@ -27,7 +27,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from lxml import etree
 import geopandas as gpd
 
-from mecha.utils.data_loader import GeneralData, GeometryData, HydraulicData
+from mecha.utils.data_loader import GeneralData, GeometryData
 from mecha.utils.hydraulic_cell import HydraulicCellManager
 
 from granap.network_base import AbstractNetwork
@@ -170,7 +170,7 @@ class NetworkBuilder(AbstractNetwork):
         # If we are populating from another network, this might not be needed.
         pass
 
-    def build_network(self, general: GeneralData, geometry: GeometryData, cellset_data, hydraulic = HydraulicData, verbose: bool = False, centroid_method: str = "shapely"):
+    def build_network(self, general: GeneralData, geometry: GeometryData, cellset_data, verbose: bool = False, centroid_method: str = "shapely"):
         """Main method to build network from XML data"""
         if cellset_data is None:
             raise ValueError("Cellset data is None")
@@ -178,17 +178,10 @@ class NetworkBuilder(AbstractNetwork):
             raise ValueError("General data is None")
         if geometry is None:
             raise ValueError("Geometry data is None")
-        if hydraulic is None:
-            raise ValueError("Hydraulic data is None")
         
         self.cellset = cellset_data
         self.n_walls = len(self.cellset['points'])
         self.n_cells = len(self.cellset['cells'])
-
-        if verbose:
-            print('Set pre hydraulic parameters in network...')
-        self.phi_type = hydraulic.phi_type
-        self.n_phi_layers = hydraulic.n_phi_layers
 
         if verbose:
             print('  Creating wall, junction and cell nodes...')
