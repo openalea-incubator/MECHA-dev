@@ -80,8 +80,12 @@ class HydraulicMatrixBuilder:
                     elif path == 'plasmodesmata':
                         self._fill_plasmodesmata(i, j, eattr, kpl_config, thickness, barrier)
 
-        # 2. Add soil-wall connections
-        self._apply_soil_boundary(x_contact, height, thickness, kw, barrier, boundary, rhs_s, rhs_C)
+        # 2. Add soil-wall connections or transpiration boundary
+        transpiration_mode = getattr(self.hydraulic, 'transpiration_mode', False) or (x_contact > 5.0e6)
+        if transpiration_mode:
+            self._apply_transpiration_boundary(barrier, boundary, rhs_s)
+        else:
+            self._apply_soil_boundary(x_contact, height, thickness, kw, barrier, boundary, rhs_s, rhs_C)
 
         # 3. Add xylem / phloem BC
         self._apply_xylo_phloem_boundary(i_maturity, barrier, psi_xyl, psi_sieve, distributed_flow_xyl, distributed_flow_sieve, boundary, rhs_s, rhs_x, rhs_p, rhs)
@@ -595,12 +599,18 @@ class HydraulicMatrixBuilder:
                 rhs_s[j_id][0] = -K
 
     def _apply_xylo_phloem_boundary(self, i_maturity, barrier, psi_xyl, psi_sieve, distributed_flow_xyl, distributed_flow_sieve, boundary, rhs_s, rhs_x, rhs_p, rhs):
+        transpiration_mode = getattr(self.hydraulic, 'transpiration_mode', False) or (float(self.hydraulic.xcontactrange[0]) > 5.0e6)
+        if transpiration_mode:
+            psi_soil_left = boundary.scenarios[0].get('psi_air', boundary.scenarios[0].get('psi_left_soil', -15E3))
+        else:
+            psi_soil_left = boundary.scenarios[0]['psi_soil_left']
+
         if barrier > 0:
             if not np.isnan(psi_xyl[1][i_maturity][0]):
                 for cid in self.network.xylem_cells:
                     rhs_x[cid][0] = -self.hydraulic.k_xyl
                     self._add_W(cid, cid, -self.hydraulic.k_xyl)
-                rhs[:] = rhs_s * boundary.scenarios[0]['psi_soil_left'] + rhs_x * psi_xyl[1][i_maturity][0]
+                rhs[:] = rhs_s * psi_soil_left + rhs_x * psi_xyl[1][i_maturity][0]
 
                 if not np.isnan(psi_xyl[0][i_maturity][0]):
                     print('Distal xylem pressure BC not accounted for in kr estimation')
@@ -608,19 +618,61 @@ class HydraulicMatrixBuilder:
             elif not np.isnan(distributed_flow_xyl[1][0][0]):
                 for i, cid in enumerate(self.network.xylem_cells):
                     rhs_x[cid][0] = distributed_flow_xyl[1][i+1][0]
-                rhs[:] = rhs_s * boundary.scenarios[0]['psi_soil_left'] + rhs_x
+                rhs[:] = rhs_s * psi_soil_left + rhs_x
             else:
-                rhs[:] = rhs_s * boundary.scenarios[0]['psi_soil_left']
+                rhs[:] = rhs_s * psi_soil_left
 
         elif barrier == 0:
             if not np.isnan(psi_sieve[1][i_maturity][0]):
                 for cid in getattr(self.network, 'protosieve_list', []):
                     rhs_p[cid][0] = -self.hydraulic.k_sieve
                     self._add_W(cid, cid, -self.hydraulic.k_sieve)
-                rhs[:] = rhs_s * boundary.scenarios[0]['psi_soil_left'] + rhs_p * psi_sieve[1][i_maturity][0]
+                rhs[:] = rhs_s * psi_soil_left + rhs_p * psi_sieve[1][i_maturity][0]
             elif not np.isnan(distributed_flow_sieve[1][0][0]):
                 for i, cid in enumerate(getattr(self.network, 'protosieve_list', [])):
                     rhs_p[cid][0] = distributed_flow_sieve[1][i+1][0]
-                rhs[:] = rhs_s * boundary.scenarios[0]['psi_soil_left'] + rhs_p
+                rhs[:] = rhs_s * psi_soil_left + rhs_p
             else:
-                rhs[:] = rhs_s * boundary.scenarios[0]['psi_soil_left']
+                rhs[:] = rhs_s * psi_soil_left
+
+    def _apply_transpiration_boundary(self, barrier, boundary, rhs_s):
+        """Apply boundary conditions to the intercellular/air spaces in transpiration mode."""
+        # 1. Identify all air space cells
+        air_cells = self.network.cell_manager.intercellular
+        if not air_cells:
+            print('No intercellular spaces found')
+            return
+
+        # 2. Identify stomata locations for distance calculation
+        stomata_cells = self.network.cell_manager.stomata
+        if stomata_cells:
+            stomata_coords = np.array([[c.x, c.y] for c in stomata_cells])
+        else:
+            print('No stomata found')
+            return
+
+        # 3. Apply BC to each air space cell
+        k_air = getattr(self.hydraulic, 'k_air', 1.0) # default transpiration boundary conductance
+        psi_air = boundary.scenarios[0]['psi_air']
+        psi_inter = getattr(self.hydraulic, 'psi_inter', -5000.0)
+        L = psi_air - psi_inter # Total change in potential
+        for cell in air_cells:
+            cid = cell.node_id
+            
+            # Compute distance to closest stoma
+            pos = np.array([cell.x, cell.y])
+            dists = np.linalg.norm(stomata_coords - pos, axis=1)
+            min_dist = np.min(dists) if len(dists) > 0 else 0.0
+            decay_length = getattr(self.hydraulic, 'decay_length', 500.) # in mm
+
+            k = 0.2 # steepness
+
+            # Sigmoid function that goes from 0 (close to stomata) to 1 (far from stomata) 
+            # Local potential factor relative to distance from stomata (value decays with distance)
+            local_psi_factor = psi_inter + L / (1.0 + np.exp(-k * (min_dist - decay_length)))
+            
+            # Add to matrix and rhs_s
+            self._add_W(cid, cid, -k_air)
+            rhs_s[cid][0] = k_air * local_psi_factor
+            print(cid, '  ', k_air * local_psi_factor)
+

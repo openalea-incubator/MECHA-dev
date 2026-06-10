@@ -720,6 +720,14 @@ class HydraulicCellManager:
             result.extend(self._by_type.get(key, []))
         return result
 
+    @property
+    def stomata(self, type=["guard cell", "pore"]) -> List[HydraulicCell]:
+        """Guard cells (stomata)."""
+        result = []
+        for key in type:
+            result.extend(self._by_type.get(key, []))
+        return result
+
     # ------------------------------------------------------------------
     # Filtered views (properties) — connection objects
     # ------------------------------------------------------------------

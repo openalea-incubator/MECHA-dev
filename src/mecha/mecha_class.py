@@ -828,7 +828,11 @@ class Mecha:
                 for neighboor, eattr in edges.items():
                     j = self.indice[neighboor]
                     if j > i and eattr['path'] == "membrane":
-                        rank = int(self.network.cell_ranks[int(j - self.network.n_wall_junction)])
+                        rank_val = self.network.cell_ranks[int(j - self.network.n_wall_junction)]
+
+                        if np.isnan(rank_val) or rank_val not in self.network.rank_to_row:
+                             continue
+                        rank = int(rank_val)
                         row = int(self.network.rank_to_row[rank])
                         
                         # Determine os_membranes and s_membranes
@@ -999,8 +1003,13 @@ class Mecha:
                 # x_rel is NaN for non-border nodes (no membrane neighbours),
                 # but rhs_s is 0 there.  numpy evaluates 0*NaN=NaN, so we
                 # must sanitise x_rel before the element-wise multiply.
-                psi_soil_left  = self.boundary.scenarios[i_scenario].get('psi_soil_left', 0.0)
-                psi_soil_right = self.boundary.scenarios[i_scenario].get('psi_soil_right', 0.0)
+                transpiration_mode = getattr(self.hydraulic, 'transpiration_mode', False) or (float(self.hydraulic.xcontactrange[0]) > 5.0e6)
+                if transpiration_mode:
+                    psi_soil_left = self.boundary.scenarios[i_scenario].get('psi_air', self.boundary.scenarios[i_scenario].get('psi_left_soil', -15E3))
+                    psi_soil_right = psi_soil_left
+                else:
+                    psi_soil_left  = self.boundary.scenarios[i_scenario].get('psi_soil_left', 0.0)
+                    psi_soil_right = self.boundary.scenarios[i_scenario].get('psi_soil_right', 0.0)
                 x_rel_safe = np.nan_to_num(x_rel, nan=0.5)   # value irrelevant where rhs_s==0
                 psi_soil_profile = psi_soil_left * (1 - x_rel_safe) + psi_soil_right * x_rel_safe
                 if verbose: print(f"[soil BC] scen={i_scenario}: psi_soil_left={psi_soil_left}, psi_soil_right={psi_soil_right}, "
@@ -1492,10 +1501,18 @@ class Mecha:
 
         barrier = int(self.geometry.maturity_stages[i_maturity].get("barrier"))
 
-        for ind in self.network.border_walls:
-            q_soil.append(rhs_s[ind]*(solution[ind]-self.boundary.scenarios[i_scenario]['psi_soil_left'])) #(cm^3/d) Positive for water flowing into the root
-        for ind in self.network.border_junction:
-            q_soil.append(rhs_s[ind]*(solution[ind]-self.boundary.scenarios[i_scenario]['psi_soil_left'])) #(cm^3/d) Positive for water flowing into the root
+        transpiration_mode = getattr(self.hydraulic, 'transpiration_mode', False) or (float(self.hydraulic.xcontactrange[0]) > 5.0e6)
+        if transpiration_mode:
+            psi_soil_left = self.boundary.scenarios[i_scenario].get('psi_air', self.boundary.scenarios[i_scenario].get('psi_left_soil', -15E3))
+            air_cells = self.network.cell_manager.intercellular
+            for cell in air_cells:
+                ind = cell.node_id
+                q_soil.append(rhs_s[ind]*(solution[ind]-psi_soil_left))
+        else:
+            for ind in self.network.border_walls:
+                q_soil.append(rhs_s[ind]*(solution[ind]-self.boundary.scenarios[i_scenario]['psi_soil_left'])) #(cm^3/d) Positive for water flowing into the root
+            for ind in self.network.border_junction:
+                q_soil.append(rhs_s[ind]*(solution[ind]-self.boundary.scenarios[i_scenario]['psi_soil_left'])) #(cm^3/d) Positive for water flowing into the root
 
         if barrier > 0:
             if not np.isnan(self.psi_xyl[1][i_maturity][i_scenario]):
@@ -1580,14 +1597,20 @@ class Mecha:
         q_soil, q_xyl, q_sieve = self._calculate_interface_flows(i_maturity, solution, rhs, rhs_s)
             
         self.total_flow[i_maturity][0]=sum(q_soil) #Total flow rate at root surface
+        transpiration_mode = getattr(self.hydraulic, 'transpiration_mode', False) or (float(self.hydraulic.xcontactrange[0]) > 5.0e6)
+        if transpiration_mode:
+            psi_soil_left = self.boundary.scenarios[0].get('psi_air', self.boundary.scenarios[0].get('psi_left_soil', -15E3))
+        else:
+            psi_soil_left = self.boundary.scenarios[0]['psi_soil_left']
+
         if barrier>0:
             if not isnan(self.psi_xyl[1][i_maturity][0]):
-                self.kr_tot[i_maturity][0]=self.total_flow[i_maturity][0]/(self.boundary.scenarios[0]['psi_soil_left']-self.psi_xyl[1][i_maturity][0])/self.network.perimeter/height/1.0E-04
+                self.kr_tot[i_maturity][0]=self.total_flow[i_maturity][0]/(psi_soil_left-self.psi_xyl[1][i_maturity][0])/self.network.perimeter/height/1.0E-04
             else:
                 print('Error: Scenario 0 should have xylem pressure boundary conditions, except for the elongation zone')
         elif barrier==0:
             if not isnan(self.psi_sieve[1][i_maturity][0]):
-                self.kr_tot[i_maturity][0]=self.total_flow[i_maturity][0]/(self.boundary.scenarios[0]['psi_soil_left']-self.psi_sieve[1][i_maturity][0])/self.network.perimeter/height/1.0E-04
+                self.kr_tot[i_maturity][0]=self.total_flow[i_maturity][0]/(psi_soil_left-self.psi_sieve[1][i_maturity][0])/self.network.perimeter/height/1.0E-04
             else:
                 print('Error: Scenario 0 should have phloem pressure boundary conditions in the elongation zone')
 
@@ -1636,7 +1659,10 @@ class Mecha:
                         #Flow densities calculation
                         #Macroscopic distributed parameter for transmembrane flow
                         #Discretization based on cell layers and apoplasmic barriers
-                        rank = int(self.network.cell_ranks[j-self.network.n_wall_junction])
+                        rank_val = self.network.cell_ranks[j-self.network.n_wall_junction]
+                        if np.isnan(rank_val) or rank_val not in self.network.rank_to_row:
+                             continue
+                        rank = int(rank_val)
                         row = int(self.network.rank_to_row[rank])
                         if rank == 1 and self.network.graph.nodes[node]['count_epi'] > 0: #Outer exodermis
                             row += 1

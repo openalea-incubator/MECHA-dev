@@ -1249,6 +1249,18 @@ class HydraulicData:
                 'kw_endo_cortex': kw,
                 'kw_passage': kw,
                 'kw_phi_thick': kw_barrier_lignin
+            },
+            10: {  # Needle barriers: Endodermis Casparian, Epidermis & Hypodermis lignified
+                'kw_endo_endo': kw_barrier_casparian,
+                'kw_exo_exo': kw_barrier_lignin,
+                'kw_exo_epi': kw_barrier_lignin,
+                'kw_exo_cortex': kw,
+                'kw_septa': kw_septa,
+                'kw_cortex_cortex': kw,
+                'kw_endo_peri': kw,
+                'kw_endo_cortex': kw,
+                'kw_passage': kw,
+                'kw_phi_thick': kw_barrier_lignin
             }
         }
 
