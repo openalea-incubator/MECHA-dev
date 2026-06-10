@@ -68,7 +68,11 @@ def _build_mecha_neumann() -> tuple:
     mecha.psi_xyl[1, 0, 0]              = np.nan
     mecha.distributed_flow_xyl[1, 0, 0] = F_total
     mecha._distribute_xylem_flow()
-    sol, mat_W = mecha.water_flux()
+    mecha.water_flux()
+
+    mat_W = mecha.results[0]["matrix_W"]
+    sol   = mecha.results[0]["solution"]
+    
     fluxes = []
     coo = mat_W.tocoo()
     for i, j, v in zip(coo.row, coo.col, coo.data):

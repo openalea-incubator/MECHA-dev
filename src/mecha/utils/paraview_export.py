@@ -251,7 +251,6 @@ def _export_cells(
     polygons: List[List[int]] = []
 
     # Per-cell data arrays
-    water_potentials: List[float] = []
     psi_p_vals: List[float] = []
     psi_os_vals: List[float] = []
     psi_total_vals: List[float] = []
@@ -738,33 +737,59 @@ def _export_flow_vectors(
     filepath: str,
     sol: Optional[np.ndarray],
     indice: Dict[int, int],
-) -> None:
-    """
-    Export one point per edge midpoint with a flow vector (Q × radial unit).
+) -> Dict[str, str]:
+    """Export edge flow vectors split into three separate files:
 
+    'apoplastic', 'symplastic', and 'transmembrane'.
     The vector magnitude encodes |Q| and the direction is from the upstream
     node to the downstream node (sign of Q determines direction).
     Useful for the *Glyph* filter in ParaView.
+
+    Parameters
+    ----------
+    obj : Any
+        A fully solved Mecha instance.
+    filepath : str
+        Base file path for export.
+    sol : np.ndarray, optional
+        Solution vector.
+    indice : Dict[int, int]
+        Node ID to solution index mapping.
+
+    Returns
+    -------
+    Dict[str, str]
+        Mapping of output type -> file path for successfully exported files.
     """
+    import os
 
     graph = obj.network.graph
     pos = dict(graph.nodes(data="position", default=(0.0, 0.0)))
 
-    points: List[Tuple[float, float, float]] = []
-    vectors: List[Tuple[float, float, float]] = []
-    K_vals: List[float] = []
-    Q_vals: List[float] = []
-    path_ids: List[float] = []
+    # Initialize collections for each category
+    data_by_cat = {
+        "apoplastic": {"points": [], "vectors": [], "K_vals": [], "Q_vals": [], "velocity_vals": [], "path_ids": []},
+        "symplastic": {"points": [], "vectors": [], "K_vals": [], "Q_vals": [], "velocity_vals": [], "path_ids": []},
+        "transmembrane": {"points": [], "vectors": [], "K_vals": [], "Q_vals": [], "velocity_vals": [], "path_ids": []},
+    }
 
     _PATH_ID = {"wall": 0.0, "membrane": 1.0, "plasmodesmata": 2.0}
+    _PATH_TO_CAT = {
+        "wall": "apoplastic",
+        "membrane": "transmembrane",
+        "plasmodesmata": "symplastic"
+    }
 
     for u, v, eattr in graph.edges(data=True):
         K = eattr.get("K")
         Q = eattr.get("Q")
+        velocity = eattr.get("velocity")
         path = eattr.get("path", "wall")
 
         if K is None:
             continue
+
+        cat = _PATH_TO_CAT.get(path, "apoplastic")
 
         pu = pos.get(u, (0.0, 0.0))
         pv = pos.get(v, (0.0, 0.0))
@@ -783,36 +808,46 @@ def _export_flow_vectors(
         else:
             vx, vy = 0.0, 0.0
 
-        points.append((mx, my, 0.0))
-        vectors.append((vx, vy, 0.0))
-        K_vals.append(_safe(K))
-        Q_vals.append(q_val)
-        path_ids.append(_PATH_ID.get(path, -1.0))
+        data_by_cat[cat]["points"].append((mx, my, 0.0))
+        data_by_cat[cat]["vectors"].append((vx, vy, 0.0))
+        data_by_cat[cat]["K_vals"].append(_safe(K))
+        data_by_cat[cat]["Q_vals"].append(q_val)
+        data_by_cat[cat]["velocity_vals"].append(_safe(velocity))
+        data_by_cat[cat]["path_ids"].append(_PATH_ID.get(path, -1.0))
 
-    if not points:
-        print("[paraview_export] No flow data — skipping flow vectors.")
-        return
+    base, ext = os.path.splitext(filepath)
+    written: Dict[str, str] = {}
 
-    _ensure_dir(filepath)
-    with open(filepath, "w") as f:
-        f.write(
-            "# vtk DataFile Version 3.0\n"
-            "MECHA edge flow vectors\n"
-            "ASCII\n"
-            "DATASET POLYDATA\n"
-        )
-        _write_points(f, points)
-        # Write as vertices so the Glyph filter works
-        f.write(f"VERTICES {len(points)} {2 * len(points)}\n")
-        for i in range(len(points)):
-            f.write(f"1 {i}\n")
-        _write_point_data_header(f, len(points))
-        _write_vector(f, "flow_Q", vectors)
-        _write_scalar(f, "K", K_vals)
-        _write_scalar(f, "Q_magnitude", [abs(q) for q in Q_vals])
-        _write_scalar(f, "path_id", path_ids)
+    for cat, data in data_by_cat.items():
+        points = data["points"]
+        if not points:
+            continue
 
-    print(f"[paraview_export] Flow vectors → {filepath}  ({len(points)} points)")
+        cat_filepath = f"{base}_{cat}{ext}"
+        _ensure_dir(cat_filepath)
+        with open(cat_filepath, "w") as f:
+            f.write(
+                "# vtk DataFile Version 3.0\n"
+                f"MECHA edge flow vectors - {cat}\n"
+                "ASCII\n"
+                "DATASET POLYDATA\n"
+            )
+            _write_points(f, points)
+            # Write as vertices so the Glyph filter works
+            f.write(f"VERTICES {len(points)} {2 * len(points)}\n")
+            for i in range(len(points)):
+                f.write(f"1 {i}\n")
+            _write_point_data_header(f, len(points))
+            _write_vector(f, "flow_Q", data["vectors"])
+            _write_scalar(f, "K", data["K_vals"])
+            _write_scalar(f, "Q_magnitude", [abs(q) for q in data["Q_vals"]])
+            _write_scalar(f, 'velocity', [abs(v) for v in data['velocity_vals']])
+            _write_scalar(f, "path_id", data["path_ids"])
+
+        print(f"[paraview_export] Flow vectors ({cat}) → {cat_filepath}  ({len(points)} points)")
+        written[f"flow_vectors_{cat}"] = cat_filepath
+
+    return written
 
 
 # ---------------------------------------------------------------------------
@@ -822,8 +857,8 @@ def _export_flow_vectors(
 def export_to_vtk(
     obj: Any,
     prefix: str = "mecha_export",
-    maturity_idx: int = 0,
-    scenario_idx: str = "standard water flow",
+    maturity_idx: Optional[int] = None,
+    scenario_idx: Optional[Union[str, int]] = None,
     extrude_z: float = 50.0,
     pd_radius: float = 0.05,
     export_cells: bool = True,
@@ -951,8 +986,8 @@ def export_to_vtk(
 
         if export_flow_vectors:
             fp = f"{current_prefix}_flow_vectors.vtk"
-            _export_flow_vectors(obj, fp, sol, indice)
-            written["flow_vectors"] = fp
+            written_vectors = _export_flow_vectors(obj, fp, sol, indice)
+            written.update(written_vectors)
         
         last_written = written
 

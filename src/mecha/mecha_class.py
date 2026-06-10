@@ -148,6 +148,11 @@ class Mecha:
         n_maturity = self.geometry.n_maturity
         n_scenarios = self.boundary.n_scenarios
         r_discret = self._get_r_discret()
+        
+        # phi tags
+        phi_type = self.network.phi_type
+        n_phi_layers = self.network.n_phi_layers
+        self.network.cell_manager.tag_phi_thick_cells(phi_type, n_phi_layers)
 
         # Initialize solution arrays
         
@@ -162,6 +167,7 @@ class Mecha:
 
         # Set initial conditions for each maturity stage
         self._set_maturity_initial_conditions()
+        
 
     def _get_r_discret(self) -> int:
         """Get the radial discretization value."""
@@ -280,7 +286,7 @@ class Mecha:
             for j in range(self.network.n_walls, self.network.n_wall_junction):
                 j_idx = j - self.network.n_walls
                 for cid in self.network.junction_wall_cell[j_idx]:
-                    if isnan(cid):
+                    if np.isnan(cid):
                         continue
                     cell_index = int(cid - self.network.n_wall_junction)
                     if cell_index in self.hormones.apo_zombie0:
@@ -480,11 +486,11 @@ class Mecha:
                     cellnumber=int(K_sieve.get("id"))
                     K_axial[cellnumber+network.n_wall_junction]=float(K_sieve.get("value"))
             else: #K_xyl_spec calculated from Poiseuille law (cm^3/hPa/d)
-                for cid in [c.node_id for c in network.cell_manager.xylem]:
-                    K_axial[cid]=network.cell_areas[cid-network.n_wall_junction]**2/(8*3.141592*height*1.0E-05/3600/24)*1.0E-12 #(micron^4/micron)->(cm^3) & (1.0E-3 Pa.s)->(1.0E-05/3600/24 hPa.d) 
+                for c in [c for c in network.cell_manager.xylem]:
+                    K_axial[c.node_id]=c.area**2/(8*3.141592*height*1.0E-05/3600/24)*1.0E-12 #(micron^4/micron)->(cm^3) & (1.0E-3 Pa.s)->(1.0E-05/3600/24 hPa.d) 
                 K_xyl_spec=sum(K_axial)*height/1.0E04
-                for cid in [c.node_id for c in network.cell_manager.sieve]:
-                    K_axial[cid]=network.cell_areas[cid-network.n_wall_junction]**2/(8*3.141592*height*1.0E-05/3600/24)*1.0E-12 #(micron^4/micron)->(cm^3) & (1.0E-3 Pa.s)->(1.0E-05/3600/24 hPa.d) 
+                for c in [c for c in network.cell_manager.sieve]:
+                    K_axial[c.node_id]=c.area**2/(8*3.141592*height*1.0E-05/3600/24)*1.0E-12 #(micron^4/micron)->(cm^3) & (1.0E-3 Pa.s)->(1.0E-05/3600/24 hPa.d) 
         else: # barrier=0
             if hydraulic.axial_conductance_source==2:
                 for K_sieve in hydraulic.k_sieve_elems:
@@ -492,8 +498,8 @@ class Mecha:
                     if cellnumber+network.n_wall_junction in network.listprotosieve:
                         K_axial[cellnumber+network.n_wall_junction]=float(K_sieve.get("value"))
             else: #Calculated from Poiseuille law (cm^3/hPa/d)
-                for cid in network.listprotosieve:
-                    K_axial[cid]=network.cell_areas[cid-network.n_wall_junction]**2/(8*math.pi*height*1.0E-05/3600/24)*1.0E-12 #(micron^4/micron)->(cm^3) & (1.0E-3 Pa.s)->(1.0E-05/3600/24 hPa.d)
+                for c in [c for c in network.cell_manager.protosieve]:
+                    K_axial[c.node_id]=c.area**2/(8*3.141592*height*1.0E-05/3600/24)*1.0E-12 #(micron^4/micron)->(cm^3) & (1.0E-3 Pa.s)->(1.0E-05/3600/24 hPa.d)
 
         return K_axial, K_xyl_spec
 
@@ -634,30 +640,55 @@ class Mecha:
         # Unpack needed properties
         elong_cell = self.elong_cell[i_maturity][i_scenario]
         elong_side = self.elong_cell_side_diff[i_maturity][i_scenario]
-        thickness = self.geometry.thickness
+        
         _, x_rel = self.network.get_relative_positions()
         
         barrier = int(self.geometry.maturity_stages[i_maturity].get("barrier"))
 
         if barrier == 0:  # No elongation from the Casparian strip on
             for wall_id in range(self.network.n_walls):
-                rhs_e[wall_id][0] = self.network.wall_lengths[wall_id] * thickness/2 * 1.0E-08 * \
+                th_p = self.network.cm.get_wall_by_node_id(wall_id).thickness
+                rhs_e[wall_id][0] = self.network.wall_lengths[wall_id] * th_p/2 * 1.0E-08 * \
                                     (elong_cell + (x_rel[wall_id] - 0.5) * elong_side) * \
                                     self.boundary.water_fraction_apo
             
             for cid in range(len(self.network.cell_manager)):
                 node_idx = self.network.n_wall_junction + cid
-                if self.network.cell_areas[cid] > self.network.cell_perimeters[cid] * thickness/2:
-                    rhs_e[node_idx][0] = (self.network.cell_areas[cid] - self.network.cell_perimeters[cid] * thickness/2) * \
-                                         1.0E-8 * (elong_cell + (x_rel[node_idx] - 0.5) * elong_side) * \
+                cell = self.network.cm.get_cell_by_id(cid)
+                th_s = np.mean([w.thickness for w in cell.walls])
+                if cell.area > cell.perimeter * th_s/2:
+                    rhs_e[node_idx][0] = (cell.area - cell.perimeter * th_s/2) * 1.0E-8 * \
+                                         (elong_cell + (x_rel[node_idx] - 0.5) * elong_side) * \
                                          self.boundary.water_fraction_sym
                 else:
                     rhs_e[node_idx][0] = 0.0
                     
         return rhs_e
         
-    def initialize_scenarios(self, i_scenario: int, i_maturity: int, Kmb: np.ndarray) -> tuple:
-        """Initialize vectors and matrices for a specific scenario."""
+    def initialize_scenarios(self, i_scenario: int, i_maturity: int, Kmb: np.ndarray, verbose: bool=True) -> tuple:
+        """
+        Initialize vectors and matrices for a specific scenario.
+        
+        Parameters
+        ----------
+        i_scenario : int
+            Index of the scenario.
+        i_maturity : int
+            Index of the maturity stage.
+        Kmb : np.ndarray
+            Array of membrane conductances.
+            
+        Returns
+        -------
+        rhs : np.ndarray
+            RHS vector.
+        rhs_x : np.ndarray
+            RHS vector for xylem.
+        rhs_p : np.ndarray
+            RHS vector for phloem.
+        rhs_o : np.ndarray
+            RHS vector for osmotic potential.
+        """
         
         # Initialize vectors
         n_nodes = self.network.graph.number_of_nodes()
@@ -694,6 +725,8 @@ class Mecha:
         
         # Determine specific osmotic values based on os_hetero
 
+        # self.boundary.get_osmotic_values()
+
         vals = {}
         if os_hetero == 0:
             base = os_cortex
@@ -712,15 +745,26 @@ class Mecha:
             vals = {k: base for k in ['epi', 'exo'] + [f'c{i}' for i in range(1,9)]}
             vals.update({'endo': (base - 5000.0)/2.0, 'peri': -5000.0, 'stele': -5000.0})
             vals['comp'] = (os_sieve - 5000.0)/2
+        elif os_hetero == 4:
+            os_epi = float(self.boundary.scenarios[i_scenario].get("osmotic_epi"))
+            os_exo = float(self.boundary.scenarios[i_scenario].get("osmotic_exo"))
+            os_endo = float(self.boundary.scenarios[i_scenario].get("osmotic_endo"))
+            os_peri = float(self.boundary.scenarios[i_scenario].get("osmotic_peri"))
+            os_stele = float(self.boundary.scenarios[i_scenario].get("osmotic_stele"))
+            
+            vals = {'epi': os_epi, 'exo': os_exo, 'endo': os_endo, 'peri': os_peri, 'stele': os_stele, 'cortex': os_cortex}
+            vals.update({f'c{i}': os_cortex for i in range(1,9)})
+            vals['comp'] = (os_sieve + os_stele)/2
         # Ensure all values are numeric (no NaNs)
         vals = {k: (float(v) if not np.isnan(v) else 0.0) for k, v in vals.items()}
         s_vals = {k: (float(v) if not np.isnan(v) else 0.0) for k, v in s_vals.items()}
 
         # print unique values
-        print(f"--- Debug Scenario: {i_scenario}, Maturity: {i_maturity} ---")
-        print(f"os_cortex: {os_cortex}, os_sieve: {os_sieve}, s_factor: {s_factor}")
-        print(f"Unique osmotic values: {set(vals.values())}")
-        print(f"Unique sigma values: {set(s_vals.values())}")    
+        if verbose:
+            print(f"--- Debug Scenario: {i_scenario}, Maturity: {i_maturity} ---")
+            print(f"os_cortex: {os_cortex}, os_sieve: {os_sieve}, s_factor: {s_factor}")
+            print(f"Unique osmotic values: {set(vals.values())}")
+            print(f"Unique sigma values: {set(s_vals.values())}")    
         
         if any(np.isnan(list(vals.values()))):
             print(f"WARNING: NaNs found in osmotic vals dictionary!")
@@ -863,10 +907,15 @@ class Mecha:
                         
                         K = Kmb[jmb][0]
                         if wall_obj is not None and cell_obj is not None and mb is not None:
-                            rhs_o[i] += K * mb.sigma * (cell_obj.psi_os - wall_obj.psi_os)
-                            rhs_o[j] += K * mb.sigma * (wall_obj.psi_os - cell_obj.psi_os)
+                            rhs_o[i] += K * mb.sigma * (wall_obj.psi_os - cell_obj.psi_os)
+                            rhs_o[j] += K * mb.sigma * (cell_obj.psi_os - wall_obj.psi_os)
                         
                         jmb += 1
+        
+         # print unique values
+        if verbose:
+            print(f"--- Debug Scenario: {i_scenario}, Maturity: {i_maturity} ---")
+            print(f"os_soil: {os_soil_local}, os_xyl: {os_xyl_local}")
 
         # Calculate rhs_x (Xylem BC)
         if barrier > 0:
@@ -890,6 +939,7 @@ class Mecha:
         if not np.isnan(psi_p):
             for cid in target_sieve:
                 rhs_p[cid][0] = -k_sieve
+                print(self.network.cell_manager.get_by_node_id(cid))
         elif not np.isnan(flow_p):
             for i, cid in enumerate(target_sieve):
                  rhs_p[cid][0] = self.distributed_flow_sieve[1][i+1][i_scenario]
@@ -901,8 +951,22 @@ class Mecha:
                 
         return rhs, rhs_x, rhs_p, rhs_o
 
-    def water_flux(self, h: int=0) -> tuple: 
-        """Solve the hydraulic system for all maturity stages."""
+    def water_flux(self, h: int=0, verbose:bool=True) -> tuple: 
+        """
+        Solve the hydraulic system for all maturity stages
+        it then get the transmembrane fractions for the maturation stages
+        
+        it initializes the different boundary condition scenarios and solve the hydraulic
+        system for each scenario.
+            - osmotic potential
+            - reflection coefficients
+            - elongation BC
+            - soil BC
+            - pholem BC
+            - xylem BC
+    
+    
+        """
 
         for i_maturity in range(self.geometry.n_maturity):
             solution, _, matrix_W, Kmb, rhs_s = self.solve_W(h = h, i_maturity = i_maturity)
@@ -923,14 +987,13 @@ class Mecha:
                     rhs += rhs_e
                     
                 # Adding up all BCs
-                print(f"Adding rhs_o for scenario {i_scenario}!")
+                if verbose: print(f"Adding rhs_o for scenario {i_scenario}!")
+            
                 rhs += rhs_o
 
                 # Critical check for NaNs in rhs before soil BC
                 if np.any(np.isnan(rhs)):
                     print(f"CRITICAL: NaNs detected in rhs for scenario {i_scenario}!")
-                else:
-                    print(f"No NaNs detected in rhs for scenario {i_scenario}!")
                 
                 # Soil BC
                 # x_rel is NaN for non-border nodes (no membrane neighbours),
@@ -940,7 +1003,7 @@ class Mecha:
                 psi_soil_right = self.boundary.scenarios[i_scenario].get('psi_soil_right', 0.0)
                 x_rel_safe = np.nan_to_num(x_rel, nan=0.5)   # value irrelevant where rhs_s==0
                 psi_soil_profile = psi_soil_left * (1 - x_rel_safe) + psi_soil_right * x_rel_safe
-                print(f"[soil BC] scen={i_scenario}: psi_soil_left={psi_soil_left}, psi_soil_right={psi_soil_right}, "
+                if verbose: print(f"[soil BC] scen={i_scenario}: psi_soil_left={psi_soil_left}, psi_soil_right={psi_soil_right}, "
                       f"profile_range=[{np.nanmin(psi_soil_profile):.1f}, {np.nanmax(psi_soil_profile):.1f}]")
                 rhs += np.multiply(rhs_s, psi_soil_profile)
 
@@ -957,10 +1020,10 @@ class Mecha:
                         for cid in [c.node_id for c in self.network.cell_manager.xylem]:
                             matrix_W[cid, cid] -= self.hydraulic.k_xyl
                         rhs += rhs_x * psi_xyl_val
-                        print(f"Adding xylem BC for scenario {i_scenario}!")
+                        if verbose: print(f"Adding xylem BC for scenario {i_scenario}")
                     elif not np.isnan(flow_xyl_val): # Flow BC
                         rhs += rhs_x
-                        print(f"Adding xylem BC for scenario {i_scenario}!")
+                        if verbose: print(f"Adding xylem BC for scenario {i_scenario}")
 
                 # Critical check for NaNs in rhs after xylem BC
                 if np.any(np.isnan(rhs)):
@@ -979,19 +1042,17 @@ class Mecha:
                          rhs += rhs_p
                 elif barrier > 0:
                     if not np.isnan(psi_sieve_val):
-                         for cid in [c.node_id for c in self.network.cell_manager.sieve]:
+                         for cid in [c.node_id for c in self.network.cell_manager.sieve][:1]:
                              matrix_W[cid, cid] -= self.hydraulic.k_sieve
                          rhs += rhs_p * psi_sieve_val
-                         print(f"Adding phloem BC for scenario {i_scenario}!")
+                         if verbose: print(f"Adding phloem BC for scenario {i_scenario}!")
                     elif not np.isnan(flow_sieve_val):
                          rhs += rhs_p
-                         print(f"Adding phloem BC for scenario {i_scenario}!")
+                         if verbose: print(f"Adding phloem BC for scenario {i_scenario}!")
 
                 # Critical check for NaNs in rhs after phloem BC
                 if np.any(np.isnan(rhs)):
                     print(f"CRITICAL: NaNs detected in rhs for scenario {i_scenario}!")
-                else:
-                    print(f"No NaNs detected in rhs for scenario {i_scenario}!")
                 
                 # Solve Doussan equation, results in soln matrix 
                 solution, _ = self.solve(matrix=matrix_W, rhs=rhs, sparse_matrix=self.general.sparse_matrix)
@@ -1011,7 +1072,13 @@ class Mecha:
                 # Calculate standard transmembrane fractions for the scenario
                 self.standard_transmembrane_fractions(solution, i_maturity, i_scenario, Kmb)
     
-        return solution, matrix_W
+
+        if verbose: 
+            print(f'--- {len(self.results)} solutions computed ---')
+            # Printing total flow for each scenario and maturity stage 
+            for i_scenario in range(self.boundary.n_scenarios):
+                for i_maturity in range(self.geometry.n_maturity):
+                    print(f"Total flow for scenario {i_scenario} and maturity stage {i_maturity}: {self.total_flow[i_maturity][i_scenario]}")
 
 
     def standard_solute_flux(
@@ -1081,6 +1148,7 @@ class Mecha:
         height = float(maturity_stages[i_maturity].get("height"))
 
         # Build matrices (COO) and convert to CSR for in-place diagonal modifications
+        self.network.cell_manager.reset_hydraulic_properties()
         matrix_W, matrix_C, rhs_C, rhs_p, rhs_x, rhs_s, rhs, Kmb =\
             self.build_matrices(h = h, i_maturity = i_maturity)
         matrix_W = matrix_W.tocsr()
@@ -1132,7 +1200,8 @@ class Mecha:
         height = 0.0
         if self.geometry.maturity_stages and i_maturity < len(self.geometry.maturity_stages):
             height = float(self.geometry.maturity_stages[i_maturity].get('height', 0.0))
-        pd_section = float(getattr(self.geometry, 'pd_section', 0.0))  # µm²
+            barrier = self.geometry.maturity_stages[i_maturity].get('barrier', 0)
+        pd_section = float(getattr(self.geometry, 'pd_section', 7.47E-5))  # µm²
 
         # Initialise per-node accumulators
         Q_in  = {node_id: 0.0 for node_id in graph.nodes()}
@@ -1183,20 +1252,28 @@ class Mecha:
                 A = (height * thickness) * 1.0e-8  # µm² → cm²
 
             elif path == 'membrane':
-                mb = cm.get_membrane_by_edge(u, v)
-                if mb is not None:
-                    # suface area of the membrane against the cell wall
-                    # height of section * length of the cell wall in contact with the membrane
-                    A = (height * mb.length) * 1.0e-8  # µm² → cm²
+                    mb = cm.get_membrane_by_edge(u, v)
+                    if mb is not None:
+                        # suface area of the membrane against the cell wall
+                        # height of section * length of the cell wall in contact with the membrane
+                        A = (height * mb.length) * 1.0e-8  # µm² → cm²
 
             elif path == 'plasmodesmata':
-                # temp_factor is [#PD × µm²] (number of PD on the cell wall)
-                tf = eattr.get('temp_factor')
-                if tf is not None:
-                    A = (float(pd_section) * 1.0e-8) * float(tf)  # cm²
+                pd = cm.get_plasmodesmata_by_edge(u, v)
+                
+                is_xylem_interface = False
+                if barrier > 0:
+                    interface = (pd.cell_i.cgroup, pd.cell_j.cgroup)
+                    if interface == (13,13):
+                        is_xylem_interface = True
+                
+                if is_xylem_interface:
+                    A = 0.0
+                else:
+                    A = float(pd.n_pd) * float(pd_section*pd.aperture_coef) * 1.0E-08 # µm² → cm²
 
             eattr['A'] = A
-            vel = Q / A if A > 0.0 else float('nan')
+            vel = Q / A if A > 0.0 else 0.0
             eattr['velocity'] = vel
 
             # ----------------------------------------------------------------
@@ -1232,7 +1309,7 @@ class Mecha:
             elif path == 'plasmodesmata':
                 pd = cm.get_plasmodesmata_by_edge(u, v)
                 if pd is not None:
-                    pd.kpl = K
+                    pd.K_computed = K
                     pd.Q   = Q
                     pd.A   = A
                     pd.velocity = vel
@@ -1311,6 +1388,7 @@ class Mecha:
             'membrane_Q': {
                 (mb.wall.node_id, mb.cell.node_id): mb.Q for mb in cm.membranes
             },
+            'cell_manager': cm,
         }
 
         # Store snapshot and edge_fluxes in the matching results entry
@@ -1360,6 +1438,7 @@ class Mecha:
                 return False
 
             graph = self.network.graph
+            self.network.cell_manager = snap['cell_manager']
             cm = self.network.cell_manager
 
             # Restore graph node attributes

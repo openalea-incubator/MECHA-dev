@@ -56,11 +56,27 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 from shapely.geometry import Polygon
+import numpy as np
 
 if TYPE_CHECKING:
     # Avoid circular import at runtime; only used for type hints.
     from mecha.utils.network_builder import NetworkBuilder
 
+CGROUP_TO_TYPE = {
+    1: "exodermis",
+    2: "epidermis",
+    3: "endodermis",
+    4: "cortex",
+    5: "stele",
+    16: "pericycle",
+    11: "phloem",
+    12: "companion",
+    13: "xylem",
+    19: "xylem",
+    20: "xylem",
+    17: "transfusion parenchyma",
+    18: "transfusion tracheid"
+}
 
 # ---------------------------------------------------------------------------
 # HydraulicWall
@@ -197,6 +213,7 @@ class HydraulicMembrane:
         "K_computed",  # Effective conductance computed by HydraulicMatrixBuilder [cm³ hPa⁻¹ d⁻¹]
         "sigma", # Reflection coefficient
         "Q", "A", "velocity",
+        "diffusion_coeff", # Diffusion coefficient
     )
 
     def __init__(
@@ -220,6 +237,7 @@ class HydraulicMembrane:
         self.Q: Optional[float] = None
         self.A: Optional[float] = None
         self.velocity: Optional[float] = None
+        self.diffusion_coeff: Optional[float] = None
 
     def reset_hydraulics(self) -> None:
         """Reset all hydraulic fields to ``None``."""
@@ -268,12 +286,15 @@ class HydraulicPlasmodesmata:
         # Geometry
         "length",
         # Hydraulic properties — None until solver assigns them
-        "kpl",        # Plasmodesmata conductance [cm³ hPa⁻¹ d⁻¹]
+        "kpl",        # Plasmodesmata conductance of a single unit [cm³ hPa⁻¹ d⁻¹]
+        "K_computed", # Computed conductance of whole plasmodesmata [cm³ hPa⁻¹ d⁻¹]
         "fplxheight", # plasmodesmata height (default 8.0E5) [] UNITS ?
         "temp_factor",  # Tissue-specific frequency factor (dimensionless × cm)
+        "aperture_coef", # interface specific for the aperture of the plasmodesmata
         "sigma",      # Reflection coefficient
         "Q", #Flow rate through plasmodesmata [cm³ d⁻¹]
         "A", "velocity",
+        "n_pd", # number of plasmodesmata per interface
     )
 
     def __init__(
@@ -286,19 +307,23 @@ class HydraulicPlasmodesmata:
         self.cell_i: 'HydraulicCell' = cell_i
         self.cell_j: 'HydraulicCell' = cell_j
         self.length: float = length
+        self.n_pd: int = 0
 
         # Hydraulic fields — None until explicitly assigned
-        self.kpl: Optional[float] = None
-        self.fplxheight: Optional[float] = None
-        self.temp_factor: Optional[float] = None
-        self.sigma: Optional[float] = None
-        self.Q: Optional[float] = None
-        self.A: Optional[float] = None
-        self.velocity: Optional[float] = None
+        self.kpl: Optional[float] = 0.0
+        self.fplxheight: Optional[float] = 0.0
+        self.temp_factor: Optional[float] = 0.0
+        self.aperture_coef: Optional[float] = 0.0
+        self.sigma: Optional[float] = 0.0
+        self.Q: Optional[float] = 0.0
+        self.A: Optional[float] = 0.0
+        self.velocity: Optional[float] = 0.0
+        self.K_computed: Optional[float] = 0.0
 
     def reset_hydraulics(self) -> None:
-        """Reset all hydraulic fields to ``None``."""
-        self.kpl = self.fplxheight = self.temp_factor = self.sigma = self.Q = self.A = self.velocity = None
+        """Reset all hydraulic fields to 0.0."""
+        self.kpl = self.fplxheight = self.temp_factor = self.sigma = self.Q = self.A = self.velocity = 0.0
+        self.K_computed = self.aperture_coef = self.n_pd = 0.0
 
     def __repr__(self) -> str:
         s = (
@@ -377,6 +402,7 @@ class HydraulicCell:
         "Q_in", "Q_out",
         # --- growth ---
         "elongation_rate",
+        "phi_thick",   # int — 0-1 (0 not in thickened layer, 1 in thickened layer) if this cortex cell is in a φ-thickening layer
     )
 
     def __init__(
@@ -415,6 +441,7 @@ class HydraulicCell:
 
         # Hydraulic fields — all None until explicitly assigned
         # -------------------------------------------------------
+        self.phi_thick: int = 0
         # Cell-wall (apoplastic) conductivity  [cm hPa⁻¹ d⁻¹]
         self.kw: Optional[float] = None
         # Plasmodesmata (symplastic) conductance  [cm³ hPa⁻¹ d⁻¹]
@@ -525,6 +552,28 @@ class HydraulicCellManager:
         self._plasmodesmata: List[HydraulicPlasmodesmata] = []
         self._pd_by_edge: Dict[Tuple[int, int], HydraulicPlasmodesmata] = {}
 
+        self.tagged_phi_thick_cells: List[HydraulicCell] = []
+
+    # ------------------------------------------------------------------
+    # Reset hydraulic properties
+    # ------------------------------------------------------------------
+
+    def reset_hydraulic_properties(self) -> None:
+        """
+        Reset hydraulic properties for all walls, membranes, plasmodesmata and cells.
+        """
+        for wall in self._walls:
+            wall.reset_hydraulics()
+
+        for membrane in self._membranes:
+            membrane.reset_hydraulics()
+
+        for pd in self._plasmodesmata:
+            pd.reset_hydraulics()
+
+        for cell in self._cells:
+            cell.reset_hydraulics()
+
     # ------------------------------------------------------------------
     # Collection protocol
     # ------------------------------------------------------------------
@@ -594,19 +643,56 @@ class HydraulicCellManager:
     # ------------------------------------------------------------------
 
     @property
-    def xylem(self) -> List[HydraulicCell]:
+    def xylem(self, type=["protoxylem", "metaxylem", "xylem"]) -> List[HydraulicCell]:
         """Proto- and meta-xylem cells (cgroup 13, 19, 20)."""
-        return [c for c in self._cells if c.cgroup in (13, 19, 20)]
+        result = []
+        for key in type:
+            result.extend(self._by_type.get(key, []))
+
+        return result
 
     @property
-    def sieve(self) -> List[HydraulicCell]:
+    def sieve(self, type=["sieve", "phloem"] ) -> List[HydraulicCell]:
         """Phloem sieve-tube cells (cgroup 11, 23)."""
-        return [c for c in self._cells if c.cgroup in (11, 23)]
+        result = []
+        for key in type:
+            result.extend(self._by_type.get(key, []))
+        return result
+
+    # ! same as sieve !  
+    @property
+    def protosieve(self, type=["protosieve", "phloem"] ) -> List[HydraulicCell]:
+        """Phloem sieve-tube cells (cgroup 11, 23)."""
+        result = []
+        for key in type:
+            result.extend(self._by_type.get(key, []))
+        return result
 
     @property
-    def epidermis(self) -> List[HydraulicCell]:
+    def epidermis(self, type="epidermis") -> List[HydraulicCell]:
         """Epidermis cells (cgroup 2)."""
-        return [c for c in self._cells if c.cgroup == 2]
+        return [c for c in self._cells if c.cell_type == type or c.cgroup == 2]
+
+    @property
+    def exodermis(self, type="exodermis") -> List[HydraulicCell]:
+        """Exodermis cells (cgroup 1)."""
+        return [c for c in self._cells if c.cell_type == type or c.cgroup == 1]
+
+    @property
+    def cortex(self, type=["cortex", "outercortex", "innercortex"]) -> List[HydraulicCell]:
+        """Cortex cells (cgroup 4)."""
+        result = []
+        for key in type:
+            result.extend(self._by_type.get(key, []))
+        return result
+    
+    @property
+    def mesophyll(self, type=["mesophyll", "spongy", "palisade"]) -> List[HydraulicCell]:
+        """Mesophyll cells (cgroup 4)."""
+        result = []
+        for key in type:
+            result.extend(self._by_type.get(key, []))
+        return result
 
     @property
     def passage(self) -> List[HydraulicCell]:
@@ -614,10 +700,23 @@ class HydraulicCellManager:
         return self._by_type.get("passage", [])
 
     @property
-    def intercellular(self) -> List[HydraulicCell]:
+    def endodermis(self) -> List[HydraulicCell]:
+        """Endodermis cells."""
+        return [c for c in self._cells if c.cgroup == 3]
+
+    @property
+    def intercellular(self, type=["intercellular", "air space", "aerenchyma"]) -> List[HydraulicCell]:
         """Intercellular / air-space cells."""
         result = []
-        for key in ("intercellular", "air space", "aerenchyma"):
+        for key in type:
+            result.extend(self._by_type.get(key, []))
+        return result
+    
+    @property
+    def transfusion_tissue(self, type=["tracheid", "parenchyma"]) -> List[HydraulicCell]:
+        """Transfusion tissue cells (cgroup 17, 18)."""
+        result = []
+        for key in type:
             result.extend(self._by_type.get(key, []))
         return result
 
@@ -774,7 +873,9 @@ class HydraulicCellManager:
                 cell_type = "passage"
             else:
                 cell_type = node_data.get("cell_type", "")
-
+                if cell_type == "":
+                    # use key 'cgroup'
+                    cell_type = CGROUP_TO_TYPE[cgroup]
             # --- Rank ------------------------------------------------------
             rank = (
                 int(network.cell_ranks[cell_id])
@@ -819,6 +920,44 @@ class HydraulicCellManager:
         # Pass 3: Build Membrane and Plasmodesmata connection objects
         self.sync_membranes_from_network(network)
         self.sync_plasmodesmata_from_network(network)
+
+        # Tag φ-thickening cells after all cells are built
+        print(f'[DEBUG] tag_phi_thick_cells: {network.n_phi_layers}, {network.phi_type}')
+        self.tag_phi_thick_cells(network.n_phi_layers, network.phi_type)
+
+    def tag_phi_thick_cells(self, n_phi_layers: int, phi_type: int) -> None:
+        """Tag cortex cells in φ-thickening layers based on rank.
+        phi_type 1 (inner): n_phi_layers layers closest to endodermis (lowest rank).
+        phi_type 2 (outer): n_phi_layers layers closest to epidermis (highest rank).
+        phi_type 3 (mixed): both inner and outer.
+        """
+        if len(self.tagged_phi_thick_cells) > 0: # Prevent re-tagging
+            return
+        cortex = self.cortex
+        rank_list = [c.rank for c in cortex]
+        if rank_list:
+            min_rank = min(rank_list)
+            max_rank = max(rank_list)
+            median_rank = np.median(rank_list)
+            tagged = []
+        else:
+            return
+        
+        if phi_type == 1:
+            for rank_i in range(n_phi_layers):
+                tagged.extend([c for c in cortex if c.rank == min_rank + rank_i])
+        elif phi_type == 2:
+            for rank_i in range(n_phi_layers):
+                tagged.extend([c for c in cortex if c.rank == max_rank - rank_i])
+        elif phi_type == 3:
+            for rank_i in range(n_phi_layers):
+                tagged.extend([c for c in cortex if c.rank == int(median_rank) - rank_i])
+                tagged.extend([c for c in cortex if c.rank == int(median_rank) + rank_i])
+
+        print(f'unique ranks of tagged cells: {np.unique([c.rank for c in tagged])}')
+        for cell in tagged:
+            cell.phi_thick = 1
+        self.tagged_phi_thick_cells = tagged
 
     # ------------------------------------------------------------------
     # Connection sync helpers

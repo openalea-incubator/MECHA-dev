@@ -66,7 +66,10 @@ def _build_mecha_homogeneous() -> Mecha:
     kw_base   = float(mecha.hydraulic.get_kw_value(h))
     kw_config = mecha.hydraulic_conductivities[h, i_mat, 1]['kw']
     kw_config['kw_endo_endo'] = kw_base
-    sol, mat_W = mecha.water_flux()
+    mecha.water_flux()
+    sol   = mecha.results[0]["solution"]
+    mat_W = mecha.results[0]["matrix_W"]
+    
     fluxes = []
     coo = mat_W.tocoo()
     for i, j, v in zip(coo.row, coo.col, coo.data):
