@@ -15,6 +15,7 @@ dependencies:
   - geopandas
   - matplotlib # bundles pylab
   - shapely
+  - pydantic
   - opencv
   - openalea.mtg
   - pyan3 

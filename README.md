@@ -7,6 +7,14 @@ A Python package for simulating hydraulic scenarios in plant root systems.
 
 ## Installation
 
+Git clone `Granap` and `Mecha` in the same parent directory
+
+```bash
+git clone https://github.com/openalea-incubator/GRANAP-dev.git 
+git clone https://github.com/openalea-incubator/MECHA-dev.git
+cd MECHA-dev
+```
+
 In MECHA-dev root directory, install the environment with
 ```bash
 mamba create -f ./conda/environment.yaml -y
@@ -15,7 +23,7 @@ mamba activate mecha
 
 For source to be recognized in the environment, run the following at the root of the MECHA-env directory
 ```bash
-pip install -e . 
+pip install -e ../GRANAP-dev && pip install -e .
 ```
 
 ## Usage
