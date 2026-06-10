@@ -27,8 +27,8 @@ from typing import Dict, Any, List, Optional, Tuple
 from lxml import etree
 import geopandas as gpd
 
-from mecha.utils.data_loader import GeneralData, GeometryData
-from mecha.utils.hydraulic_cell import HydraulicCellManager
+from openalea.mecha.utils.data_loader import GeneralData, GeometryData
+from openalea.mecha.utils.hydraulic_cell import HydraulicCellManager
 
 from granap.network_base import AbstractNetwork
 from shapely.geometry import Polygon

@@ -28,7 +28,7 @@ import matplotlib.cm as cm
 import numpy as np
 import pandas as pd
 
-from mecha.utils.network_builder import NetworkBuilder
+from openalea.mecha.utils.network_builder import NetworkBuilder
 
 # Constants moved from visu.py
 _PATH_COLORS = {
