@@ -5,7 +5,7 @@ import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 from scipy.sparse import coo_matrix
 
-from mecha.hydraulic_solver import HydraulicMatrixBuilder
+from openalea.mecha.hydraulic_solver import HydraulicMatrixBuilder
 
 
 def _cgroup_canonical(cg: int) -> int:

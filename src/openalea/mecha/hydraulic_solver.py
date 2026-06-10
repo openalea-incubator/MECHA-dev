@@ -1,4 +1,4 @@
-from mecha.utils import hydraulic_cell
+from openalea.mecha.utils import hydraulic_cell
 import numpy as np
 import math
 from scipy.sparse import coo_matrix

@@ -1,14 +1,14 @@
 # test GANACHE
 # GRANAP connection with MECHA
 
-from mecha.mecha_class import Mecha
-from mecha.utils.data_loader import InData
-from mecha.utils.network_builder import NetworkBuilder
-from mecha.utils.prepare_paraview import prepare_geometrical_properties
+from openalea.mecha.mecha_class import Mecha
+from openalea.mecha.utils.data_loader import InData
+from openalea.mecha.utils.network_builder import NetworkBuilder
+from openalea.mecha.utils.prepare_paraview import prepare_geometrical_properties
 from granap.network_base import AbstractNetwork
 from granap.root_class import RootAnatomy
 from granap.anatomy_writer import AnatomyWriter
-from mecha.utils.visu import visualize
+from openalea.mecha.utils.visu import visualize
 
 from utils import assert_close_range
 

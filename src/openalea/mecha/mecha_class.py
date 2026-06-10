@@ -35,12 +35,12 @@ from pylab import *  # for plotting
 import argparse # for command-line argument parsing
 
 
-from mecha.utils.data_loader import *
-from mecha.utils.network_builder import *
-from mecha.utils.prepare_paraview import prepare_geometrical_properties
-from mecha.hydraulic_solver import HydraulicMatrixBuilder
+from openalea.mecha.utils.data_loader import *
+from openalea.mecha.utils.network_builder import *
+from openalea.mecha.utils.prepare_paraview import prepare_geometrical_properties
+from openalea.mecha.hydraulic_solver import HydraulicMatrixBuilder
 from granap.network_base import AbstractNetwork
-from mecha.solute_transport import SoluteTransport
+from openalea.mecha.solute_transport import SoluteTransport
 
 class Mecha:
     """Main class of the library, encodes a hydraulic anatomy to solve.
