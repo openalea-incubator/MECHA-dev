@@ -23,7 +23,6 @@ mamba activate mecha
 
 For source to be recognized in the environment, run the following at the root of the MECHA-env directory
 ```bash
-cd MECHA-dev
 pip install -e .
 cd ../GRANAP-dev
 pip install -e .
@@ -90,5 +89,42 @@ granap_mecha.compute_conductivities()
 for i in range(len(granap_mecha.root_hydraulic_properties)):
     print(granap_mecha.root_hydraulic_properties[i])
 
+
+```
+
+
+## repository structure
+
+```bash
+MECHA-dev/
+├── conda/                 # Conda environment file (environment.yaml)
+├── docs/                   # Documentation
+├── extdata/               # External datasets (e.g., .xml files)
+├── src/
+│   └── openalea/
+│       └── mecha/
+│           ├── mecha_class.py         # Main MECHA class
+│           ├── __init__.py            # Package initialization
+│           ├── GUI/                   # GUI
+│           │   └── app.py               # MECHA GUI (In progress)
+│           └── utils/
+│               ├── network_builder.py   # Network construction
+│               ├── scenario_builder.py  # Scenario setup
+│               ├── solute_transport.py  # Solute transport algorithms
+│               ├── hydraulic_solver.py  # Hydraulic solving utilities
+│               ├── data_loader.py       # Data loading (InData)
+│               ├── visu.py              # Visualization functions
+│               └── network_export.py    # Network export tools
+│
+├── tutorials/             # Examples of how to use the package
+├── test/                  # Unit tests and integration tests
+│   ├── test_advdiff.py
+│   ├── test_osmotic.py
+│   ├── test_transport.py
+│   └── test_visu_types.py
+├── .gitignore
+├── LICENSE
+├── pyproject.toml
+└── README.md
 
 ```

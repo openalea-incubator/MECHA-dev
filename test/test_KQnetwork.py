@@ -27,9 +27,7 @@ import matplotlib.colors as mcolors
 import matplotlib.cm as cm
 import networkx as nx
 
-from openalea.mecha.mecha_class import Mecha
-from openalea.mecha.utils.data_loader import InData
-from openalea.mecha.utils.network_builder import NetworkBuilder
+from openalea.mecha import Mecha, InData, NetworkBuilder
 from granap.root_class import RootAnatomy
 
 # ---------------------------------------------------------------------------

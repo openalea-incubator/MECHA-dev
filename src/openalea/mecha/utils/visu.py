@@ -59,15 +59,13 @@ import numpy as np
 
 from shapely.geometry import LineString, Polygon
 from typing import Tuple, Dict, List, Any, Optional
-from openalea.mecha.utils.network_builder import NetworkBuilder
-from openalea.mecha.mecha_class import Mecha
-from openalea.mecha.utils.paraview_export import export_to_vtk
+from openalea.mecha import Mecha, NetworkBuilder
+
 import networkx as nx
 import pandas as pd
-
 # Network visualization functions
 from openalea.mecha.utils.network_export import *
-
+from openalea.mecha.utils.paraview_export import export_to_vtk
 
 
 def prep_section(cellset_data) -> gpd.GeoDataFrame:

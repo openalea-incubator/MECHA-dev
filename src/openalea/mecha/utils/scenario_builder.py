@@ -11,7 +11,7 @@ import dataclasses
 
 import numpy as np
 
-from openalea.mecha.mecha_class import Mecha
+from openalea.mecha import Mecha
 
 # Tissue groups that are symplastically isolated or not true parenchyma
 NONPARENCHYMA_CGROUPS = frozenset({13, 19, 20, 11, 12})

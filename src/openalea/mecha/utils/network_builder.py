@@ -562,7 +562,7 @@ class NetworkBuilder(AbstractNetwork):
 
         # ---- XML path ------------------------------------------------
         if hasattr(self, 'cellset') and self.cellset:
-            from mecha.utils.visu import prep_section
+            from openalea.mecha.utils.visu import prep_section
             return prep_section(self.cellset)
 
         # ---- GRANAP path ---------------------------------------------
@@ -933,7 +933,7 @@ class NetworkBuilder(AbstractNetwork):
         
         poly_dict = {}
         if centroid_method == "shapely":
-            from mecha.utils.visu import prep_section
+            from openalea.mecha.utils.visu import prep_section
             gdf = prep_section(self.cellset)
             poly_dict = {row["id_cell"]: row["geometry"] for _, row in gdf.iterrows()}
         
