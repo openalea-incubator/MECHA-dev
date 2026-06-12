@@ -60,7 +60,7 @@ import numpy as np
 
 if TYPE_CHECKING:
     # Avoid circular import at runtime; only used for type hints.
-    from mecha.utils.network_builder import NetworkBuilder
+    from openalea.mecha.utils.network_builder import NetworkBuilder
 
 CGROUP_TO_TYPE = {
     1: "exodermis",
@@ -791,7 +791,7 @@ class HydraulicCellManager:
                     poly_dict[int(row['id_cell'])] = poly.buffer(0.0)
         else:
             # prep the geometry
-            from mecha.utils.visu import prep_section
+            from openalea.mecha.utils.visu import prep_section
             gdf = prep_section(network.cellset_data) 
             for _, row in gdf.iterrows():
                 if isinstance(row['geometry'], Polygon):

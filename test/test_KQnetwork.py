@@ -30,7 +30,7 @@ import networkx as nx
 from openalea.mecha.mecha_class import Mecha
 from openalea.mecha.utils.data_loader import InData
 from openalea.mecha.utils.network_builder import NetworkBuilder
-from granap.root_class import RootAnatomy
+from openalea.granap.root_class import RootAnatomy
 
 # ---------------------------------------------------------------------------
 # Helper: build a small standard root anatomy and a Mecha instance

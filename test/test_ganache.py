@@ -5,9 +5,9 @@ from openalea.mecha.mecha_class import Mecha
 from openalea.mecha.utils.data_loader import InData
 from openalea.mecha.utils.network_builder import NetworkBuilder
 from openalea.mecha.utils.prepare_paraview import prepare_geometrical_properties
-from granap.network_base import AbstractNetwork
-from granap.root_class import RootAnatomy
-from granap.anatomy_writer import AnatomyWriter
+from openalea.granap.network_base import AbstractNetwork
+from openalea.granap.root_class import RootAnatomy
+from openalea.granap.anatomy_writer import AnatomyWriter
 from openalea.mecha.utils.visu import visualize
 
 from utils import assert_close_range
@@ -136,7 +136,7 @@ def test_compare_granar_ganache():
     plotting = True
     if plotting:
         import matplotlib.pyplot as plt
-        from mecha.utils.network_export import (
+        from openalea.mecha.utils.network_export import (
             plot_network_difference, plot_matrix_difference, 
             plot_networks_interC, plot_networks_rank, 
             plot_edge_and_node_differences,

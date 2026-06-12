@@ -133,7 +133,7 @@ def visualize_network(
         Additional keyword arguments for customizing the plot.
     """
     # Import Mecha locally to avoid circular dependencies if needed
-    from mecha.mecha_class import Mecha
+    from openalea.mecha.mecha_class import Mecha
 
     if isinstance(obj, NetworkBuilder):
         graph = obj.graph

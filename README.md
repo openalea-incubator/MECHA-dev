@@ -64,7 +64,7 @@ visualize(section, "flow", maturity_idx=0)
 
 ```python
 
-from granap import RootAnatomy
+from openalea.granap import RootAnatomy
 from mecha.utils import NetworkBuilder, InData
 
 root = RootAnatomy()
