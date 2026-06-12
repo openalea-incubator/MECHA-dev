@@ -285,12 +285,83 @@ class SoluteTransport:
                     rows.append(r); cols.append(c); data.append(v)
 
         A = coo_matrix((data, (rows, cols)), shape=(n, n)).tocsr()
+        A = A + self._build_osmotic_advection(i_maturity)
 
         if self.mode == 'apo':
             return A[:nwj, :nwj]
         if self.mode == 'sym':
             return A[nwj:, nwj:]
         return A
+
+    def _build_osmotic_advection(self, i_maturity: int) -> sp.csr_matrix:
+        """
+        Osmotic contribution to advective solute transport at membrane edges.
+
+        edge_flux_list captures only the pressure-driven volume flux
+            F_p = K × (ψ_p,wall − ψ_p,cell).
+        The true Kedem-Katchalsky volume flux is
+            J_v = K × (Δψ_p + σ Δψ_os)
+        so the missing term is
+            F_os = K × σ × (ψ_os,wall − ψ_os,cell).
+        The advective solute flux couples with factor (1−σ), identical to the
+        pressure-driven path, giving an additional upwind contribution
+            ΔJ_s = (1−σ) × F_os × c_upstream.
+
+        osmotic potentials are read from wall_obj.psi_os / cell_obj.psi_os,
+        which are set by mecha.initialize_scenarios().  If both are zero (or
+        None) for every membrane edge the returned matrix is all-zero, so
+        calling this when no osmotic scenario has been set is safe.
+        """
+        nwj = self.n_wall_junction
+        n   = self.n_total
+        rows, cols, data = [], [], []
+        cm = self.network.cell_manager
+
+        def _os(obj):
+            v = getattr(obj, 'psi_os', None)
+            return float(v) if (v is not None and not np.isnan(float(v))) else 0.0
+
+        for node, edges in self.network.graph.adjacency():
+            i = self.indice[node]
+            if i >= nwj:
+                continue  # only start from wall nodes to avoid double-counting
+
+            for neighbor, eattr in edges.items():
+                j = self.indice[neighbor]
+                if j <= i or eattr.get('path') != 'membrane':
+                    continue
+
+                K = eattr.get('K', 0.0)
+                if not K:
+                    continue
+
+                cg  = _cgroup_canonical(
+                    self.network.graph.nodes[neighbor].get('cgroup', 4))
+                sig = float(self.sigma.get(cg, 0.0))
+                if sig == 0.0:
+                    continue
+
+                wall_obj = cm.get_wall_by_node_id(i)
+                cell_obj = cm.get_by_node_id(j)
+                if wall_obj is None or cell_obj is None:
+                    continue
+
+                F_os = K * sig * (_os(wall_obj) - _os(cell_obj))
+                if F_os == 0.0:
+                    continue
+
+                factor = 1.0 - sig   # Kedem-Katchalsky advection coupling
+
+                if F_os > 0.0:       # osmotic drive: wall → cell (wall is upstream)
+                    for r, c, v in ((i, i, -F_os * factor),
+                                    (j, i,  F_os * factor)):
+                        rows.append(r); cols.append(c); data.append(v)
+                else:                # osmotic drive: cell → wall (cell is upstream)
+                    for r, c, v in ((j, j,  F_os * factor),
+                                    (i, j, -F_os * factor)):
+                        rows.append(r); cols.append(c); data.append(v)
+
+        return coo_matrix((data, (rows, cols)), shape=(n, n)).tocsr()
 
     # ------------------------------------------------------------------
     # Capacitance  C  (diagonal)

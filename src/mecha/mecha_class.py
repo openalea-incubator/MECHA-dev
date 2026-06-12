@@ -659,7 +659,7 @@ class Mecha:
                     
         return rhs_e
         
-    def initialize_scenarios(self, i_scenario: int, i_maturity: int, Kmb: np.ndarray, verbose: bool=True) -> tuple:
+    def initialize_scenarios(self, i_scenario: int, i_maturity: int, Kmb: np.ndarray, verbose: bool=True, use_stored_psi_os: bool = False) -> tuple:
         """
         Initialize vectors and matrices for a specific scenario.
         
@@ -822,8 +822,14 @@ class Mecha:
                 for neighboor, eattr in edges.items():
                     j = self.indice[neighboor]
                     if j > i and eattr['path'] == "membrane":
-                        rank = int(self.network.cell_ranks[int(j - self.network.n_wall_junction)])
-                        row = int(self.network.rank_to_row[rank])
+                        rank_raw = self.network.cell_ranks[int(j - self.network.n_wall_junction)]
+                        if not np.isnan(rank_raw):
+                            rank = int(rank_raw)
+                            row  = int(self.network.rank_to_row[rank]) \
+                                   if rank in self.network.rank_to_row else 0
+                        else:
+                            rank = -1   # non-root tissue: fall through to cgroup checks
+                            row  = 0
                         
                         # Determine os_membranes and s_membranes
                        
@@ -894,7 +900,7 @@ class Mecha:
 
                         if wall_obj is not None:
                             wall_obj.psi_os = wall_os
-                        if cell_obj is not None:
+                        if cell_obj is not None and not use_stored_psi_os:
                             cell_obj.psi_os = cell_os
                         if mb is not None:
                             mb.sigma = sig
@@ -945,7 +951,7 @@ class Mecha:
                 
         return rhs, rhs_x, rhs_p, rhs_o
 
-    def water_flux(self, h: int=0, verbose:bool=True) -> tuple: 
+    def water_flux(self, h: int=0, verbose:bool=True, use_stored_psi_os: bool = False) -> tuple:
         """
         Solve the hydraulic system for all maturity stages
         it then get the transmembrane fractions for the maturation stages
@@ -963,17 +969,17 @@ class Mecha:
         """
 
         for i_maturity in range(self.geometry.n_maturity):
-            solution, _, matrix_W, Kmb, rhs_s = self.solve_W(h = h, i_maturity = i_maturity)
+            solution, _, matrix_W, Kmb, rhs_s = self.solve_W(h=h, i_maturity=i_maturity, use_stored_psi_os=use_stored_psi_os)
             # Calculate standard transmembrane fractions
             self.standard_transmembrane_fractions(solution, i_maturity, 0, Kmb)
 
             barrier = int(self.geometry.maturity_stages[i_maturity].get("barrier"))
             height_val = float(self.geometry.maturity_stages[i_maturity].get("height"))
-            
+
             _, x_rel = self.network.get_relative_positions()
 
             for i_scenario in range(1,self.boundary.n_scenarios):
-                rhs, rhs_x, rhs_p, rhs_o = self.initialize_scenarios(i_scenario, i_maturity, Kmb) # set and reset matrices for each scenario
+                rhs, rhs_x, rhs_p, rhs_o = self.initialize_scenarios(i_scenario, i_maturity, Kmb, use_stored_psi_os=use_stored_psi_os)
                  
                 # Elongation BC
                 if barrier==0:
@@ -1131,7 +1137,7 @@ class Mecha:
 
 
 
-    def solve_W(self, h: int=0, i_maturity: int=0) -> tuple: 
+    def solve_W(self, h: int=0, i_maturity: int=0, use_stored_psi_os: bool = False) -> tuple:
         """Solve the hydraulic system.
 
         Solve the hydraulic system based on the provided configurations and network.
@@ -1142,7 +1148,16 @@ class Mecha:
         height = float(maturity_stages[i_maturity].get("height"))
 
         # Build matrices (COO) and convert to CSR for in-place diagonal modifications
+        # When use_stored_psi_os is True, preserve cell psi_os values set by
+        # set_osmotic_from_concentration across the reset so initialize_scenarios
+        # can read them for rhs_o instead of recomputing from the scenario dict.
+        if use_stored_psi_os:
+            saved_psi_os = {cell.cell_id: cell.psi_os
+                            for cell in self.network.cell_manager}
         self.network.cell_manager.reset_hydraulic_properties()
+        if use_stored_psi_os:
+            for cell in self.network.cell_manager:
+                cell.psi_os = saved_psi_os.get(cell.cell_id)
         matrix_W, matrix_C, rhs_C, rhs_p, rhs_x, rhs_s, rhs, Kmb =\
             self.build_matrices(h = h, i_maturity = i_maturity)
         matrix_W = matrix_W.tocsr()
@@ -1630,7 +1645,12 @@ class Mecha:
                         #Flow densities calculation
                         #Macroscopic distributed parameter for transmembrane flow
                         #Discretization based on cell layers and apoplasmic barriers
-                        rank = int(self.network.cell_ranks[j-self.network.n_wall_junction])
+                        rank_raw = self.network.cell_ranks[j-self.network.n_wall_junction]
+                        if np.isnan(rank_raw):
+                            continue
+                        rank = int(rank_raw)
+                        if rank not in self.network.rank_to_row:
+                            continue
                         row = int(self.network.rank_to_row[rank])
                         if rank == 1 and self.network.graph.nodes[node]['count_epi'] > 0: #Outer exodermis
                             row += 1
