@@ -32,8 +32,8 @@ pip install -e .
 
 ```python
 
-from mecha.utils import InData, visualize
-from mecha import MECHA
+from openalea.mecha.utils import InData, visualize
+from openalea.mecha import MECHA
 
 # --- Loading data ---
 AllIn = InData(cellset_file="extdata/current_root.xml")
@@ -63,8 +63,8 @@ visualize(section, "flow", maturity_idx=0)
 
 ```python
 
-from granap import RootAnatomy
-from mecha.utils import NetworkBuilder, InData
+from openalea.granap import RootAnatomy
+from openalea.mecha.utils import NetworkBuilder, InData
 
 root = RootAnatomy()
 _ = root.export_to_adjencymatrix()

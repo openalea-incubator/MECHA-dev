@@ -39,7 +39,7 @@ from openalea.mecha.utils.data_loader import *
 from openalea.mecha.utils.network_builder import *
 from openalea.mecha.utils.prepare_paraview import prepare_geometrical_properties
 from openalea.mecha.utils.hydraulic_solver import HydraulicMatrixBuilder
-from granap.network_base import AbstractNetwork
+from openalea.granap.network_base import AbstractNetwork
 from openalea.mecha.utils.solute_transport import SoluteTransport
 
 class Mecha:

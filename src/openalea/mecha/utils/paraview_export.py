@@ -46,14 +46,14 @@ Usage
 -----
 ::
 
-    from mecha.utils.paraview_export import export_to_vtk
+    from openalea.mecha.utils.paraview_export import export_to_vtk
     export_to_vtk(mecha_obj, prefix="results/my_sim",
                   maturity_idx=0, scenario_idx="standard water flow",
                   extrude_z=50.0)
 
 Or via the unified ``visualize()`` dispatcher::
 
-    from mecha.utils.visu import visualize
+    from openalea.mecha.utils.visu import visualize
     visualize(mecha_obj, visu_type='paraview',
               prefix='results/my_sim', extrude_z=50.0)
 

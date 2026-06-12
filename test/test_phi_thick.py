@@ -1,5 +1,5 @@
 from openalea.mecha import Mecha, InData, NetworkBuilder, visualize
-from granap.root_class import RootAnatomy
+from openalea.granap.root_class import RootAnatomy
 import matplotlib.pyplot as plt
 
 

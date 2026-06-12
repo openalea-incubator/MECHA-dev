@@ -30,7 +30,7 @@ import geopandas as gpd
 from openalea.mecha.utils.data_loader import GeneralData, GeometryData
 from openalea.mecha.utils.hydraulic_cell import HydraulicCellManager
 
-from granap.network_base import AbstractNetwork
+from openalea.granap.network_base import AbstractNetwork
 from shapely.geometry import Polygon
 
 class NetworkBuilder(AbstractNetwork):

@@ -28,7 +28,7 @@ import matplotlib.cm as cm
 import networkx as nx
 
 from openalea.mecha import Mecha, InData, NetworkBuilder
-from granap.root_class import RootAnatomy
+from openalea.granap.root_class import RootAnatomy
 
 # ---------------------------------------------------------------------------
 # Helper: build a small standard root anatomy and a Mecha instance

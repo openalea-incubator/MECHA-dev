@@ -2,9 +2,9 @@
 # GRANAP connection with MECHA
 
 from openalea.mecha import Mecha, InData, NetworkBuilder, visualize
-from granap.network_base import AbstractNetwork
-from granap.root_class import RootAnatomy
-from granap.anatomy_writer import AnatomyWriter
+from openalea.granap.network_base import AbstractNetwork
+from openalea.granap.root_class import RootAnatomy
+from openalea.granap.anatomy_writer import AnatomyWriter
 
 from utils import assert_close_range
 

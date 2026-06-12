@@ -1,5 +1,5 @@
 
-from granap import NeedleAnatomy
+from openalea.granap import NeedleAnatomy
 from openalea.mecha import Mecha, InData, NetworkBuilder, visualize
 
 

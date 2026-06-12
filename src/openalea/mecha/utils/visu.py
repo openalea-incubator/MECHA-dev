@@ -15,8 +15,8 @@ Includes polygon visualization, ParaView export, water potential mapping,
 and network-level visualization functions.
 
 Examples:
-    >>> from mecha.utils.visu import visualize
-    >>> from mecha import Mecha
+    >>> from openalea.mecha.utils.visu import visualize
+    >>> from openalea.mecha import Mecha
     
     >>> # Basic visualization of the root organ section
     >>> visualize(mecha_instance, visu_type='polygon')
