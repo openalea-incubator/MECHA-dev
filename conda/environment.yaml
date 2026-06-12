@@ -18,6 +18,7 @@ dependencies:
   - pydantic
   - opencv
   - openalea.mtg
+  - openalea.granap
   - pyan3 
   - graphviz 
   - python-graphviz

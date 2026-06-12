@@ -167,7 +167,7 @@ def _D_eff_pathway_breakdown(mecha, mode: str, dp: dict, cap_params: dict,
     -------
     dict with keys 'wall', 'membrane', 'plasmodesmata', 'total'  (µm²/d each)
     """
-    from openalea.mecha.solute_transport import SoluteTransport
+    from openalea.mecha.utils.solute_transport import SoluteTransport
 
     pathways = {
         'wall':          ('apo_wall',      dict(apo_wall=1.0, membrane=0.0, plasmodesmata=0.0)),
@@ -370,7 +370,7 @@ def test_diffusion_time_evolution():
     The reduction factor f = D_eff / D_input hence measures the effect of the 
     network geometry. 
     """
-    from openalea.mecha.solute_transport import SoluteTransport
+    from openalea.mecha.utils.solute_transport import SoluteTransport
 
     print('\n[test_diffusion] building Mecha...')
     mecha = _build_mecha()

@@ -65,7 +65,8 @@ dependencies = [
     "shapely",
     "opencv",
     "pydantic",
-    "openalea.mtg"
+    "openalea.mtg",
+    "openalea.granap"
 ]
 
 [project.optional-dependencies]
