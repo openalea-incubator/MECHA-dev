@@ -52,6 +52,7 @@ dependencies = []
 [tool.conda.environment]
 channels = [
   "openalea3",
+  "openalea3/label/dev",
   "conda-forge"
 ]
 dependencies = [
