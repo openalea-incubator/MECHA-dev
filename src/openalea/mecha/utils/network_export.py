@@ -28,7 +28,7 @@ import matplotlib.cm as cm
 import numpy as np
 import pandas as pd
 
-from mecha.utils.network_builder import NetworkBuilder
+from openalea.mecha import NetworkBuilder
 
 # Constants moved from visu.py
 _PATH_COLORS = {
@@ -133,7 +133,7 @@ def visualize_network(
         Additional keyword arguments for customizing the plot.
     """
     # Import Mecha locally to avoid circular dependencies if needed
-    from mecha.mecha_class import Mecha
+    from openalea.mecha import Mecha
 
     if isinstance(obj, NetworkBuilder):
         graph = obj.graph

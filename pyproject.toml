@@ -9,17 +9,15 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 
-[tool.setuptools]
-include-package-data = true # force explicit declaration of data (disable automatic inclusion)
-
-[tool.setuptools.package-data]
-"mecha" = ["*.yaml"]
-
 # enable dynamic version based on git tags
 [tool.setuptools_scm]
+# Format version to ease alignment with conda/meta.yaml tag-based versioning
+fallback_version = "2.0.0.dev0"
+version_scheme = "guess-next-dev"
+local_scheme = "no-local-version"
 
 [project]
-name = "mecha"
+name = "openalea.mecha"
 authors = [
   { name = "Adrien Heymans", email = "tristan.gerault@uclouvain.be" },
 ]
@@ -51,15 +49,25 @@ classifiers = [
 dependencies = []
 
 # section specific to conda-only distributed package (not used by pip yet)
-[tool.conda-environment]
-
+[tool.conda.environment]
+channels = [
+  "openalea3",
+  "openalea3/label/dev",
+  "conda-forge"
+]
 dependencies = [
     "python",
     "numpy",
     "scipy",
     "networkx",
     "lxml",
-    "geopandas"
+    "geopandas",
+    "matplotlib", # bundles pylab
+    "shapely",
+    "opencv",
+    "pydantic",
+    "openalea.mtg",
+    "openalea.granap"
 ]
 
 [project.optional-dependencies]
@@ -78,11 +86,14 @@ doc = [
   "ipykernel",
   "sphinx-copybutton",
   "ipython_genutils",
-  "nbsphinx"
+  "nbsphinx",
+  "pyan3", 
+  "graphviz", 
+  "python-graphviz"
 ]
 
 [project.urls]
 Repository = "https://github.com/MECHARoot/MECHA-dev"
 
-# [project.entry-points."wralea"]
-# "my_pkg" = "mecha_wralea"
+[project.entry-points."wralea"]
+"mecha" = "openalea.mecha_wralea"

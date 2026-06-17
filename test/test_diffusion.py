@@ -49,9 +49,7 @@ from scipy.stats import linregress
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from mecha.mecha_class import Mecha
-from mecha.utils.data_loader import InData
-from mecha.utils.scenario_builder import ScenarioBuilder
+from openalea.mecha import Mecha, InData, SoluteTransport, ScenarioBuilder
 
 _OUT_DIR    = os.path.join(os.path.dirname(__file__), 'outputs')
 _CELLSET    = os.path.join(os.path.dirname(__file__), '..', 'extdata', 'current_root.xml')
@@ -169,7 +167,7 @@ def _D_eff_pathway_breakdown(mecha, mode: str, dp: dict, cap_params: dict,
     -------
     dict with keys 'wall', 'membrane', 'plasmodesmata', 'total'  (µm²/d each)
     """
-    from mecha.solute_transport import SoluteTransport
+    from openalea.mecha.utils.solute_transport import SoluteTransport
 
     pathways = {
         'wall':          ('apo_wall',      dict(apo_wall=1.0, membrane=0.0, plasmodesmata=0.0)),
@@ -372,7 +370,7 @@ def test_diffusion_time_evolution():
     The reduction factor f = D_eff / D_input hence measures the effect of the 
     network geometry. 
     """
-    from mecha.solute_transport import SoluteTransport
+    from openalea.mecha.utils.solute_transport import SoluteTransport
 
     print('\n[test_diffusion] building Mecha...')
     mecha = _build_mecha()

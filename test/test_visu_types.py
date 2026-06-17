@@ -1,9 +1,10 @@
-from mecha.utils.network_export import export_to_graphml
-from mecha.mecha_class import Mecha
-from mecha.utils.data_loader import InData
-from mecha.utils.network_builder import NetworkBuilder
-from granap.root_class import RootAnatomy
-from mecha.utils.visu import visualize
+"""
+test for MECHA visualizations
+"""
+
+from openalea.mecha import Mecha, visualize, InData, NetworkBuilder
+from openalea.mecha.utils.network_export import export_to_graphml
+from openalea.granap.root_class import RootAnatomy
 import matplotlib.pyplot as plt
 import numpy as np
 
