@@ -2,6 +2,7 @@ name: mecha
 channels:
   - conda-forge
   - openalea3
+  - openalea3/label/dev
 channel_priority: strict
 dependencies:
   - python
@@ -15,8 +16,10 @@ dependencies:
   - geopandas
   - matplotlib # bundles pylab
   - shapely
+  - pydantic
   - opencv
   - openalea.mtg
+  - openalea.granap
   - pyan3 
   - graphviz 
   - python-graphviz

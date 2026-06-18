@@ -37,14 +37,10 @@ import matplotlib.pyplot as plt
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from mecha.mecha_class import Mecha
-from mecha.utils.data_loader import InData
-from mecha.solute_transport import SoluteTransport
-from mecha.utils.scenario_builder import ScenarioBuilder
+from openalea.mecha import Mecha, InData, SoluteTransport, ScenarioBuilder
 
-_OUT_DIR    = os.path.join(os.path.dirname(__file__), 'outputs')
-_CELLSET    = os.path.join(os.path.dirname(__file__), '..', 'extdata', 'current_root.xml')
-
+_OUT_DIR    = 'outputs'
+_CELLSET    = os.path.join('inputs', 'current_root.xml')
 
 def _build_mecha_homogeneous() -> Mecha:
     data  = InData(cellset_file=_CELLSET)
