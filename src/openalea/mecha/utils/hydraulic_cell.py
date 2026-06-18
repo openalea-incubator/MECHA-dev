@@ -57,10 +57,11 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 import numpy as np
 from shapely.geometry import Polygon
+import numpy as np
 
 if TYPE_CHECKING:
     # Avoid circular import at runtime; only used for type hints.
-    from mecha.utils.network_builder import NetworkBuilder
+    from openalea.mecha.utils.network_builder import NetworkBuilder
 
 CGROUP_TO_TYPE = {
     1: "exodermis",
@@ -402,6 +403,7 @@ class HydraulicCell:
         "Q_in", "Q_out",
         # --- growth ---
         "elongation_rate",
+        "phi_thick",   # int — 0-1 (0 not in thickened layer, 1 in thickened layer) if this cortex cell is in a φ-thickening layer
     )
 
     def __init__(
@@ -440,6 +442,7 @@ class HydraulicCell:
 
         # Hydraulic fields — all None until explicitly assigned
         # -------------------------------------------------------
+        self.phi_thick: int = 0
         # Cell-wall (apoplastic) conductivity  [cm hPa⁻¹ d⁻¹]
         self.kw: Optional[float] = None
         # Plasmodesmata (symplastic) conductance  [cm³ hPa⁻¹ d⁻¹]
@@ -549,6 +552,8 @@ class HydraulicCellManager:
         # Plasmodesmata connections (cell ↔ cell, path='plasmodesmata')
         self._plasmodesmata: List[HydraulicPlasmodesmata] = []
         self._pd_by_edge: Dict[Tuple[int, int], HydraulicPlasmodesmata] = {}
+
+        self.tagged_phi_thick_cells: List[HydraulicCell] = []
 
     # ------------------------------------------------------------------
     # Reset hydraulic properties
@@ -815,7 +820,7 @@ class HydraulicCellManager:
                     poly_dict[int(row['id_cell'])] = poly.buffer(0.0)
         else:
             # prep the geometry
-            from mecha.utils.visu import prep_section
+            from openalea.mecha.utils.visu import prep_section
             gdf = prep_section(network.cellset_data) 
             for _, row in gdf.iterrows():
                 if isinstance(row['geometry'], Polygon):
@@ -944,6 +949,44 @@ class HydraulicCellManager:
         # Pass 3: Build Membrane and Plasmodesmata connection objects
         self.sync_membranes_from_network(network)
         self.sync_plasmodesmata_from_network(network)
+
+        # Tag φ-thickening cells after all cells are built
+        print(f'[DEBUG] tag_phi_thick_cells: {network.n_phi_layers}, {network.phi_type}')
+        self.tag_phi_thick_cells(network.n_phi_layers, network.phi_type)
+
+    def tag_phi_thick_cells(self, n_phi_layers: int, phi_type: int) -> None:
+        """Tag cortex cells in φ-thickening layers based on rank.
+        phi_type 1 (inner): n_phi_layers layers closest to endodermis (lowest rank).
+        phi_type 2 (outer): n_phi_layers layers closest to epidermis (highest rank).
+        phi_type 3 (mixed): both inner and outer.
+        """
+        if len(self.tagged_phi_thick_cells) > 0: # Prevent re-tagging
+            return
+        cortex = self.cortex
+        rank_list = [c.rank for c in cortex]
+        if rank_list:
+            min_rank = min(rank_list)
+            max_rank = max(rank_list)
+            median_rank = np.median(rank_list)
+            tagged = []
+        else:
+            return
+        
+        if phi_type == 1:
+            for rank_i in range(n_phi_layers):
+                tagged.extend([c for c in cortex if c.rank == min_rank + rank_i])
+        elif phi_type == 2:
+            for rank_i in range(n_phi_layers):
+                tagged.extend([c for c in cortex if c.rank == max_rank - rank_i])
+        elif phi_type == 3:
+            for rank_i in range(n_phi_layers):
+                tagged.extend([c for c in cortex if c.rank == int(median_rank) - rank_i])
+                tagged.extend([c for c in cortex if c.rank == int(median_rank) + rank_i])
+
+        print(f'unique ranks of tagged cells: {np.unique([c.rank for c in tagged])}')
+        for cell in tagged:
+            cell.phi_thick = 1
+        self.tagged_phi_thick_cells = tagged
 
     # ------------------------------------------------------------------
     # Connection sync helpers

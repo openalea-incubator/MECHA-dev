@@ -1,11 +1,10 @@
 
-from mecha.utils import paraview_export
-from mecha.mecha_class import Mecha
-from mecha.utils.data_loader import InData
-from mecha.utils.network_builder import NetworkBuilder
-from granap.root_class import RootAnatomy
-from mecha.utils.visu import visualize
-from mecha.utils.network_export import export_to_graphml
+"""
+Test osmotic scenarios
+"""
+
+from openalea.mecha import Mecha, InData, NetworkBuilder, visualize
+from openalea.granap.root_class import RootAnatomy
 import matplotlib.pyplot as plt
 
 

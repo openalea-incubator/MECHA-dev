@@ -35,12 +35,12 @@ from pylab import *  # for plotting
 import argparse # for command-line argument parsing
 
 
-from mecha.utils.data_loader import *
-from mecha.utils.network_builder import *
-from mecha.utils.prepare_paraview import prepare_geometrical_properties
-from mecha.hydraulic_solver import HydraulicMatrixBuilder
-from granap.network_base import AbstractNetwork
-from mecha.solute_transport import SoluteTransport
+from openalea.mecha.utils.data_loader import *
+from openalea.mecha.utils.network_builder import *
+from openalea.mecha.utils.prepare_paraview import prepare_geometrical_properties
+from openalea.mecha.utils.hydraulic_solver import HydraulicMatrixBuilder
+from openalea.granap.network_base import AbstractNetwork
+from openalea.mecha.utils.solute_transport import SoluteTransport
 
 class Mecha:
     """Main class of the library, encodes a hydraulic anatomy to solve.
@@ -148,6 +148,11 @@ class Mecha:
         n_maturity = self.geometry.n_maturity
         n_scenarios = self.boundary.n_scenarios
         r_discret = self._get_r_discret()
+        
+        # phi tags
+        phi_type = self.network.phi_type
+        n_phi_layers = self.network.n_phi_layers
+        self.network.cell_manager.tag_phi_thick_cells(phi_type, n_phi_layers)
 
         # Initialize solution arrays
         
@@ -162,6 +167,7 @@ class Mecha:
 
         # Set initial conditions for each maturity stage
         self._set_maturity_initial_conditions()
+        
 
     def _get_r_discret(self) -> int:
         """Get the radial discretization value."""
