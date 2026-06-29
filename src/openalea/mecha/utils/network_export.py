@@ -773,7 +773,7 @@ def plot_K_network(obj, **kwargs):
         widths = 0.3 + 4.5 * log_K
 
         # Colour map: low K = dark, high K = bright
-        cmap   = cm.get_cmap('plasma')
+        cmap   = plt.colormaps['plasma']
         colors = [cmap(v) for v in log_K]
 
         nx.draw_networkx_edges(
