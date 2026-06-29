@@ -119,12 +119,9 @@ matplotlib.use('Agg')
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from granap.needle_class import NeedleAnatomy
-from mecha.mecha_class import Mecha
-from mecha.utils.data_loader import InData
-from mecha.utils.network_builder import NetworkBuilder
-from mecha.solute_transport import SoluteTransport
-from mecha.utils.coupled_solver import coupled_water_solute_solve
+from openalea.granap.needle_class import NeedleAnatomy
+from openalea.mecha import Mecha, InData, SoluteTransport, NetworkBuilder
+from openalea.mecha.utils.coupled_solver import coupled_water_solute_solve
 
 # ── Physical constants ────────────────────────────────────────────────────────
 T_25C  = 298.15              # K  (25 °C)  passed directly
