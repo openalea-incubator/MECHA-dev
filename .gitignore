@@ -2,4 +2,10 @@
 *.egg-info
 *.vscode
 .pytest_cache
-*test/outputs*
+*test/outputs/*.png
+*test/outputs/*.txt
+*test/outputs/*.vtk
+*test/outputs/*.xml
+*test/outputs/*.graphml
+src_old/*
+src_old
