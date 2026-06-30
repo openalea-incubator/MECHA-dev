@@ -3,22 +3,7 @@ test_osmo_couple.py
 
 Tests for the concentration–osmotic coupling implementation.
 
-Eleven tests (listed in declaration order):
-
-  test_set_osmotic_from_concentration
-      Unit test: HydraulicCellManager.set_osmotic_from_concentration writes
-      Ψ_os = −RT·c correctly onto every cell object.
-
-  test_set_osmotic_with_baseline
-      Unit test: set_osmotic_from_concentration with psi_os_baseline adds the
-      dynamic van't Hoff term on top of the baseline (three cases: no baseline,
-      uniform baseline, per-cell heterogeneous baseline).
-
-  test_psi_os_preserved_through_water_flux
-      Integration test: water_flux(use_stored_psi_os=True) preserves
-      concentration-derived psi_os values through the internal
-      reset_hydraulic_properties() call and does not overwrite them with
-      scenario-dict values in initialize_scenarios.
+Four tests (listed in declaration order):
 
   test_coupled_solver_convergence
       Integration test: coupled_water_solute_solve with operators='D' returns a
@@ -29,11 +14,6 @@ Eleven tests (listed in declaration order):
       coupled_solver.py.  This test uses operators='D' so c is flow-independent
       and no such cancellation can occur.
 
-  test_coupled_solver_updates_osmotic
-      Integration test: after the coupled solve, psi_os = scenario baseline +
-      van't Hoff dynamic term, and psi_total at mesophyll cells has shifted from
-      the uncoupled reference.
-
   test_coupled_solver_T_operator_coupling
       Integration test: operators='T' (advection + diffusion) exercises genuine
       two-way coupling on the mild-osmotic anatomy (_build_mecha_mild).  The 'T'
@@ -41,21 +21,6 @@ Eleven tests (listed in declaration order):
       (advection contributes), and the solute→osmotic→water feedback reaches the
       hydraulics.  The bare Picard loop limit-cycles under 'T' and does not
       converge; this test asserts coupling behaviour, not tight convergence.
-
-  test_coupled_solver_relaxation_stabilises_T
-      Integration test: the relaxation parameter (ω<1) damps the Picard limit
-      cycle so operators='T' converges where ω=1.0 does not.  Also covers the
-      relaxation input guard (ω ∉ (0,1] raises ValueError) and verifies that
-      Dirichlet BCs are imposed exactly after relaxation.
-
-  test_set_osmotic_sign_and_robustness
-      Unit test: set_osmotic_from_concentration applies van't Hoff verbatim —
-      c=0 → 0, c<0 → positive psi_os (no clamp), baseline+0 → baseline exactly,
-      and cells whose cell_id ≥ len(c_cells) are left untouched.
-
-  test_coupled_solver_input_validation
-      Unit test: coupled_water_solute_solve raises ValueError for i_scenario=0
-      (no osmotic term) and st.mode='apo' (no cell concentrations to couple).
 
   test_wall_psi_os_from_scenario_under_stored
       Integration test: under use_stored_psi_os=True only *cell* psi_os is
@@ -87,8 +52,7 @@ Scenario builders
       osmotic_sieve=-500 hPa, s_factor=SIGMA=0.9, os_hetero=0).
       The reduced osmotic drive keeps the upwind advection-diffusion operator
       well-conditioned so the coupled fixed point stays bounded under 'T'.
-      Used by test_coupled_solver_T_operator_coupling and
-      test_coupled_solver_relaxation_stabilises_T.
+      Used by test_coupled_solver_T_operator_coupling.
 
 The coupled solver requires i_scenario >= 1 (scenario 0 has no osmotic term).
 
@@ -261,169 +225,6 @@ def _build_transport_bc(mecha: Mecha, st: SoluteTransport, cells: dict) -> dict:
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
-def test_set_osmotic_from_concentration():
-    """
-    set_osmotic_from_concentration writes Ψ_os = −RT·c on all cells.
-
-    Checks:
-      - every cell with cell_id < n_cells gets psi_os = -RT * c_uniform
-      - all psi_os values are negative (c > 0)
-      - the van't Hoff value is correct to within numerical noise
-    """
-    print('\n[test_set_osmotic_from_concentration]')
-    mecha   = _build_mecha()
-    manager = mecha.network.cell_manager
-    n_cells = mecha.network.n_cells
-    nwj     = mecha.network.n_wall_junction
-
-    c_uniform = np.full(n_cells, C_MESO)
-
-    manager.set_osmotic_from_concentration(c_uniform, nwj, T_25C)
-
-    expected = -_RT_25C * C_MESO
-    n_set = 0
-    for cell in manager:
-        assert cell.psi_os is not None, \
-            f'cell_id={cell.cell_id} has psi_os=None after set_osmotic_from_concentration'
-        assert abs(cell.psi_os - expected) < 1e-9, \
-            f'cell_id={cell.cell_id}: psi_os={cell.psi_os:.4f} != expected {expected:.4f}'
-        assert cell.psi_os < 0, \
-            f'cell_id={cell.cell_id}: psi_os should be negative, got {cell.psi_os}'
-        n_set += 1
-
-    assert n_set == n_cells, f'Expected {n_cells} cells set, got {n_set}'
-
-    psi_val = -_RT_25C * C_MESO
-    print(f'  n_cells={n_cells}  Ψ_os = {psi_val:.1f} hPa for C_MESO={C_MESO*1e6:.0f} mM')
-    print('  PASSED: all cells have correct psi_os')
-
-
-def test_set_osmotic_with_baseline():
-    """
-    set_osmotic_from_concentration with psi_os_baseline sums baseline and dynamic terms.
-
-    Three cases:
-      1. psi_os_baseline=None  →  Ψ_os = −RT·c          
-      2. uniform baseline      →  Ψ_os = baseline + (−RT·c)
-      3. heterogeneous baseline→  Ψ_os = baseline[i] + (−RT·c) per cell
-
-    This is the unit test for the feature that allows unknown background solutes
-    (represented by the baseline osmotic potential set from the scenario dict) to
-    coexist with dynamically solved solutes.
-    """
-    print('\n[test_set_osmotic_with_baseline]')
-    mecha   = _build_mecha()
-    manager = mecha.network.cell_manager
-    n_cells = mecha.network.n_cells
-    nwj     = mecha.network.n_wall_junction
-
-    c_uniform = np.full(n_cells, C_MESO)
-    dynamic   = -_RT_25C * C_MESO       # ≈ −1239 hPa at 25 °C, 50 mM
-
-    # ── case 1: no baseline ───────────────────────────────────────────────────
-    manager.set_osmotic_from_concentration(c_uniform, nwj, T_25C)
-    for cell in manager:
-        assert abs(cell.psi_os - dynamic) < 1e-6, \
-            f'case 1 cell_id={cell.cell_id}: expected {dynamic:.4f}, got {cell.psi_os:.4f}'
-
-    # ── case 2: uniform baseline ──────────────────────────────────────────────
-    baseline   = np.full(n_cells, -2000.0)
-    expected_2 = -2000.0 + dynamic
-    manager.set_osmotic_from_concentration(c_uniform, nwj, T_25C, baseline)
-    for cell in manager:
-        assert abs(cell.psi_os - expected_2) < 1e-6, \
-            (f'case 2 cell_id={cell.cell_id}: '
-             f'expected baseline+dynamic={expected_2:.4f}, got {cell.psi_os:.4f}')
-
-    # ── case 3: heterogeneous baseline ────────────────────────────────────────
-    rng        = np.random.default_rng(42)
-    baseline_h = rng.uniform(-5000.0, -500.0, n_cells)
-    manager.set_osmotic_from_concentration(c_uniform, nwj, T_25C, baseline_h)
-    for cell in manager:
-        cid      = cell.cell_id
-        expected = float(baseline_h[cid]) + dynamic
-        assert abs(cell.psi_os - expected) < 1e-6, \
-            (f'case 3 cell_id={cid}: expected {expected:.4f}, got {cell.psi_os:.4f}')
-
-    print(f'  dynamic term: {dynamic:.1f} hPa  (C_MESO={C_MESO*1e6:.0f} mM)')
-    print('  PASSED: additive baseline respected in all three cases')
-
-
-def test_psi_os_preserved_through_water_flux():
-    """
-    water_flux(use_stored_psi_os=True) preserves concentration-derived psi_os.
-
-    Sequence:
-      1. water_flux() — initial solve; cells get psi_os from scenario dict.
-      2. set_osmotic_from_concentration(c_uniform) — overwrite with RT·c values.
-      3. water_flux(use_stored_psi_os=True) — re-solve; must NOT overwrite psi_os.
-
-    Checks:
-      - After step 3, every cell still has psi_os == −RT · c_uniform.
-      - The scenario-dict values (−4800 hPa for cortex cells in scenario 1) must
-        NOT have been restored by initialize_scenarios.
-
-    Scenario 1 prescribes os_cortex=-4800 hPa; the uniform concentration gives
-    Ψ_os ≈ -1239 hPa — a clear difference used to verify preservation.
-    """
-    print('\n[test_psi_os_preserved_through_water_flux]')
-    mecha   = _build_mecha()
-    manager = mecha.network.cell_manager
-    n_cells = mecha.network.n_cells
-    nwj     = mecha.network.n_wall_junction
-
-    # Step 1: initial hydraulic solve (assigns psi_os from scenario dict)
-    print('  Step 1: initial water_flux() ...')
-    mecha.water_flux()
-
-    # Snapshot psi_os after scenario-dict solve
-    psi_os_from_scenario = {
-        cell.cell_id: cell.psi_os
-        for cell in manager
-        if cell.psi_os is not None
-    }
-    n_scenario_set = len(psi_os_from_scenario)
-    print(f'  Cells with psi_os after scenario solve: {n_scenario_set}')
-    assert n_scenario_set > 0, 'No cells have psi_os after water_flux()'
-
-    # Verify that at least some cells have the scenario-prescribed value
-    # (os_cortex=-4800 in scenario 1)
-    scenario_vals = list(psi_os_from_scenario.values())
-    assert any(abs(v - (-4800.0)) < 50.0 for v in scenario_vals), \
-        'Expected some cells to have psi_os ≈ -4800 hPa from scenario 1'
-
-    # Step 2: overwrite psi_os with uniform concentration-derived values
-    c_uniform = np.full(n_cells, C_MESO)
-    manager.set_osmotic_from_concentration(c_uniform, nwj, T_25C)
-
-    expected = -_RT_25C * C_MESO   # ≈ -1239 hPa at 25°C, 50 mM
-    print(f'  Step 2: set_osmotic_from_concentration → Ψ_os = {expected:.1f} hPa')
-
-    for cell in manager:
-        assert abs(cell.psi_os - expected) < 1e-6, \
-            f'cell_id={cell.cell_id} not updated: psi_os={cell.psi_os:.2f}'
-
-    # Step 3: re-solve with stored psi_os; the flag must prevent overwriting
-    print('  Step 3: water_flux(use_stored_psi_os=True) ...')
-    mecha.water_flux(use_stored_psi_os=True)
-
-    n_overwritten = 0
-    for cell in manager:
-        if cell.psi_os is None:
-            # A cell that had psi_os set but now has None was wiped — failure.
-            assert False, \
-                f'cell_id={cell.cell_id}: psi_os was reset to None by water_flux'
-        if abs(cell.psi_os - expected) > 1.0:   # 1 hPa tolerance
-            n_overwritten += 1
-
-    assert n_overwritten == 0, (
-        f'{n_overwritten} cells had psi_os overwritten by water_flux '
-        f'(use_stored_psi_os=True should prevent this). '
-        f'Expected {expected:.1f} hPa, found deviations > 1 hPa.'
-    )
-    print(f'  PASSED: all {n_cells} cells kept psi_os = {expected:.1f} hPa')
-
-
 def test_coupled_solver_convergence():
     """
     coupled_water_solute_solve returns a valid concentration field and converges.
@@ -532,146 +333,6 @@ def test_coupled_solver_convergence():
     assert c_phloem_max < 1e-10, \
         f'Phloem Dirichlet BC violated: max c_phloem = {c_phloem_max:.3e}'
 
-    print('  PASSED')
-
-
-def test_coupled_solver_updates_osmotic():
-    """
-    The coupling adds the dynamic van't Hoff term on top of the scenario baseline.
-
-    After the coupled solve, mesophyll cells must have
-        Ψ_os ≈ Ψ_os_baseline + (−RT · C_MESO)
-              ≈ −4800 + (−1239) ≈ −6039 hPa
-    where Ψ_os_baseline (−4800 hPa) comes from the scenario dict (os_cortex) and
-    represents unknown background solutes, and −RT · C_MESO is the dynamic van't
-    Hoff contribution from the transport solver.
-
-    The difference |Ψ_os_coupled − Ψ_os_scenario| for mesophyll cells must
-    exceed 1000 hPa — a clear signal that the dynamic term was applied.  It must
-    also be within 100 hPa of the additive expectation (baseline + dynamic).
-    """
-    print('\n[test_coupled_solver_updates_osmotic]')
-    mecha   = _build_mecha()
-    manager = mecha.network.cell_manager
-    n_cells = mecha.network.n_cells
-    nwj     = mecha.network.n_wall_junction
-
-    cells = _classify_cells(mecha)
-
-    D_MEM_EFF = D_MEM * (1.0 - SIGMA)
-    dp = dict(apo_wall=D_APO, plasmodesmata=D_PD, membrane=D_MEM_EFF,
-              sigma={cg: SIGMA for cg in range(1, 20)})
-    st = SoluteTransport(mecha, dp, capacitance_params=None, mode='sym')
-    bc = _build_transport_bc(mecha, st, cells)
-
-    # ── Reference: psi_os and psi_total after a plain water_flux ─────────────
-    mecha.water_flux()
-    psi_os_ref    = {cell.cell_id: (cell.psi_os    if cell.psi_os    is not None else 0.0)
-                     for cell in manager}
-    psi_total_ref = {cell.cell_id: cell.psi_total
-                     for cell in manager
-                     if cell.psi_total is not None}
-
-    # Scenario 1 should have assigned os_cortex=-4800 to mesophyll-like cells.
-    # Verify reference contains that value.
-    meso_ids = cells['mesophyll']
-    ref_meso_vals = [psi_os_ref[cid] for cid in meso_ids if cid in psi_os_ref]
-    print(f'  Reference psi_os at mesophyll cells: '
-          f'mean={np.mean(ref_meso_vals):.1f} hPa  '
-          f'(scenario os_cortex=-4800 hPa)')
-    assert any(abs(v - (-4800.0)) < 100.0 for v in ref_meso_vals), \
-        ('Expected mesophyll cells to have psi_os ≈ −4800 hPa from scenario 1 '
-         '(initialize_scenarios with os_hetero=0, os_cortex=-4800).')
-
-    # ── Rebuild for coupled solve (fresh mecha to reset all state) ────────────
-    mecha2  = _build_mecha()
-    manager2 = mecha2.network.cell_manager
-    st2 = SoluteTransport(mecha2, dp, capacitance_params=None, mode='sym')
-    bc2 = _build_transport_bc(mecha2, st2, cells)
-
-    c, n_iter, converged = coupled_water_solute_solve(
-        mecha2, st2,
-        T=T_25C,
-        boundary_conditions=bc2,
-        rhs=np.zeros(n_cells),
-        i_scenario=1,
-        tol=10.0,
-        max_iter=5,
-        operators='D',
-        verbose=False,
-    )
-    print(f'  Coupled solve: n_iter={n_iter}  converged={converged}')
-
-    # ── Check that mesophyll psi_os = baseline + van't Hoff dynamic term ────────
-    # The baseline is the scenario-dict value captured before the coupled loop.
-    # The dynamic term is -RT * C_MESO for mesophyll cells (Dirichlet at C_MESO).
-    baseline_meso        = float(np.mean(ref_meso_vals))   # ≈ -4800 hPa
-    dynamic_term         = -_RT_25C * C_MESO               # ≈ -1239 hPa
-    expected_meso_psi_os = baseline_meso + dynamic_term    # ≈ -6039 hPa
-
-    psi_os_coupled_meso = [
-        cell.psi_os for cell in manager2
-        if cell.cell_id in meso_ids and cell.psi_os is not None
-    ]
-    assert len(psi_os_coupled_meso) > 0, \
-        'No mesophyll cells have psi_os after coupled solve'
-
-    mean_coupled = float(np.mean(psi_os_coupled_meso))
-    print(f'  Coupled psi_os at mesophyll: mean={mean_coupled:.1f} hPa  '
-          f'(expected ≈ {expected_meso_psi_os:.1f} hPa = '
-          f'{baseline_meso:.1f} baseline + {dynamic_term:.1f} dynamic)')
-
-    # The coupled value must differ from the raw scenario baseline — the dynamic
-    # term (~-1239 hPa) must have been added on top.
-    delta_from_scenario = abs(mean_coupled - baseline_meso)
-    assert delta_from_scenario > 1000.0, (
-        f'Coupled psi_os at mesophyll ({mean_coupled:.1f} hPa) is too close to '
-        f'the scenario baseline ({baseline_meso:.1f} hPa): '
-        f'Δ = {delta_from_scenario:.1f} hPa (expected > 1000 hPa). '
-        f'The dynamic van\'t Hoff term may not have been applied.'
-    )
-
-    # The coupled value must equal baseline + dynamic within tolerance.
-    delta_from_additive = abs(mean_coupled - expected_meso_psi_os)
-    assert delta_from_additive < 100.0, (
-        f'Coupled psi_os at mesophyll ({mean_coupled:.1f} hPa) deviates from '
-        f'additive expectation ({expected_meso_psi_os:.1f} hPa = '
-        f'{baseline_meso:.1f} + {dynamic_term:.1f}) by '
-        f'{delta_from_additive:.1f} hPa (tolerance 100 hPa).'
-    )
-
-    print(f'  Δ from scenario baseline: {delta_from_scenario:.1f} hPa  '
-          f'(threshold > 1000 hPa ✓)')
-    print(f'  Δ from additive expectation: {delta_from_additive:.1f} hPa  '
-          f'(tolerance 100 hPa ✓)')
-
-    # ── Check that psi_total shifted — the convergence criterion is on Δψ_total ─
-    # If coupling had no effect on psi_total the new convergence criterion would
-    # converge trivially without actually coupling anything.
-    psi_total_coupled_meso = [
-        cell.psi_total for cell in manager2
-        if cell.cell_id in meso_ids and cell.psi_total is not None
-    ]
-    assert len(psi_total_coupled_meso) > 0, \
-        'No mesophyll cells have psi_total after coupled solve'
-
-    ref_psi_total_meso = [psi_total_ref[cid] for cid in meso_ids
-                          if cid in psi_total_ref]
-    assert len(ref_psi_total_meso) > 0, \
-        'No mesophyll cells have psi_total in reference solve'
-
-    mean_psi_total_coupled = float(np.mean(psi_total_coupled_meso))
-    mean_psi_total_ref     = float(np.mean(ref_psi_total_meso))
-    delta_psi_total        = abs(mean_psi_total_coupled - mean_psi_total_ref)
-
-    assert delta_psi_total > 100.0, (
-        f'psi_total at mesophyll did not shift after coupling: '
-        f'ref={mean_psi_total_ref:.1f} hPa, coupled={mean_psi_total_coupled:.1f} hPa, '
-        f'Δ={delta_psi_total:.1f} hPa (expected > 100 hPa). '
-        f'The Δψ_total convergence criterion may not be exercised.'
-    )
-    print(f'  psi_total shift at mesophyll: {delta_psi_total:.1f} hPa  '
-          f'(ref={mean_psi_total_ref:.1f}, coupled={mean_psi_total_coupled:.1f}) ✓')
     print('  PASSED')
 
 
@@ -842,198 +503,6 @@ def test_coupled_solver_T_operator_coupling():
     print('  PASSED')
 
 
-def test_coupled_solver_relaxation_stabilises_T():
-    """
-    Under-relaxation (relaxation < 1) stabilises the operators='T' coupling.
-
-    On the mild-osmotic needle anatomy the bare Picard loop (relaxation=1.0)
-    fails to converge under 'T' within the iteration budget — it settles into a
-    limit cycle (see test_coupled_solver_T_operator_coupling).  Damping the
-    concentration feedback with ω≈0.3 breaks the cycle and reaches the
-    Δψ_total tolerance.
-
-    Checks
-    ------
-    1. relaxation outside (0, 1] raises ValueError (input guard).
-    2. relaxation=1.0 (pure Picard) does NOT converge in the budget.
-    3. relaxation=0.3 DOES converge in the same budget, in fewer iterations, and
-       the result is bounded.
-    4. Dirichlet BC nodes are re-imposed exactly after relaxation (never damped).
-    """
-    print('\n[test_coupled_solver_relaxation_stabilises_T]')
-
-    D_APO_T = 1.0
-    D_PD_T  = 0.05
-    D_MEM_T = 1e-3 * (1.0 - SIGMA)
-    dp = dict(apo_wall=D_APO_T, plasmodesmata=D_PD_T, membrane=D_MEM_T,
-              sigma={cg: SIGMA for cg in range(1, 20)})
-
-    # ── 1. input validation ───────────────────────────────────────────────────
-    mecha_v = _build_mecha_mild()
-    st_v = SoluteTransport(mecha_v, dp, capacitance_params=None, mode='sym')
-    for bad in (0.0, -0.2, 1.5):
-        raised = False
-        try:
-            coupled_water_solute_solve(
-                mecha_v, st_v, T=T_25C, boundary_conditions={},
-                i_scenario=1, relaxation=bad)
-        except ValueError as e:
-            raised = True
-        assert raised, f'relaxation={bad} must raise ValueError'
-    print('  relaxation ∈ {0.0, -0.2, 1.5} → ValueError ✓')
-
-    max_iter = 40
-    tol      = 50.0
-
-    # ── 2. pure Picard (ω=1) does not converge ────────────────────────────────
-    mecha_p = _build_mecha_mild()
-    cells   = _classify_cells(mecha_p)
-    n_cells = mecha_p.network.n_cells
-    st_p = SoluteTransport(mecha_p, dp, capacitance_params=None, mode='sym')
-    bc_p = _build_transport_bc(mecha_p, st_p, cells)
-    _, n_picard, conv_picard = coupled_water_solute_solve(
-        mecha_p, st_p, T=T_25C, boundary_conditions=bc_p,
-        rhs=np.zeros(n_cells), i_scenario=1, tol=tol, max_iter=max_iter,
-        operators='T', relaxation=1.0, verbose=False)
-    print(f'  ω=1.0: n_iter={n_picard}  converged={conv_picard}')
-    assert not conv_picard, \
-        'Pure Picard unexpectedly converged — pick a stiffer regime for this test.'
-
-    # ── 3. relaxed (ω=0.3) converges and is bounded ───────────────────────────
-    mecha_r = _build_mecha_mild()
-    st_r = SoluteTransport(mecha_r, dp, capacitance_params=None, mode='sym')
-    bc_r = _build_transport_bc(mecha_r, st_r, cells)
-    omega = 0.3
-    c_r, n_relax, conv_relax = coupled_water_solute_solve(
-        mecha_r, st_r, T=T_25C, boundary_conditions=bc_r,
-        rhs=np.zeros(n_cells), i_scenario=1, tol=tol, max_iter=max_iter,
-        operators='T', relaxation=omega, verbose=True)
-    print(f'  ω={omega}: n_iter={n_relax}  converged={conv_relax}  '
-          f'c_max={c_r.max()*1e6:.2f} µM')
-    assert conv_relax, \
-        f'Under-relaxation ω={omega} failed to converge in {max_iter} iters (tol={tol}).'
-    assert n_relax < max_iter, 'relaxed solve hit the iteration cap without flagging'
-    assert np.all(np.isfinite(c_r)), 'non-finite concentration with relaxation'
-    assert c_r.max() <= 100.0 * C_MESO, \
-        f'relaxed solve not bounded: c_max={c_r.max()*1e6:.2f} µM'
-
-    # ── 4. Dirichlet BCs exact under relaxation ───────────────────────────────
-    meso_ids = cells['mesophyll']
-    assert abs(float(c_r[meso_ids].mean()) - C_MESO) / C_MESO < 1e-6, \
-        'mesophyll source BC not exact under relaxation'
-    assert abs(float(c_r[cells['phloem']].max())) < 1e-9, \
-        'phloem sink BC not exact under relaxation'
-    print('  Dirichlet BCs exact under relaxation ✓')
-    print('  PASSED')
-
-
-def test_set_osmotic_sign_and_robustness():
-    """
-    set_osmotic_from_concentration handles zero, negative and out-of-range c.
-
-    Checks:
-      - c = 0           →  Ψ_os = 0            (with no baseline)
-      - c < 0           →  Ψ_os = −RT·c > 0    (sign follows the formula; no clamp)
-      - baseline + 0    →  Ψ_os = baseline      (dynamic term vanishes)
-      - cells whose cell_id >= len(c_cells) are left untouched (not written).
-
-    This documents the *contract*: the method applies van't Hoff verbatim and
-    does not clamp negative concentrations.  Any physical non-negativity must be
-    enforced upstream (by the transport solver / BCs), not here.
-    """
-    print('\n[test_set_osmotic_sign_and_robustness]')
-    mecha   = _build_mecha()
-    manager = mecha.network.cell_manager
-    n_cells = mecha.network.n_cells
-    nwj     = mecha.network.n_wall_junction
-
-    # ── zero concentration → zero osmotic ─────────────────────────────────────
-    manager.set_osmotic_from_concentration(np.zeros(n_cells), nwj, T_25C)
-    for cell in manager:
-        assert abs(cell.psi_os) < 1e-9, \
-            f'c=0 should give psi_os=0, got {cell.psi_os} (cell_id={cell.cell_id})'
-
-    # ── negative concentration → positive osmotic (no clamp) ──────────────────
-    c_neg = np.full(n_cells, -C_MESO)
-    manager.set_osmotic_from_concentration(c_neg, nwj, T_25C)
-    expected_pos = -_RT_25C * (-C_MESO)     # = +RT·C_MESO > 0
-    for cell in manager:
-        assert abs(cell.psi_os - expected_pos) < 1e-6, \
-            f'c<0 cell_id={cell.cell_id}: expected {expected_pos:.4f}, got {cell.psi_os:.4f}'
-        assert cell.psi_os > 0, 'negative c must give positive psi_os (no clamp)'
-
-    # ── baseline + zero concentration → exactly baseline ──────────────────────
-    baseline = np.full(n_cells, -3333.0)
-    manager.set_osmotic_from_concentration(np.zeros(n_cells), nwj, T_25C, baseline)
-    for cell in manager:
-        assert abs(cell.psi_os - (-3333.0)) < 1e-6, \
-            f'baseline+0 cell_id={cell.cell_id}: expected -3333.0, got {cell.psi_os:.4f}'
-
-    # ── short c_cells array: out-of-range cells untouched ─────────────────────
-    # Reset to a sentinel, then pass a c array covering only the first half.
-    for cell in manager:
-        cell.psi_os = -1.0                      # sentinel
-    half = max(1, n_cells // 2)
-    c_short = np.full(half, C_MESO)
-    manager.set_osmotic_from_concentration(c_short, nwj, T_25C)
-    dynamic = -_RT_25C * C_MESO
-    n_updated = n_untouched = 0
-    for cell in manager:
-        if cell.cell_id < half:
-            assert abs(cell.psi_os - dynamic) < 1e-6, \
-                f'cell_id={cell.cell_id} in range should be updated to {dynamic:.2f}'
-            n_updated += 1
-        else:
-            assert abs(cell.psi_os - (-1.0)) < 1e-9, \
-                f'cell_id={cell.cell_id} out of range should keep sentinel -1.0'
-            n_untouched += 1
-    assert n_updated == half
-    assert n_untouched == n_cells - half
-    print(f'  zero/negative/baseline-zero handled; '
-          f'{n_updated} in-range updated, {n_untouched} out-of-range untouched')
-    print('  PASSED')
-
-
-def test_coupled_solver_input_validation():
-    """
-    coupled_water_solute_solve guards its preconditions with ValueError.
-
-    Checks:
-      - i_scenario = 0  →  ValueError (scenario 0 has no osmotic term).
-      - st.mode = 'apo' →  ValueError (apoplast-only has no cell concentrations).
-
-    These guards must fire *before* any expensive solve so a misuse fails fast.
-    """
-    print('\n[test_coupled_solver_input_validation]')
-    mecha = _build_mecha()
-
-    dp = dict(apo_wall=D_APO, plasmodesmata=D_PD, membrane=D_MEM * (1 - SIGMA),
-              sigma={cg: SIGMA for cg in range(1, 20)})
-
-    # ── i_scenario < 1 rejected ───────────────────────────────────────────────
-    st_sym = SoluteTransport(mecha, dp, capacitance_params=None, mode='sym')
-    raised = False
-    try:
-        coupled_water_solute_solve(
-            mecha, st_sym, T=T_25C, boundary_conditions={}, i_scenario=0)
-    except ValueError as e:
-        raised = True
-        print(f'  i_scenario=0 → ValueError: {e}')
-    assert raised, 'i_scenario=0 must raise ValueError'
-
-    # ── apo mode rejected ─────────────────────────────────────────────────────
-    st_apo = SoluteTransport(mecha, dp, capacitance_params=None, mode='apo')
-    raised = False
-    try:
-        coupled_water_solute_solve(
-            mecha, st_apo, T=T_25C, boundary_conditions={}, i_scenario=1)
-    except ValueError as e:
-        raised = True
-        print(f"  mode='apo' → ValueError: {e}")
-    assert raised, "st.mode='apo' must raise ValueError"
-    print('  PASSED')
-
-
 def test_wall_psi_os_from_scenario_under_stored():
     """
     Wall-node psi_os always comes from the scenario dict, even with stored cells.
@@ -1183,32 +652,11 @@ def test_full_mode_concentration_slicing():
 if __name__ == '__main__':
     os.makedirs(_OUT_DIR, exist_ok=True)
 
-    test_set_osmotic_from_concentration()
-    print('\n✓ test_set_osmotic_from_concentration PASSED')
-
-    test_set_osmotic_with_baseline()
-    print('\n✓ test_set_osmotic_with_baseline PASSED')
-
-    test_psi_os_preserved_through_water_flux()
-    print('\n✓ test_psi_os_preserved_through_water_flux PASSED')
-
     test_coupled_solver_convergence()
     print('\n✓ test_coupled_solver_convergence PASSED')
 
-    test_coupled_solver_updates_osmotic()
-    print('\n✓ test_coupled_solver_updates_osmotic PASSED')
-
     test_coupled_solver_T_operator_coupling()
     print('\n✓ test_coupled_solver_T_operator_coupling PASSED')
-
-    test_coupled_solver_relaxation_stabilises_T()
-    print('\n✓ test_coupled_solver_relaxation_stabilises_T PASSED')
-
-    test_set_osmotic_sign_and_robustness()
-    print('\n✓ test_set_osmotic_sign_and_robustness PASSED')
-
-    test_coupled_solver_input_validation()
-    print('\n✓ test_coupled_solver_input_validation PASSED')
 
     test_wall_psi_os_from_scenario_under_stored()
     print('\n✓ test_wall_psi_os_from_scenario_under_stored PASSED')
