@@ -1,8 +1,8 @@
 name: mecha
 channels:
   - conda-forge
-  - openalea3
-  - openalea3/label/dev
+  - https://conda.anaconda.org/openalea3
+  - https://conda.anaconda.org/openalea3/label/dev
 channel_priority: strict
 dependencies:
   - python
