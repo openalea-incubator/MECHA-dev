@@ -105,8 +105,8 @@ def prepare_geometrical_properties(general, network, position, indice):
 
         # re-define L_diff here as in original (same numerical intent)
         L_diff = (
-            abs(float((layer_dist[3][0] - layer_dist[2][0]) * 1.0e-4)),
-            abs(float((layer_dist[3][0] - xylem80) * 1.0e-4)),
+            abs(float((layer_dist[3] - layer_dist[2]) * 1.0e-4)),
+            abs(float((layer_dist[3] - xylem80) * 1.0e-4)),
         )
 
     # -------------------------------------------------------------------------
@@ -150,41 +150,38 @@ def prepare_geometrical_properties(general, network, position, indice):
                     yw = position[wall_id][1] + dy * sgn
 
                     # thick_wallentry
-                    ThickWalls.append(
-                        array(
-                            (
-                                twpid,
-                                wall_id,
-                                cid,
-                                xw,
-                                yw,
-                                inf,  # neighbor new junction walls IDs not known yet
-                                inf,
-                                border_link[wall_id],
-                            )
-                        )
-                    )
+                    # TypeError: array() takes from 1 to 2 positional arguments but 8 were given
+                    thick_wall.append([
+                        twpid,
+                        wall_id,
+                        cid,
+                        xw,
+                        yw,
+                        inf,
+                        inf,
+                        border_link[wall_id]
+                    ])
 
                     cell_idx = int(cid - network.n_wall_junction)
-                    cw_idx = int(n_cell_to_thick_wall[cell_idx])
+                    cw_idx = int(n_cell_to_thick_wall[cell_idx][0])
                     cell_to_thick_wall[cell_idx][cw_idx] = twpid
-                    n_cell_to_thick_wall[cell_idx] += 1
+                    n_cell_to_thick_wall[cell_idx][0] += 1
 
                     # thick_wall_x entry
                     thick_wall_x.append((twpidX, xw, yw, wall_id, cid))
 
                     # Polygon association (wall has 2 polygons)
                     for poly_row in (2 * wall_id, 2 * wall_id + 1):
-                        pidx = int(n_thick_wall_polygon_x[poly_row])
+                        pidx = int(n_thick_wall_polygon_x[poly_row][0])
                         thick_wall_polygon_x[poly_row][pidx] = twpidX
-                        n_thick_wall_polygon_x[poly_row] += 1
+                        n_thick_wall_polygon_x[poly_row][0] += 1
 
                     # Mapping from original wall to new thick-wall node
-                    wall_to_wall[wall_id][int(n_wall_to_wall[wall_id])] = twpid
-                    n_wall_to_wall[wall_id] += 1
+                    wall_to_wall[wall_id][int(n_wall_to_wall[wall_id][0])] = twpid
+                    n_wall_to_wall[wall_id][0] += 1
 
-                    wall_to_wall_x[wall_id][int(n_wall_to_wall_x[wall_id])] = twpidX
-                    n_wall_to_wall_x[wall_id] += 1
+                    wall_to_wall_x[wall_id][int(n_wall_to_wall_x[wall_id][0])] = twpidX
+                    n_wall_to_wall_x[wall_id][0] += 1
 
                     twpid += 1
                     twpidX += 1
@@ -196,19 +193,19 @@ def prepare_geometrical_properties(general, network, position, indice):
                         thick_wall_x.append((twpidX, xw2, yw2, wall_id, inf))
 
                         for poly_row in (2 * wall_id, 2 * wall_id + 1):
-                            pidx = int(n_thick_wall_polygon_x[poly_row])
+                            pidx = int(n_thick_wall_polygon_x[poly_row][0])
                             thick_wall_polygon_x[poly_row][pidx] = twpidX
-                            n_thick_wall_polygon_x[poly_row] += 1
+                            n_thick_wall_polygon_x[poly_row][0] += 1
 
-                        wall_to_wall_x[wall_id][int(n_wall_to_wall_x[wall_id])] = twpidX
-                        n_wall_to_wall_x[wall_id] += 1
+                        wall_to_wall_x[wall_id][int(n_wall_to_wall_x[wall_id][0])] = twpidX
+                        n_wall_to_wall_x[wall_id][0] += 1
                         twpidX += 1
 
             elif ntype == "apo":
                 # j is a junction node
                 idx = int(n_wall_to_junction[wall_id][0])
                 wall_to_junction[wall_id][idx] = indice[neighboor]
-                n_wall_to_junction[wall_id] += 1
+                n_wall_to_junction[wall_id][0] += 1
 
     # -------------------------------------------------------------------------
     # SECOND PASS on adjacency: build junction_wall_cell (+ thick junctions)
@@ -240,11 +237,11 @@ def prepare_geometrical_properties(general, network, position, indice):
                 if cid not in junction_wall_cell[j_idx]:
                     pos = int(n_junction_wall_cell[j_idx][0])
                     junction_wall_cell[j_idx][pos] = cid
-                    n_junction_wall_cell[j_idx] += 1
+                    n_junction_wall_cell[j_idx][0] += 1
 
                     if use_thick:
-                        junction_to_wall[j_idx][int(n_junction_to_wall[j_idx])] = i
-                        n_junction_to_wall[j_idx] += 1
+                        junction_to_wall[j_idx][int(n_junction_to_wall[j_idx][0])] = i
+                        n_junction_to_wall[j_idx][0] += 1
                 else:
                     # Already associated through another wall => "thick junction node"
                     if not use_thick:
@@ -279,29 +276,28 @@ def prepare_geometrical_properties(general, network, position, indice):
                     yj = position[j][1] + dy * sgn
 
                     # thick_wallentry for junction node
-                    ThickWalls.append(
-                        array(
-                            (
-                                twpid,
-                                j,
-                                int(cid),
-                                xj,
-                                yj,
-                                twpid1,
-                                twpid2,
-                                border_link[j],
-                            )
-                        )
-                    )
+                    thick_wall.append([
+                        twpid,
+                        j,
+                        cid,
+                        xj,
+                        yj,
+                        twpid1,
+                        twpid2,
+                        border_link[j]
+                    ])
+
                     # Add link from existing thick-wall points to this one
-                    ThickWalls[twpid1][int(5 + n_thick_wall[twpid1])] = twpid
-                    ThickWalls[twpid2][int(5 + n_thick_wall[twpid2])] = twpid
+                    n_twid1_idx = n_thick_wall[twpid1][0]
+                    n_twid2_idx = n_thick_wall[twpid2][0]
+                    thick_wall[twpid1][int(5 + n_twid1_idx)] = twpid
+                    thick_wall[twpid2][int(5 + n_twid2_idx)] = twpid
                     n_thick_wall[twpid1] += 1
                     n_thick_wall[twpid2] += 1
 
                     # Cell ↔ thick-node map
                     cell_idx = int(cid - network.n_wall_junction)
-                    pos_c  = int(n_cell_to_thick_wall[cell_idx])
+                    pos_c  = int(n_cell_to_thick_wall[cell_idx][0])
                     cell_to_thick_wall[cell_idx][pos_c] = twpid
                     n_cell_to_thick_wall[cell_idx] += 1
 
@@ -337,8 +333,8 @@ def prepare_geometrical_properties(general, network, position, indice):
                     n_thick_wall_polygon_x[poly_w] += 1
 
                     # New wall ID for each original wall/junction
-                    wall_to_wall_x[j][int(n_wall_to_wall_x[j])] = twpidX
-                    n_wall_to_wall_x[j] += 1
+                    wall_to_wall_x[j][int(n_wall_to_wall_x[j][0])] = twpidX
+                    n_wall_to_wall_x[j][0] += 1
 
                     twpid += 1
                     twpidX += 1
@@ -374,10 +370,13 @@ def prepare_geometrical_properties(general, network, position, indice):
                             thick_wall_polygon_x[poly_b][2] = twpidX
                         n_thick_wall_polygon_x[poly_b] += 1
 
-                        wall_to_wall_x[j][int(n_wall_to_wall_x[j])] = twpidX
-                        n_wall_to_wall_x[j] += 1
+                        wall_to_wall_x[j][int(n_wall_to_wall_x[j][0])] = twpidX
+                        n_wall_to_wall_x[j][0] += 1
                         twpidX += 1
 
+    # Convert thick_wall to numpy array after all entries are built
+    if use_thick:
+        thick_wall = None # np.array(thick_wall, dtype=float)
 
     return {
         'wall_to_cell': wall_to_cell,

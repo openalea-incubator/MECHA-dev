@@ -75,6 +75,7 @@ from __future__ import annotations
 import math
 import os
 from typing import Any, Dict, List, Optional, Tuple, Union
+from shapely.geometry import Polygon
 
 import numpy as np
 
@@ -241,11 +242,14 @@ def _export_cells(
     indice: Dict[int, int],
     extrude_z: float,
 ) -> None:
-    """Export cell polygons as extruded prisms to *filepath*."""
+    """Export cell polygons as extruded prisms to *filepath*.""" 
 
     cm = obj.network.cell_manager
     if not cm:
         return
+
+    # Get im_scale for coordinate scaling (convert from image units to microns)
+    im_scale = getattr(obj.geometry, 'im_scale', 1000.0)
 
     points: List[Tuple[float, float, float]] = []
     polygons: List[List[int]] = []
@@ -269,6 +273,7 @@ def _export_cells(
         if c_type is None:
             c_type = "default"
         wt = get_thickness(c_type)
+
         if poly is not None and not poly.is_empty:
             poly = poly.buffer(-wt/2)
             if poly is None or poly.is_empty:
@@ -279,6 +284,25 @@ def _export_cells(
             coords = _reconstruct_polygon_from_walls(cell)
             if coords is None:
                 continue  # no geometry available
+
+        # Apply order_polygon to reorder coordinates around centroid
+        if coords and len(coords) >= 3 and obj.cellset_data is not None:
+            # --- Helper: order points around centroid (fallback) ---
+            def order_polygon(points: List[Tuple[float, float]]) -> Polygon:
+                """
+                Given a list of (x, y) coordinates, order them around the centroid.
+                """
+                arr = np.array(points)
+                # convex hull
+                hull = Polygon(arr)
+                # centroid of hull
+                cx, cy = hull.centroid.x, hull.centroid.y
+                angles = np.arctan2(arr[:, 1] - cy, arr[:, 0] - cx)
+                ordered = arr[np.argsort(angles)]
+                return Polygon(ordered)
+            ordered_poly = order_polygon(coords)
+            coords = list(ordered_poly.exterior.coords)[:-1]
+            coords = [(x * im_scale, y * im_scale) for x, y in coords]
 
         n = len(coords)
         if n < 3:
@@ -668,6 +692,7 @@ def _export_plasmodesmata(
     K_vals: List[float] = []
     Q_vals: List[float] = []
     kpl_vals: List[float] = []
+    vel_vals: List[float] = []
 
     # node_id → point index (so cell centroids are shared across PDs)
     node_to_pt: Dict[int, int] = {}
@@ -700,8 +725,9 @@ def _export_plasmodesmata(
             graph.edges.get((cj.node_id, ci.node_id), {}),
         )
         K_vals.append(_safe(edge_data.get("K")))
-        Q_vals.append(_safe(edge_data.get("Q")))
+        Q_vals.append(abs(_safe(edge_data.get("Q"))))
         kpl_vals.append(_safe(pd.kpl))
+        vel_vals.append(abs(_safe(edge_data.get("velocity"))))
 
     if not polylines:
         print("[paraview_export] No plasmodesmata — skipping.")
@@ -721,6 +747,7 @@ def _export_plasmodesmata(
         _write_scalar(f, "K_pd", K_vals)
         _write_scalar(f, "Q_pd", Q_vals)
         _write_scalar(f, "kpl", kpl_vals)
+        _write_scalar(f, "velocity_pd", vel_vals)
 
     print(
         f"[paraview_export] Plasmodesmata → {filepath}  "
@@ -920,10 +947,11 @@ def export_to_vtk(
     indice: Dict[int, int] = getattr(obj, "indice", {})
 
     for m_val, s_val in to_export:
+        maturity_name = obj.geometry.maturity_stages[m_val]['apo_barrier_type']
         # Determine prefix for this iteration
         if len(to_export) > 1:
             s_suffix = str(s_val).replace(" ", "_")
-            current_prefix = f"{prefix}_mat{m_val}_scen{s_suffix}"
+            current_prefix = f"{prefix}_mat_{maturity_name}_scen_{s_suffix}"
         else:
             current_prefix = prefix
 
