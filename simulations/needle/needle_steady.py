@@ -52,6 +52,7 @@ UNITS
 
 import os
 import sys
+import copy
 import numpy as np
 import scipy.sparse as sp
 from scipy.sparse import csgraph
@@ -71,14 +72,15 @@ _GRANAP_SRC = os.path.join(_SCRIPT_DIR, '..', '..', 'GRANAP-dev', 'src')
 for p in (_MECHA_SRC, _GRANAP_SRC):
     sys.path.insert(0, os.path.abspath(p))
 
-from granap.needle_class import NeedleAnatomy
-from mecha.mecha_class import Mecha
-from mecha.utils.data_loader import InData
-from mecha.utils.network_builder import NetworkBuilder
-from mecha.solute_transport import SoluteTransport
-from mecha.utils.scenario_builder import ScenarioBuilder
-from mecha.utils.visu import visualize
-from mecha.utils.network_export import _plot_edge_vector_property
+from openalea.granap.needle_class import NeedleAnatomy
+from openalea.mecha.mecha_class import Mecha
+from openalea.mecha.utils.data_loader import InData
+from openalea.mecha.utils.network_builder import NetworkBuilder
+from openalea.mecha.utils.solute_transport import SoluteTransport
+from openalea.mecha.utils.scenario_builder import ScenarioBuilder
+from openalea.mecha.utils.coupled_solver import coupled_water_solute_solve
+from openalea.mecha.utils.visu import visualize
+from openalea.mecha.utils.network_export import _plot_edge_vector_property
 
 
 def _plot_concentration_polygon(mecha_obj, sol_arr, label, title, save_path,
@@ -151,10 +153,89 @@ D_MEM    = 1e-6    # cm²/d  passive transmembrane diffusivity (sucrose; <<D_PD,
 # (Steudle 1993, Tyree & Zimmermann 2002, Nobel 2009)
 SIGMA_SUCROSE = 0.9
 
+# ---- Temperature (van't Hoff) ------------------------------------------------
+# Osmotic potential is derived from the solute concentration via van't Hoff:
+#   Ψ_os [hPa] = −R·T × c [mol/cm³]   with R = 8.314e4 hPa cm³ mol⁻¹ K⁻¹
+# At C_MESO = 50 mM and 25 °C this gives Ψ_os ≈ −1239 hPa.
+T_KELVIN = 298.15   # K  (25 °C)
+
+# ---- Coupling controls -------------------------------------------------------
+# The water flux and solute transport are coupled: the sucrose concentration
+# sets the cell osmotic potential (van't Hoff), which drives the transmembrane
+# water flux (Kedem–Katchalsky), which advects the sucrose.  The loop is solved
+# to a fixed point by coupled_water_solute_solve.
+COUPLE_TOL     = 10.0   # hPa   convergence tol on max|Δψ_total|
+COUPLE_MAXITER = 30     # outer iterations
+COUPLE_RELAX   = 0.5    # under-relaxation ω ∈ (0,1] to stabilise the feedback
+# operators for the transport solve inside the coupling loop:
+#   'D'  diffusion only — solute concentration is flow-INDEPENDENT, so the
+#        loop reaches a genuine fixed point in ~2 iterations while STILL
+#        exercising the full concentration → Ψ_os (van't Hoff) → transmembrane
+#        water-flux (Kedem-Katchalsky) coupling.  Stable for the stiff needle
+#        Casparian osmotic drive (Ψ_os up to several thousand hPa).
+#   'T'  advection + diffusion — adds solute advection by the water flow.  With
+#        the strong needle osmotic drive the bare Picard loop limit-cycles and
+#        does not reach a tight fixed point (documented in coupled_solver.py).
+COUPLE_OPS     = 'T'    # diffusion-only transport (stable, flow-independent c)
+
+# ---- Advective-coupling stabilisation ---------------------------------------
+# Two numerical options for making operators='T' (advective coupling) tractable.
+# Both are wired through SoluteTransport.solve / coupled_water_solute_solve:
+#
+#   COUPLE_SCHEME='sg'    Scharfetter–Gummel: the FULL operator T = advection +
+#                         diffusion is built in one per-edge pass
+#                         (SoluteTransport.build_transport_operator), so D and A
+#                         are discretised on the same footing.  The resulting T
+#                         is a proper M-matrix (off-diagonals ≥ 0), hence
+#                         non-oscillatory at ANY mesh Peclet — no negative or
+#                         over-source concentrations, unlike first-order upwind.
+#                         Requires COUPLE_OPS='T'.
+#
+#   COUPLE_TIMESTEP=True  Implicit-Euler pseudo-time march to steady state
+#                         (theta=1): unconditionally non-oscillatory TIME
+#                         integration; damps the transport update each outer
+#                         iteration.  Enable with COUPLE_OPS='T' to march instead
+#                         of solving the steady operator in one shot.
+#
+# Note: SG fixes the SPATIAL operator.  The OUTER solute→osmotic→water feedback
+# is repelling under the very strong needle Casparian drive, so it is solved
+# with the JFNK Newton–Krylov method configured below rather than a fixed-point
+# iteration.  Run the full advective coupling with
+# COUPLE_OPS='T' + COUPLE_SCHEME='sg' + COUPLE_METHOD='jfnk'.
+COUPLE_SCHEME   = 'sg'  # 'upwind' | 'sg'  (sg requires COUPLE_OPS='T')
+COUPLE_TIMESTEP = False     # implicit-Euler pseudo-time march (suggestion 1)
+COUPLE_THETA    = 1.0       # 1.0 = implicit Euler (recommended); 0.5 = CN
+COUPLE_DT       = 1e-2      # d   pseudo-time step for the implicit march
+
+# ---- Outer solver: Jacobian-Free Newton–Krylov (JFNK) ------------------------
+# Under the strong needle drive the concentration→Ψ_os→water→concentration
+# fixed-point map g(c) has spectral radius > 1, so plain Picard (and any linear
+# extrapolation of it — Anderson/Pulay) limit-cycles or blows up.  JFNK instead
+# drives the residual F(c) = g(c) − c to zero with Newton's method
+# (scipy.optimize.newton_krylov): the Jacobian action is finite-differenced and
+# the Newton system solved matrix-free with GMRES, plus an Armijo line search for
+# globalisation.  Newton does NOT require g to be a contraction, so it converges
+# where the fixed-point iteration diverges.
+#   COUPLE_METHOD='jfnk'     Newton–Krylov (recommended for the coupled needle).
+#   COUPLE_METHOD='picard'   legacy fixed-point iteration (+ COUPLE_RELAX).
+#   COUPLE_CONTINUATION      Homotopy schedule on the osmotic drive: ramp λ from
+#                            an easy small value up to 1, warm-starting each JFNK
+#                            solve.  e.g. [0.25, 0.5, 1.0].  None → single stage.
+COUPLE_METHOD        = 'jfnk'   # 'jfnk' | 'picard'
+COUPLE_JFNK_MAXITER  = 25       # max Newton iterations per continuation stage
+COUPLE_JFNK_INNER    = 120      # max inner GMRES iterations per Newton step
+COUPLE_JFNK_FTOL     = None     # residual ‖F‖ tol; None → derived from COUPLE_TOL
+COUPLE_JFNK_LS       = 'armijo' # line search: 'armijo' | 'wolfe' | None
+COUPLE_JFNK_RDIFF    = 1e-3     # relative FD step for the matrix-free Jacobian
+COUPLE_CONTINUATION  = [0.25, 0.5, 1.0]   # None → single stage at λ=1
+
 # ---- Indices ----------------------------------------------------------------
+# The coupled solver requires i_scenario >= 1: scenario 0 has no osmotic term
+# and cannot carry the concentration-derived Ψ_os feedback.  We build scenario 1
+# with the osmotic operator enabled (s_factor = σ) below.
 H_IDX  = 0    # hydraulic parameter set index
 I_MAT  = 0    # maturity stage index (only one stage here)
-I_SCE  = 0    # scenario index
+I_SCE  = 1    # osmotic scenario index (coupled; scenario 0 is pure hydraulic)
 
 # cgroup → readable tissue name
 CGROUP_NAMES = {
@@ -219,6 +300,29 @@ network.populate_from_network()
 default_input = InData()
 default_input.geometry.set_maturity_stages([1], [200.0])
 default_input.hydraulic.xcontactrange = [X_CONTACT]   # disable outer-boundary soil contact
+
+# Scenario 0: pure hydraulic (no osmotic operator).  Cannot be coupled.
+default_input.boundary.scenarios[0]['os_cortex']     = 0.0
+default_input.boundary.scenarios[0]['osmotic_sieve'] = 0.0
+default_input.boundary.scenarios[0]['s_factor']      = 0.0
+
+# Scenario 1 (I_SCE): osmotic operator ON.  s_factor = σ activates the
+# reflection-coefficient term so the concentration-derived Ψ_os set on each
+# cell (via van't Hoff) drives the transmembrane water flux.  ALL background
+# osmotic terms (cell os_cortex/os_hetero and the xylem/endo/sieve wall
+# osmolality inherited from the default scenario) are zeroed so the ONLY
+# osmotic contribution is the dynamic sucrose term from the transport solve.
+# This makes the concentration → Ψ_os loading exactly Ψ_os = −R·T·c.
+_s1 = copy.deepcopy(default_input.boundary.scenarios[0])
+_s1['s_factor']      = SIGMA_SUCROSE
+_s1['os_hetero']     = 0
+_s1['os_cortex']     = 0.0
+_s1['osmotic_sieve'] = 0.0
+_s1['osmotic_xyl']   = 0.0
+_s1['osmotic_endo']  = 0.0
+_s1['osmotic_left_soil']  = 0.0
+_s1['osmotic_right_soil'] = 0.0
+default_input.boundary.add_scenario(_s1)
 
 mecha = Mecha(default_input, network=network)
 
@@ -335,33 +439,29 @@ print(f"  Guard cells            (cgroup 12) : {len(guard_node_ids)}")
 print(f"  Stomatal air spaces (atm BC)       : {len(stomatal_airspace_ids)}")
 
 
-# ── 4. Solve hydraulics (Dirichlet: xylem = PSI_XYL, stomata = PSI_ATM) ──────
+# ── 4. Preliminary hydraulic solve (osmosis OFF — for the initial BC map) ────
+#
+# This is only a reference solve WITHOUT the concentration → osmotic feedback,
+# used to draw the initial water-potential BC map and to report the purely
+# pressure-driven baseline.  The physically coupled solve (concentration →
+# van't Hoff Ψ_os → Kedem-Katchalsky water flux → advection) is performed in
+# Section 6c via coupled_water_solute_solve once the transport operator and
+# solute BCs are available.
 
-print(f"\n=== 4. Hydraulic solve  PSI_XYL = {PSI_XYL:.0f} hPa  PSI_ATM = {PSI_ATM:.0f} hPa ===")
+print(f"\n=== 4. Preliminary hydraulic solve  PSI_XYL = {PSI_XYL:.0f} hPa  PSI_ATM = {PSI_ATM:.0f} hPa ===")
 
 h_cm = float(mecha.geometry.maturity_stages[I_MAT].get('height')) * 1e-4
 print(f"  Section height: {h_cm*1e4:.0f} µm = {h_cm:.4f} cm")
 print(f"  Stomatal air spaces wired to atmosphere: {len(stomatal_airspace_ids)} cells")
 
-
-def _solve_and_build_fluxes():
-    """Dirichlet xylem + stomatal BCs → solve hydraulics → return (sol_arr, fluxes)."""
-    sol_W, _verify, mat_W, _kmb, _rhs_s = mecha.solve_W(h=H_IDX, i_maturity=I_MAT)
-    sol_arr = np.array(sol_W).ravel()
-    coo = mat_W.tocoo()
-    fluxes = []
-    for i, j, v in zip(coo.row, coo.col, coo.data):
-        if i < j and v > 0:
-            pi, pj = float(sol_arr[i]), float(sol_arr[j])
-            if not (np.isnan(pi) or np.isnan(pj)):
-                f = v * (pi - pj)
-                fluxes.append({'source': int(i), 'target': int(j), 'flux': f})
-    return sol_arr, fluxes
-
-
-sol_W, fluxes = _solve_and_build_fluxes()
-mecha.edge_flux_list[I_MAT][I_SCE] = fluxes
-print(f"  Hydraulic solve done: {len(fluxes)} edge fluxes")
+# water_flux() solves scenario I_SCE and writes edge fluxes (Q, velocity) onto
+# the graph and into mecha.edge_flux_list[I_MAT][I_SCE] via compute_edge_flows.
+# At this point all cell psi_os are still the scenario defaults (0), so this is
+# the osmosis-free baseline.
+mecha.water_flux(h=H_IDX, verbose=False)
+fluxes = mecha.edge_flux_list[I_MAT][I_SCE]
+sol_W = np.array(mecha.standardized_results[-1]).ravel()
+print(f"  Baseline (osmosis OFF) hydraulic solve done: {len(fluxes)} edge fluxes")
 
 # Pressure at xylem nodes
 xyl_psis = [float(sol_W[mecha.indice[nd]])
@@ -408,12 +508,8 @@ _plot_concentration_polygon(
 # The sign convention: flux recorded with F > 0 meaning net flow source→target;
 # we track net signed flux between tissue groups to reveal the flow direction.
 
-print("\n=== 5. Water flow connectivity check ===")
+print("\n=== 5. Water flow connectivity check (baseline, osmosis OFF) ===")
 
-# Aggregate signed flux between tissue-group pairs (positive = flow in that direction)
-flux_apo_by_pair  = defaultdict(float)   # apoplastic (apo-apo) tissue pairs
-flux_mem_by_type  = defaultdict(float)   # transmembrane: tissue direction
-flux_pd_by_pair   = defaultdict(float)   # symplastic PD: tissue-cell pairs
 
 def _cgroup_label(idx):
     """Return tissue label for a node index (wall nodes grouped as 'apoplast')."""
@@ -423,67 +519,72 @@ def _cgroup_label(idx):
     cg  = cgroup_of_cell.get(cid, -1)
     return CGROUP_NAMES.get(cg, f'cgroup_{cg}')
 
-for edge in fluxes:
-    src, tgt, F = edge['source'], edge['target'], edge['flux']
-    src_apo = src < nwj
-    tgt_apo = tgt < nwj
 
-    sl = _cgroup_label(src)
-    tl = _cgroup_label(tgt)
+def _analyze_water_connectivity(flux_edges, show=True):
+    """Aggregate signed water fluxes by tissue and print a summary.
 
-    if src_apo and tgt_apo:
-        # Apoplastic wall-to-wall flow
-        key = (sl, tl) if sl <= tl else (tl, sl)
-        flux_apo_by_pair[key] += abs(F)
-    elif not src_apo and not tgt_apo:
-        # Symplastic PD flow: F > 0 means flow from src-cell to tgt-cell
-        key = (sl, tl) if F > 0 else (tl, sl)
-        flux_pd_by_pair[key] += abs(F)
-    else:
-        # Transmembrane.  F is computed as K × (P_src − P_tgt):
-        #   F > 0 → actual flow from src to tgt
-        #   F < 0 → actual flow from tgt to src
-        # One of src/tgt is an apo wall, the other is a cell.
-        if src_apo and not tgt_apo:
-            # src = wall, tgt = cell
-            cell_label = tl
-            direction  = 'apo→cell' if F > 0 else 'cell→apo'
+    Returns (net_flux_per_cg, pd_sorted, mem_sorted).  Called on the baseline
+    (osmosis-off) fluxes and again on the coupled fluxes so the reported flow
+    path reflects the concentration → osmotic → water feedback.
+    """
+    flux_apo_by_pair = defaultdict(float)
+    flux_mem_by_type = defaultdict(float)
+    flux_pd_by_pair  = defaultdict(float)
+
+    for edge in flux_edges:
+        src, tgt, F = edge['source'], edge['target'], edge['flux']
+        src_apo = src < nwj
+        tgt_apo = tgt < nwj
+        sl = _cgroup_label(src)
+        tl = _cgroup_label(tgt)
+
+        if src_apo and tgt_apo:
+            key = (sl, tl) if sl <= tl else (tl, sl)
+            flux_apo_by_pair[key] += abs(F)
+        elif not src_apo and not tgt_apo:
+            key = (sl, tl) if F > 0 else (tl, sl)
+            flux_pd_by_pair[key] += abs(F)
         else:
-            # src = cell, tgt = wall
-            cell_label = sl
-            direction  = 'cell→apo' if F > 0 else 'apo→cell'
-        flux_mem_by_type[(cell_label, direction)] += abs(F)
+            if src_apo and not tgt_apo:
+                cell_label = tl
+                direction  = 'apo→cell' if F > 0 else 'cell→apo'
+            else:
+                cell_label = sl
+                direction  = 'cell→apo' if F > 0 else 'apo→cell'
+            flux_mem_by_type[(cell_label, direction)] += abs(F)
 
-# Net water flux per cell type (sum of all edges entering that cell type)
-net_flux_per_cg = defaultdict(float)
-for edge in fluxes:
-    src, tgt, F = edge['source'], edge['target'], edge['flux']
-    # Positive flow from src to tgt
-    net_flux_per_cg[_cgroup_label(tgt)] += F
-    net_flux_per_cg[_cgroup_label(src)] -= F
+    net_flux = defaultdict(float)
+    for edge in flux_edges:
+        src, tgt, F = edge['source'], edge['target'], edge['flux']
+        net_flux[_cgroup_label(tgt)] += F
+        net_flux[_cgroup_label(src)] -= F
 
-print("\n  Net water flux per tissue type (+ = net inflow, − = net outflow):")
-ordered_tissues = ['xylem', 'transfusion parenchyma', 'endodermis',
+    pd_top  = sorted(flux_pd_by_pair.items(),  key=lambda x: -x[1])[:8]
+    mem_top = sorted(flux_mem_by_type.items(), key=lambda x: -x[1])[:8]
+
+    if show:
+        print("\n  Net water flux per tissue type (+ = net inflow, − = net outflow):")
+        ordered = ['xylem', 'transfusion parenchyma', 'endodermis',
                    'mesophyll / airspace', 'Strasburger cell',
                    'phloem sieve', 'epidermis', 'apoplast']
-for tissue in ordered_tissues + [t for t in sorted(net_flux_per_cg) if t not in ordered_tissues]:
-    q = net_flux_per_cg.get(tissue, 0.0)
-    if abs(q) > 1e-15:
-        print(f"    {tissue:30s}  {q:+.3e} cm³/d")
+        for tissue in ordered + [t for t in sorted(net_flux) if t not in ordered]:
+            q = net_flux.get(tissue, 0.0)
+            if abs(q) > 1e-15:
+                print(f"    {tissue:30s}  {q:+.3e} cm³/d")
+        print("\n  Top PD water fluxes between cell types:")
+        for (a, b), q in pd_top:
+            if q > 1e-15:
+                print(f"    {a:25s} → {b:25s}   {q:.3e} cm³/d")
+        print("\n  Top transmembrane fluxes (mem edges):")
+        for (tissue, direction), q in mem_top:
+            if q > 1e-15:
+                print(f"    {tissue:25s}  {direction:12s}   {q:.3e} cm³/d")
 
-# Top PD-mediated symplastic fluxes (reveals symplastic water path)
-print("\n  Top PD water fluxes between cell types:")
-pd_sorted = sorted(flux_pd_by_pair.items(), key=lambda x: -x[1])[:8]
-for (a, b), q in pd_sorted:
-    if q > 1e-15:
-        print(f"    {a:25s} → {b:25s}   {q:.3e} cm³/d")
+    return net_flux, pd_top, mem_top
 
-# Top transmembrane fluxes (reveals Casparian strip waterpath)
-print("\n  Top transmembrane fluxes (mem edges):")
-mem_sorted = sorted(flux_mem_by_type.items(), key=lambda x: -x[1])[:8]
-for (tissue, direction), q in mem_sorted:
-    if q > 1e-15:
-        print(f"    {tissue:25s}  {direction:12s}   {q:.3e} cm³/d")
+
+# Baseline connectivity (osmosis OFF) — recomputed from the coupled flow in Sec. 7c.
+net_flux_per_cg, pd_sorted, mem_sorted = _analyze_water_connectivity(fluxes)
 
 
 # ── 6. SoluteTransport setup and connectivity ─────────────────────────────────
@@ -492,7 +593,10 @@ print("\n=== 6. Building SoluteTransport operator (full, steady-state) ===")
 
 DP_FULL = dict(apo_wall=D_APO, membrane=D_MEM, plasmodesmata=D_PD,
                sigma={cg: SIGMA_SUCROSE for cg in range(1, 20)})
-st = SoluteTransport(mecha, DP_FULL, None, mode='full')
+# Capacitance (node storage) is needed only for the implicit-Euler pseudo-time
+# march (COUPLE_TIMESTEP); it defines C/dt in [C/dt − θT] c_new = C/dt c_old + rhs.
+_cap = {'dt': COUPLE_DT} if COUPLE_TIMESTEP else None
+st = SoluteTransport(mecha, DP_FULL, _cap, mode='full')
 
 D_mat = st.build_diffusion_matrix(H_IDX, I_MAT)
 D_diag = np.abs(D_mat.diagonal())
@@ -568,25 +672,126 @@ for cid in xylem_cell_ids:
 
 rhs = np.zeros(N_TOTAL)
 
-A_mat = st.build_advection_matrix(I_MAT, I_SCE)
-A_diag_max = float(np.abs(A_mat.diagonal()).max())
+# Mesh Peclet (from the baseline, osmosis-off UPWIND advection) — a coupling
+# diagnostic (raw |F|/D ratio; upwind so it reflects the true edge Peclet).
+# At this point every cell psi_os is still 0 (no coupling has run yet), so the
+# advection matrix carries NO osmotic contribution: this is the true baseline.
+A_mat0 = st.build_advection_matrix(I_MAT, I_SCE)                     # upwind, Pe diag
+A_diag_max = float(np.abs(A_mat0.diagonal()).max())
 Pe_mesh_global = A_diag_max / D_diag_max if D_diag_max > 0 else 0.0
-print(f"  Global mesh Peclet number (full) = {Pe_mesh_global:.4f}")
+print(f"  Global mesh Peclet number (baseline, full) = {Pe_mesh_global:.4f}")
 
-# Regularise T = D + A with small ε to handle structural null space
-EPS = 1e-10 * D_diag_max
-T_mat = D_mat + A_mat + EPS * sp.eye(N_TOTAL, format='csr')
+# Baseline "advection-equivalent" matrix in the SAME scheme as the coupling
+# loop, captured now while psi_os = 0 (osmosis OFF).  Used by the Section 8b
+# significance solve so both ON and OFF loadings use the same operator.  For SG
+# the operator is not separable, so we return (T_sg − D) such that D + A == T_sg
+# reconstructs the full Scharfetter–Gummel operator downstream.
+def _advection_equiv(scheme):
+    if scheme == 'sg':
+        return (st.build_transport_operator(H_IDX, I_MAT, I_SCE, scheme='sg')
+                - D_mat)
+    return st.build_advection_matrix(I_MAT, I_SCE)
 
-T_lil = T_mat.tolil()
-for node_id, c_val in bc.items():
-    if 0 <= node_id < N_TOTAL:
-        T_lil[node_id, :] = 0.0
-        T_lil[node_id, node_id] = 1.0
-        rhs[node_id] = float(c_val)
-T_csr = T_lil.tocsr()
+A_mat0_sig = _advection_equiv(COUPLE_SCHEME)
 
-import scipy.sparse.linalg as spla
-c_sol = spla.spsolve(T_csr, rhs)
+
+def _solve_transport_and_loading(A_operator, include_advection_in_solve):
+    """Solve steady transport for a given advection matrix; return loading metrics.
+
+    include_advection_in_solve mirrors the coupling loop's ``operators`` choice:
+      True  → solve the full operator  T_solve = D + A   (matches operators='T')
+      False → solve diffusion only     T_solve = D       (matches operators='D';
+              c is then flow-independent and numerically stable at any osmotic
+              strength — this is what the coupled loop actually used).
+
+    In BOTH cases the PHYSICAL loading flux is reported with the full operator
+    T_phys = D + A applied to the solved field, split into its diffusive (D·c)
+    and advective (A·c) parts so the osmotic-sensitive advective share is
+    explicit.  Returns (c, Q_diff, Q_adv, dc_load).
+    """
+    import scipy.sparse.linalg as _spla
+    T_solve = (D_mat + A_operator) if include_advection_in_solve else D_mat
+    EPS_ = 1e-10 * D_diag_max
+    T_ = (T_solve + EPS_ * sp.eye(N_TOTAL, format='csr')).tolil()
+    rhs_ = np.zeros(N_TOTAL)
+    for node_id, c_val in bc.items():
+        if 0 <= node_id < N_TOTAL:
+            T_[node_id, :] = 0.0
+            T_[node_id, node_id] = 1.0
+            rhs_[node_id] = float(c_val)
+    c_ = _spla.spsolve(T_.tocsr(), rhs_)
+    idx = nwj + np.array(phloem_loading_ids) if phloem_loading_ids else None
+    Q_diff = float(np.sum(D_mat.dot(c_)[idx]))       if idx is not None else np.nan
+    Q_adv  = float(np.sum(A_operator.dot(c_)[idx]))  if idx is not None else np.nan
+    c_tr = (float(np.mean(c_[nwj + np.array(transfusion_parenchyma_ids)]))
+            if transfusion_parenchyma_ids else np.nan)
+    c_st = (float(np.mean(c_[nwj + np.array(strasburger_cell_ids)]))
+            if strasburger_cell_ids else np.nan)
+    dc_ = c_tr - (c_st if not np.isnan(c_st) else C_PHLOEM)
+    return c_, Q_diff, Q_adv, dc_
+
+
+# Baseline (osmosis OFF): solved with the SAME operator regime + scheme as the
+# coupling loop, using the osmosis-free advection matrix A_mat0_sig (captured
+# while psi_os=0).  With SG this D + A_sg baseline solve is well-posed.
+_use_adv = (COUPLE_OPS != 'D')
+(c_baseline, Qdiff_baseline, Qadv_baseline,
+ dc_load_baseline) = _solve_transport_and_loading(A_mat0_sig, _use_adv)
+Q_load_baseline = Qdiff_baseline + Qadv_baseline
+
+# ── Coupled water–solute solve ─────────────────────────────────────────────────
+# This is the two-way coupling: on each outer iteration the transport solve
+# yields c, the cell osmotic potentials are set from c via van't Hoff
+# (Ψ_os = −R·T·c), the hydraulics are re-solved with those Ψ_os (Kedem-Katchalsky
+# transmembrane flux), and the new water flow feeds back into the advection
+# operator.  Iterated to a fixed point on max|Δψ_total|.
+print(f"\n  Coupling water flux ↔ osmotic potential:")
+print(f"    T = {T_KELVIN:.2f} K  →  Ψ_os(c_meso) = {-8.314e4 * T_KELVIN * C_MESO:.1f} hPa")
+print(f"    operators='{COUPLE_OPS}'  scheme='{COUPLE_SCHEME}'  "
+      f"time_stepping={COUPLE_TIMESTEP} (θ={COUPLE_THETA}, dt={COUPLE_DT} d)")
+_accel_note = (f"JFNK maxiter={COUPLE_JFNK_MAXITER} inner={COUPLE_JFNK_INNER} "
+               f"ls={COUPLE_JFNK_LS}"
+               if COUPLE_METHOD == 'jfnk' else f"Picard ω={COUPLE_RELAX}")
+_cont_note = ("" if not COUPLE_CONTINUATION
+              else f"  continuation={COUPLE_CONTINUATION}")
+print(f"    method={_accel_note}  tol={COUPLE_TOL} hPa{_cont_note}")
+
+c_sol, n_couple_iter, couple_converged = coupled_water_solute_solve(
+    mecha, st,
+    T=T_KELVIN,
+    boundary_conditions=bc,
+    rhs=rhs,
+    i_scenario=I_SCE,
+    i_maturity=I_MAT,
+    h=H_IDX,
+    tol=COUPLE_TOL,
+    max_iter=COUPLE_MAXITER,
+    operators=COUPLE_OPS,
+    relaxation=COUPLE_RELAX,
+    component_tol=COUPLE_TOL,
+    scheme=COUPLE_SCHEME,
+    time_stepping=COUPLE_TIMESTEP,
+    theta=COUPLE_THETA,
+    method=COUPLE_METHOD,
+    jfnk_f_tol=COUPLE_JFNK_FTOL,
+    jfnk_maxiter=COUPLE_JFNK_MAXITER,
+    jfnk_inner_maxiter=COUPLE_JFNK_INNER,
+    jfnk_line_search=COUPLE_JFNK_LS,
+    jfnk_rdiff=COUPLE_JFNK_RDIFF,
+    continuation_steps=COUPLE_CONTINUATION,
+    verbose=True,
+)
+print(f"  Coupled solve: {n_couple_iter} iteration(s), "
+      f"converged={couple_converged}")
+
+# Refresh the flux list + advection/diffusion matrices from the CONVERGED
+# coupled state so all downstream metrics/plots use the coupled water flow.
+# Use the SAME scheme as the coupling loop so D + A_mat reproduces the operator
+# that produced c_sol.  For SG the operator is not separable, so A_mat is the
+# advection-equivalent (T_sg − D) and D + A_mat == T_sg exactly.
+fluxes = mecha.edge_flux_list[I_MAT][I_SCE]
+D_mat  = st.build_diffusion_matrix(H_IDX, I_MAT)
+A_mat  = _advection_equiv(COUPLE_SCHEME)
 
 if np.any(np.isnan(c_sol)) or np.any(np.isinf(c_sol)):
     print("  WARNING: transport solve returned NaN/Inf — system may be singular")
@@ -595,6 +800,42 @@ else:
     c_walls = c_sol[:nwj]
     print(f"  Solve OK.  Cell c range:  [{c_cells.min()*1e6:.2f}, {c_cells.max()*1e6:.2f}] µM")
     print(f"             Wall c range:  [{c_walls.min()*1e6:.2f}, {c_walls.max()*1e6:.2f}] µM")
+
+# ── Verify osmotic pressure was loaded from the solute concentration ──────────
+# Ψ_os should equal −R·T·c on every non-BC cell (baseline here is 0).  Compare
+# the van't Hoff prediction against the psi_os actually stored on the cells.
+print("\n  Osmotic-loading check (Ψ_os = −R·T·c, van't Hoff):")
+_RT = 8.314e4 * T_KELVIN
+manager = mecha.network.cell_manager
+_c_used_cells = c_sol[nwj: nwj + n_cells]
+_expected = -_RT * _c_used_cells
+_stored   = np.array([cell.psi_os if cell.psi_os is not None else np.nan
+                      for cell in manager])
+_finite = np.isfinite(_stored) & np.isfinite(_expected)
+_max_err = float('nan')
+if np.any(_finite):
+    _max_err = float(np.max(np.abs(_stored[_finite] - _expected[_finite])))
+    print(f"    cells checked          : {int(np.sum(_finite))} / {n_cells}")
+    print(f"    max |Ψ_os_stored − (−R·T·c)| = {_max_err:.3e} hPa")
+    print(f"    Ψ_os range (stored)    : "
+          f"[{np.nanmin(_stored):.1f}, {np.nanmax(_stored):.1f}] hPa")
+    if _max_err < 1e-3:
+        print(f"    → OK: osmotic potential correctly loaded from concentration.")
+    else:
+        print(f"    → WARNING: stored Ψ_os deviates from van't Hoff prediction.")
+
+# Report the coupled water-potential components (turgor vs osmotic).
+_psi_p  = np.array([c.psi_p     if c.psi_p     is not None else np.nan for c in manager])
+_psi_t  = np.array([c.psi_total if c.psi_total is not None else np.nan for c in manager])
+print(f"    Ψ_p    range (turgor)  : [{np.nanmin(_psi_p):.1f}, {np.nanmax(_psi_p):.1f}] hPa")
+print(f"    Ψ_total range          : [{np.nanmin(_psi_t):.1f}, {np.nanmax(_psi_t):.1f}] hPa")
+
+
+# ── 7c. Coupled water-flow connectivity (osmosis ON) ─────────────────────────
+# Re-aggregate the water fluxes from the converged coupled state so the reported
+# flow path reflects the concentration → osmotic → water feedback.
+print("\n=== 7c. Water flow connectivity (coupled, osmosis ON) ===")
+net_flux_per_cg, pd_sorted, mem_sorted = _analyze_water_connectivity(fluxes)
 
 
 # ── 7b. Initial concentration field (BC map) ──────────────────────────────────
@@ -666,6 +907,84 @@ print(f"\n  ── Loading site ──")
 print(f"  Δc_load (transfusion → Strasburger) = {dc_load*1e6:.2f} µM")
 print(f"    (last upstream step into phloem loading complex)")
 print(f"  Q_load (full operator)              = {Q_load*1e12:.4f} pmol/d")
+
+
+# ── 8b. Significance of the osmotic term on sugar loading ─────────────────────
+#
+# Question: how much does the osmotic pressure added from the sucrose
+# concentration (Ψ_os = −R·T·c) change phloem sugar loading?
+#
+# We isolate the effect with an apples-to-apples comparison: the SAME full
+# transport operator T = D + A is solved in two hydraulic states, differing
+# ONLY in whether the concentration-derived osmotic potentials are present.
+#   osmosis OFF : water flow from the pressure BCs alone (all Ψ_os = 0)
+#                 → advection matrix A_mat0 (no osmotic term).
+#   osmosis ON  : converged coupled water flow, where Ψ_os = −R·T·c feeds the
+#                 Kedem-Katchalsky transmembrane flux → advection matrix A_mat
+#                 (includes the osmotic membrane flux and its (1−σ) sucrose carry).
+# Both loadings are recomputed here through _solve_transport_and_loading so the
+# only difference between the two numbers is the osmotic contribution to A.
+#
+# The osmotic term shifts BOTH the water flow that advects sucrose AND, through
+# that advection, the steady concentration profile — so Δc_load moves too.
+
+print("\n=== 8b. Significance of the osmotic term on sugar loading ===")
+
+# osmosis ON: same operator regime as the coupled loop, but with the CONVERGED
+# coupled advection matrix A_mat (which carries the concentration-derived Ψ_os
+# membrane flux).
+(c_osmON, Qdiff_on, Qadv_on,
+ dc_load_on) = _solve_transport_and_loading(A_mat, _use_adv)
+Q_load_on = Qdiff_on + Qadv_on
+
+def _rel_pct(new, ref):
+    return (new - ref) / abs(ref) * 100.0 if (ref not in (0, None) and abs(ref) > 0) else float('nan')
+
+dQ_abs  = Q_load_on  - Q_load_baseline
+dQ_pct  = _rel_pct(Q_load_on,  Q_load_baseline)
+ddc_abs = dc_load_on - dc_load_baseline
+ddc_pct = _rel_pct(dc_load_on, dc_load_baseline)
+
+print(f"  Transport solved with operators='{COUPLE_OPS}' (matches the coupled loop).")
+print(f"  {'':24s}{'osmosis OFF':>15s}{'osmosis ON':>15s}{'Δ (ON−OFF)':>15s}{'rel.':>9s}")
+print(f"  {'Q_load  total [pmol/d]':24s}{Q_load_baseline*1e12:15.4f}{Q_load_on*1e12:15.4f}"
+      f"{dQ_abs*1e12:15.4f}{dQ_pct:8.1f}%")
+print(f"  {'  · diffusive [pmol/d]':24s}{Qdiff_baseline*1e12:15.4f}{Qdiff_on*1e12:15.4f}"
+      f"{(Qdiff_on-Qdiff_baseline)*1e12:15.4f}")
+print(f"  {'  · advective [pmol/d]':24s}{Qadv_baseline*1e12:15.4f}{Qadv_on*1e12:15.4f}"
+      f"{(Qadv_on-Qadv_baseline)*1e12:15.4f}")
+print(f"  {'Δc_load [µM]':24s}{dc_load_baseline*1e6:15.4f}{dc_load_on*1e6:15.4f}"
+      f"{ddc_abs*1e6:15.4f}{ddc_pct:8.1f}%")
+
+# Advective share of the ON loading — the part of Q_load that the osmotic water
+# flux can act on (diffusion is osmosis-independent when c is flow-independent).
+adv_share = (abs(Qadv_on) / (abs(Qdiff_on) + abs(Qadv_on)) * 100.0
+             if (abs(Qdiff_on) + abs(Qadv_on)) > 0 else float('nan'))
+
+_sig = ("SIGNIFICANT" if (np.isfinite(dQ_pct) and abs(dQ_pct) >= 5.0)
+        else "minor (<5%)")
+print(f"\n  Ψ_os from concentration spans [{np.nanmin(_stored):.0f}, "
+      f"{np.nanmax(_stored):.0f}] hPa vs the pressure BC ΔΨ = {PSI_XYL - PSI_ATM:.0f} hPa,")
+print(f"  so the osmotic drive is comparable to (here it exceeds) the imposed "
+      f"pressure gradient.")
+print(f"  → Osmotic-term effect on sugar loading: {_sig} "
+      f"({dQ_pct:+.1f}% on Q_load, {ddc_pct:+.1f}% on Δc_load).")
+if COUPLE_OPS == 'D':
+    print(f"    With operators='D' the sucrose field is diffusion-controlled and "
+          f"flow-independent,\n    so Q_load and Δc_load are identical ON vs OFF: "
+          f"the osmotic pressure does NOT\n    change the (diffusion-dominated) "
+          f"loading.  The advective loading that the\n    osmotic water flux "
+          f"WOULD carry is only ~{adv_share:.1f}% of the total flux and is "
+          f"suppressed\n    by the sucrose reflection coefficient σ = "
+          f"{SIGMA_SUCROSE} (carry factor 1−σ = {1-SIGMA_SUCROSE:.2f}).")
+else:
+    print(f"    Advective coupling ON (operators='T', scheme='{COUPLE_SCHEME}'"
+          f"{', implicit-Euler march' if COUPLE_TIMESTEP else ''}): advection is "
+          f"now allowed\n    to reshape the sucrose field, so BOTH Q_load and "
+          f"Δc_load respond to the osmotic\n    water flow.  The advective share "
+          f"of the ON loading is ~{adv_share:.1f}% of the total flux\n    (the "
+          f"osmotic-sensitive part), carried across membranes with factor "
+          f"1−σ = {1-SIGMA_SUCROSE:.2f}.")
 
 
 # ── 9. Concentration field plot ───────────────────────────────────────────────
@@ -843,6 +1162,19 @@ with open(results_path, 'w') as f:
     f.write(f"  D_MEM         = {D_MEM:.2e} cm²/d  (passive transmembrane diffusivity)\n")
     f.write(f"  σ_sucrose     = {SIGMA_SUCROSE}       (membrane reflection coefficient; 10% of water flow carries sucrose)\n\n")
 
+    f.write("Water–solute coupling (concentration ↔ osmotic potential ↔ water flux):\n")
+    f.write(f"  Coupled scenario   : i_scenario = {I_SCE} (osmotic operator ON; s_factor = σ)\n")
+    f.write(f"  Temperature        : T = {T_KELVIN:.2f} K  →  Ψ_os = −R·T·c (van't Hoff)\n")
+    f.write(f"  Ψ_os(c_meso)       : {-8.314e4 * T_KELVIN * C_MESO:.1f} hPa at c = {C_MESO*1e6:.0f} µM\n")
+    f.write(f"  Solver             : operators='{COUPLE_OPS}'  scheme='{COUPLE_SCHEME}'  "
+            f"time_stepping={COUPLE_TIMESTEP} (θ={COUPLE_THETA}, dt={COUPLE_DT} d)\n")
+    f.write(f"                       ω={COUPLE_RELAX}  tol={COUPLE_TOL} hPa\n")
+    f.write(f"  Iterations         : {n_couple_iter}  (converged = {couple_converged})\n")
+    f.write(f"  Ψ_os loaded from c : max|Ψ_os − (−R·T·c)| = {_max_err:.3e} hPa\n")
+    f.write(f"  Ψ_os range         : [{np.nanmin(_stored):.1f}, {np.nanmax(_stored):.1f}] hPa\n")
+    f.write(f"  Ψ_p  range (turgor): [{np.nanmin(_psi_p):.1f}, {np.nanmax(_psi_p):.1f}] hPa\n")
+    f.write(f"  Ψ_total range      : [{np.nanmin(_psi_t):.1f}, {np.nanmax(_psi_t):.1f}] hPa\n\n")
+
     f.write("Transpirational flow path (from hydraulic solve):\n")
     f.write(f"  Dirichlet BCs: xylem = {PSI_XYL:.0f} hPa → stomatal air spaces = {PSI_ATM:.0f} hPa\n")
     f.write(f"  Expected: xylem → transfusion parenchyma → endodermis (CS barrier)\n")
@@ -874,7 +1206,31 @@ with open(results_path, 'w') as f:
     f.write(f"  Q_load (full operator)       = {Q_load*1e12:.4f} pmol/d\n")
     f.write(f"  Δc_load (transfusion→Strasburger) = {dc_load*1e6:.2f} µM\n")
     f.write(f"    (driving force across the last step into the phloem loading complex)\n")
-    f.write(f"  Global mesh Pe (full)        = {Pe_mesh_global:.4f}\n")
+    f.write(f"  Global mesh Pe (full)        = {Pe_mesh_global:.4f}\n\n")
+
+    f.write("Significance of the osmotic term on sugar loading (osmosis ON vs OFF):\n")
+    f.write(f"  Transport solved with operators='{COUPLE_OPS}' (matches the coupled loop).\n")
+    f.write(f"  OFF = pressure-only water flow (Ψ_os=0); ON = concentration-derived\n")
+    f.write(f"  Ψ_os = −R·T·c feeding the transmembrane (Kedem-Katchalsky) flux.\n")
+    f.write(f"  {'':24s}{'OFF':>13s}{'ON':>13s}{'Δ':>13s}{'rel.':>9s}\n")
+    f.write(f"  {'Q_load total [pmol/d]':24s}{Q_load_baseline*1e12:13.4f}{Q_load_on*1e12:13.4f}"
+            f"{dQ_abs*1e12:13.4f}{dQ_pct:8.1f}%\n")
+    f.write(f"  {'  diffusive [pmol/d]':24s}{Qdiff_baseline*1e12:13.4f}{Qdiff_on*1e12:13.4f}"
+            f"{(Qdiff_on-Qdiff_baseline)*1e12:13.4f}\n")
+    f.write(f"  {'  advective [pmol/d]':24s}{Qadv_baseline*1e12:13.4f}{Qadv_on*1e12:13.4f}"
+            f"{(Qadv_on-Qadv_baseline)*1e12:13.4f}\n")
+    f.write(f"  {'Δc_load [µM]':24s}{dc_load_baseline*1e6:13.4f}{dc_load_on*1e6:13.4f}"
+            f"{ddc_abs*1e6:13.4f}{ddc_pct:8.1f}%\n")
+    f.write(f"  Ψ_os from concentration spans [{np.nanmin(_stored):.0f}, "
+            f"{np.nanmax(_stored):.0f}] hPa vs pressure BC ΔΨ = {PSI_XYL - PSI_ATM:.0f} hPa.\n")
+    f.write(f"  → Osmotic term is {_sig} for sugar loading "
+            f"({dQ_pct:+.1f}% on Q_load, {ddc_pct:+.1f}% on Δc_load).\n")
+    if COUPLE_OPS == 'D':
+        f.write(f"    With operators='D' the sucrose field is diffusion-controlled and\n")
+        f.write(f"    flow-independent → Q_load/Δc_load identical ON vs OFF: the osmotic\n")
+        f.write(f"    pressure does NOT change the diffusion-dominated loading.  The\n")
+        f.write(f"    advective loading it could carry is ~{adv_share:.1f}% of the total\n")
+        f.write(f"    flux, suppressed by σ = {SIGMA_SUCROSE} (carry factor 1−σ = {1-SIGMA_SUCROSE:.2f}).\n")
 
 print(f"\n  Results written to: {results_path}")
 print("\n=== DONE ===")
