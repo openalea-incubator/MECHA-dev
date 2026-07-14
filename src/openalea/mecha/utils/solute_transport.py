@@ -22,9 +22,11 @@ class SoluteTransport:
 
     where
       C  — diagonal capacitance (node volumes × tissue storage fraction)
-      T  — spatial transport operator  T = D + A
+      T  — spatial transport operator  T = D + A − R
            D = diffusion matrix  (negative diagonal / positive off-diagonal)
            A = advection matrix  (upwind, same sign convention)
+           R = first-order reaction (degradation) matrix, diag(k_deg × V_i);
+               only present when reaction_params['k_deg'] > 0
            (T c)_i = net transport flux INTO node i
       s  — external source  (s > 0 → production at i)
 
@@ -64,6 +66,11 @@ class SoluteTransport:
             'C_wall': float  apoplast storage fraction (0–1; default 1.0)
             'C_cell': float  symplast storage fraction (0–1; default 1.0)
         }
+    reaction_params : dict, optional
+        {
+            'k_deg' : float  1/d  first-order degradation rate constant
+                      (mol degraded / mol-day); default 0.0 (no reaction)
+        }
     mode : str
         'full'  n_total × n_total
         'apo'   n_wall_junction × n_wall_junction
@@ -71,7 +78,8 @@ class SoluteTransport:
     """
 
     def __init__(self, mecha, diffusion_params: dict,
-                 capacitance_params: dict = None, mode: str = 'full'):
+                 capacitance_params: dict = None, mode: str = 'full',
+                 reaction_params: dict = None):
         if mode not in ('full', 'apo', 'sym'):
             raise ValueError(f"mode must be 'full', 'apo', or 'sym'; got '{mode}'")
 
@@ -79,12 +87,14 @@ class SoluteTransport:
         self.network            = mecha.network
         self.diffusion_params   = diffusion_params
         self.capacitance_params = capacitance_params
+        self.reaction_params    = reaction_params
         self.mode               = mode
 
         self.D_wall = float(diffusion_params.get('apo_wall',      0.0))
         self.D_pd   = float(diffusion_params.get('plasmodesmata', 0.0))
         self.D_mem  = float(diffusion_params.get('membrane',      0.0))
         self.sigma  = diffusion_params.get('sigma', {})
+        self.k_deg  = float(reaction_params.get('k_deg', 0.0)) if reaction_params else 0.0
 
         self.n_total         = mecha.network.graph.number_of_nodes()
         self.n_wall_junction = mecha.network.n_wall_junction
@@ -354,6 +364,37 @@ class SoluteTransport:
         return sp.diags(cap_diag, format='csr')
 
     # ------------------------------------------------------------------
+    # Reaction (first-order degradation) matrix R
+    # ------------------------------------------------------------------
+
+    def build_reaction_matrix(self, i_maturity: int) -> sp.csr_matrix:
+        """
+        Diagonal first-order degradation matrix.
+
+        Diagonal entry i:
+            R_i = k_deg × V_i   [cm³/d]
+        so that subtracting R from T adds a −k_deg·c_i sink term to
+        C dc/dt = (T c) + s, consistent with the units of D and A.
+        """
+        n   = self._matrix_size
+        nwj = self.n_wall_junction
+
+        if self.k_deg <= 0.0:
+            return sp.diags(np.zeros(n), format='csr')
+
+        vols = self._compute_node_volumes(i_maturity)
+        react_diag = np.zeros(n)
+
+        if self.mode == 'full':
+            react_diag[:] = self.k_deg * vols
+        elif self.mode == 'apo':
+            react_diag[:] = self.k_deg * vols[:nwj]
+        else:
+            react_diag[:] = self.k_deg * vols[nwj:]
+
+        return sp.diags(react_diag, format='csr')
+
+    # ------------------------------------------------------------------
     # Peclet number diagnostic
     # ------------------------------------------------------------------
 
@@ -440,7 +481,8 @@ class SoluteTransport:
 
         D = self.build_diffusion_matrix(h, i_maturity) if operators in ('D', 'T') else zero
         A = self.build_advection_matrix(i_maturity, i_scenario) if operators in ('A', 'T') else zero
-        T = D + A
+        R = self.build_reaction_matrix(i_maturity)
+        T = D + A - R
 
         Cm      = self.build_capacitance(i_maturity)
         rhs_eff = np.asarray(rhs, dtype=float).copy()

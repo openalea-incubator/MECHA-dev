@@ -603,9 +603,7 @@ class HydraulicMatrixBuilder:
     def _apply_xylo_phloem_boundary(self, i_maturity, barrier, psi_xyl, psi_sieve, distributed_flow_xyl, distributed_flow_sieve, boundary, rhs_s, rhs_x, rhs_p, rhs):
         if barrier > 0:
             if not np.isnan(psi_xyl[1][i_maturity][0]):
-                print("DEBUG: apply_xylo_phloem_boundary, ",len(self.network.xylem_cells))
                 for cid in self.network.xylem_cells:
-                    print("DEBUG: apply_xylo_phloem_boundary, ", cid, "k_xyl: ", self.hydraulic.k_xyl)
                     if not isinstance(self.hydraulic.k_xyl, list):
                         k_xyl_value = self.hydraulic.k_xyl
                     else:
@@ -630,8 +628,7 @@ class HydraulicMatrixBuilder:
                     if not isinstance(self.hydraulic.k_sieve, list):
                         k_sieve_value = self.hydraulic.k_sieve
                     else:
-                        k_sieve_value = self.hydraulic.k_sieve[0] # not true ?
-                    print("DEBUG: apply_xylo_phloem_boundary, k_sieve_value: ", k_sieve_value)
+                        k_sieve_value = self.hydraulic.k_sieve[0]
                     rhs_p[cid][0] = -k_sieve_value
                     self._add_W(cid, cid, -k_sieve_value)
                 rhs[:] = rhs_s * boundary.scenarios[0]['psi_soil_left'] + rhs_p * psi_sieve[1][i_maturity][0]

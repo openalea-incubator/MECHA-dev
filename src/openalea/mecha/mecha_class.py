@@ -488,12 +488,14 @@ class Mecha:
                     K_axial[cellnumber+network.n_wall_junction]=float(K_sieve.get("value"))
             else: #K_xyl_spec calculated from Poiseuille law (cm^3/hPa/d)
                 for c in [c for c in network.cell_manager.xylem]:
-                    K_axial[c.node_id]=c.area**2/(8*3.141592*height*1.0E-05/3600/24)*1.0E-12 #(micron^4/micron)->(cm^3) & (1.0E-3 Pa.s)->(1.0E-05/3600/24 hPa.d) 
+                    # K_axial[c.node_id]=c.area**2/(8*3.141592*height*1.0E-05/3600/24)*1.0E-12 #(micron^4/micron)->(cm^3) & (1.0E-3 Pa.s)->(1.0E-05/3600/24 hPa.d)
+                    K_axial[c.node_id]=c.area**2/(8*3.141592*height*1.3076E-05/3600/24)*1.0E-12 #(micron^4/micron)->(cm^3) & (1.3076E-3 Pa.s)->(1.3076E-05/3600/24 hPa.d) water at 10°C
                 K_xyl_spec=sum(K_axial)*height/1.0E04
                 # Update hydraulic.k_xyl for the scenario
                 print(self.hydraulic.k_xyl)
                 for c in [c for c in network.cell_manager.sieve]:
-                    K_axial[c.node_id]=c.area**2/(8*3.141592*height*1.0E-05/3600/24)*1.0E-12 #(micron^4/micron)->(cm^3) & (1.0E-3 Pa.s)->(1.0E-05/3600/24 hPa.d) 
+                    # K_axial[c.node_id]=c.area**2/(8*3.141592*height*1.0E-05/3600/24)*1.0E-12 #(micron^4/micron)->(cm^3) & (1.0E-3 Pa.s)->(1.0E-05/3600/24 hPa.d)
+                    K_axial[c.node_id]=c.area**2/(8*3.141592*height*1.7E-05/3600/24)*1.0E-12 #(micron^4/micron)->(cm^3) & (1.7E-3 Pa.s)->(1.7E-05/3600/24 hPa.d) Phloem sap viscosity (Ross Eliott et al. 2017)
         else: # barrier=0
             if hydraulic.axial_conductance_source==2:
                 for K_sieve in hydraulic.k_sieve_elems:
@@ -504,7 +506,8 @@ class Mecha:
                         K_axial[cellnumber+network.n_wall_junction]=float(K_sieve.get("value")[0])
             else: #Calculated from Poiseuille law (cm^3/hPa/d)
                 for c in [c for c in network.cell_manager.protosieve]:
-                    K_axial[c.node_id]=c.area**2/(8*3.141592*height*1.0E-05/3600/24)*1.0E-12 #(micron^4/micron)->(cm^3) & (1.0E-3 Pa.s)->(1.0E-05/3600/24 hPa.d)
+                    # K_axial[c.node_id]=c.area**2/(8*3.141592*height*1.0E-05/3600/24)*1.0E-12 #(micron^4/micron)->(cm^3) & (1.0E-3 Pa.s)->(1.0E-05/3600/24 hPa.d)
+                    K_axial[c.node_id]=c.area**2/(8*3.141592*height*1.7E-05/3600/24)*1.0E-12 #(micron^4/micron)->(cm^3) & (1.7E-3 Pa.s)->(1.7E-05/3600/24 hPa.d) Phloem sap viscosity (Ross Eliott et al. 2017)
 
         return K_axial, K_xyl_spec
 
@@ -939,7 +942,6 @@ class Mecha:
                     if isinstance(self.hydraulic.k_xyl, list):
                         if len(self.hydraulic.k_xyl) == 1:
                             k_xyl_value = self.hydraulic.k_xyl[0]
-                            print("DEBUG: k_xyl_value for node ", cid, "is ", k_xyl_value)
                     else:
                         k_xyl_value = self.hydraulic.k_xyl
                     rhs_x[cid][0] = -k_xyl_value
@@ -1495,7 +1497,6 @@ class Mecha:
         #Removing xylem and phloem BC terms
         if barrier==0:
             if not np.isnan(self.psi_sieve[1][i_maturity][i_scenario]):
-                print("DEBUG: bc phloem removal step: ",self.hydraulic.k_sieve)
                 for cid in [c.node_id for c in self.network.cell_manager.protosieve]:
                     matrix_W[cid, cid] += self.hydraulic.k_sieve
         else:

@@ -583,7 +583,7 @@ class HormonesData:
     """Hormones file configuration.
 
     This class loads and manages hormone configuration parameters from an XML file.
-    It includes hormone movement parameters, active transport carriers, symplastic and apoplastic contagion,
+    It includes hormone movement parameters, active transport carriers, symplastic and apoplastic transport,
     and contact range information.
 
     Attributes
@@ -596,6 +596,8 @@ class HormonesData:
         Diffusivity of hormone 1 through plasmodesmata (default is 0.0).
     diff_pw1 : float, optional
         Diffusivity of hormone 1 through cell walls (default is 0.0).
+    diff_mb1 : float, optional
+        Diffusivity of hormone 1 across cell membranes (default is 0.0).
     d2o1 : bool, optional
         Flag indicating whether hormone 1 is D2O (deuterium oxide) labeled (default is False).
     carrier_elems : List[Any], optional
@@ -632,6 +634,7 @@ class HormonesData:
     degrad1: float = 48.0
     diff_pd1: float = 0.0035
     diff_pw1: float = 0.0035
+    diff_mb1: float = 0.0035
     d2o1: bool = False
 
     # Active transport carriers - Use field(default_factory=list) for mutable defaults
@@ -672,6 +675,8 @@ class HormonesData:
         self.degrad1 = float(root.xpath('Hormone_movement/Degradation_constant_H1')[0].get("value"))
         self.diff_pd1 = float(root.xpath('Hormone_movement/Diffusivity_PD_H1')[0].get("value"))
         self.diff_pw1 = float(root.xpath('Hormone_movement/Diffusivity_PW_H1')[0].get("value"))
+        diff_mb1_elem = root.xpath('Hormone_movement/Diffusivity_MB_H1')
+        self.diff_mb1 = float(diff_mb1_elem[0].get("value")) if diff_mb1_elem else 0.0
         self.d2o1 = int(root.xpath('Hormone_movement/H1_D2O')[0].get("flag")) == 1
 
         # Parse active transport carriers
