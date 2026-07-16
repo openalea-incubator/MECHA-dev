@@ -55,6 +55,7 @@ Units (same convention as the rest of MECHA):
 from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
+import numpy as np
 from shapely.geometry import Polygon
 import numpy as np
 
@@ -561,20 +562,48 @@ class HydraulicCellManager:
     # ------------------------------------------------------------------
 
     def reset_hydraulic_properties(self) -> None:
-        """
-        Reset hydraulic properties for all walls, membranes, plasmodesmata and cells.
-        """
+        """Reset hydraulic properties for all walls, membranes, plasmodesmata and cells."""
         for wall in self._walls:
             wall.reset_hydraulics()
-
         for membrane in self._membranes:
             membrane.reset_hydraulics()
-
         for pd in self._plasmodesmata:
             pd.reset_hydraulics()
-
         for cell in self._cells:
             cell.reset_hydraulics()
+
+    def set_osmotic_from_concentration(
+        self,
+        c_cells: np.ndarray,
+        n_wall_junction: int,
+        T: float,
+        psi_os_baseline: np.ndarray = None,
+    ) -> None:
+        """Set cell osmotic potentials from a concentration array via van't Hoff (Ψ_os = −RT·c).
+
+        Parameters
+        ----------
+        c_cells : ndarray, shape (n_cells,)
+            Molar concentration per cell [mol cm⁻³], indexed by cell_id.
+        n_wall_junction : int
+            Kept for API consistency with SoluteTransport conventions; unused here.
+        T : float
+            Temperature [K].  R = 8.314e4 hPa cm³ mol⁻¹ K⁻¹ is used internally
+            (derived from R = 8.314 J mol⁻¹ K⁻¹ and 1 J = 1e4 hPa cm³).
+        psi_os_baseline : ndarray, shape (n_cells,), optional
+            Background osmotic potential per cell [hPa] representing unknown /
+            non-dynamic solutes.  When provided the dynamic van't Hoff term is
+            *added* to this baseline instead of replacing the cell's psi_os
+            entirely.  Indexed by cell_id; 0.0 is used for out-of-range entries.
+        """
+        RT = 8.314e4 * T
+        for cell in self._cells:
+            if cell.cell_id < len(c_cells):
+                dynamic = -RT * float(c_cells[cell.cell_id])
+                if psi_os_baseline is not None and cell.cell_id < len(psi_os_baseline):
+                    cell.psi_os = float(psi_os_baseline[cell.cell_id]) + dynamic
+                else:
+                    cell.psi_os = dynamic
 
     # ------------------------------------------------------------------
     # Collection protocol
