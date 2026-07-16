@@ -29,6 +29,7 @@ import numpy as np
 import pandas as pd
 
 from openalea.mecha import NetworkBuilder
+from openalea.mecha.utils.data_loader import BARRIER_KEY
 
 # Constants moved from visu.py
 _PATH_COLORS = {
@@ -43,7 +44,7 @@ _PATH_LABELS = {
 }
 _CONTINUOUS_PROPS = ['psi', 'psi_p', 'psi_os', 'psi_total', 'length', 'wall_thickness', 'Q_in', 'Q_out', 'Q', 'A', 'velocity', 'rank'] 
 
-def export_to_graphml(obj: Any, filepath: str) -> None:
+def export_to_graphml(obj: Any, filepath: str, **kwargs: Any) -> None:
     """
     Export the hydraulic network to a .graphml file.
     
@@ -53,15 +54,35 @@ def export_to_graphml(obj: Any, filepath: str) -> None:
         The object containing the graph to export.
     filepath : str
         Target file path for the .graphml file.
+    **kwargs : Dict[str, Any]
+        Additional keyword arguments for customizing the plot.
     """
-    if hasattr(obj, 'network') and obj.network is not None:
-        graph = obj.network.graph
-    elif hasattr(obj, 'graph'):
-        graph = obj.graph
-    elif isinstance(obj, nx.Graph):
-        graph = obj
-    else:
-        raise ValueError("Unsupported object type for graphml export.")
+    if not hasattr(obj, 'network'):
+        print("Object must have a network attribute.")
+        return
+
+    graph = obj.network.graph
+
+    maturity_idx: int = kwargs.get('maturity_idx', 0)
+    scenario_idx = kwargs.get('scenario_idx', 'current')
+
+    # --- 1. Restore scenario state when a specific scenario is requested ----
+    if scenario_idx != 'current' and hasattr(obj, 'restore_scenario_state'):
+        print(f"Restoring scenario state for maturity={maturity_idx}, scenario={scenario_idx}")
+        restored = obj.restore_scenario_state(maturity_idx, scenario_idx)
+        if not restored:
+            print(
+                f"[plot_radial_profile] WARNING: could not restore state for "
+                f"mat={maturity_idx}, scen={scenario_idx}. "
+                "Falling back to current graph state."
+            )
+            sol, _ = _get_result_data(obj, **kwargs)
+            if sol is not None and hasattr(obj, 'compute_edge_flows'):
+                obj.compute_edge_flows(
+                    sol,
+                    i_maturity=maturity_idx,
+                    i_scenario=0 if scenario_idx == 'standard water flow' else scenario_idx,
+                )
 
     # GraphML doesn't support complex attributes like tuples or objects directly easily
     # We should ensure positions and other attributes are converted to simple types if needed
@@ -82,6 +103,8 @@ def export_to_graphml(obj: Any, filepath: str) -> None:
         for _, attrs in G.nodes(data=True):
             for k, v in list(attrs.items()):
                 if not isinstance(v, (str, int, float, bool)):
+                    if k in ["velocity", "Q"]:# absolute value
+                        v = abs(v)
                     attrs[k] = str(v)
 
         for _, _, attrs in G.edges(data=True):
@@ -540,7 +563,8 @@ def _plot_edge_vector_property(obj: Any, prop_name: str, unit: str = '', **kwarg
 
     # --- 0. Restore scenario state when a specific scenario is requested ----
     if scenario_idx != 'current' and hasattr(obj, 'restore_scenario_state'):
-        print(f"Restoring scenario state for maturity={maturity_idx}, scenario={scenario_idx}")
+        barrier_type = obj.geometry.maturity_stages[maturity_idx].get('apo_barrier_type')
+        print(f"Restoring scenario state for barrier={barrier_type} and scenario={scenario_idx}")
         _ = obj.restore_scenario_state(maturity_idx, scenario_idx)
 
     # ------------------------------------------------------------------ #
@@ -638,8 +662,9 @@ def _plot_edge_vector_property(obj: Any, prop_name: str, unit: str = '', **kwarg
         fig, ax = plt.subplots(figsize=(12, 12), facecolor='#0d0d1a')
     ax.set_facecolor('#0d0d1a')
     ax.set_aspect('equal')
+    maturity_name = obj.geometry.maturity_stages[kwargs.get('maturity_idx', 0)]['apo_barrier_type']
     ax.set_title(
-        f"{prop_name} {f'[{unit}]' if unit else ''} – edges (Mat {kwargs.get('maturity_idx', 0)}) ",
+        f"{prop_name} {f'[{unit}]' if unit else ''} – edges (Mat: {maturity_name}) ",
         color='white', fontsize=13,
     )
 
@@ -728,6 +753,7 @@ def plot_K_network(obj, **kwargs):
 
     save_path = kwargs.get('save_path', None)
     maturity_idx = kwargs.get('maturity_idx', 0)
+    maturity_name = obj.geometry.maturity_stages[maturity_idx]['apo_barrier_type']
     
     # If obj is Mecha, we might need to re-run build_matrices to get the right K for the maturity
     if hasattr(obj, 'build_matrices') and maturity_idx != getattr(obj, '_current_visu_maturity', -1):
@@ -735,7 +761,7 @@ def plot_K_network(obj, **kwargs):
         obj.build_matrices(h=kwargs.get('h', 0), i_maturity=maturity_idx)
         obj._current_visu_maturity = maturity_idx
 
-    title = kwargs.get('title', f"Tri-pathways Hydraulic Conductance (K) - Mat {maturity_idx}")
+    title = kwargs.get('title', f"Tri-pathways Hydraulic Conductance (K) - Mat: {maturity_name}")
 
     fig, axes = plt.subplots(1, 3, figsize=(18, 6), facecolor='#111111')
     fig.suptitle(title, color='white', fontsize=14, y=1.01)
@@ -898,6 +924,7 @@ def plot_radial_profile(obj: Any, **kwargs: Any) -> None:
     # --- 3. Build per-node identifiers for special cell types ---------------
     xylem_ids: set = {x.node_id for x in cm.xylem} if hasattr(cm, 'xylem') else set()
     sieve_ids: set = {s.node_id for s in cm.sieve} if hasattr(cm, 'sieve') else set()
+    protosieve_ids = set = {s.node_id for s in cm.protosieve} if hasattr(cm, 'protosieve') else set()
     inter_ids: set = (
         {i.node_id for i in cm.intercellular} if hasattr(cm, 'intercellular') else set()
     )
@@ -937,7 +964,7 @@ def plot_radial_profile(obj: Any, **kwargs: Any) -> None:
 
         if cell.node_id in xylem_ids:
             xylem_data.append(row)
-        elif cell.node_id in sieve_ids:
+        elif cell.node_id in sieve_ids or cell.node_id in protosieve_ids:
             sieve_data.append(row)
         elif cell.node_id not in special_ids:
             data.append(row)
@@ -1170,4 +1197,246 @@ def _gather_edge_data(graph):
         data[path]['Q'].append(Q if Q is not None else 0.0)
         data[path]['xy_mid'].append(mid)
     return data
+
+
+# ---------------------------------------------------------------------------
+# Radial boundary velocity / flux helpers
+# ---------------------------------------------------------------------------
+
+# Canonical cgroup → tissue name used in the boundary table.
+from openalea.mecha.utils.hydraulic_cell import CGROUP_TO_TYPE
+
+
+
+# Radial boundaries ordered from outside to inside.
+# Each entry: (label, frozenset of (source_cgroups, target_cgroups))
+# An edge crosses the boundary when its two flanking tissue cgroups match
+# one element in source_cgroups and one in target_cgroups (order-independent).
+_RADIAL_BOUNDARIES: List[Tuple[str, frozenset, frozenset]] = [
+    # label                src cgroups       dst cgroups
+    ('LRC → Epidermis',    frozenset({6, 7, 8}),        frozenset({2})),
+    ('Epidermis → Cortex', frozenset({2}),               frozenset({4})),
+    ('Cortex → Endodermis',frozenset({4}),               frozenset({3})),
+    ('Endodermis → Pericycle', frozenset({3}),           frozenset({16, 21})),
+    ('Pericycle → Stele',  frozenset({16, 21}),          frozenset({5, 11, 12, 13, 19, 20})),
+]
+
+
+def _get_node_cgroup(node_id: int, graph) -> Optional[int]:
+    """Return the cgroup stored on a graph node, or None for non-cell nodes."""
+    return graph.nodes[node_id].get('cgroup')
+
+
+def _flanking_cgroups(u: int, v: int, graph) -> Tuple[Optional[int], Optional[int]]:
+    """Return the cgroup pair (cu, cv) for edge (u, v).
+
+    For wall (apoplastic) nodes that carry no cgroup themselves, we look at
+    their cell neighbours to infer the tissue the wall belongs to.
+    """
+    def _resolve(n: int) -> Optional[int]:
+        cg = _get_node_cgroup(n, graph)
+        if cg is not None and cg >= 0:
+            return cg
+        # Wall node: inherit cgroup from any adjacent *cell* neighbour
+        for nb in graph.neighbors(n):
+            nb_cg = graph.nodes[nb].get('cgroup')
+            if nb_cg is not None and nb_cg >= 0:
+                return nb_cg
+        return None
+
+    return _resolve(u), _resolve(v)
+
+
+def _classify_boundary(
+    cu: Optional[int],
+    cv: Optional[int],
+) -> Optional[str]:
+    """Return the boundary label if (cu, cv) crosses a radial boundary, else None."""
+    if cu is None or cv is None or cu == cv:
+        return None
+    # pair = frozenset({cu, cv})
+    for label, src_cgroups, dst_cgroups in _RADIAL_BOUNDARIES:
+        if (cu in src_cgroups and cv in dst_cgroups) or \
+           (cv in src_cgroups and cu in dst_cgroups):
+            return label
+    return None
+
+
+def calculate_radial_boundary_velocities(
+    obj: Any,
+    maturity_idx: int = 0,
+    scenario_idx: Union[int, str] = 0,
+) -> pd.DataFrame:
+    """Calculate velocity and flux statistics across each radial tissue boundary.
+
+    For each boundary (e.g. Epidermis → Cortex) and each transport pathway
+    (wall, membrane, plasmodesmata) the function returns:
+
+    * **Mean velocity** [mm d⁻¹] — absolute velocity averaged over all crossing
+      edges.
+    * **Median velocity** [mm d⁻¹] — median of the same set.
+    * **Flux** [mm³ d⁻¹] — sum of |Q| for all crossing edges.
+
+    The graph edge attributes ``velocity`` (cm d⁻¹) and ``Q`` (cm³ d⁻¹) are
+    read after restoring the requested scenario state so that the correct
+    per-scenario values are used.
+
+    Parameters
+    ----------
+    obj : Any
+        A solved ``Mecha`` instance.
+    maturity_idx : int, optional
+        Maturity stage index (default ``0``).
+    scenario_idx : int or str, optional
+        Scenario key (default ``0`` / ``'standard water flow'``).
+
+    Returns
+    -------
+    pd.DataFrame
+        Columns: ``Radial Boundary``, ``Source Tissue``, ``Target Tissue``,
+        ``Edge Type``, ``Mean Velocity [mm/d]``, ``Median Velocity [mm/d]``,
+        ``Flux [mm3/d]``, ``N edges``.
+    """
+    if not hasattr(obj, 'network') or obj.network is None:
+        raise ValueError("obj must be a solved Mecha instance with a network.")
+
+    # Restore the correct per-scenario state on the graph
+    if hasattr(obj, 'restore_scenario_state'):
+        restored = obj.restore_scenario_state(maturity_idx, scenario_idx)
+        if not restored:
+            print(
+                f"[calculate_radial_boundary_velocities] WARNING: could not restore "
+                f"state for mat={maturity_idx}, scen={scenario_idx}. "
+                "Falling back to current graph state."
+            )
+
+    graph = obj.network.graph
+
+    # Accumulate per (boundary_label, path_type) lists of velocity and Q
+    # velocity in cm/d
+    # Q in cm³/d
+    def um_per_sec(cm_per_day):
+        return cm_per_day * 10000 / 86400
+
+
+    accum: Dict[Tuple[str, str], Dict[str, list]] = {}
+
+    for u, v, eattr in graph.edges(data=True):
+        path = eattr.get('path')
+        if path not in _PATH_COLORS:
+            continue
+
+        cu, cv = _flanking_cgroups(u, v, graph)
+        boundary_label = _classify_boundary(cu, cv)
+        if boundary_label is None:
+            continue
+
+        vel = eattr.get('velocity')
+        Q   = eattr.get('Q')
+        if vel is None or Q is None:
+            continue
+
+        key = (boundary_label, path)
+        if key not in accum:
+            accum[key] = {'velocities': [], 'fluxes': []}
+        accum[key]['velocities'].append(float(um_per_sec(vel)))
+        accum[key]['fluxes'].append(float(Q))
+
+    # Build result rows in canonical order
+    rows: List[Dict] = []
+    boundary_labels_ordered = [b[0] for b in _RADIAL_BOUNDARIES]
+    path_types_ordered = ['wall', 'membrane', 'plasmodesmata']
+
+    for boundary_label, src_cgroups, dst_cgroups in _RADIAL_BOUNDARIES:
+        # Derive human-readable tissue names from cgroup sets
+        src_names = sorted({CGROUP_TO_TYPE.get(c, str(c)) for c in src_cgroups})
+        dst_names = sorted({CGROUP_TO_TYPE.get(c, str(c)) for c in dst_cgroups})
+        src_tissue = ' / '.join(src_names)
+        dst_tissue = ' / '.join(dst_names)
+
+        for path in path_types_ordered:
+            key = (boundary_label, path)
+            entry = accum.get(key, {})
+            vels  = entry.get('velocities', [])
+            fluxs = entry.get('fluxes', [])
+
+            rows.append({
+                'Radial Boundary':          boundary_label,
+                'Source Tissue':            src_tissue,
+                'Target Tissue':            dst_tissue,
+                'Edge Type':                path,
+                'Mean Velocity [µm/s]':     float(np.mean(vels))   if vels  else 0.0,
+                'Median Velocity [µm/s]':   float(np.median(vels)) if vels  else 0.0,
+                'Flux [cm3/d]':             float(np.sum(fluxs))   if fluxs else 0.0,
+                'N edges':                  len(vels),
+            })
+
+    return pd.DataFrame(rows)
+
+
+def export_radial_boundary_velocities(
+    obj: Any,
+    output_dir: str = '.',
+    **kwargs: Any,
+) -> None:
+    """Export radial boundary velocity / flux tables to CSV for every scenario.
+
+    One CSV file is written per (maturity stage × scenario) combination found
+    in ``obj.results``.  File names follow the pattern::
+
+        radial_boundary_mat{maturity_idx}_scen{scenario_idx}.csv
+
+    Parameters
+    ----------
+    obj : Any
+        A solved ``Mecha`` instance with populated ``results``.
+    output_dir : str
+        Directory in which to save CSV files (created if absent).
+    **kwargs : Any
+        Forwarded to :func:`calculate_radial_boundary_velocities`.
+    """
+    import os
+    os.makedirs(output_dir, exist_ok=True)
+
+    if not hasattr(obj, 'results') or not obj.results:
+        print("[export_radial_boundary_velocities] No results found on Mecha object.")
+        return
+
+    # Collect unique (maturity_idx, scenario_idx) pairs from stored results
+    seen: set = set()
+    combos: List[Tuple[int, Any]] = []
+    for res in obj.results:
+        m = res.get('maturity stage')
+        s = res.get('scenario')
+        if m is None or s is None:
+            continue
+        key = (m, s)
+        if key not in seen:
+            seen.add(key)
+            combos.append((m, s))
+
+    if not combos:
+        print("[export_radial_boundary_velocities] No valid (maturity, scenario) pairs found.")
+        return
+
+    for mat_idx, scen_idx in combos:
+        df = calculate_radial_boundary_velocities(
+            obj,
+            maturity_idx=mat_idx,
+            scenario_idx=scen_idx,
+        )
+
+        # Build a safe filename suffix for the scenario key
+        scen_str = str(scen_idx).replace(' ', '_')
+        fname = f"radial_boundary_mat{mat_idx}_scen{scen_str}.csv"
+        fpath = os.path.join(output_dir, fname)
+
+        df.to_csv(fpath, index=False)
+        print(f"[export_radial_boundary_velocities] Saved → {fpath}")
+        # Also print a preview
+        non_zero = df[df['N edges'] > 0]
+        if not non_zero.empty:
+            print(non_zero.to_string(index=False))
+        else:
+            print("  (no boundary-crossing edges found for this scenario)")
 

@@ -24,6 +24,19 @@ import numpy as np
 from typing import Dict, List, Any, Optional, Tuple, Union
 from dataclasses import dataclass, field
 
+BARRIER_KEY = {
+    0 : "No apo barrier",
+    1 : "En_cs",
+    2 : "En_sub + PC",
+    3 : "En_sub",
+    4 : "En_sub + Ex_cs",
+    5 : "En_cs + Ex_cs",
+    6 : "En_cs + En_sub",
+    7 : "Ex_cs",
+    8 : "En_sub + Ex_sub",
+    9 : "Ex_Lcap"
+}
+
 @dataclass
 class BoundaryData:
     """Boundary conditions file configuration
@@ -485,7 +498,8 @@ class GeometryData:
         for mat in self.maturity_elems:
             self.maturity_stages.append({
                 'barrier': int(mat.get("Barrier")),
-                'height': float(mat.get("height"))
+                'height': float(mat.get("height")),
+                'apo_barrier_type': BARRIER_KEY.get(int(mat.get("Barrier")), "NA")
             })
         
         self.n_maturity = len(self.maturity_stages)
@@ -547,7 +561,9 @@ class GeometryData:
             
         self.maturity_stages = []
         for i, b in enumerate(barrier):
-            self.maturity_stages.append({'barrier': b, 'height': height[i], 'nlayers': int(1)})
+            # from the key get the string for the apoplastic barrier
+            apo_barrier_type = BARRIER_KEY.get(b) 
+            self.maturity_stages.append({'barrier': b, 'height': height[i], 'nlayers': int(1), 'apo_barrier_type': apo_barrier_type})
         self.n_maturity = len(self.maturity_stages)
 
     def add_passage_cell(self, cid: int):
@@ -567,7 +583,7 @@ class HormonesData:
     """Hormones file configuration.
 
     This class loads and manages hormone configuration parameters from an XML file.
-    It includes hormone movement parameters, active transport carriers, symplastic and apoplastic contagion,
+    It includes hormone movement parameters, active transport carriers, symplastic and apoplastic transport,
     and contact range information.
 
     Attributes
@@ -580,6 +596,8 @@ class HormonesData:
         Diffusivity of hormone 1 through plasmodesmata (default is 0.0).
     diff_pw1 : float, optional
         Diffusivity of hormone 1 through cell walls (default is 0.0).
+    diff_mb1 : float, optional
+        Diffusivity of hormone 1 across cell membranes (default is 0.0).
     d2o1 : bool, optional
         Flag indicating whether hormone 1 is D2O (deuterium oxide) labeled (default is False).
     carrier_elems : List[Any], optional
@@ -616,6 +634,7 @@ class HormonesData:
     degrad1: float = 48.0
     diff_pd1: float = 0.0035
     diff_pw1: float = 0.0035
+    diff_mb1: float = 0.0035
     d2o1: bool = False
 
     # Active transport carriers - Use field(default_factory=list) for mutable defaults
@@ -656,6 +675,8 @@ class HormonesData:
         self.degrad1 = float(root.xpath('Hormone_movement/Degradation_constant_H1')[0].get("value"))
         self.diff_pd1 = float(root.xpath('Hormone_movement/Diffusivity_PD_H1')[0].get("value"))
         self.diff_pw1 = float(root.xpath('Hormone_movement/Diffusivity_PW_H1')[0].get("value"))
+        diff_mb1_elem = root.xpath('Hormone_movement/Diffusivity_MB_H1')
+        self.diff_mb1 = float(diff_mb1_elem[0].get("value")) if diff_mb1_elem else 0.0
         self.d2o1 = int(root.xpath('Hormone_movement/H1_D2O')[0].get("flag")) == 1
 
         # Parse active transport carriers
@@ -685,6 +706,7 @@ class HormonesData:
         # Parse contact range
         contact_elems = root.xpath('Contactrange/Contact')
         self.contact = [int(contact.get("id")) for contact in contact_elems]
+        print(f'Contact range: {self.contact}')
     
     def _set_default_values(self):
         """Set default values if no file is provided."""
@@ -835,6 +857,7 @@ class HydraulicData:
 
         (5, 16): 1.08E6,         # stele-peri
         (5, 11): 9.0E5,          # stele-phloem
+        (5, 23): 9.0E5,          # stele-protophloem
         (5, 12): 9.8E5,          # stele-comp
         (5, 13): 6.4E5,          # stele-xylem
         (5, 5): 6.4E5,           # stele-stele
@@ -846,18 +869,21 @@ class HydraulicData:
         (11, 16): 7.2E5,         # sieve-peri
         (11, 13): 0.0,           # sieve-xylem
         (11, 11): 0.0,           # sieve-sieve
+        (11, 23): 0.0,           # sieve-protophloem
         (11, 17): 6.4E5,         # sieve-transfusion parenchyma
         (11, 18): 0.0,           # sieve-transfusion tracheid
 
         (12, 13): 9.8E5,         # comp-xylem
         (12, 16): 7.0E5,         # comp-peri
         (12, 12): 6.8E5,         # comp-comp
+        (12, 23): 6.8E5,         # comp-protophloem
 
         (12, 17): 1.08E6,        # Strasburger cell-transfusion parenchyma
         (12, 18): 0.0,           # Strasburger cell -transfusion tracheid
 
         (13, 16): 1.08E6,        # xylem-peri   
         (13, 13): 6.4E5,         # xylem-xylem
+        (13, 23): 0.0,           # xylem-protophloem
 
         (13, 17): 1.08E6,        # xylem-transfusion parenchyma
         (13, 18): 1.76E6,        # xylem-transfusion tracheid
@@ -865,6 +891,8 @@ class HydraulicData:
         (17, 17): 8.0e5,         # transfusion parenchyma-transfusion parenchyma
         (17, 18): 0.0,           # transfusion parenchyma-transfusion tracheid
         (18, 18): 0.0,           # transfusion tracheid - transfusion tracheid
+
+        (23, 23): 0.0,
         # Add other mappings as needed
     })
 
@@ -1004,11 +1032,11 @@ class HydraulicData:
         self.axial_conductance_source = int(root.xpath('Kax_source')[0].get("value")) if root.xpath('Kax_source') else 1
         self.k_sieve_elems = root.xpath('K_sieve_range/K_sieve')
         self.k_xyl_elems = root.xpath('K_xyl_range/K_xyl')
-        self.k_sieve = [float(k_sieve.get("value")) for k_sieve in self.k_sieve_elems] if self.k_sieve_elems else [0.0]
-        self.k_xyl = [float(k_xyl.get("value")) for k_xyl in self.k_xyl_elems] if self.k_xyl_elems else [0.0]
+        self.k_sieve = [float(k_sieve.get("value")) for k_sieve in self.k_sieve_elems] if self.k_sieve_elems else [1.0E-6]
+        self.k_xyl = [float(k_xyl.get("value")) for k_xyl in self.k_xyl_elems] if self.k_xyl_elems else [1.0E-6]
         
         # Contact range
-        self.xcontactrange = root.xpath('Xcontactrange/Xcontact')
+        self.xcontactrange = [float(xcontact.get("value")) for xcontact in root.xpath('Xcontactrange/Xcontact')]
         self.n_xcontact = len(self.xcontactrange)
         
         # Output paths
@@ -1035,10 +1063,10 @@ class HydraulicData:
             kpl_dict = {'value': float(kpl_elem.get("value"))}
             kpl_dict['phloem_companion_cell_factor'] = float(kpl_elem.get("PCC_factor")) # 
             kpl_dict['pericycle_phloem_pole_factor'] = float(kpl_elem.get("PPP_factor")) # 
-            kpl_dict['phloem_sieve_tube_factor'] = float(kpl_elem.get("PST_factor")) # 
-            kpl_dict['cortex_factor'] = float(kpl_elem.get("cortex_factor"))
-            kpl_dict['endo_in_factor'] = float(kpl_elem.get("endo_in_factor"))
-            kpl_dict['endo_out_factor'] = float(kpl_elem.get("endo_out_factor"))
+            kpl_dict['phloem_sieve_tube_factor'] = float(kpl_elem.get("PST_factor", 0.0)) # 
+            kpl_dict['cortex_factor'] = float(kpl_elem.get("cortex_factor", 1.0))
+            kpl_dict['endo_in_factor'] = float(kpl_elem.get("endo_in_factor", 1.0))
+            kpl_dict['endo_out_factor'] = float(kpl_elem.get("endo_out_factor", 1.0))
 
             self.kpl.append(kpl_dict)
 
@@ -1091,24 +1119,33 @@ class HydraulicData:
 
     def get_kw_barrier_values(self, h: int) -> Tuple[float, List[float]]:
         """Get the kw_barrier values based on the scenario index."""
+        if h >= len(self.kw_barrier_elems):
+            h = 0
+        sub_value = self.kw_barrier_elems[h].get("Sub")
+        if self.kw_barrier_elems[h].get("Sub_in") is None and self.kw_barrier_elems[h].get("Sub") is not None:
+            sub_in_value = sub_value
+            sub_out_value = sub_value
+        else:
+            sub_in_value = float(self.kw_barrier_elems[h].get("Sub_in"))
+            sub_out_value = float(self.kw_barrier_elems[h].get("Sub_out"))
         if self.n_kw_barrier == self.n_hydraulics:
             kw_barrier_casparian = float(self.kw_barrier_elems[h].get("Casp"))
             kw_barrier_suberin = float(self.kw_barrier_elems[h].get("Sub"))
-            kw_barrier_suberin_in = float(self.kw_barrier_elems[h].get("Sub_in"))
-            kw_barrier_suberin_out = float(self.kw_barrier_elems[h].get("Sub_out"))
+            kw_barrier_suberin_in = sub_in_value
+            kw_barrier_suberin_out = sub_out_value
             kw_barrier_lignin = float(self.kw_barrier_elems[h].get("Lig"))
         elif self.n_kw_barrier == 1:
             kw_barrier_casparian = float(self.kw_barrier_elems[0].get("Casp"))
             kw_barrier_suberin = float(self.kw_barrier_elems[0].get("Sub"))
-            kw_barrier_suberin_in = float(self.kw_barrier_elems[0].get("Sub_in"))
-            kw_barrier_suberin_out = float(self.kw_barrier_elems[0].get("Sub_out"))
+            kw_barrier_suberin_in = sub_in_value
+            kw_barrier_suberin_out = sub_out_value
             kw_barrier_lignin = float(self.kw_barrier_elems[0].get("Lig"))
         else:
             index = int(h/(self.n_kaqp*self.n_kpl*self.n_kw))%self.n_kw_barrier
             kw_barrier_casparian = float(self.kw_barrier_elems[index].get("Casp"))
             kw_barrier_suberin = float(self.kw_barrier_elems[index].get("Sub"))
-            kw_barrier_suberin_in = float(self.kw_barrier_elems[index].get("Sub_in"))
-            kw_barrier_suberin_out = float(self.kw_barrier_elems[index].get("Sub_out"))
+            kw_barrier_suberin_in = sub_in_value
+            kw_barrier_suberin_out = sub_out_value
             kw_barrier_lignin = float(self.kw_barrier_elems[index].get("Lig"))
 
         # Use the general 'suberin' value if specific ones are missing
@@ -1368,7 +1405,22 @@ def parse_cellset(cellset_file: str) -> Dict[str, Any]:
     """
     tree = etree.parse(cellset_file)
     root = tree.getroot()
-        
+
+    all_points = []
+    points_groups = [points for points in root.xpath('walls/wall/points')]
+    for points in points_groups:
+        all_points.extend(points)
+    # center of the tissue in x direction
+    x_center = np.mean([float(point.get('x')) for point in all_points])
+    y_center = np.mean([float(point.get('y')) for point in all_points])
+
+    def _recenter_walls(points_groups, x_center, y_center):
+        for points in points_groups:
+            for pt in points:
+                pt.set('x', str(float(pt.get('x')) - x_center))
+                pt.set('y', str(float(pt.get('y')) - y_center))
+    _recenter_walls(points_groups, x_center, y_center)
+
     return {
         'root': root,
         'points': root.xpath('walls/wall/points'),

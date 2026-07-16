@@ -28,7 +28,7 @@ class HydraulicMatrixBuilder:
         barrier = int(maturity_stages[i_maturity].get("barrier"))
         height = float(maturity_stages[i_maturity].get("height"))
         x_contact = float(self.hydraulic.xcontactrange[h])
-
+        
         hyd_props = hydraulic_conductivities[h, i_maturity, barrier]
         kw_config = hyd_props['kw']
         kpl_config = hyd_props['kpl']
@@ -573,8 +573,14 @@ class HydraulicMatrixBuilder:
     def _apply_soil_boundary(self, x_contact, height, thickness, kw, barrier, boundary, rhs_s, rhs_C):
         wall_to_cell = self.geo_props['wall_to_cell']
         junction_wall_cell = self.geo_props['junction_wall_cell']
+        contact_id_cell = self.hormones.contact
+        cm = self.network.cell_manager
+        contact_cells = cm.get_cells_by_ids(contact_id_cell)
+        contact_walls = [walls for cell in contact_cells for walls in cell.walls]
+        contact_wall_id = [wall.node_id for wall in contact_walls if wall.is_border]
+
         for wall_id in self.network.border_walls:
-            if (self.position[wall_id][0] >= x_contact) or ((wall_to_cell[wall_id][0] - self.network.n_wall_junction) in getattr(self.hormones, 'contact', [])):
+            if (self.position[wall_id][0] >= x_contact) or (wall_id in contact_wall_id):
                 temp = 1.0E-04 * (self.network.wall_lengths[wall_id] / 2 * height) / (thickness / 2)
                 K = kw * temp
                 self._add_W(wall_id, wall_id, -K)
@@ -585,8 +591,7 @@ class HydraulicMatrixBuilder:
 
         for j_id in self.network.border_junction:
             cells = junction_wall_cell[j_id - self.network.n_walls]
-            contact_nodes = getattr(self.hormones, 'contact', [])
-            has_contact = any((c - self.network.n_wall_junction) in contact_nodes for c in cells[:3] if not np.isnan(c))
+            has_contact = any((c - self.network.n_wall_junction) in contact_id_cell for c in cells[:3] if not np.isnan(c))
 
             if (self.position[j_id][0] >= x_contact) or has_contact:
                 temp = 1.0E-04 * (self.network.wall_lengths[j_id] * height) / (thickness / 2)
@@ -594,12 +599,17 @@ class HydraulicMatrixBuilder:
                 self._add_W(j_id, j_id, -K)
                 rhs_s[j_id][0] = -K
 
+
     def _apply_xylo_phloem_boundary(self, i_maturity, barrier, psi_xyl, psi_sieve, distributed_flow_xyl, distributed_flow_sieve, boundary, rhs_s, rhs_x, rhs_p, rhs):
         if barrier > 0:
             if not np.isnan(psi_xyl[1][i_maturity][0]):
                 for cid in self.network.xylem_cells:
-                    rhs_x[cid][0] = -self.hydraulic.k_xyl
-                    self._add_W(cid, cid, -self.hydraulic.k_xyl)
+                    if not isinstance(self.hydraulic.k_xyl, list):
+                        k_xyl_value = self.hydraulic.k_xyl
+                    else:
+                        k_xyl_value = self.hydraulic.k_xyl[0] # not true ?
+                    rhs_x[cid][0] = -k_xyl_value
+                    self._add_W(cid, cid, -k_xyl_value)
                 rhs[:] = rhs_s * boundary.scenarios[0]['psi_soil_left'] + rhs_x * psi_xyl[1][i_maturity][0]
 
                 if not np.isnan(psi_xyl[0][i_maturity][0]):
@@ -614,12 +624,16 @@ class HydraulicMatrixBuilder:
 
         elif barrier == 0:
             if not np.isnan(psi_sieve[1][i_maturity][0]):
-                for cid in getattr(self.network, 'protosieve_list', []):
-                    rhs_p[cid][0] = -self.hydraulic.k_sieve
-                    self._add_W(cid, cid, -self.hydraulic.k_sieve)
+                for cid in getattr(self.network, 'protosieve_cells', []):
+                    if not isinstance(self.hydraulic.k_sieve, list):
+                        k_sieve_value = self.hydraulic.k_sieve
+                    else:
+                        k_sieve_value = self.hydraulic.k_sieve[0]
+                    rhs_p[cid][0] = -k_sieve_value
+                    self._add_W(cid, cid, -k_sieve_value)
                 rhs[:] = rhs_s * boundary.scenarios[0]['psi_soil_left'] + rhs_p * psi_sieve[1][i_maturity][0]
             elif not np.isnan(distributed_flow_sieve[1][0][0]):
-                for i, cid in enumerate(getattr(self.network, 'protosieve_list', [])):
+                for i, cid in enumerate(getattr(self.network, 'protosieve_cells', [])):
                     rhs_p[cid][0] = distributed_flow_sieve[1][i+1][0]
                 rhs[:] = rhs_s * boundary.scenarios[0]['psi_soil_left'] + rhs_p
             else:
