@@ -300,7 +300,7 @@ class SoluteTransport:
                 cg     = _cgroup_canonical(
                     self.network.graph.nodes[cell_node].get('cgroup', 4))
                 factor = 1.0 - float(self.sigma.get(cg, 0.0))
-            else:
+            else: # need to check for pd
                 factor = 1.0
 
             if F > 0.0:   # src is upstream
@@ -522,7 +522,7 @@ class SoluteTransport:
                             F_os_wc = K * sig * (_os(wall_obj) - _os(cell_obj))
                             # F_os_wc is wall→cell; convert to i→j.
                             F += F_os_wc if (wall_id == i) else -F_os_wc
-            else:
+            else: # need to check for pd
                 factor = 1.0
 
             _emit(i, j, De, F * factor)
@@ -801,7 +801,7 @@ class SoluteTransport:
             θ ∈ [0, 1].  Default 0.5 (Crank-Nicolson).
         operators : str
             Which spatial operators to include in T:
-              'T'  (default)  T = D + A  full advection-diffusion
+              'T'  (default)  T = D + A - R  full advection-diffusion
               'D'             T = D      diffusion only
               'A'             T = A      advection only
         scheme : str
@@ -834,17 +834,20 @@ class SoluteTransport:
         n    = self._matrix_size
         zero = sp.csr_matrix((n, n))
 
+        R = self.build_reaction_matrix(i_maturity)
+
         if scheme == 'sg':
             # Full SG operator built (and cached) in one per-edge pass, with D
             # and A on the same footing.  SG is exponentially fitted and stable
             # at any Peclet number, so it needs neither the separate D/A
             # matrices nor the Peclet oscillation warning below.
             T = self.build_transport_operator(h, i_maturity, i_scenario, scheme='sg')
+            T -= R 
         else:
             D = self.build_diffusion_matrix(h, i_maturity) if operators in ('D', 'T') else zero
             A = (self.build_advection_matrix(i_maturity, i_scenario)
                  if operators in ('A', 'T') else zero)
-            R = self.build_reaction_matrix(i_maturity)
+            
             T = D + A - R
 
         Cm      = self.build_capacitance(i_maturity)
