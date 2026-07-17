@@ -76,7 +76,9 @@ CGROUP_TO_TYPE = {
     19: "xylem",
     20: "xylem",
     17: "transfusion parenchyma",
-    18: "transfusion tracheid"
+    18: "transfusion tracheid",
+    21: "pericycle",
+    23: "protosieve"
 }
 
 # ---------------------------------------------------------------------------
@@ -632,7 +634,15 @@ class HydraulicCellManager:
     def get_by_node_id(self, node_id: int) -> Optional[HydraulicCell]:
         """Return the cell whose graph node index is *node_id*, or ``None``."""
         return self._by_node_id.get(node_id)
+    
+    def get_cell_by_id(self, cell_id: int) -> Optional[HydraulicCell]:
+        """Return the cell whose id is *cell_id*, or ``None``."""
+        return [cell for cell in self._cells if cell.cell_id == cell_id][0] if any(cell.cell_id == cell_id for cell in self._cells) else None
 
+    def get_cells_by_ids(self, cell_ids: List[int]) -> List[HydraulicCell]:
+        """Return the cells whose ids are in *cell_ids*."""
+        return [cell for cell in self._cells if cell.cell_id in cell_ids]
+    
     def get_wall_by_node_id(self, node_id: int) -> Optional[HydraulicWall]:
         """Return the wall whose graph node index is *node_id*, or ``None``."""
         return self._wall_by_node_id.get(node_id)
@@ -682,7 +692,7 @@ class HydraulicCellManager:
 
     @property
     def sieve(self, type=["sieve", "phloem"] ) -> List[HydraulicCell]:
-        """Phloem sieve-tube cells (cgroup 11, 23)."""
+        """Phloem sieve-tube cells (cgroup 11)."""
         result = []
         for key in type:
             result.extend(self._by_type.get(key, []))
@@ -690,8 +700,8 @@ class HydraulicCellManager:
 
     # ! same as sieve !  
     @property
-    def protosieve(self, type=["protosieve", "phloem"] ) -> List[HydraulicCell]:
-        """Phloem sieve-tube cells (cgroup 11, 23)."""
+    def protosieve(self, type=["protosieve", "protophloem"] ) -> List[HydraulicCell]:
+        """Phloem sieve-tube cells (cgroup 23)."""
         result = []
         for key in type:
             result.extend(self._by_type.get(key, []))
@@ -951,7 +961,6 @@ class HydraulicCellManager:
         self.sync_plasmodesmata_from_network(network)
 
         # Tag φ-thickening cells after all cells are built
-        print(f'[DEBUG] tag_phi_thick_cells: {network.n_phi_layers}, {network.phi_type}')
         self.tag_phi_thick_cells(network.n_phi_layers, network.phi_type)
 
     def tag_phi_thick_cells(self, n_phi_layers: int, phi_type: int) -> None:
@@ -983,7 +992,6 @@ class HydraulicCellManager:
                 tagged.extend([c for c in cortex if c.rank == int(median_rank) - rank_i])
                 tagged.extend([c for c in cortex if c.rank == int(median_rank) + rank_i])
 
-        print(f'unique ranks of tagged cells: {np.unique([c.rank for c in tagged])}')
         for cell in tagged:
             cell.phi_thick = 1
         self.tagged_phi_thick_cells = tagged
