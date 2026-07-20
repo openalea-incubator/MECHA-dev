@@ -1360,11 +1360,6 @@ class NetworkBuilder(AbstractNetwork):
                     dist = np.hypot(pos[0] - self.x_grav, pos[1] - self.y_grav)
                     self.layer_dist[50] += dist
                     self.n_layer[50] += 1
-                    
-                    # Track protosieve cells
-                    cgroup = self.graph.nodes[node_id].get('cgroup', 0)
-                    if cgroup == 23:  # Protosieve
-                        self.protosieve_cells.append(cell_id)
 
         
         # Iterative pass: Refine layer rankings
