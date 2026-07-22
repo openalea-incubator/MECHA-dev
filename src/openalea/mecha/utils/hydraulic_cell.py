@@ -726,6 +726,14 @@ class HydraulicCellManager:
         return result
     
     @property
+    def pericycle(self, type=["pericycle"]) -> List[HydraulicCell]:
+        """Cortex cells (cgroup 16)."""
+        result = []
+        for key in type:
+            result.extend(self._by_type.get(key, []))
+        return result
+    
+    @property
     def mesophyll(self, type=["mesophyll", "spongy", "palisade"]) -> List[HydraulicCell]:
         """Mesophyll cells (cgroup 4)."""
         result = []

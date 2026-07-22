@@ -579,8 +579,14 @@ class HydraulicMatrixBuilder:
         contact_walls = [walls for cell in contact_cells for walls in cell.walls]
         contact_wall_id = [wall.node_id for wall in contact_walls if wall.is_border]
 
+        graph = self.network.graph
+        for node_id in graph.nodes:
+            graph.nodes[node_id]['has_contact'] = False
+
         for wall_id in self.network.border_walls:
-            if (self.position[wall_id][0] >= x_contact) or (wall_id in contact_wall_id):
+            wall_has_contact = (self.position[wall_id][0] >= x_contact) or (wall_id in contact_wall_id)
+            graph.nodes[wall_id]['has_contact'] = wall_has_contact
+            if wall_has_contact:
                 temp = 1.0E-04 * (self.network.wall_lengths[wall_id] / 2 * height) / (thickness / 2)
                 K = kw * temp
                 self._add_W(wall_id, wall_id, -K)
@@ -591,9 +597,14 @@ class HydraulicMatrixBuilder:
 
         for j_id in self.network.border_junction:
             cells = junction_wall_cell[j_id - self.network.n_walls]
-            has_contact = any((c - self.network.n_wall_junction) in contact_id_cell for c in cells[:3] if not np.isnan(c))
+            real_neighbors = [c for c in cells[:3] if not np.isnan(c)]
+            has_contact = bool(real_neighbors) and all(
+                (c - self.network.n_wall_junction) in contact_id_cell for c in real_neighbors
+            )
 
-            if (self.position[j_id][0] >= x_contact) or has_contact:
+            junction_has_contact = (self.position[j_id][0] >= x_contact) or has_contact
+            graph.nodes[j_id]['has_contact'] = junction_has_contact
+            if junction_has_contact:
                 temp = 1.0E-04 * (self.network.wall_lengths[j_id] * height) / (thickness / 2)
                 K = kw * temp
                 self._add_W(j_id, j_id, -K)
