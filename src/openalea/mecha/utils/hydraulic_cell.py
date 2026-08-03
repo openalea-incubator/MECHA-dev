@@ -4,7 +4,7 @@
 #       mecha.utils.hydraulic_cell
 #
 #       File author(s):
-#           Adrien Heymans
+#           Adrien Heymans, Jonas Sonnenschein
 #
 #       Copyright © by UCLouvain
 #       Distributed under the LGPL License.
@@ -33,6 +33,11 @@ Standalone descriptors for MECHA's hydraulic network.
   - a single cell ↔ cell symplastic connection (graph edge path='plasmodesmata')
   - geometry: length between the two cell centroids
   - hydraulic properties: kpl (conductance, cm³ hPa⁻¹ d⁻¹)
+
+``HydraulicWallAir`` carries:
+  - a single wall ↔ air space (mesophyll) connection (graph edge path='wall_air')
+  - geometry: length, dist (wall-to-cell half-thickness distance)
+  - hydraulic properties: kwa (conductance, cm³ hPa⁻¹ d⁻¹)
 
 ``HydraulicCell`` carries:
   - geometry fields mirrored from GRANAP Cell (without inheriting it)
@@ -106,7 +111,7 @@ class HydraulicWall:
 
     __slots__ = (
         "x", "y", "length", "thickness", "node_id", "is_border", "is_aerenchyma",
-        "cells", "membranes",
+        "cells", "membranes", "wall_air", "protect_topology",
         # Hydraulic properties
         "kw", "Q", "Q_in", "Q_out", "A", "velocity", "psi_os", "psi_total", "psi_p",
     )
@@ -135,6 +140,9 @@ class HydraulicWall:
 
         # Link to HydraulicMembrane objects for this wall
         self.membranes: List['HydraulicMembrane'] = []
+
+        # Link to HydraulicWallAir objects for this wall
+        self.wall_air: List['HydraulicWallAir'] = []
 
         # Hydraulic Cell-wall (apoplastic) conductivity [cm hPa⁻¹ d⁻¹]
         self.kw: Optional[float] = None
@@ -344,7 +352,87 @@ class HydraulicPlasmodesmata:
         s += ")"
         return s
 
+# ---------------------------------------------------------------------------
+# HydraulicWallAir
+# ---------------------------------------------------------------------------
 
+class HydraulicWallAir:
+    """Descriptor for a single wall ↔ air space (mesophyll) connection.
+
+    Represents one graph edge with ``path='wall_air'``, connecting a
+    ``HydraulicWall`` node to a ``HydraulicCell`` node.
+
+    Parameters
+    ----------
+    wall : HydraulicWall
+        The wall-side of this membrane connection.
+    cell : HydraulicCell
+        The cell-side of this membrane connection.
+    length : float
+        Shared wall length for this connection (µm).
+    dist : float
+        Half-thickness distance from the wall midpoint to the cell centroid (µm).
+    """
+
+    __slots__ = (
+        "wall", "cell", "protect_topology",
+        # Geometry
+        "length", "dist",
+        # Hydraulic properties — None until solver assigns them
+        "kwa",    # Total wall to air conductivity  [cm hPa⁻¹ d⁻¹]
+        "K_computed",  # Effective conductance computed by HydraulicMatrixBuilder [cm³ hPa⁻¹ d⁻¹]
+        # Linearized Kelvin coupling coefficients (asymmetric two-node stencil)
+        "K_wall",  # Slope on the wall potential unknown  [cm³ hPa⁻¹ d⁻¹]
+        "K_air",   # Slope on the air vapour-pressure unknown  [cm³ d⁻¹]
+        "offset",  # Constant Kelvin linearization term  [cm³ d⁻¹]
+        "Q", "A", "velocity",
+        "diffusion_coeff", # Diffusion coefficient
+    )
+
+    def __init__(
+        self,
+        *,
+        wall: 'HydraulicWall',
+        cell: 'HydraulicCell',
+        length: float,
+        dist: float,
+    ) -> None:
+        self.wall: 'HydraulicWall' = wall
+        self.cell: 'HydraulicCell' = cell
+        self.length: float = length
+        self.dist: float = dist
+
+        # Hydraulic fields — None until explicitly assigned
+        self.kwa: Optional[float] = None
+        self.K_computed: Optional[float] = None
+        self.K_wall: Optional[float] = None
+        self.K_air: Optional[float] = None
+        self.offset: Optional[float] = None
+        self.Q: Optional[float] = None
+        self.A: Optional[float] = None
+        self.velocity: Optional[float] = None
+        self.diffusion_coeff: Optional[float] = None
+
+    def reset_hydraulics(self) -> None:
+        """Reset all hydraulic fields to ``None``."""
+        self.kwa = self.K_computed = self.K_wall = self.K_air = self.offset = None
+        self.Q = self.A = self.velocity = None
+
+    def __repr__(self) -> str:
+        s = (
+            f"HydraulicWallAir(wall={self.wall.node_id}, "
+            f"cell={self.cell.node_id}, length={self.length:.1f}, "
+            f"dist={self.dist:.1f}"
+        )
+        s += f", kwa={self.kwa:.1f}" if self.kwa is not None else ", kwa=None"
+        s += f", K_computed={self.K_computed:.1f}" if self.K_computed is not None else ", K_computed=None"
+        s += f", Q={self.Q:.1e}" if self.Q is not None else ", Q=None"
+        if self.velocity is not None:
+            s += f", velocity={self.velocity:.1e}"
+        s += ")"
+        return s
+
+    
 # ---------------------------------------------------------------------------
 # HydraulicCell
 # ---------------------------------------------------------------------------
@@ -356,8 +444,8 @@ class HydraulicCell:
     **no inheritance dependency** on GRANAP — it is constructed purely from
     data already present in the ``NetworkBuilder`` graph.
 
-    Hydraulic fields (``kw``, ``kpl``, ``km``, ``kaqp``, ``psi_os``, ``psi``,
-    ``psi_p``) are initialised to ``None`` and are meant to be populated later
+    Hydraulic fields (``kw``, ``kpl``, ``km``, ``kaqp``, ``kwa``, ``psi_os``, ``psi``,
+    ``psi_p``, ``psi_air``) are initialised to ``None`` and are meant to be populated later
     by ``Mecha._set_hydraulic_conductivities`` and post-solve routines.
 
     Parameters
@@ -392,20 +480,24 @@ class HydraulicCell:
         # --- spatial polygon (Shapely Polygon, µm units) ---
         "polygon",
         # --- topology ---
-        "node_id", "cell_id", "cgroup", "rank", "walls", "plasmodesmata",
+        "node_id", "cell_id", "cgroup", "rank", "walls", "plasmodesmata", "wall_air", "protect_topology",
         # --- hydraulic configuration (apoplastic) ---
         "kw",
         # --- hydraulic configuration (symplastic / plasmodesmata) ---
         "kpl",
         # --- hydraulic configuration (membrane) ---
-        "km", "kaqp",
+        "km", "kaqp", 
+        # --- hydraulic configuration (wall-air) ---
+        "kwa",
         # --- hydraulic state (potentials) ---
-        "psi_os", "psi_total", "psi_p",
+        "psi_os", "psi_total", "psi_p", "psi_air",
         # --- flow balance ---
         "Q_in", "Q_out",
         # --- growth ---
         "elongation_rate",
         "phi_thick",   # int — 0-1 (0 not in thickened layer, 1 in thickened layer) if this cortex cell is in a φ-thickening layer
+        # --- relative humidity ---
+        "RH",
     )
 
     def __init__(
@@ -424,6 +516,7 @@ class HydraulicCell:
         walls: Optional[List['HydraulicWall']] = None,
         plasmodesmata: Optional[List['HydraulicPlasmodesmata']] = None,
         polygon: Optional[Polygon] = None,
+        wall_air: Optional[List['HydraulicWallAir']] = None,
     ) -> None:
         # Geometry
         self.x: float = x
@@ -441,6 +534,7 @@ class HydraulicCell:
         self.rank: int = rank
         self.walls: List['HydraulicWall'] = walls if walls is not None else []
         self.plasmodesmata: List['HydraulicPlasmodesmata'] = plasmodesmata if plasmodesmata is not None else []
+        self.wall_air: List['HydraulicWallAir'] = wall_air if wall_air is not None else []
 
         # Hydraulic fields — all None until explicitly assigned
         # -------------------------------------------------------
@@ -459,6 +553,8 @@ class HydraulicCell:
         self.psi_total: Optional[float] = None
         # Pressure potential  [hPa]
         self.psi_p: Optional[float] = None
+        # Vapor (in air) pressure potential  [hPa]
+        self.psi_air: Optional[float] = None
 
         self.Q_in: Optional[float] = None
         self.Q_out: Optional[float] = None
@@ -475,8 +571,8 @@ class HydraulicCell:
 
     def reset_hydraulics(self) -> None:
         """Reset all hydraulic fields to ``None``."""
-        self.kw = self.kpl = self.km = self.kaqp = None
-        self.psi_os = self.psi_total = self.psi_p = self.Q_in = self.Q_out = None
+        self.kw = self.kpl = self.km = self.kaqp = self.kwa = None
+        self.psi_os = self.psi_total = self.psi_p = self.psi_air = self.Q_in = self.Q_out = None
 
     def _polygon(self) -> Polygon:
         
@@ -492,16 +588,22 @@ class HydraulicCell:
             s += f", walls={self.walls}"
         if self.plasmodesmata:
             s += f", plasmodesmata={self.plasmodesmata}"
+        if self.wall_air is not None:
+            s += f", wall_air={self.wall_air}"
         if self.psi_os is not None:
             s += f", psi_os={self.psi_os:.3f}"
         if self.psi_total is not None:
             s += f", psi_total={self.psi_total:.3f}"
         if self.psi_p is not None:
             s += f", psi_p={self.psi_p:.3f}"
+        if self.psi_air is not None:
+            s += f", psi_air={self.psi_air:.3f}"
         if self.Q_in is not None:
             s += f", Q_in={self.Q_in:.1e}"
         if self.Q_out is not None:
             s += f", Q_out={self.Q_out:.1e}"
+        if self.RH is not None:
+            s += f", RH={self.RH:.3f}"
         s += ")"
         return s
 
@@ -518,9 +620,9 @@ class HydraulicCellManager:
     cells.  Lookups by ``node_id`` or ``cgroup`` are O(1) thanks to internal
     dictionaries that are rebuilt whenever the manager is synchronised.
 
-    Also holds all :class:`HydraulicMembrane` and
-    :class:`HydraulicPlasmodesmata` connection objects built from the network
-    graph edges (``path='membrane'`` and ``path='plasmodesmata'``).
+    Also holds all :class:`HydraulicMembrane`, :class:`HydraulicPlasmodesmata` and
+    :class:`HydraulicWallAir` connection objects built from the network
+    graph edges (``path='membrane'``, ``path='plasmodesmata'`` and ``path='wall_air'``).
 
     Typical usage::
 
@@ -534,6 +636,7 @@ class HydraulicCellManager:
         # Access connection objects
         all_membranes       = manager.membranes
         all_plasmodesmata   = manager.plasmodesmata
+        all_wall_air       = manager.wall_air
         mb = manager.get_membrane_by_edge(wall_id, cell_node_id)
         pd = manager.get_plasmodesmata_by_edge(cell_i_node_id, cell_j_node_id)
     """
@@ -543,6 +646,7 @@ class HydraulicCellManager:
         self._by_node_id: Dict[int, HydraulicCell] = {}
         self._by_cgroup: Dict[int, List[HydraulicCell]] = {}
         self._by_type: Dict[str, List[HydraulicCell]] = {}
+        self._by_protect_topology: Dict[bool, List[HydraulicCell]] = {}
 
         self._walls: List[HydraulicWall] = []
         self._wall_by_node_id: Dict[int, HydraulicWall] = {}
@@ -554,6 +658,10 @@ class HydraulicCellManager:
         # Plasmodesmata connections (cell ↔ cell, path='plasmodesmata')
         self._plasmodesmata: List[HydraulicPlasmodesmata] = []
         self._pd_by_edge: Dict[Tuple[int, int], HydraulicPlasmodesmata] = {}
+
+        # Wall-air connections (wall ↔ air, path='wall_air')
+        self._wall_air: List[HydraulicWallAir] = []
+        self._wall_air_by_edge: Dict[Tuple[int, int], HydraulicWallAir] = {}
 
         self.tagged_phi_thick_cells: List[HydraulicCell] = []
 
@@ -569,6 +677,8 @@ class HydraulicCellManager:
             membrane.reset_hydraulics()
         for pd in self._plasmodesmata:
             pd.reset_hydraulics()
+        for wall_air in self._wall_air:
+            wall_air.reset_hydraulics()
         for cell in self._cells:
             cell.reset_hydraulics()
 
@@ -605,6 +715,21 @@ class HydraulicCellManager:
                 else:
                     cell.psi_os = dynamic
 
+    
+    def set_relative_humidity(
+            self,
+            air_spaces: np.ndarray,
+
+            T: float = 298.15) -> float:
+
+        """Calculate relative humidity (RH)."""
+        p_liq = self.psi_p if self.psi_p is not None else 0.0
+        p_air = self.psi_air if self.psi_air is not None else 0.0
+        R_gas = 8.314e4  # hPa cm³ mol⁻¹ K⁻¹
+        V_m = 1.8e-5  # cm³ mol⁻¹
+
+        return np.exp((p_liq - p_air) * V_m / (R_gas * T)) 
+
     # ------------------------------------------------------------------
     # Collection protocol
     # ------------------------------------------------------------------
@@ -625,6 +750,7 @@ class HydraulicCellManager:
             f"{len(self._walls)} walls, "
             f"{len(self._membranes)} membranes, "
             f"{len(self._plasmodesmata)} plasmodesmata)"
+            f"{len(self._wall_air)} wall-air connections"
         )
 
     # ------------------------------------------------------------------
@@ -655,6 +781,10 @@ class HydraulicCellManager:
         """Return all cells whose ``cell_type`` matches *type_str*."""
         return self._by_type.get(type_str, [])
 
+    def get_by_protect_topology(self, protect_topology: bool) -> List[HydraulicCell]:
+        """Return all cells flagged with *protect_topology*."""
+        return self._by_protect_topology.get(protect_topology, [])
+
     # ------------------------------------------------------------------
     # Lookups — connection objects
     # ------------------------------------------------------------------
@@ -676,6 +806,15 @@ class HydraulicCellManager:
         """
         key = (min(node_i, node_j), max(node_i, node_j))
         return self._pd_by_edge.get(key)
+
+    def get_wall_air_by_edge(self, wall_node_id: int, air_node_id: int) -> Optional[HydraulicWallAir]:
+        """Return the wall-air connection connecting *wall_node_id* ↔ *air_node_id*, or ``None``.
+
+        The key is stored canonically as ``(min, max)`` so the order of
+        arguments does not matter.
+        """
+        key = (min(wall_node_id, air_node_id), max(wall_node_id, air_node_id))
+        return self._wall_air_by_edge.get(key)
 
     # ------------------------------------------------------------------
     # Filtered views (properties) — cells
@@ -778,6 +917,11 @@ class HydraulicCellManager:
         """All plasmodesmata (cell ↔ cell) connections in the network."""
         return self._plasmodesmata
 
+    @property
+    def wall_air(self) -> List[HydraulicWallAir]:
+        """All wall-air connections in the network."""
+        return self._wall_air
+
     # ------------------------------------------------------------------
     # Communication bridge with NetworkBuilder
     # ------------------------------------------------------------------
@@ -810,6 +954,9 @@ class HydraulicCellManager:
         self._membrane_by_edge = {}
         self._plasmodesmata = []
         self._pd_by_edge = {}
+        self._wall_air = []
+        self._wall_air_by_edge = {}
+        self._by_protect_topology = {}
 
         nwj = network.n_wall_junction
         position = {}
@@ -956,9 +1103,10 @@ class HydraulicCellManager:
             self._by_cgroup.setdefault(cgroup, []).append(cell)
             self._by_type.setdefault(cell_type, []).append(cell)
 
-        # Pass 3: Build Membrane and Plasmodesmata connection objects
+        # Pass 3: Build Membrane, Plasmodesmata and wall_air connection objects
         self.sync_membranes_from_network(network)
         self.sync_plasmodesmata_from_network(network)
+        self.sync_wall_air_from_network(network)
 
         # Tag φ-thickening cells after all cells are built
         self.tag_phi_thick_cells(network.n_phi_layers, network.phi_type)
@@ -1103,3 +1251,61 @@ class HydraulicCellManager:
                 cell_i.plasmodesmata.append(pd)
             if pd not in cell_j.plasmodesmata:
                 cell_j.plasmodesmata.append(pd)
+
+    def sync_wall_air_from_network(self, network: "NetworkBuilder") -> None:
+        """Build :class:`HydraulicWallAir` objects from ``path='wall_air'`` edges.
+
+        A wall-air edge connects an apoplastic wall node to a protected
+        mesophyll air-space cell node.
+
+        The resulting objects are stored in :attr:`_wall_air`, indexed in
+        :attr:`_wall_air_by_edge`.
+
+        Parameters
+        ----------
+        network : NetworkBuilder
+            Must have a populated ``graph`` and valid ``n_wall_junction``.
+        """
+        self._wall_air = []
+        self._wall_air_by_edge = {}
+
+        for node_i, node_j, edge_data in network.graph.edges(data=True):
+            if edge_data.get("path") != "wall_air":
+                continue
+
+            # Graph edge ordering is not guaranteed: identify endpoints using
+            # the descriptor indexes rather than assuming a fixed direction.
+            if node_i in self._wall_by_node_id and node_j in self._by_node_id:
+                wall_node_id, air_node_id = node_i, node_j
+            elif node_j in self._wall_by_node_id and node_i in self._by_node_id:
+                wall_node_id, air_node_id = node_j, node_i
+            else:
+                # Ignore malformed wall_air edges that do not link a known wall
+                # descriptor to a known cell descriptor.
+                continue
+
+            wall = self._wall_by_node_id[wall_node_id]
+            air_cell = self._by_node_id[air_node_id]
+
+            connection = HydraulicWallAir(
+                wall=wall,
+                cell=air_cell,
+                length=float(edge_data.get("length", 0.0)),
+                dist=float(edge_data.get("dist", 0.0)),
+            )
+
+            # Preserve optional geometric / physical edge metadata where these
+            # attributes are part of HydraulicWallAir.
+            if hasattr(connection, "d_vec"):
+                connection.d_vec = edge_data.get("d_vec")
+            if hasattr(connection, "wall_thickness"):
+                connection.wall_thickness = edge_data.get("wall_thickness")
+
+            self._wall_air.append(connection)
+
+            key = (min(wall_node_id, air_node_id), max(wall_node_id, air_node_id))
+            self._wall_air_by_edge[key] = connection
+
+            # Bidirectional descriptor references.
+            wall.wall_air.append(connection)
+            air_cell.wall_air.append(connection)

@@ -163,7 +163,7 @@ class SoluteTransport:
                 position=mecha.position,
                 indice=mecha.indice,
             )
-            _, matrix_C, _, _, _, _, _, _ = builder.build(
+            _, matrix_C, _, _, _, _, _, _, _ = builder.build(
                 h=h,
                 i_maturity=i_maturity,
                 hydraulic_conductivities=mecha.hydraulic_conductivities,

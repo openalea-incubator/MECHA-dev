@@ -33,6 +33,7 @@ class HydraulicMatrixBuilder:
         kw_config = hyd_props['kw']
         kpl_config = hyd_props['kpl']
         kaqp_config = hyd_props['kaqp']
+        kwa_config = hyd_props['kwa']
         a_cortex = hyd_props['a_cortex']
         b_cortex = hyd_props['b_cortex']
 
@@ -59,11 +60,16 @@ class HydraulicMatrixBuilder:
         rhs_s = np.zeros((n_nodes, 1))
         rhs_x = np.zeros((n_nodes, 1))
         rhs_p = np.zeros((n_nodes, 1))
+        # Persistent constant source vector for the linearized wall-air (Kelvin)
+        # coupling.  Held in its own vector so it survives the ``rhs[:] = ...``
+        # overwrite in ``_apply_xylo_phloem_boundary`` and the per-scenario
+        # ``rhs`` re-initialisation in ``Mecha.water_flux``.
+        rhs_wa = np.zeros((n_nodes, 1))
 
         Kmb = np.zeros((self.network.n_membrane, 1))
         jmb = 0
 
-        # 1. Edge loops (wall, membrane, plasmodesmata conductances)
+        # 1. Edge loops (wall, membrane, plasmodesmata, wall_air, conductances)
         for node, edges in self.network.graph.adjacency():
             i = self.indice[node]
             for neighboor, eattr in edges.items():
@@ -79,6 +85,9 @@ class HydraulicMatrixBuilder:
                         jmb += 1
                     elif path == 'plasmodesmata':
                         self._fill_plasmodesmata(i, j, eattr, kpl_config, thickness, barrier)
+                    elif path == 'wall_air':
+                        self._fill_wall_air(i, j, node, neighboor, eattr, kwa_config,
+                                            height, thickness, barrier, rhs_wa)
 
         # 2. Add soil-wall connections
         self._apply_soil_boundary(x_contact, height, thickness, kw, barrier, boundary, rhs_s, rhs_C)
@@ -94,7 +103,7 @@ class HydraulicMatrixBuilder:
             matrix_C = None
 
         # Unified solute matrix -> removed ApoC and SymC
-        return matrix_W, matrix_C, rhs_C, rhs_p, rhs_x, rhs_s, rhs, Kmb
+        return matrix_W, matrix_C, rhs_C, rhs_p, rhs_x, rhs_s, rhs, rhs_wa, Kmb
 
     def _add_W(self, i, j, val):
         self._rows_W.append(i)
@@ -569,6 +578,149 @@ class HydraulicMatrixBuilder:
             if (j - n_wall_junction) not in self.hormones.sym_zombie0:
                 self._add_C(j, j, -DF)
                 self._add_C(j, i,  DF)
+
+    def _fill_wall_air(
+        self,
+        i: int,
+        j: int,
+        node: int,
+        neighboor: int,
+        eattr: dict,
+        kwa_config: dict,
+        height: float,
+        thickness: float,
+        barrier: int,
+        rhs_wa: np.ndarray,
+    ) -> None:
+        r"""Fill matrix / rhs entries for a wall ↔ mesophyll air-space edge.
+
+        Builds the linearized coupled water-vapour transport between an
+        apoplastic cell-wall node and a mesophyll air-space node (both flagged
+        ``protect_topology`` upstream and joined by a ``path='wall_air'`` edge in
+        :meth:`NetworkBuilder.build_wall_air_connections`).
+
+        Physics
+        -------
+        At the wall node liquid and vapour are assumed to be in local equilibrium.
+        The vapour pressure is then related to the liquid water potential via the Kelvin equation:
+
+            p_vapour = p_sat * exp(alpha * psi_wall)
+
+        where alpha = M_w / (R * T) is the Kelvin coefficient and 
+        p_sat is the saturation vapour pressure (here assumed constant).
+        The transport is then assumed to follow a diffusive law:
+
+            j = kwa * A * (p_vapour - p_air)
+
+        For p_vapour we linearize the exponential around a reference water potential psi_ref:
+            
+            p_vapour ≈ p_sat * exp(alpha * psi_ref) * (1 + alpha * (psi_wall - psi_ref))
+        
+        This leads to a linearized flux expression:
+
+            j = K_wall * psi_wall - K_air * p_air + offset
+
+        Note that K_wall and K_air are asymmetric, 
+        and offset is a constant term which is included in the rhs vector.
+
+
+        Parameters
+        ----------
+        i, j : int
+            Matrix indices of the two connected nodes (wall node and
+            air-space cell node, in either order).
+        node, neighboor : int
+            Graph node ids corresponding to *i* and *j* respectively.
+        eattr : dict
+            Edge attribute dict (mutated in-place with ``K``, ``K_wall``,
+            ``K_air``, ``offset`` and ``A``).
+        kwa_config : dict
+            Wall-air configuration for the current barrier level, holding the
+            conductivity ``kwa`` [cm hPa⁻¹ d⁻¹] plus the linearization
+            constants ``p_sat`` , ``psi_ref`` (hPa), 
+            ``M_w`` (water molar mass, g mol⁻¹), ``R``(gas constant, hPa cm³ mol⁻¹ K⁻¹) 
+            and ``T`` (temperature, K).
+        height : float
+            Cross-section height (µm).
+        thickness : float
+            Cell-wall half-thickness (µm).
+        barrier : int
+            Maturity barrier level (0 = no strip).
+        rhs_wa : np.ndarray
+            Persistent constant-source vector for the linearized coupling
+            (mutated in-place).
+        """
+        cm = self.network.cell_manager
+
+        # Resolve which node is the wall and which is the air-space cell.
+        # wall_air edges connect a HydraulicWall node to a HydraulicCell node.
+        wall = cm.get_wall_by_node_id(i) or cm.get_wall_by_node_id(j)
+        if wall is not None and wall.node_id == i:
+            wall_idx, air_idx = i, j
+        else:
+            wall_idx, air_idx = j, i
+
+        # ── Geometry: exchange area of the wall-air interface (cm²) ──────────
+        length = float(eattr['length'])
+        dist = float(eattr['dist'])
+        area = (height + dist) * length * 1.0E-08  # µm² → cm²
+
+        # ── Kelvin-equation parameters ──────────────────────────────────────
+        kwa = float(kwa_config['kwa'])
+        p_sat = float(kwa_config['p_sat'])
+        psi_ref = float(kwa_config['psi_ref'])
+        M_w = float(kwa_config['M_w'])
+        R = float(kwa_config['R'])
+        T = float(kwa_config['T'])
+
+        # Linearization of exp(alpha * psi) around psi_ref (wall side only).
+        alpha = M_w / (R * T)
+        e_ref = math.exp(alpha * psi_ref)
+
+        # Asymmetric conductances
+        # from the Taylor expansion above.  K_wall multiplies psi_wall,
+        # K_air multiplies the air-node vapour pressure psi_air, and offset is
+        # the constant Kelvin term (independent of both unknowns).
+        K_wall = kwa * p_sat * e_ref * alpha * area         # cm³ hPa⁻¹ d⁻¹
+        K_air = kwa * area                                  # cm³ hPa⁻¹ d⁻¹
+        offset = kwa * p_sat * area * e_ref * (1.0 - alpha * psi_ref)
+
+        # ── Assemble linear coupling on wall (w) and air (a) nodes ───────────
+        # Flux j leaves the wall node and enters the air node:
+        #   wall eqn gains -j = -K_wall*psi_wall + K_air*x_air - offset
+        #   air  eqn gains +j = +K_wall*psi_wall - K_air*x_air + offset
+        # The wall column (K_wall) and air column (K_air) differ, so this is
+        # not a symmetric Laplacian stencil — vapour is still conserved
+        # because the air-node contributions are the exact negatives of the
+        # wall-node ones.
+        self._add_W(wall_idx, wall_idx, -K_wall)
+        self._add_W(wall_idx, air_idx,   K_air)
+        self._add_W(air_idx,  wall_idx,  K_wall)
+        self._add_W(air_idx,  air_idx,  -K_air)
+
+        # Constant Kelvin linearization offset as a persistent source term.
+        rhs_wa[wall_idx][0] += offset
+        rhs_wa[air_idx][0]  -= offset
+
+        # ── Record on the HydraulicWallAir connection object ────────────────
+        wa = cm.get_wall_air_by_edge(wall_idx, air_idx)
+        if wa is not None:
+            wa.kwa = float(kwa)
+            wa.K_computed = float(K_wall)
+            wa.K_wall = float(K_wall)
+            wa.K_air = float(K_air)
+            wa.offset = float(offset)
+            wa.A = float(area)
+
+        # Store on the graph edge for post-solve flow computation.  ``K`` keeps
+        # the wall-side slope for backward compatibility with generic edge-flow
+        # code; ``K_wall``/``K_air``/``offset`` expose the full asymmetric
+        # coupling for downstream (mecha_class) flux reconstruction.
+        eattr['K'] = float(K_wall)
+        eattr['K_wall'] = float(K_wall)
+        eattr['K_air'] = float(K_air)
+        eattr['offset'] = float(offset)
+        eattr['A'] = float(area)
 
     def _apply_soil_boundary(self, x_contact, height, thickness, kw, barrier, boundary, rhs_s, rhs_C):
         wall_to_cell = self.geo_props['wall_to_cell']
