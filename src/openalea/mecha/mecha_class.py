@@ -373,11 +373,14 @@ class Mecha:
             # Wall ↔ air-space (mesophyll) vapour coupling parameters
             kwa_config = self._get_wall_air_config(hydraulic, h)
 
+            # Air-space ↔ air-space (mesophyll) vapour diffusion parameters
+            k_air_config = self._get_air_link_config(hydraulic, h)
+
             # Calculate parameter a for cortex
             a_cortex, b_cortex = self._calculate_cortex_parameters(height = height, kaqp_cortex = kaqp_config['kaqp_cortex'], hydraulic = hydraulic)
 
             # Store values in a dictionary
-            self._set_hydraulic_conductivities_dict(h, i_maturity, barrier, height, kw_config, kpl_config, kaqp_config, kwa_config, a_cortex, b_cortex)
+            self._set_hydraulic_conductivities_dict(h, i_maturity, barrier, height, kw_config, kpl_config, kaqp_config, kwa_config, k_air_config, a_cortex, b_cortex)
 
     @staticmethod
     def _get_wall_air_config(hydraulic: HydraulicData, h: int) -> Dict[str, float]:
@@ -402,12 +405,6 @@ class Mecha:
             pressure factor), ``psi_ref`` (linearization reference potential,
             hPa), ``M_w`` (water molar mass, g mol⁻¹), ``R`` (gas constant,
             hPa cm³ mol⁻¹ K⁻¹) and ``T`` (temperature, K).
-
-            ``p_air`` (air-space relative vapour pressure) is also returned as
-            the default/initial value for the air-cell degree of freedom, but
-            it is **not** consumed by
-            :meth:`HydraulicMatrixBuilder._fill_wall_air`: the air node carries
-            its own vapour-pressure unknown in the coupled linear system.
         """
         getter = getattr(hydraulic, 'get_wall_air_conductances', None)
         if callable(getter):
@@ -415,11 +412,36 @@ class Mecha:
         return {
             'kwa': float(getattr(hydraulic, 'kwa', 1.0E-04)),
             'p_sat': float(getattr(hydraulic, 'p_sat', 1.0)),
-            'p_air': float(getattr(hydraulic, 'p_air', 1.0)),
             'psi_ref': float(getattr(hydraulic, 'psi_ref_wall_air', 0.0)),
             'M_w': float(getattr(hydraulic, 'M_w', 18.015)),
             'R': float(getattr(hydraulic, 'R_gas', 8.314E4)),
             'T': float(getattr(hydraulic, 'T', 298.15)),
+        }
+
+    @staticmethod
+    def _get_air_link_config(hydraulic: HydraulicData, h: int) -> Dict[str, float]:
+        """Assemble the air-space ↔ air-space vapour diffusion parameters.
+
+        Values are read from :class:`HydraulicData` when available and fall
+        back to a physically sensible default otherwise.
+
+        Parameters
+        ----------
+        hydraulic : HydraulicData
+            Hydraulic configuration container.
+        h : int
+            Hydraulic-scenario index.
+
+        Returns
+        -------
+        dict
+            Key ``k_air`` (vapour diffusion conductivity, cm hPa⁻¹ d⁻¹).
+        """
+        getter = getattr(hydraulic, 'get_air_link_conductances', None)
+        if callable(getter):
+            return getter(h)
+        return {
+            'k_air': float(getattr(hydraulic, 'k_air', 1.0E-04)),
         }
 
 
@@ -489,13 +511,14 @@ class Mecha:
 
         return a_cortex, b_cortex
 
-    def _set_hydraulic_conductivities_dict(self, h: int, i_maturity: int, barrier: int, height: float, kw_config: np.ndarray, kpl_config: np.ndarray, kaqp_config: np.ndarray, kwa_config: Dict[str, float], a_cortex: float, b_cortex: float) -> None:
+    def _set_hydraulic_conductivities_dict(self, h: int, i_maturity: int, barrier: int, height: float, kw_config: np.ndarray, kpl_config: np.ndarray, kaqp_config: np.ndarray, kwa_config: Dict[str, float], k_air_config: Dict[str, float], a_cortex: float, b_cortex: float) -> None:
         """Set hydraulic conductivities in a dictionary."""
         self.hydraulic_conductivities[h, i_maturity, barrier] = {
             "kw": kw_config,
             "kpl": kpl_config,
             "kaqp": kaqp_config,
             "kwa": kwa_config,
+            "k_air": k_air_config,
             "a_cortex": a_cortex,
             "b_cortex": b_cortex,
             "height": height,
@@ -1400,6 +1423,11 @@ class Mecha:
                 # reuse it directly for the velocity estimate.
                 A = float(eattr.get('A', 0.0))
 
+            elif path == 'air_link':
+                # Exchange area already computed by _fill_air_link (cm²);
+                # reuse it directly for the velocity estimate.
+                A = float(eattr.get('A', 0.0))
+
             eattr['A'] = A
             vel = Q / A if A > 0.0 else 0.0
             eattr['velocity'] = vel
@@ -1453,6 +1481,16 @@ class Mecha:
                     wa.Q = Q
                     wa.A = A
                     wa.velocity = vel
+
+            elif path == 'air_link':
+                al = cm.get_air_link_by_edge(u, v)
+                if al is not None:
+                    # K_computed / k_air are set once by build_matrices;
+                    # only the per-scenario flow varies here.
+                    al.K_computed = K
+                    al.Q = Q
+                    al.A = A
+                    al.velocity = vel
 
         # --------------------------------------------------------------------
         # Store per-node quantities on graph nodes and in cell_manager

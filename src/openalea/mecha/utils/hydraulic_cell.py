@@ -432,7 +432,81 @@ class HydraulicWallAir:
         s += ")"
         return s
 
-    
+
+# ---------------------------------------------------------------------------
+# HydraulicAirLink
+# ---------------------------------------------------------------------------
+
+class HydraulicAirLink:
+    """Descriptor for a single air-space ↔ air-space (mesophyll) connection.
+
+    Represents one graph edge with ``path='air_link'``, connecting two
+    mesophyll air-space :class:`HydraulicCell` nodes (both flagged
+    ``protect_topology`` upstream).  The edge models the diffusive vapour
+    transport between neighbouring intercellular air spaces.
+
+    Unlike :class:`HydraulicWallAir`, the degree of freedom on both endpoints
+    is *already* the partial vapour pressure in the air space, so **no**
+    linearized Kelvin conversion is required.  The flux follows a simple
+    symmetric linear diffusion law:
+
+        j_ij = k_air * (psi_i - psi_j)
+
+    Parameters
+    ----------
+    cell_i, cell_j : HydraulicCell
+        The two air-space cells joined by this connection.
+    length : float
+        Distance between the two air-space centroids (µm).
+    """
+
+    __slots__ = (
+        "cell_i", "cell_j",
+        # Geometry
+        "length",
+        # Hydraulic properties — None until solver assigns them
+        "k_air",        # Vapour diffusion conductance  [cm³ hPa⁻¹ d⁻¹]
+        "K_computed",   # Effective conductance computed by HydraulicMatrixBuilder
+        "Q", "A", "velocity",
+    )
+
+    def __init__(
+        self,
+        *,
+        cell_i: 'HydraulicCell',
+        cell_j: 'HydraulicCell',
+        length: float,
+    ) -> None:
+        self.cell_i: 'HydraulicCell' = cell_i
+        self.cell_j: 'HydraulicCell' = cell_j
+        self.length: float = length
+
+        # Hydraulic fields — None until explicitly assigned
+        self.k_air: Optional[float] = None
+        self.K_computed: Optional[float] = None
+        self.Q: Optional[float] = None
+        self.A: Optional[float] = None
+        self.velocity: Optional[float] = None
+
+    def reset_hydraulics(self) -> None:
+        """Reset all hydraulic fields to ``None``."""
+        self.k_air = self.K_computed = None
+        self.Q = self.A = self.velocity = None
+
+    def __repr__(self) -> str:
+        s = (
+            f"HydraulicAirLink(cell_i={self.cell_i.node_id}, "
+            f"cell_j={self.cell_j.node_id}, length={self.length:.1f}"
+        )
+        s += f", k_air={self.k_air:.1e}" if self.k_air is not None else ", k_air=None"
+        s += f", K_computed={self.K_computed:.1e}" if self.K_computed is not None else ", K_computed=None"
+        s += f", Q={self.Q:.1e}" if self.Q is not None else ", Q=None"
+        if self.velocity is not None:
+            s += f", velocity={self.velocity:.1e}"
+        s += ")"
+        return s
+
+
 # ---------------------------------------------------------------------------
 # HydraulicCell
 # ---------------------------------------------------------------------------
@@ -480,7 +554,7 @@ class HydraulicCell:
         # --- spatial polygon (Shapely Polygon, µm units) ---
         "polygon",
         # --- topology ---
-        "node_id", "cell_id", "cgroup", "rank", "walls", "plasmodesmata", "wall_air", "protect_topology",
+        "node_id", "cell_id", "cgroup", "rank", "walls", "plasmodesmata", "wall_air", "air_link", "protect_topology",
         # --- hydraulic configuration (apoplastic) ---
         "kw",
         # --- hydraulic configuration (symplastic / plasmodesmata) ---
@@ -517,6 +591,7 @@ class HydraulicCell:
         plasmodesmata: Optional[List['HydraulicPlasmodesmata']] = None,
         polygon: Optional[Polygon] = None,
         wall_air: Optional[List['HydraulicWallAir']] = None,
+        air_link: Optional[List['HydraulicAirLink']] = None,
     ) -> None:
         # Geometry
         self.x: float = x
@@ -535,6 +610,7 @@ class HydraulicCell:
         self.walls: List['HydraulicWall'] = walls if walls is not None else []
         self.plasmodesmata: List['HydraulicPlasmodesmata'] = plasmodesmata if plasmodesmata is not None else []
         self.wall_air: List['HydraulicWallAir'] = wall_air if wall_air is not None else []
+        self.air_link: List['HydraulicAirLink'] = air_link if air_link is not None else []
 
         # Hydraulic fields — all None until explicitly assigned
         # -------------------------------------------------------
@@ -663,6 +739,10 @@ class HydraulicCellManager:
         self._wall_air: List[HydraulicWallAir] = []
         self._wall_air_by_edge: Dict[Tuple[int, int], HydraulicWallAir] = {}
 
+        # Air-link connections (air ↔ air, path='air_link')
+        self._air_link: List[HydraulicAirLink] = []
+        self._air_link_by_edge: Dict[Tuple[int, int], HydraulicAirLink] = {}
+
         self.tagged_phi_thick_cells: List[HydraulicCell] = []
 
     # ------------------------------------------------------------------
@@ -679,6 +759,8 @@ class HydraulicCellManager:
             pd.reset_hydraulics()
         for wall_air in self._wall_air:
             wall_air.reset_hydraulics()
+        for air_link in self._air_link:
+            air_link.reset_hydraulics()
         for cell in self._cells:
             cell.reset_hydraulics()
 
@@ -714,21 +796,6 @@ class HydraulicCellManager:
                     cell.psi_os = float(psi_os_baseline[cell.cell_id]) + dynamic
                 else:
                     cell.psi_os = dynamic
-
-    
-    def set_relative_humidity(
-            self,
-            air_spaces: np.ndarray,
-
-            T: float = 298.15) -> float:
-
-        """Calculate relative humidity (RH)."""
-        p_liq = self.psi_p if self.psi_p is not None else 0.0
-        p_air = self.psi_air if self.psi_air is not None else 0.0
-        R_gas = 8.314e4  # hPa cm³ mol⁻¹ K⁻¹
-        V_m = 1.8e-5  # cm³ mol⁻¹
-
-        return np.exp((p_liq - p_air) * V_m / (R_gas * T)) 
 
     # ------------------------------------------------------------------
     # Collection protocol
@@ -815,6 +882,15 @@ class HydraulicCellManager:
         """
         key = (min(wall_node_id, air_node_id), max(wall_node_id, air_node_id))
         return self._wall_air_by_edge.get(key)
+
+    def get_air_link_by_edge(self, node_i: int, node_j: int) -> Optional[HydraulicAirLink]:
+        """Return the air-link connecting *node_i* ↔ *node_j*, or ``None``.
+
+        The key is stored canonically as ``(min, max)`` so the order of
+        arguments does not matter.
+        """
+        key = (min(node_i, node_j), max(node_i, node_j))
+        return self._air_link_by_edge.get(key)
 
     # ------------------------------------------------------------------
     # Filtered views (properties) — cells
@@ -922,6 +998,11 @@ class HydraulicCellManager:
         """All wall-air connections in the network."""
         return self._wall_air
 
+    @property
+    def air_link(self) -> List[HydraulicAirLink]:
+        """All air-link (air ↔ air) connections in the network."""
+        return self._air_link
+
     # ------------------------------------------------------------------
     # Communication bridge with NetworkBuilder
     # ------------------------------------------------------------------
@@ -956,6 +1037,8 @@ class HydraulicCellManager:
         self._pd_by_edge = {}
         self._wall_air = []
         self._wall_air_by_edge = {}
+        self._air_link = []
+        self._air_link_by_edge = {}
         self._by_protect_topology = {}
 
         nwj = network.n_wall_junction
@@ -1103,10 +1186,11 @@ class HydraulicCellManager:
             self._by_cgroup.setdefault(cgroup, []).append(cell)
             self._by_type.setdefault(cell_type, []).append(cell)
 
-        # Pass 3: Build Membrane, Plasmodesmata and wall_air connection objects
+        # Pass 3: Build Membrane, Plasmodesmata, wall_air and air_link objects
         self.sync_membranes_from_network(network)
         self.sync_plasmodesmata_from_network(network)
         self.sync_wall_air_from_network(network)
+        self.sync_air_link_from_network(network)
 
         # Tag φ-thickening cells after all cells are built
         self.tag_phi_thick_cells(network.n_phi_layers, network.phi_type)
@@ -1309,3 +1393,52 @@ class HydraulicCellManager:
             # Bidirectional descriptor references.
             wall.wall_air.append(connection)
             air_cell.wall_air.append(connection)
+
+    def sync_air_link_from_network(self, network: "NetworkBuilder") -> None:
+        """Build :class:`HydraulicAirLink` objects from ``path='air_link'`` edges.
+
+        An air-link edge connects two mesophyll air-space cell nodes
+        and models diffusive vapour transport between neighbouring air spaces.
+
+        The resulting objects are stored in :attr:`_air_link`, indexed in
+        :attr:`_air_link_by_edge`, with back-references added on both cells.
+
+        Parameters
+        ----------
+        network : NetworkBuilder
+            Must have a populated ``graph``.
+        """
+        self._air_link = []
+        self._air_link_by_edge = {}
+
+        # Clear existing air_link back-refs on cells
+        for cell in self._cells:
+            cell.air_link = []
+
+        for node_i, node_j, edge_data in network.graph.edges(data=True):
+            if edge_data.get("path") != "air_link":
+                continue
+
+            cell_i = self._by_node_id.get(node_i)
+            cell_j = self._by_node_id.get(node_j)
+            if cell_i is None or cell_j is None:
+                # Ignore malformed air_link edges that do not link two known
+                # cell descriptors.
+                continue
+
+            connection = HydraulicAirLink(
+                cell_i=cell_i,
+                cell_j=cell_j,
+                length=float(edge_data.get("length", 0.0)),
+            )
+
+            self._air_link.append(connection)
+
+            key = (min(node_i, node_j), max(node_i, node_j))
+            self._air_link_by_edge[key] = connection
+
+            # Bidirectional descriptor references.
+            if connection not in cell_i.air_link:
+                cell_i.air_link.append(connection)
+            if connection not in cell_j.air_link:
+                cell_j.air_link.append(connection)

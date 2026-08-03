@@ -34,6 +34,7 @@ class HydraulicMatrixBuilder:
         kpl_config = hyd_props['kpl']
         kaqp_config = hyd_props['kaqp']
         kwa_config = hyd_props['kwa']
+        k_air_config = hyd_props['k_air']
         a_cortex = hyd_props['a_cortex']
         b_cortex = hyd_props['b_cortex']
 
@@ -88,6 +89,8 @@ class HydraulicMatrixBuilder:
                     elif path == 'wall_air':
                         self._fill_wall_air(i, j, node, neighboor, eattr, kwa_config,
                                             height, thickness, barrier, rhs_wa)
+                    elif path == 'air_link':
+                        self._fill_air_link(i, j, eattr, k_air_config, height)
 
         # 2. Add soil-wall connections
         self._apply_soil_boundary(x_contact, height, thickness, kw, barrier, boundary, rhs_s, rhs_C)
@@ -663,7 +666,7 @@ class HydraulicMatrixBuilder:
         # ── Geometry: exchange area of the wall-air interface (cm²) ──────────
         length = float(eattr['length'])
         dist = float(eattr['dist'])
-        area = (height + dist) * length * 1.0E-08  # µm² → cm²
+        area =  dist * length * 1.0E-08  # µm² → cm²
 
         # ── Kelvin-equation parameters ──────────────────────────────────────
         kwa = float(kwa_config['kwa'])
@@ -678,21 +681,11 @@ class HydraulicMatrixBuilder:
         e_ref = math.exp(alpha * psi_ref)
 
         # Asymmetric conductances
-        # from the Taylor expansion above.  K_wall multiplies psi_wall,
-        # K_air multiplies the air-node vapour pressure psi_air, and offset is
-        # the constant Kelvin term (independent of both unknowns).
         K_wall = kwa * p_sat * e_ref * alpha * area         # cm³ hPa⁻¹ d⁻¹
         K_air = kwa * area                                  # cm³ hPa⁻¹ d⁻¹
         offset = kwa * p_sat * area * e_ref * (1.0 - alpha * psi_ref)
 
         # ── Assemble linear coupling on wall (w) and air (a) nodes ───────────
-        # Flux j leaves the wall node and enters the air node:
-        #   wall eqn gains -j = -K_wall*psi_wall + K_air*x_air - offset
-        #   air  eqn gains +j = +K_wall*psi_wall - K_air*x_air + offset
-        # The wall column (K_wall) and air column (K_air) differ, so this is
-        # not a symmetric Laplacian stencil — vapour is still conserved
-        # because the air-node contributions are the exact negatives of the
-        # wall-node ones.
         self._add_W(wall_idx, wall_idx, -K_wall)
         self._add_W(wall_idx, air_idx,   K_air)
         self._add_W(air_idx,  wall_idx,  K_wall)
@@ -715,11 +708,73 @@ class HydraulicMatrixBuilder:
         # Store on the graph edge for post-solve flow computation.  ``K`` keeps
         # the wall-side slope for backward compatibility with generic edge-flow
         # code; ``K_wall``/``K_air``/``offset`` expose the full asymmetric
-        # coupling for downstream (mecha_class) flux reconstruction.
+        # coupling for mecha_class flux reconstruction.
         eattr['K'] = float(K_wall)
         eattr['K_wall'] = float(K_wall)
         eattr['K_air'] = float(K_air)
         eattr['offset'] = float(offset)
+        eattr['A'] = float(area)
+
+    def _fill_air_link(
+        self,
+        i: int,
+        j: int,
+        eattr: dict,
+        k_air_config: dict,
+        height: float,
+    ) -> None:
+        r"""Fill matrix entries for an air-space ↔ air-space vapour edge.
+
+        Builds the diffusive vapour transport between two mesophyll air-space
+        nodes joined by a ``path='air_link'`` edge in
+        :meth:`NetworkBuilder.build_air_link_connections`.
+
+        Physics
+        -------
+        The flux follows a symmetric linear diffusion law:
+
+            j_ij = k_air * (psi_i - psi_j)
+
+        where ``psi_i`` and ``psi_j`` are the vapour pressures of the two air
+        spaces.
+
+        Parameters
+        ----------
+        i, j : int
+            Matrix indices of the two connected air-space nodes.
+        eattr : dict
+            Edge attribute dict (mutated in-place with ``K`` and ``A``).
+        k_air_config : dict
+            Air-link configuration for the current barrier level, holding the
+            vapour diffusion conductivity ``k_air`` [cm hPa⁻¹ d⁻¹].
+        height : float
+            Cross-section height (µm).
+        """
+        cm = self.network.cell_manager
+
+        # ── Geometry: cross-sectional area of the shared air interface (cm²) ──
+        length = float(eattr.get('length', 0.0))
+        area = height * length * 1.0E-08  # µm² → cm²
+
+        # ── Diffusive conductance: j = k_air * (psi_i - psi_j) ───────────────
+        k_air = float(k_air_config['k_air'])
+        K = k_air * area  # cm³ hPa⁻¹ d⁻¹
+
+        # Symmetric Laplacian stencil (vapour conserved, no source term).
+        self._add_W(i, i, -K)
+        self._add_W(i, j,  K)
+        self._add_W(j, i,  K)
+        self._add_W(j, j, -K)
+
+        # ── Record on the HydraulicAirLink connection object ─────────────────
+        al = cm.get_air_link_by_edge(i, j)
+        if al is not None:
+            al.k_air = float(k_air)
+            al.K_computed = float(K)
+            al.A = float(area)
+
+        # Store on the graph edge for post-solve flow computation.
+        eattr['K'] = float(K)
         eattr['A'] = float(area)
 
     def _apply_soil_boundary(self, x_contact, height, thickness, kw, barrier, boundary, rhs_s, rhs_C):
