@@ -88,7 +88,8 @@ class HydraulicMatrixBuilder:
                         self._fill_plasmodesmata(i, j, eattr, kpl_config, thickness, barrier)
                     elif path == 'wall_air':
                         self._fill_wall_air(i, j, node, neighboor, eattr, kwa_config,
-                                            height, thickness, barrier, rhs_wa)
+                                            height, thickness, barrier, rhs_wa,
+                                            kw, kw_config, kaqp_config, a_cortex, b_cortex)
                     elif path == 'air_link':
                         self._fill_air_link(i, j, eattr, k_air_config, height)
 
@@ -434,6 +435,94 @@ class HydraulicMatrixBuilder:
         eattr['K'] = float(K)
         return K
 
+    def _membrane_conductance(
+        self, wall_idx: int, cell_node: int, membrane_length: float,
+        membrane_dist: float, kw: float, kw_config: dict, height: float,
+        thickness: float, barrier: int, kaqp_config: dict,
+        a_cortex: float, b_cortex: float,
+    ) -> float:
+        r"""Compute the transmembrane conductance ``K_memb`` for one wall↔cell pair.
+
+        Reproduces the exact conductance formula used in :meth:`_fill_membrane`
+        (series of cell-wall half-thickness and membrane + aquaporin
+        conductivities) so it can be reused where a membrane resistance is
+        needed in series with another transport step — e.g. the liquid path
+        that water must cross before it evaporates at a wall ↔ air-space
+        interface in :meth:`_fill_wall_air`.
+
+        The pure hydraulic conductance is computed here without the
+        solute-transport (C-matrix) side effects of :meth:`_fill_membrane`,
+        which only apply to xylem interfaces that never border an air space.
+
+        Parameters
+        ----------
+        wall_idx : int
+            Matrix index of the wall node.
+        cell_node : int
+            Graph node id of the flanking cell whose membrane is crossed.
+        membrane_length : float
+            Shared wall length of the membrane (µm).
+        membrane_dist : float
+            Wall-midpoint → cell-centroid distance (µm).
+        kw, kw_config, height, thickness, barrier, kaqp_config, a_cortex, b_cortex
+            Same meaning as in :meth:`_fill_membrane`.
+
+        Returns
+        -------
+        float
+            Membrane conductance ``K_memb`` [cm³ hPa⁻¹ d⁻¹].
+        """
+        cm = self.network.cell_manager
+        cgroup = self.network.graph.nodes[cell_node]['cgroup']
+        n_wall_junction = self.network.n_wall_junction
+        intercellular_ids = np.array([c.cell_id for c in cm.intercellular])
+
+        # ── Aquaporin contribution kaqp_curr (mirrors _fill_membrane) ─────────
+        kaqp_curr = 0.0
+        if cgroup == 1:
+            kaqp_curr = kaqp_config['kaqp_exo']
+        elif cgroup == 2:
+            kaqp_curr = kaqp_config['kaqp_epi']
+        elif cgroup == 3:
+            kaqp_curr = kaqp_config['kaqp_endo']
+        elif cgroup in [13, 19, 20]:
+            kaqp_curr = kaqp_config['kaqp_stele'] * 10000 if barrier > 0 else kaqp_config['kaqp_stele']
+        elif cgroup > 4:
+            kaqp_curr = kaqp_config['kaqp_stele']
+        elif (cell_node - n_wall_junction in intercellular_ids) and barrier > 0:
+            kaqp_curr = getattr(self.geometry, 'k_interc', 0.0)
+        elif cgroup == 4:
+            kaqp_curr = float(a_cortex * self.network.distance_center_grav[wall_idx][0] * 1.0E-04 + b_cortex)
+            if kaqp_curr < 0:
+                print('Error, negative kaqp in cortical cell, adjust Paqp_cortex')
+
+        # ── Select kw_key via interface map (mirrors _fill_membrane) ──────────
+        cells_i = self._get_cells_for_wall_node(wall_idx)
+        passage_cids = {c.cell_id for c in cm.passage}
+        n_endo = sum(1 for c in cells_i if c.cgroup == 3)
+        n_exo = sum(1 for c in cells_i if c.cgroup == 1)
+        n_stele = sum(1 for c in cells_i if c.cgroup > 4)
+        n_passage = sum(1 for c in cells_i if c.cell_id in passage_cids)
+
+        kw_key = None
+        if len(cells_i) == 2:
+            interface = tuple(sorted((cells_i[0].cgroup, cells_i[1].cgroup)))
+            kw_key = self.hydraulic.interface_kw_key_map.get(interface, None)
+        if n_endo > 0 and n_passage > 0:
+            kw_key = 'kw_passage'
+        kw_val = kw_config.get(kw_key, kw) if kw_key is not None else kw
+
+        # ── Membrane conductance calculation (identical to _fill_membrane) ────
+        is_barrier_interface = (n_endo >= 2) or (n_exo >= 2) or (n_stele > 0 and n_endo > 0)
+        if (not is_barrier_interface) and kaqp_curr == 0.0:
+            K = 1.00E-16
+        elif kw_val == 0.0:
+            K = 0.0
+        else:
+            K = 1 / (1 / (kw_val / (thickness / 2 * 1.0E-04)) + 1 / (self.hydraulic.kmb + kaqp_curr)) \
+                * 1.0E-08 * (height + membrane_dist) * membrane_length
+        return float(K)
+
     @staticmethod
     def _get_kpl_factor(kpl_config: dict, factor_key) -> float:
         """Resolve an interface factor key against *kpl_config*.
@@ -594,6 +683,11 @@ class HydraulicMatrixBuilder:
         thickness: float,
         barrier: int,
         rhs_wa: np.ndarray,
+        kw: float,
+        kw_config: dict,
+        kaqp_config: dict,
+        a_cortex: float,
+        b_cortex: float,
     ) -> None:
         r"""Fill matrix / rhs entries for a wall ↔ mesophyll air-space edge.
 
@@ -604,27 +698,44 @@ class HydraulicMatrixBuilder:
 
         Physics
         -------
-        At the wall node liquid and vapour are assumed to be in local equilibrium.
-        The vapour pressure is then related to the liquid water potential via the Kelvin equation:
+        Water reaching the evaporating wall surface must first cross the
+        membrane of the flanking mesophyll cell.  The wall ↔ air transport is
+        therefore two transport steps in **series**:
 
-            p_vapour = p_sat * exp(alpha * psi_wall)
+            R_tot = R_memb + R_vap        (1/K_tot = 1/K_memb + 1/K_vap)
 
-        where alpha = M_w / (R * T) is the Kelvin coefficient and 
-        p_sat is the saturation vapour pressure (here assumed constant).
-        The transport is then assumed to follow a diffusive law:
+        1. *Membrane (liquid) step* — identical conductance to
+           :meth:`_fill_membrane`, using the full formula with the aquaporin
+           contribution and the same membrane exchange area
+           ``(height + dist) * length``:
 
-            j = kwa * A * (p_vapour - p_air)
+               K_memb = 1 / (1/(kw/(thickness/2)) + 1/(kmb + kaqp)) * A_memb
 
-        For p_vapour we linearize the exponential around a reference water potential psi_ref:
-            
-            p_vapour ≈ p_sat * exp(alpha * psi_ref) * (1 + alpha * (psi_wall - psi_ref))
-        
-        This leads to a linearized flux expression:
+        2. *Evaporation (vapour) step* — at the wall surface liquid and vapour
+           are in local equilibrium, so the vapour pressure follows the Kelvin
+           equation ``p_vapour = p_sat * exp(alpha * psi_surface)`` with
+           ``alpha = M_w / (R * T)`` and constant ``p_sat``.  Transport is
+           diffusive, ``j = kwa * A * (p_vapour - p_air)``.  Linearizing the
+           exponential around ``psi_ref`` gives the wall-side slope
+           ``K_vap = kwa * p_sat * exp(alpha*psi_ref) * alpha * A``.
+
+        Eliminating the intermediate surface potential ``psi_surface`` from the
+        two series steps attenuates every linearized coefficient by the same
+        factor ``f = 1 / (1 + K_vap / K_memb)``:
+
+            K_wall  = f * kwa * p_sat * e_ref * alpha * A
+            K_air   = f * kwa * A
+            offset  = f * kwa * p_sat * A * e_ref * (1 - alpha * psi_ref)
+
+        yielding the linearized flux expression
 
             j = K_wall * psi_wall - K_air * p_air + offset
 
-        Note that K_wall and K_air are asymmetric, 
+        Note that K_wall and K_air are asymmetric,
         and offset is a constant term which is included in the rhs vector.
+        The exchange area ``A`` is the membrane exchange area
+        ``(height + dist) * length`` (same as the transmembrane path), so that
+        both series resistances refer to the same surface.
 
 
         Parameters
@@ -652,6 +763,10 @@ class HydraulicMatrixBuilder:
         rhs_wa : np.ndarray
             Persistent constant-source vector for the linearized coupling
             (mutated in-place).
+        kw, kw_config, kaqp_config, a_cortex, b_cortex
+            Membrane-conductance parameters (same meaning as in
+            :meth:`_fill_membrane`) used to build the series membrane
+            resistance ``R_memb`` of the flanking mesophyll cell.
         """
         cm = self.network.cell_manager
 
@@ -663,10 +778,28 @@ class HydraulicMatrixBuilder:
         else:
             wall_idx, air_idx = j, i
 
-        # ── Geometry: exchange area of the wall-air interface (cm²) ──────────
-        length = float(eattr['length'])
-        dist = float(eattr['dist'])
-        area =  dist * length * 1.0E-08  # µm² → cm²
+        # ── Membrane (liquid) resistance in series with evaporation ──────────
+        # Water must cross the flanking mesophyll cell's membrane before it can
+        # evaporate at the wall surface.  Locate that cell (the wall neighbour
+        # linked by a 'membrane' edge — the air-space cell itself is joined by
+        # this 'wall_air' edge, not a membrane edge) and reuse the identical
+        # membrane conductance formula, including aquaporins and the SAME
+        # membrane exchange area used for transmembrane transport.
+        memb_length = None
+        memb_dist = None
+        memb_cell_node = None
+        for nbr in self.network.graph.neighbors(node if node == wall.node_id else neighboor):
+            edata = self.network.graph.edges[wall.node_id, nbr]
+            if edata.get('path') == 'membrane':
+                memb_cell_node = nbr
+                memb_length = float(edata.get('length', eattr['length']))
+                memb_dist = float(edata.get('dist', eattr['dist']))
+                break
+
+        # ── Geometry: membrane exchange area (cm²) — shared by both steps ────
+        length = memb_length if memb_length is not None else float(eattr['length'])
+        dist = memb_dist if memb_dist is not None else float(eattr['dist'])
+        area = (height + dist) * length * 1.0E-08  # µm² → cm²
 
         # ── Kelvin-equation parameters ──────────────────────────────────────
         kwa = float(kwa_config['kwa'])
@@ -680,10 +813,28 @@ class HydraulicMatrixBuilder:
         alpha = M_w / (R * T)
         e_ref = math.exp(alpha * psi_ref)
 
-        # Asymmetric conductances
-        K_wall = kwa * p_sat * e_ref * alpha * area         # cm³ hPa⁻¹ d⁻¹
-        K_air = kwa * area                                  # cm³ hPa⁻¹ d⁻¹
-        offset = kwa * p_sat * area * e_ref * (1.0 - alpha * psi_ref)
+        # Vapour (evaporation) wall-side slope, before adding membrane series.
+        K_vap = kwa * p_sat * e_ref * alpha * area          # cm³ hPa⁻¹ d⁻¹
+
+        # Membrane conductance for the flanking mesophyll cell (full formula
+        # with aquaporins).  If no membrane neighbour is found the water path
+        # collapses to the pure evaporation step (f = 1).
+        if memb_cell_node is not None:
+            K_memb = self._membrane_conductance(
+                wall.node_id, memb_cell_node, length, dist,
+                kw, kw_config, height, thickness, barrier,
+                kaqp_config, a_cortex, b_cortex,
+            )
+        else:
+            K_memb = float('inf')
+
+        # Series attenuation factor f = 1 / (1 + K_vap / K_memb).
+        f = 1.0 / (1.0 + K_vap / K_memb) if K_memb > 0.0 else 0.0
+
+        # Asymmetric conductances (attenuated by the series membrane resistance)
+        K_wall = f * K_vap                                  # cm³ hPa⁻¹ d⁻¹
+        K_air = f * kwa * area                              # cm³ hPa⁻¹ d⁻¹
+        offset = f * kwa * p_sat * area * e_ref * (1.0 - alpha * psi_ref)
 
         # ── Assemble linear coupling on wall (w) and air (a) nodes ───────────
         self._add_W(wall_idx, wall_idx, -K_wall)
