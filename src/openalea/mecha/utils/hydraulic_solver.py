@@ -443,16 +443,12 @@ class HydraulicMatrixBuilder:
     ) -> float:
         r"""Compute the transmembrane conductance ``K_memb`` for one wall↔cell pair.
 
-        Reproduces the exact conductance formula used in :meth:`_fill_membrane`
-        (series of cell-wall half-thickness and membrane + aquaporin
-        conductivities) so it can be reused where a membrane resistance is
-        needed in series with another transport step — e.g. the liquid path
-        that water must cross before it evaporates at a wall ↔ air-space
+        It is reused where a membrane resistance is in series with 
+        another transport step — a wall ↔ air-space
         interface in :meth:`_fill_wall_air`.
 
         The pure hydraulic conductance is computed here without the
-        solute-transport (C-matrix) side effects of :meth:`_fill_membrane`,
-        which only apply to xylem interfaces that never border an air space.
+        solute-transport (C-matrix) side effects of :meth:`_fill_membrane`.
 
         Parameters
         ----------
@@ -699,8 +695,8 @@ class HydraulicMatrixBuilder:
         Physics
         -------
         Water reaching the evaporating wall surface must first cross the
-        membrane of the flanking mesophyll cell.  The wall ↔ air transport is
-        therefore two transport steps in **series**:
+        membrane of the flanking mesophyll cell. The wall ↔ air transport.
+        The transport is two steps in series:
 
             R_tot = R_memb + R_vap        (1/K_tot = 1/K_memb + 1/K_vap)
 
@@ -712,10 +708,10 @@ class HydraulicMatrixBuilder:
                K_memb = 1 / (1/(kw/(thickness/2)) + 1/(kmb + kaqp)) * A_memb
 
         2. *Evaporation (vapour) step* — at the wall surface liquid and vapour
-           are in local equilibrium, so the vapour pressure follows the Kelvin
+           are in local equilibrium. The vapour pressure follows the Kelvin
            equation ``p_vapour = p_sat * exp(alpha * psi_surface)`` with
-           ``alpha = M_w / (R * T)`` and constant ``p_sat``.  Transport is
-           diffusive, ``j = kwa * A * (p_vapour - p_air)``.  Linearizing the
+           ``alpha = M_w / (R * T)`` and constant ``p_sat``. Transport is
+           diffusive, ``j = kwa * A * (p_vapour - p_air)``. Linearizing the
            exponential around ``psi_ref`` gives the wall-side slope
            ``K_vap = kwa * p_sat * exp(alpha*psi_ref) * alpha * A``.
 
@@ -779,12 +775,6 @@ class HydraulicMatrixBuilder:
             wall_idx, air_idx = j, i
 
         # ── Membrane (liquid) resistance in series with evaporation ──────────
-        # Water must cross the flanking mesophyll cell's membrane before it can
-        # evaporate at the wall surface.  Locate that cell (the wall neighbour
-        # linked by a 'membrane' edge — the air-space cell itself is joined by
-        # this 'wall_air' edge, not a membrane edge) and reuse the identical
-        # membrane conductance formula, including aquaporins and the SAME
-        # membrane exchange area used for transmembrane transport.
         memb_length = None
         memb_dist = None
         memb_cell_node = None
