@@ -7,6 +7,7 @@
 #           Dilhan Ozturk, Adrien Heymans
 #
 #       File contributor(s):
+#           Jonas Sonnenschein
 #
 #       File maintainer(s):
 #           Valentin Couvreur
@@ -966,10 +967,13 @@ class HydraulicData:
     axial_conductance_source: int = 1
     k_sieve_elems: List[Any] = field(default_factory=list)
     k_xyl_elems: List[Any] = field(default_factory=list)
-    k_sieve: float = 1.0E-6  # Sieve tube hydraulic conductance
+    k_sieve: float = 1.0  # Penalty conductance for sieve-tube Dirichlet BC [cm³ hPa⁻¹ d⁻¹].
     K_axial: Optional[np.ndarray] = None
-    k_xyl: float = 1.0E-6   # Xylem vessel axial hydraulic conductance
-    K_xyl_spec: float = 1.0E-6   # Xylem vessel axial hydraulic conductance ## remove?
+    # Penalty conductance for the xylem Dirichlet BC [cm³ hPa⁻¹ d⁻¹].
+    # This is a *numerical* penalty not a physical conductance.
+    # It must dominate the largest physical diagonal entry.
+    k_xyl: float = 1.0
+    K_xyl_spec: float = 1.0E-6   # Xylem vessel specific axial hydraulic conductance
 
     # Root conductivities
     conductivities: List[Dict[str, Any]] = field(default_factory=list)
@@ -1577,8 +1581,108 @@ class InData:
         else:
             return description
 
+    @classmethod
+    def needle_defaults(cls) -> "InData":
+        """Build an :class:`InData` pre-configured for a conifer needle.
+
+        The needle *geometry / topology* is produced upstream by GRANAP
+        (``NeedleAnatomy`` → ``NetworkBuilder.populate_from_network()``); this
+        factory only sets the *physics parameters* that MECHA needs and that are
+        otherwise keyed to maize-root calibrations.
+
+        Design rules followed here
+        --------------------------
+        * Start from the built-in root defaults (``cls()`` fires every
+          ``_set_default_values()``), then override only what differs for a
+          needle.
+        * A value is changed away from the root default **only when it can be
+          cited**.  Every parameter that is *inherited* from the root
+          calibration and still awaits needle-specific evidence is flagged with
+          a ``# ROOT DEFAULT (needs needle evidence)`` comment so it can be
+          revisited.
+
+        Returns
+        -------
+        InData
+            Configuration ready to pass to :class:`Mecha` together with a
+            GRANAP-populated ``NetworkBuilder``.
+
+        """
+        data = cls()
+
+        # ── Geometry / maturity ────────────────────────────────────────────
+        # Needles possess a Casparian-strip-equivalent structure on the radial
+        # walls of the endodermis surrounding the vascular (transfusion) tissue.
+        # barrier = 1 activates the endodermal Casparian strip (En_cs): apoplastic
+        # flow across endo–endo radial walls is blocked (kw_endo_endo →
+        # kw_barrier_casparian), while the tangential endo–cortex / endo–peri
+        # walls stay permeable to transmembrane flow.
+        # Endodermal Casparian band in conifer needles:
+        # Canny (1993), Liesche et al. (2011)
+        data.geometry.set_maturity_stages([1], [200.0])
+
+        # ROOT DEFAULT (needs needle evidence): double cell-wall thickness (µm).
+        # Root value from Andème-Onzighi et al. (2002); conifer needle epidermal
+        # and hypodermal walls are reported thicker, but no calibrated MECHA
+        # value is available yet.
+        # data.geometry.thickness = 1.5
+
+        # ROOT DEFAULT (needs needle evidence): plasmodesmatal open cross-section
+        # (µm²) No reported needle value is available yet
+        # data.geometry.pd_section = 7.47E-5
+
+        # ── Hydraulics ─────────────────────────────────────────────────────
+        # Disable the outer-boundary soil contact: a needle cross-section has no
+        # soil interface, so no border wall should carry the soil Dirichlet BC.
+        # x_contact = 1e10 µm (effectively ∞) → no border wall satisfies
+        # x >= x_contact.  (needle_steady.py: X_CONTACT = 1e10)
+        data.hydraulic.xcontactrange = [1.0E10]
+        data.hydraulic.n_xcontact = 1
+
+        # ROOT DEFAULT (needs needle evidence): bulk cell-wall conductivity
+        # (cm hPa⁻¹ d⁻¹).  Maize-root calibration.
+        # data.hydraulic.kw = [2.4E-4]
+
+        # Casparian-strip / suberised
+        # barrier wall conductivity (cm hPa⁻¹ d⁻¹).  Retained so barrier=1 blocks
+        # the endo–endo apoplastic path as intended.
+        data.hydraulic.kw_barrier = [1.0E-16]     # High default for numerical stability, 
+                                                  # exact unknown
+
+        # ROOT DEFAULT (needs needle evidence): background (non-aquaporin)
+        # membrane conductivity (cm hPa⁻¹ d⁻¹).  Maize-root cortex calibration.
+        # no needle-specific evidence yet, so retain the root default for now.
+        # data.hydraulic.kmb = 3.0E-5
+
+        # ROOT DEFAULT (needs needle evidence): aquaporin membrane conductivity
+        # and per-tissue factors. Uniform factors inherited from the root; the
+        # needle transfusion parenchyma / mesophyll aquaporin activity is not yet
+        # differentiated.
+        # data.hydraulic.kaqp[0]['value'] = 4.3E-4
+
+        # ROOT DEFAULT (needs needle evidence): plasmodesmatal conductance
+        # (cm³ hPa⁻¹ d⁻¹).  Maize-root value.
+        # data.hydraulic.kpl[0]['value'] = 5.3E-12
+
+        # ROOT DEFAULT (needs needle evidence): axial conductances of the
+        # conducting elements (cm³ hPa⁻¹ d⁻¹). Placeholder values, not needle
+        # transfusion-tracheid specific.
+        # data.hydraulic.k_xyl = 1.0E-6
+        # data.hydraulic.k_sieve = 1.0E-6
+
+        # ── Boundary conditions (hydraulic only) ───────────────────────────
+        sc = data.boundary.scenarios[0]
+
+        # Clear all scenario values to NaN 
+        for key in sc.keys(): sc[key] = np.nan
+
+        sc['psi_soil_left'] = 0.0
+
+        return data
 
 
+# Canny MJ. 1993. Transfusion tissue of pine needles as a site of retrieval
+# of solutes from the transpiration stream. New Phytologist 123, 227–232
 
-
-
+# Liesche J, Martens HJ, Schulz A. 2011. Symplasmic transport and
+# phloem loading in gymnosperm leaves. Protoplasma 248, 181–190

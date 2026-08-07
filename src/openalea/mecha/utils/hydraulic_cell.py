@@ -37,7 +37,7 @@ Standalone descriptors for MECHA's hydraulic network.
 ``HydraulicWallAir`` carries:
   - a single wall ↔ air space (mesophyll) connection (graph edge path='wall_air')
   - geometry: length, dist (wall-to-cell half-thickness distance)
-  - hydraulic properties: kwa (conductance, cm³ hPa⁻¹ d⁻¹)
+  - hydraulic properties: kwa (conductance, cm hPa⁻¹ d⁻¹)
 
 ``HydraulicCell`` carries:
   - geometry fields mirrored from GRANAP Cell (without inheriting it)

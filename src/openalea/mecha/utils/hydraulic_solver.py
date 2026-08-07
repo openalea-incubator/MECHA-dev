@@ -412,7 +412,11 @@ class HydraulicMatrixBuilder:
         # ── Membrane conductance calculation ──────────────────────────────────
         is_barrier_interface = (n_endo >= 2) or (n_exo >= 2) or (n_stele > 0 and n_endo > 0)
 
-        if (not is_barrier_interface) and kaqp_curr == 0.0:
+        # Cut only when there is genuinely no membrane conductance
+        # (``kmb == 0`` *and* ``kaqp_curr == 0``); otherwise the normal
+        # series formula (which already includes ``kmb``) is used so the
+        # membrane stays permeable (mesohpyll cells).
+        if (not is_barrier_interface) and kaqp_curr == 0.0 and self.hydraulic.kmb == 0.0:
             K = 1.00E-16
         else:
             if kw_val == 0.0:
@@ -509,8 +513,10 @@ class HydraulicMatrixBuilder:
         kw_val = kw_config.get(kw_key, kw) if kw_key is not None else kw
 
         # ── Membrane conductance calculation (identical to _fill_membrane) ────
+        # Cut only when there is no background membrane conductance either 
+        # (``kmb == 0``), so needle mesophyll membranes remain permeable through ``kmb``.
         is_barrier_interface = (n_endo >= 2) or (n_exo >= 2) or (n_stele > 0 and n_endo > 0)
-        if (not is_barrier_interface) and kaqp_curr == 0.0:
+        if (not is_barrier_interface) and kaqp_curr == 0.0 and self.hydraulic.kmb == 0.0:
             K = 1.00E-16
         elif kw_val == 0.0:
             K = 0.0
