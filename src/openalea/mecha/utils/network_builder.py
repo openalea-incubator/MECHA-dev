@@ -4,13 +4,13 @@
 #       mecha.utils.loader
 #
 #       File author(s):
-#           Dilhan Ozturk, Adrien Heymans
+#           Dilhan Ozturk, Adrien Heymans, Jonas Sonnenschein
 #
 #       File maintainer(s):
 #           Valentin Couvreur
 #
 #       Copyright © by UCLouvain
-#       Distributed under the LGPL License..
+#       Distributed under the LGPL License.
 #       See accompanying file LICENSE.txt or copy at
 #           https://www.gnu.org/licenses/lgpl-3.0.en.html
 #
@@ -54,6 +54,8 @@ class NetworkBuilder(AbstractNetwork):
         self.n_membrane: int = 0
         self.n_membrane_from_epi: int = 0
         self.n_nodes: int = 0
+        self.n_wall_air: int = 0
+        self.n_air_link: int = 0
         
         # Cell and wall properties
         self.cell_areas: Optional[np.ndarray] = None 
@@ -195,6 +197,8 @@ class NetworkBuilder(AbstractNetwork):
         self.build_membrane_connections()
         self.compute_cell_properties()
         self.build_plasmodesmata_connections()
+        self.build_wall_air_connections()
+        self.build_air_link_connections()
         self.build_wall_connections()
         self.compute_gravity_center()
 
@@ -293,7 +297,7 @@ class NetworkBuilder(AbstractNetwork):
                 'stele': 5,
                 'pith': 5,
                 'parenchyma': 5,
-                'vascular_parenchyma': 5,
+                'vascular parenchyma': 5,
                 'phloem': 11,
                 'protosieve': 23,
                 'protophloem': 23,
@@ -478,6 +482,18 @@ class NetworkBuilder(AbstractNetwork):
             if data.get('path') == 'membrane':
                 self.n_membrane += 1
 
+        # Count wall_air connections
+        self.n_wall_air = 0
+        for u, v, data in self.graph.edges(data=True):
+            if data.get('path') == 'wall_air':
+                self.n_wall_air += 1
+
+        # Count air_link connections
+        self.n_air_link = 0
+        for u, v, data in self.graph.edges(data=True):
+            if data.get('path') == 'air_link':
+                self.n_air_link += 1
+
         # Step 9: Compute gravity center from endodermis cells
         self._compute_gravity_center_from_graph(position)
 
@@ -538,7 +554,7 @@ class NetworkBuilder(AbstractNetwork):
         """Construct ``self.cell_manager`` from the current graph state.
 
         Called automatically at the end of :meth:`build_network` and
-        :meth:`populate_from_network`.  Safe to call multiple times — the
+        :meth:`populate_from_network`. Safe to call multiple times — the
         manager is rebuilt from scratch each time.
         """
         manager = HydraulicCellManager()
@@ -550,7 +566,7 @@ class NetworkBuilder(AbstractNetwork):
 
         For the XML path this delegates to :func:`mecha.utils.visu.prep_section`.
         For the GRANAP path it adapts polygons from the source network cells
-        (scaling from mm to µm).  Returns ``None`` when no geometry is available.
+        (scaling from mm to µm). Returns ``None`` when no geometry is available.
 
         Returns
         -------
@@ -1005,6 +1021,18 @@ class NetworkBuilder(AbstractNetwork):
                         self.apo_wall_target.append(wall_id)
                     if cell_id in self.apo_immune and wall_id not in self.apo_wall_immune:
                         self.apo_wall_immune.append(wall_id)
+
+
+    def is_wall_air_cell(self, cell_node_id: int) -> bool:
+        """Check if a cell node is an air space in the mesophyll with protect_topology=True"""
+        node = self.graph.nodes[cell_node_id]
+        cell_type = str(node.get("cell_type", "")).strip().lower()
+
+        return (
+            cell_type == "air space"
+            and bool(node.get("protect_topology", False))
+        )
+
                 
     def build_membrane_connections(self):
         """Build membrane connections between cells and walls"""
@@ -1015,6 +1043,10 @@ class NetworkBuilder(AbstractNetwork):
         for cell_group in cell_to_wall:
             cell_id = int(cell_group.getparent().get("id"))
             cell_node_id = self.n_walls + self.n_junctions + cell_id
+
+            # Skip air space cells if protect_topology is enabled
+            if self.is_wall_air_cell(cell_node_id):
+                continue
             
             for wall_ref in cell_group:
                 wall_id = int(wall_ref.get("id"))
@@ -1042,7 +1074,96 @@ class NetworkBuilder(AbstractNetwork):
                     dist=dist,
                     d_vec=d_vec
                 )
-                self.n_membrane += 1 
+                self.n_membrane += 1
+
+    def build_wall_air_connections(self):
+        """Build wall_air connections between air spaces and walls"""
+        cell_to_wall = self.cellset['cell_to_wall']
+        # NOTE: do not reset ``distance_wall_cell`` here — ``build_membrane_connections``
+        # already accumulated wall→cell distances that later feed the wall
+        # cross-section geometry.  Air-space walls are simply added on top.
+        if self.distance_wall_cell is None:
+            self.distance_wall_cell = np.zeros((self.n_walls, 1))
+        position = nx.get_node_attributes(self.graph,'position') #Nodes XY positions (micrometers)
+        
+        for cell_group in cell_to_wall:
+            cell_id = int(cell_group.getparent().get("id"))
+            cell_node_id = self.n_walls + self.n_junctions + cell_id
+
+             # Only consider air space cells if protect_topology is enabled
+            if not self.is_wall_air_cell(cell_node_id):
+                continue
+            
+            for wall_ref in cell_group:
+                wall_id = int(wall_ref.get("id"))
+                
+                if wall_id >= self.n_walls:
+                    continue
+                
+                # Calculate distance and direction
+                position_cell = position[cell_node_id]
+                position_wall = position[wall_id]
+                
+                d_vec = np.array([position_wall[0] - position_cell[0], position_wall[1] - position_cell[1]])
+                dist = np.linalg.norm(d_vec)
+                
+                if dist > 0:
+                    d_vec = d_vec / dist
+                
+                self.distance_wall_cell[wall_id] += dist
+
+                self.graph.add_edge(
+                    cell_node_id,
+                    wall_id,
+                    path='wall_air',
+                    length=self.wall_lengths[wall_id],
+                    dist=dist,
+                    d_vec=d_vec
+                )
+                self.n_wall_air += 1 
+
+    def build_air_link_connections(self):
+        """Build air_link connections between neighbouring mesophyll air spaces."""
+        walls_list = self.cellset['walls']
+        position = nx.get_node_attributes(self.graph, 'position')  # micrometers
+
+        # Build wall-to-cells mapping (same convention as plasmodesmata)
+        wall_to_cells: Dict[int, list] = {}
+        for wall_elem in walls_list:
+            wall_id = int(wall_elem.get("id"))
+            cell_id = int(wall_elem.getparent().getparent().get("id"))
+            wall_to_cells.setdefault(wall_id, []).append(cell_id)
+
+        # Connect air-space cells that share a wall
+        for wall_id, cell_ids in wall_to_cells.items():
+            if len(cell_ids) != 2:
+                continue
+
+            cell1_node = self.n_walls + self.n_junctions + cell_ids[0]
+            cell2_node = self.n_walls + self.n_junctions + cell_ids[1]
+
+            # Only link two mesophyll air-space cells to each other
+            if not (self.is_wall_air_cell(cell1_node) and self.is_wall_air_cell(cell2_node)):
+                continue
+
+            pos1 = position[cell1_node]
+            pos2 = position[cell2_node]
+
+            d_vec = np.array([pos2[0] - pos1[0], pos2[1] - pos1[1]])
+            dist = np.linalg.norm(d_vec)
+
+            if dist > 0:
+                d_vec = d_vec / dist
+
+            self.graph.add_edge(
+                cell1_node,
+                cell2_node,
+                path='air_link',
+                length=self.wall_lengths[wall_id] if wall_id in self.wall_lengths else 0,
+                dist=float(dist),
+                d_vec=d_vec,
+            )
+            self.n_air_link += 1
 
     def build_wall_connections(self):
         """Build connections between walls and junctions"""

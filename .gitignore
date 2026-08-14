@@ -7,5 +7,6 @@
 *test/outputs/*.vtk
 *test/outputs/*.xml
 *test/outputs/*.graphml
+*graphify-out/*
 src_old/*
 src_old
