@@ -11,6 +11,7 @@ reproduce the measurements.
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -23,6 +24,11 @@ from openalea.mecha.calibration.forward_model import (
     rh_to_water_potential,
 )
 
+#: Process-global cache of forward models built from a factory, so each worker
+#: process (which re-receives a pickled CostFunction every generation) builds
+#: its expensive model only once. Keyed by the factory callable.
+_PROCESS_FM_CACHE: Dict[Callable[[], ForwardModel], ForwardModel] = {}
+
 # ── Water physical constants for the flux-unit conversion ─────────────────────
 RHO_W_G_CM3 = 1.0
 #: Seconds per day.
@@ -33,9 +39,8 @@ MMOL_PER_MOL = 1.0e3
 #: Prefactor converting a volumetric flux [cm^3 d^-1] to a molar flux [mmol s^-1]
 Q_TO_MMOL_PER_S: float = (RHO_W_G_CM3 / M_W) * MMOL_PER_MOL / SECONDS_PER_DAY
 
-
 def q_to_flux_density(q_cm3_per_day: float, area_m2: float) -> float:
-    """Convert a MECHA volumetric flux to a transpiration flux density.
+    """Convert a volumetric flux to a transpiration flux density.
 
     Parameters
     ----------
@@ -43,8 +48,7 @@ def q_to_flux_density(q_cm3_per_day: float, area_m2: float) -> float:
         Volumetric water flux leaving the cross-section [cm^3 H2O d^-1], i.e.
         the output of :meth:`ForwardModel.transpiration_flux`.
     area_m2 : float
-        Transpiring surface area [m^2] that the modelled cross-section
-        represents (experimental normalization area of the measured ``E``).
+        Transpiring surface area [m^2] that the modelled cross-section.        
 
     Returns
     -------
@@ -77,11 +81,7 @@ FLUX_DENSITY_TO_CM_PER_DAY: float = (
 
 
 def flux_density_to_kr(e_mmol_m2_s: float, dpsi_hpa: float) -> float:
-    """Convert a measured transpiration flux density to a radial conductance.
-
-    Turns an experimentally reported ``E`` [mmol H2O m^-2 s^-1] into the same
-    radial-conductance quantity the forward model returns
-    (:meth:`ForwardModel.transpiration_flux` with ``output="k_r"``)::
+    """Convert a transpiration flux density to a radial conductance.
 
         k_r = (E converted to a volumetric flux density [cm d^-1]) / |dpsi|
             = FLUX_DENSITY_TO_CM_PER_DAY * E / |dpsi|        [cm hPa^-1 d^-1]
@@ -89,7 +89,7 @@ def flux_density_to_kr(e_mmol_m2_s: float, dpsi_hpa: float) -> float:
     Parameters
     ----------
     e_mmol_m2_s : float
-        Measured transpiration flux density [mmol H2O m^-2 s^-1].
+        Transpiration flux density [mmol H2O m^-2 s^-1].
     dpsi_hpa : float
         Magnitude of the water-potential drop driving the flux [hPa], i.e.
         ``|psi_xyl - psi_air|`` for the measurement's boundary conditions.
@@ -129,7 +129,7 @@ class Measurement:
         Measured radial conductance [cm hPa⁻¹ d⁻¹]. Provide this *or*
         ``E_obs``.
     E_obs : float, optional
-        Measured transpiration flux density [mmol H2O m⁻² s⁻¹].  Converted to a
+        Measured transpiration flux density [mmol H2O m⁻² s⁻¹]. Converted to a
         conductance internally. Provide this *or* ``kr_obs``.
     weight : float, optional
         Relative weight of this point in the cost function (default 1.0).
@@ -161,6 +161,89 @@ class Measurement:
         if self.kr_obs is not None:
             return float(self.kr_obs)
         return flux_density_to_kr(float(self.E_obs), dpsi_hpa)
+
+    def observed_E_obs(self, dpsi_hpa: float) -> float:
+        """Observed transpiration flux density [mmol H2O m⁻² s⁻¹] for this point."""
+        if self.E_obs is not None:
+            return float(self.E_obs)
+        return q_to_flux_density(float(self.kr_obs), dpsi_hpa)
+
+
+# ── Soft constraints ──────────────────────────────────────────────────────────
+@dataclass
+class FlatnessConstraint:
+    """Soft "flat conductance" constraint over a range of ``psi_xyl``.
+
+    Experimental evidence often indicates that the radial conductance ``k_r``
+    stays approximately constant over an extended range of xylem water
+    potential. This constraint penalizes the **slope**
+    ``d k_r / d psi_xyl`` directly, adding it as extra (target-zero) residuals
+    to the calibration cost.
+
+    The range ``psi_range = (psi_lo, psi_hi)`` is sampled at ``n_anchors``
+    equally spaced xylem potentials; for each adjacent anchor pair the finite
+    difference
+
+        slope = (k_r(psi_{k+1}) - k_r(psi_k)) / (psi_{k+1} - psi_k)
+
+    is formed (``n_anchors - 1`` residuals). Driving these toward zero flattens
+    the modelled ``k_r(psi_xyl)`` response across the range.
+
+    Parameters
+    ----------
+    rh_airspace : float
+        Substomatal air-space relative humidity at which flatness should hold,
+        in ``(0, 1]``.
+    psi_range : tuple of float
+        ``(psi_lo, psi_hi)`` xylem water-potential range over which ``k_r``
+        should be flat [hPa]. ``psi_lo`` and ``psi_hi`` must differ.
+    n_anchors : int, optional
+        Number of equally spaced anchor potentials sampled across the range
+        (``>= 2``; default 3). Produces ``n_anchors - 1`` slope residuals.
+    weight : float, optional
+        Constraint strength ``lambda`` (default 1.0). Larger values enforce
+        flatness more strictly relative to the data residuals.
+    relative : bool, optional
+        If ``True`` the slope is made dimensionless by scaling to the local
+        logarithmic derivative ``(psi / k_r) * d k_r / d psi`` (using the
+        midpoint ``psi`` and mean ``k_r`` of each anchor pair), which is easier
+        to weight against relative data residuals. Defaults to ``False``
+        (absolute slope in cm hPa⁻¹ d⁻¹ per hPa).
+    label : str, optional
+        Free-form identifier.
+    """
+
+    rh_airspace: float
+    psi_range: Tuple[float, float]
+    n_anchors: int = 3
+    weight: float = 1.0
+    relative: bool = False
+    label: str = ""
+
+    def __post_init__(self) -> None:
+        if not (0.0 < self.rh_airspace <= 1.0):
+            raise ValueError(
+                f"rh_airspace must be in (0, 1], got {self.rh_airspace}."
+            )
+        lo, hi = self.psi_range
+        if float(lo) == float(hi):
+            raise ValueError(
+                f"psi_range endpoints must differ, got {self.psi_range}."
+            )
+        if int(self.n_anchors) < 2:
+            raise ValueError(
+                f"n_anchors must be >= 2, got {self.n_anchors}."
+            )
+
+    def anchors(self) -> np.ndarray:
+        """Equally spaced anchor potentials across ``psi_range`` [hPa]."""
+        lo, hi = self.psi_range
+        return np.linspace(float(lo), float(hi), int(self.n_anchors))
+
+    @property
+    def n_residuals(self) -> int:
+        """Number of slope residuals contributed (``n_anchors - 1``)."""
+        return int(self.n_anchors) - 1
 
 
 # ── Parameter space ───────────────────────────────────────────────────────────
@@ -312,23 +395,81 @@ class CostFunction:
         relative error), which balances points spanning several orders of
         magnitude. Defaults to ``False`` (absolute residuals in
         cm hPa⁻¹ d⁻¹).
+    constraints : sequence of FlatnessConstraint, optional
+        Soft "flat conductance" constraints appended to the residual vector.
+        Each penalizes ``d k_r / d psi_xyl`` over a range of xylem potential,
+        letting you enforce that ``k_r`` stays constant over an extended
+        ``psi_xyl``.
     """
 
     def __init__(
         self,
-        forward_model: ForwardModel,
-        param_space: ParamSpace,
-        measurements: Sequence[Measurement],
+        forward_model: Optional[ForwardModel] = None,
+        param_space: ParamSpace = None,
+        measurements: Sequence[Measurement] = (),
         relative: bool = False,
+        constraints: Optional[Sequence["FlatnessConstraint"]] = None,
+        forward_model_factory: Optional[Callable[[], ForwardModel]] = None,
     ) -> None:
         if not measurements:
             raise ValueError("At least one measurement is required.")
-        self.fm = forward_model
+        if forward_model is None and forward_model_factory is None:
+            raise ValueError(
+                "Provide `forward_model` or `forward_model_factory`."
+            )
+        self._fm = forward_model
+        #: Picklable zero-arg callable that rebuilds the forward model. Required
+        #: for process-based parallelism (the live model holds an unpicklable
+        #: network); each worker process rebuilds its own model once.
+        self.forward_model_factory = forward_model_factory
         self.space = param_space
         self.measurements = list(measurements)
         self.relative = bool(relative)
+        self.constraints = list(constraints) if constraints else []
         #: Number of forward-model solves performed (diagnostics).
         self.n_evals = 0
+        #: Guards ``n_evals`` when the objective is called from worker threads.
+        self._n_evals_lock = threading.Lock()
+
+    @property
+    def fm(self) -> ForwardModel:
+        """The forward model, built lazily from the factory if needed.
+
+        In a worker **process** the live model is not pickled. Because SciPy's
+        ``differential_evolution`` re-sends (re-unpickles) the objective to the
+        pool on *every* generation, a fresh ``CostFunction`` instance arrives
+        each time; rebuilding the (expensive) model per instance would erase all
+        parallel gains. The built model is therefore memoised in a
+        **process-global** cache keyed by the factory, so each worker process
+        builds it exactly once and reuses it across generations.
+        """
+        if self._fm is not None:
+            return self._fm
+        factory = self.forward_model_factory
+        if factory is None:
+            raise RuntimeError(
+                "No forward model available and no factory to build one."
+            )
+        cached = _PROCESS_FM_CACHE.get(factory)
+        if cached is None:
+            cached = factory()
+            _PROCESS_FM_CACHE[factory] = cached
+        self._fm = cached
+        return self._fm
+
+    # -- pickling: drop the unpicklable live model and the lock ----------------
+    def __getstate__(self) -> dict:
+        state = self.__dict__.copy()
+        # The live forward model (network + cell manager + C-ext state) is not
+        # picklable; workers rebuild it from `forward_model_factory`.
+        state["_fm"] = None
+        # Locks are not picklable; recreate on the other side.
+        state["_n_evals_lock"] = None
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        self.__dict__.update(state)
+        self._n_evals_lock = threading.Lock()
 
     # -- driving potential drop for a measurement (matches the forward model) --
     def _dpsi(self, m: Measurement) -> float:
@@ -343,16 +484,67 @@ class CostFunction:
             theta, m.psi_xyl, m.rh_airspace, output="k_r"
         )
 
+    # -- single forward evaluation --
+    def model_E(self, theta: Dict[str, float], m: Measurement) -> float:
+        """Forward-model transpiration flux ``E`` [mmol m⁻² s⁻¹] for a point."""
+        return self.fm.transpiration_flux(
+            theta, m.psi_xyl, m.rh_airspace, output="k_r"
+        )
+
+    # -- forward k_r at an arbitrary boundary condition (constraints) --
+    def model_kr_at(
+        self, theta: Dict[str, float], psi_xyl: float, rh_airspace: float
+    ) -> float:
+        """Forward-model ``k_r`` [cm hPa⁻¹ d⁻¹] at ``(psi_xyl, rh_airspace)``."""
+        return self.fm.transpiration_flux(
+            theta, float(psi_xyl), float(rh_airspace), output="k_r"
+        )
+
+    # -- flatness slopes for one constraint (diagnostics / residuals) --
+    def _flatness_slopes(
+        self, theta: Dict[str, float], c: "FlatnessConstraint"
+    ) -> np.ndarray:
+        """Finite-difference slopes ``d k_r / d psi_xyl`` for a constraint.
+
+        Returns one value per adjacent anchor pair (``c.n_residuals`` total).
+        Non-finite solves propagate as ``nan`` and are handled by the caller.
+        """
+        psis = c.anchors()
+        krs = np.empty(psis.size, dtype=float)
+        for j, psi in enumerate(psis):
+            try:
+                krs[j] = self.model_kr_at(theta, psi, c.rh_airspace)
+            except Exception:
+                krs[j] = np.nan
+        dpsi = np.diff(psis)
+        slope = np.diff(krs) / dpsi
+        if c.relative:
+            # Dimensionless logarithmic slope (psi/k_r) * d k_r/d psi, using the
+            # midpoint psi and mean k_r of each anchor pair.
+            psi_mid = 0.5 * (psis[:-1] + psis[1:])
+            kr_mid = 0.5 * (krs[:-1] + krs[1:])
+            with np.errstate(divide="ignore", invalid="ignore"):
+                slope = slope * psi_mid / kr_mid
+        return slope
+
     # -- residual vector (for least_squares) --
     def residuals(self, x_log: Sequence[float]) -> np.ndarray:
-        """Weighted residual vector ``w * (k_r_model - k_r_obs)``.
+        """Weighted residual vector.
+
+        Concatenates the data residuals ``w * (k_r_model - k_r_obs)`` with the
+        soft-constraint residuals ``lambda * (d k_r / d psi_xyl)`` (target zero)
+        from any :class:`FlatnessConstraint`.
 
         A non-finite forward solve is mapped to a large finite residual so the
         optimizer can retreat from an infeasible region without crashing.
         """
         theta = self.space.to_theta(x_log)
-        self.n_evals += 1
-        res = np.empty(len(self.measurements), dtype=float)
+        with self._n_evals_lock:
+            self.n_evals += 1
+        n_data = len(self.measurements)
+        n_con = sum(c.n_residuals for c in self.constraints)
+        res = np.empty(n_data + n_con, dtype=float)
+
         for i, m in enumerate(self.measurements):
             kr_obs = m.observed_kr(self._dpsi(m))
             try:
@@ -365,6 +557,13 @@ class CostFunction:
                 r = r / denom
             r = m.weight * r
             res[i] = r if np.isfinite(r) else 1.0e6
+
+        k = n_data
+        for c in self.constraints:
+            slopes = c.weight * self._flatness_slopes(theta, c)
+            for s in slopes:
+                res[k] = s if np.isfinite(s) else 1.0e6
+                k += 1
         return res
 
     # -- scalar objective (for differential_evolution / minimize) --
@@ -373,20 +572,44 @@ class CostFunction:
         r = self.residuals(x_log)
         return float(np.dot(r, r))
 
-    def observed(self) -> np.ndarray:
+    def observed_kr(self) -> np.ndarray:
         """Observed radial conductances ``k_r_obs`` for all measurements."""
         return np.array(
             [m.observed_kr(self._dpsi(m)) for m in self.measurements],
             dtype=float,
         )
 
-    def predict(self, theta: Dict[str, float]) -> np.ndarray:
+    def observed_E_obs(self) -> np.ndarray:
+        """Observed transpiration flux ``E_obs`` for all measurements."""
+        return np.array(
+            [m.observed_E_obs(self._dpsi(m)) for m in self.measurements],
+            dtype=float,
+        )
+
+    def predict_kr(self, theta: Dict[str, float]) -> np.ndarray:
         """Model radial conductances ``k_r`` for all measurements (diagnostics)."""
         return np.array(
             [self.model_kr(theta, m) for m in self.measurements],
             dtype=float,
         )
+    
+    def predict_E(self, theta: Dict[str, float]) -> np.ndarray:
+        """Model ``E`` for all measurements (diagnostics)."""
+        return np.array(
+            [self.model_E(theta, m) * Q_TO_MMOL_PER_S for m in self.measurements],
+            dtype=float,
+        )
 
+    def predict_flatness_slopes(
+        self, theta: Dict[str, float]
+    ) -> List[np.ndarray]:
+        """Modelled ``d k_r / d psi_xyl`` slopes per constraint (diagnostics).
+
+        Returns one array of ``c.n_residuals`` slopes for each
+        :class:`FlatnessConstraint`, in the order they were supplied. Useful
+        for checking how flat the calibrated ``k_r(psi_xyl)`` response is.
+        """
+        return [self._flatness_slopes(theta, c) for c in self.constraints]
 
 # ── Optimiser wrapper ─────────────────────────────────────────────────────────
 @dataclass
@@ -419,9 +642,11 @@ class Optimizer:
     :meth:`run` chains them (global → local) for a practical default.
     """
 
-    def __init__(self, cost: CostFunction) -> None:
+    def __init__(self, cost: CostFunction, workers: int = 1) -> None:
         self.cost = cost
         self.space = cost.space
+        self.workers = workers
+
 
     # -- global search --
     def run_global(
@@ -431,30 +656,78 @@ class Optimizer:
         popsize: int = 15,
         tol: float = 1.0e-4,
         polish: bool = False,
+        workers: Optional[int] = None,
     ) -> OptimizeResult:
-        """Global search with differential evolution over the log bounds."""
+        """Global search with differential evolution over the log bounds.
+
+        Parallelism is **process-based**. The MECHA forward solve is dominated
+        by pure-Python matrix assembly (GIL-held), and the shared ``ForwardModel``
+        network is mutated in place per solve, so threads neither speed it up nor
+        are thread-safe. With ``workers != 1`` each candidate evaluation runs in
+        a separate process; every worker rebuilds its own forward model once
+        from :attr:`CostFunction.forward_model_factory`.
+
+        ``workers``: ``1`` = serial, ``-1`` = all CPUs, ``>1`` = that many
+        processes. Requires the :class:`CostFunction` to carry a
+        ``forward_model_factory`` (else falls back to serial with a warning).
+        """
+        import os
+        import warnings
         from scipy.optimize import differential_evolution
 
-        self.cost.n_evals = 0
-        res = differential_evolution(
-            self.cost.objective,
+        workers = self.workers if workers is None else int(workers)
+        if workers < 0:
+            # -1 (SciPy's "all CPUs" convention) -> concrete CPU count.
+            workers = os.cpu_count() or 1
+
+        # Process parallelism needs a picklable way to rebuild the model in each
+        # worker. Without a factory we cannot pickle the live network, so fall
+        # back to a correct serial run.
+        if workers != 1 and self.cost.forward_model_factory is None:
+            warnings.warn(
+                "run_global(workers>1) needs CostFunction.forward_model_factory "
+                "for process-based parallelism; running serially instead.",
+                RuntimeWarning,
+            )
+            workers = 1
+
+        de_kwargs = dict(
             bounds=self.space.log_bounds,
             seed=seed,
             maxiter=maxiter,
             popsize=popsize,
             tol=tol,
             polish=polish,
-            workers=1,          # no parallelism
-            updating="immediate",
         )
+
+        self.cost.n_evals = 0
+        if workers == 1:
+            res = differential_evolution(
+                self.cost.objective,
+                workers=1,
+                updating="immediate",
+                **de_kwargs,
+            )
+        else:
+            # SciPy spins up a multiprocessing pool; the bound method
+            # ``self.cost.objective`` is pickled to each worker (CostFunction is
+            # picklable and rebuilds its ForwardModel lazily per process).
+            res = differential_evolution(
+                self.cost.objective,
+                workers=workers,
+                updating="deferred",
+                **de_kwargs,
+            )
         x_log = self.space.clip_log(res.x)
+        # n_evals cannot be aggregated across processes; use DE's own count.
+        n_evals = int(getattr(res, "nfev", 0)) or self.cost.n_evals
         return OptimizeResult(
             theta=self.space.to_theta(x_log),
             x_log=x_log,
             cost=float(res.fun),
             success=bool(res.success),
             message=str(res.message),
-            n_evals=self.cost.n_evals,
+            n_evals=n_evals,
             raw={"global": res},
         )
 
@@ -519,10 +792,11 @@ class Optimizer:
         global_maxiter: int = 100,
         global_popsize: int = 15,
         refine: bool = True,
+        workers: Optional[int] = None,
     ) -> OptimizeResult:
         """Global search followed by an optional local refinement."""
         g = self.run_global(
-            seed=seed, maxiter=global_maxiter, popsize=global_popsize
+            seed=seed, maxiter=global_maxiter, popsize=global_popsize, workers=workers
         )
         if not refine:
             return g

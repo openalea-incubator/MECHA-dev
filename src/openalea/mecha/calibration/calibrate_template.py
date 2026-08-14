@@ -30,8 +30,8 @@ from openalea.mecha.calibration import (
     Measurement,
     Optimizer,
     ParamSpace,
+    FlatnessConstraint,
 )
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 1. Experimental data
@@ -40,17 +40,22 @@ from openalea.mecha.calibration import (
 # One entry per measurement.  Each needs:
 #   psi_xyl      xylem water potential during the measurement          [hPa]
 #   rh_airspace  substomatal air-space relative humidity, in (0, 1]    [-]
+#   provide either E_obs or kr_obs
 #   E_obs        measured transpiration flux density                   [mmol m^-2 s^-1]
+#   kr_obs       measured radial conductance (if available)            [cm hPa^-1 d^-1] 
 #   weight       optional; use 1/sigma to down-weight noisy points     [-]
 #   label        optional free-form tag (e.g. drought stage)
 #
 # Replace the illustrative numbers below with your own data.
 MEASUREMENTS = [
-    Measurement(psi_xyl=-200.0, rh_airspace=0.99, E_obs=6.7, label="well-watered"),
-    #Measurement(psi_xyl=-700.0, rh_airspace=0.99, E_obs=0.75, label="mild-drought"),
-    #Measurement(psi_xyl=-1500.0, rh_airspace=0.99, E_obs=0.0038, label="drought"),
+    Measurement(psi_xyl=-200, rh_airspace=0.98, E_obs=6.7, label="well-watered"),
+    #Measurement(psi_xyl=-200.0, rh_airspace=0.999, kr_obs=7.7e-4, label="well-watered"),
 ]
 
+CONSTRAINTS = [
+    FlatnessConstraint(rh_airspace=0.98, psi_range=(-1000.0, -200.0),
+                       n_anchors=3, weight=1.0, relative=True, label="flat kr"),
+]
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 2. Which coefficients to calibrate
@@ -89,11 +94,22 @@ RANDOM_SEED = 0          # reproducible global search
 GLOBAL_MAXITER = 60      # differential_evolution iterations (bigger = slower)
 GLOBAL_POPSIZE = 12      # population multiplier
 REFINE_LOCALLY = True    # follow the global search with a least-squares polish
+WORKERS = 12             # -1 = all CPUs
+# NeedleAnatomy is STOCHASTIC: each build draws a new random geometry. A fixed
+# seed is REQUIRED so every worker process rebuilds the *identical* anatomy;
+# otherwise each worker would calibrate against a different needle and the
+# objective becomes inconsistent across processes. Set to None only for a
+# single-process, single-anatomy run.
+ANATOMY_SEED = 42
 
 
 def build_forward_model() -> ForwardModel:
-    """Build the (cached) needle forward model once."""
-    anatomy = NeedleAnatomy()
+    """Build the needle forward model for a fixed (reproducible) anatomy.
+
+    Must be a top-level, picklable callable with no per-call randomness so each
+    worker process reconstructs the same model (see ``ANATOMY_SEED``).
+    """
+    anatomy = NeedleAnatomy(seed=ANATOMY_SEED)
     anatomy.export_to_adjencymatrix()
     network = NetworkBuilder(anatomy)
     network.populate_from_network()
@@ -104,8 +120,15 @@ def main() -> None:
     # --- forward model + inverse problem ------------------------------------
     fm = build_forward_model()
     space = ParamSpace(names=FIT_NAMES, bounds=BOUNDS, fixed=FIXED)
-    cost = CostFunction(fm, space, MEASUREMENTS, relative=RELATIVE_RESIDUALS)
-    optimizer = Optimizer(cost)
+    # `forward_model_factory` (a module-level, picklable callable) lets each
+    # worker PROCESS rebuild its own model: the MECHA solve is GIL-bound and the
+    # network is mutated per solve, so process parallelism is required (threads
+    # neither speed it up nor are thread-safe).
+    cost = CostFunction(
+        fm, space, MEASUREMENTS, relative=True, constraints=CONSTRAINTS,
+        forward_model_factory=build_forward_model,
+    )
+    optimizer = Optimizer(cost, workers=WORKERS)
 
     # --- run global search then local refinement ----------------------------
     print(f"Calibrating {space.names} against {len(MEASUREMENTS)} measurement(s)...")
@@ -128,13 +151,17 @@ def main() -> None:
     print(f"message         = {result.message}")
 
     # --- measured vs modelled at the optimum ---------------------------------
-    print("\n=== Fit quality (k_r, cm hPa^-1 d^-1) ===")
-    kr_model = cost.predict(result.theta)
-    kr_obs = cost.observed()
-    print(f"  {'label':<14} {'psi_xyl':>9} {'RH':>6} {'kr_obs':>11} {'kr_model':>11}")
-    for m, ko, km in zip(MEASUREMENTS, kr_obs, kr_model):
-        print(f"  {m.label:<14} {m.psi_xyl:9.1f} {m.rh_airspace:6.2f} "
-              f"{ko:11.4e} {km:11.4e}")
+    print("\n=== Fit quality (k_r, cm hPa^-1 d^-1; E_obs, mmol m^-2 s^-1; E_model, mmol m^-2 s^-1 hPa^-1) ===")
+    kr_model = cost.predict_kr(result.theta)
+    kr_obs = cost.observed_kr()
+    E_obs = cost.observed_E_obs()
+    E_model = cost.predict_E(result.theta)
+
+    print(f"  {'label':<14} {'psi_xyl':>9} {'RH':>6} {'ΔΨ':>4}"
+          f" {'kr_obs':>11} {'kr_model':>11} {'E_obs':>11} {'E_model':>11}")
+    for m, ko, km, eo, em in zip(MEASUREMENTS, kr_obs, kr_model, E_obs, E_model):
+        print(f"  {m.label:<14} {m.psi_xyl:9.1f} {m.rh_airspace:6.2f} {cost._dpsi(m):2.4e}"
+              f"{ko:11.4e} {km:11.4e} {eo:11.4e} {em:11.4e}")
 
 
 if __name__ == "__main__":
