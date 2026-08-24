@@ -297,23 +297,20 @@ class ForwardModel:
         return data
 
     def _apply_air_space_rh(self, mecha: Mecha, rh: float) -> float:
-        """Record the RH-derived Dirichlet value for the evaporating wall nodes.
+        """Register the RH-derived air Dirichlet BC on the evaporating walls.
 
         The transpirationally active surfaces are the **wall nodes** on the
         ``wall_air`` interfaces. Their degree of freedom is a water potential
         [hPa], so the air relative humidity enters as an exact Dirichlet
-        condition via the Kelvin equation (:func:`rh_to_water_potential`):
+        condition via the Kelvin equation (:func:`rh_to_water_potential`).
 
-        This method only stores the target nodes and potential; the actual
-        row-elimination is performed inside :meth:`_clean_solve`.
+        Delegates to :meth:`Mecha.set_air_wall_bc`, which imposes the penalty on
+        the same evaporating wall nodes during the standard hydraulic solve.
 
         Returns the imposed evaporating-surface water potential [hPa].
         """
         psi_air = rh_to_water_potential(rh, self.T)
-        mecha._calib_air_bc = {
-            "nodes": list(self._evaporating_wall_nodes),
-            "psi_air": float(psi_air),
-        }
+        mecha.set_air_wall_bc(psi_air, nodes=self._evaporating_wall_nodes)
         return psi_air
 
     # ── main entry point ──────────────────────────────────────────────────────
@@ -381,12 +378,12 @@ class ForwardModel:
                 f" A_transp={self._transpiring_area_cm2:.4e} cm^2)"
             )
 
-        solution, W_orig = self._clean_solve(mecha)
-        q_out = self._transpiration_flux_from_bc(mecha, solution, W_orig)
+        solution = self._solve(mecha)
+        q_out = self._transpiration_flux_from_bc(mecha, solution)
         if output == "Q":
             return q_out
 
-        # Radial conductance: normalise by the driving potential drop and the
+        # Radial conductance: normalized by the driving potential drop and the
         # upstream-derived transpiring area (MECHA kr_tot convention).
         dpsi = abs(float(psi_xyl) - psi_air)
         area = self._transpiring_area_cm2
@@ -394,81 +391,33 @@ class ForwardModel:
             return 0.0
         return q_out / dpsi / area
 
-    # ── clean single solve (bypasses solve_W post-processing) ─────────────────
-    def _clean_solve(self, mecha: Mecha):
-        """Assemble and solve the hydraulic system in one well-posed pass.
+    # ── hydraulic solve ───────────────────────────────────────────────────────
+    def _solve(self, mecha: Mecha) -> np.ndarray:
+        """Solve the needle hydraulics for the transpiration configuration.
 
-        Uses :meth:`Mecha.build_matrices` directly to get the physical matrix
-        (which includes the xylem penalty BC via
-        ``_apply_xylo_phloem_boundary``) and the persistent wall-air Kelvin
-        source ``rhs_wa``, then adds the evaporating-wall RH penalty BC before
-        a single solve. Returns the solution vector and a copy of the
-        pre-evap-BC matrix (kept for API compatibility).
+        Uses the standard :meth:`Mecha.solve_W`, which now applies the
+        evaporating-wall air BC registered by :meth:`_apply_air_space_rh`
+        (via :meth:`Mecha.set_air_wall_bc`) together with the xylem penalty BC
+        and the persistent wall-air Kelvin source.  A fresh :class:`Mecha` is
+        built per call, so ``solve_W``'s in-place matrix bookkeeping is harmless.
 
-        Bypasses :meth:`Mecha.solve_W` intentionally: that method calls
-        ``remove_xyl_phloem_BC`` which strips the xylem anchor back out of the
-        stored matrix, corrupting any subsequent re-solve.
+        Returns the nodal water-potential solution vector.
         """
-        self.network.cell_manager.reset_hydraulic_properties()
-        (matrix_W, _matrix_C, _rhs_C, _rhs_p, _rhs_x, _rhs_s,
-         rhs, rhs_wa, _Kmb) = mecha.build_matrices(h=0, i_maturity=self.i_maturity)
-        rhs = np.array(rhs, dtype=float) + np.array(rhs_wa, dtype=float)
-        psi_xyl_val = float(mecha.psi_xyl[1, self.i_maturity, 0])
-        if not np.isnan(psi_xyl_val):
-            k_xyl_val = (mecha.hydraulic.k_xyl
-                         if not isinstance(mecha.hydraulic.k_xyl, list)
-                         else mecha.hydraulic.k_xyl[0])
-            for c in mecha.network.cell_manager.xylem:
-                idx_xyl = mecha.indice[c.node_id]
-                rhs[idx_xyl, 0] = -float(k_xyl_val) * psi_xyl_val
-        # Keep a copy of the assembled matrix before the evap-wall penalty is
-        # added; used for API compatibility in _transpiration_flux_from_bc.
-        W_orig = matrix_W.tocsr().copy()
-        matrix_W = matrix_W.tolil()
-
-        # ── Evaporating-wall RH BC (penalty method) ───────────────────────────
-        bc = getattr(mecha, "_calib_air_bc", None)
-        if bc and bc["nodes"]:
-            psi_air_val = bc["psi_air"]
-            # Choose penalty 1e3× the largest physical diagonal entry.
-            # W_orig diagonal gives the physical scale; exclude the xylem penalty
-            # rows (already much larger) to avoid inflating the estimate.
-            max_phys_diag = float(np.abs(W_orig.diagonal()).max())
-            k_air = max(1e3 * max_phys_diag, 1.0)
-            W_lil = matrix_W.tolil()
-            rhs_vec = rhs.ravel()
-            for node in bc["nodes"]:
-                idx = mecha.indice[node]
-                W_lil[idx, idx] -= k_air
-                rhs_vec[idx] -= k_air * psi_air_val
-            matrix_W = W_lil.tocsr()
-            rhs = rhs_vec.reshape(-1, 1)
-            # Store penalty strength for flux computation.
-            bc["k_air"] = k_air
-        solution, _ = mecha.solve(
-            matrix=matrix_W, rhs=rhs, sparse_matrix=mecha.general.sparse_matrix
-        )
-        # Store so downstream MECHA utilities (edge flows, visualisation) work.
-        mecha.results.append({
-            "maturity stage": self.i_maturity, "scenario": "transpiration",
-            "solution": solution, "matrix_W": matrix_W, "rhs": rhs,
-        })
-        mecha.compute_edge_flows(solution, i_maturity=self.i_maturity)
-        return solution, W_orig
+        solution, *_ = mecha.solve_W(h=0, i_maturity=self.i_maturity)
+        return solution
 
     # ── flux extraction ───────────────────────────────────────────────────────
     def _transpiration_flux_from_bc(
         self,
         mecha: Mecha,
         solution: np.ndarray,
-        W_orig,  # kept for API compatibility; not used in penalty formulation
     ) -> float:
         """Transpiration flux from the evaporating-wall penalty residual.
 
         Each evaporating-wall node is constrained by a penalty conductance
-        ``k_air`` that holds its potential at ``psi_air``. The water
-        extracted by the penalty at each node is
-
+        ``k_air`` (set by :meth:`Mecha._apply_air_wall_bc`) that holds its
+        potential at ``psi_air``. The water extracted by the penalty at each
+        node is
 
             Q_k = k_air(psi_k - psi_air),
 
@@ -476,15 +425,12 @@ class ForwardModel:
         all evaporating walls gives the total transpiration rate
         (positive = water leaving the liquid phase).
         """
-        bc = getattr(mecha, "_calib_air_bc", None)
-        if not bc or not bc["nodes"]:
+        bc = getattr(mecha, "_air_wall_bc", None)
+        if not bc or not bc["nodes"] or "k_air" not in bc:
             return 0.0
         sol = np.asarray(solution, dtype=float).ravel()
         k_air = bc["k_air"]
         psi_air = bc["psi_air"]
-        # Penalty-BC residual: the water extracted by the penalty term at each
-        # evaporating wall equals k_air*(ψ_solved − ψ_air). Summed over all
-        # evaporating walls this is the total transpiration flux (positive outward).
         q_out = 0.0
         for node in bc["nodes"]:
             idx = mecha.indice[node]
