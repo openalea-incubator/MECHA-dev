@@ -667,6 +667,76 @@ class Mecha:
         )
 
 
+    # ── Evaporating-wall (air-space) Dirichlet BC ─────────────────────────────
+    def _collect_evaporating_wall_nodes(self) -> list:
+        """Wall node ids on the wall ↔ air-space (``wall_air``) interfaces.
+
+        Empty for anatomies without ``wall_air`` edges (e.g. roots), which keeps
+        the air BC inert for the pre-existing root pathway.
+        """
+        g = self.network.graph
+        cm = self.network.cell_manager
+        nwj = self.network.n_wall_junction
+        walls, seen = [], set()
+        for u, v, eattr in g.edges(data=True):
+            if eattr.get('path') != 'wall_air':
+                continue
+            wall = cm.get_wall_by_node_id(u) or cm.get_wall_by_node_id(v)
+            wall_node = wall.node_id if wall is not None else (
+                u if u < nwj else (v if v < nwj else None))
+            if wall_node is not None and wall_node not in seen:
+                seen.add(wall_node)
+                walls.append(wall_node)
+        return walls
+
+    def set_air_wall_bc(self, psi_air: float, nodes: list = None) -> list:
+        """Register a Dirichlet air/transpiration BC on the evaporating walls.
+
+        Parameters
+        ----------
+        psi_air : float
+            Liquid-equivalent water potential [hPa] imposed on the evaporating
+            wall nodes (e.g. from a chosen potential or an RH via the Kelvin
+            equation).
+        nodes : list, optional
+            Explicit wall node ids to pin.  Defaults to every wall on a
+            ``wall_air`` edge (:meth:`_collect_evaporating_wall_nodes`).
+
+        Returns
+        -------
+        list
+            The wall node ids that will be pinned (empty ⇒ BC inert).
+        """
+        if nodes is None:
+            nodes = self._collect_evaporating_wall_nodes()
+        self._air_wall_bc = {'nodes': list(nodes), 'psi_air': float(psi_air)}
+        return list(nodes)
+
+    def _apply_air_wall_bc(self, matrix_W, rhs):
+        """Penalty-impose the registered air/transpiration BC before a solve.
+
+        Pins each evaporating wall node to ``psi_air`` with a large-conductance
+        penalty ``k_air`` (1e3× the largest physical diagonal).  Mutates
+        ``matrix_W`` (LIL/CSR with item assignment) and ``rhs`` in place; a no-op
+        when no BC is registered or no evaporating walls exist (root pathway).
+        Stores ``k_air`` on the BC dict for the transpiration-flux read-back.
+        """
+        bc = getattr(self, '_air_wall_bc', None)
+        if not bc or not bc['nodes']:
+            return
+        psi_air = bc['psi_air']
+        diag = np.abs(matrix_W.diagonal())
+        max_phys_diag = float(diag.max()) if diag.size else 1.0
+        k_air = max(1e3 * max_phys_diag, 1.0)
+        rhs_flat = np.asarray(rhs).ravel()
+        for node in bc['nodes']:
+            idx = self.indice[node]
+            matrix_W[idx, idx] -= k_air
+            rhs_flat[idx] -= k_air * psi_air
+        rhs[:] = rhs_flat.reshape(rhs.shape)
+        bc['k_air'] = k_air
+
+
     @staticmethod
     def solve(matrix, rhs: np.ndarray, sparse_matrix: int) -> tuple:
         """Solve the system.
@@ -1098,6 +1168,18 @@ class Mecha:
                 if rhs_wa is not None:
                     rhs += rhs_wa
 
+                # Evaporating-wall (air-space) Dirichlet BC — rhs contribution.
+                # The matrix penalty is already included in ``matrix_W`` by
+                # ``solve_W``; here add the matching ``-k_air·psi_air`` source
+                # to each scenario's freshly-rebuilt rhs (needle only; inert when
+                # no ``wall_air`` edges / no BC registered).
+                air_bc = getattr(self, '_air_wall_bc', None)
+                if air_bc and air_bc.get('nodes') and 'k_air' in air_bc:
+                    k_air = air_bc['k_air']
+                    psi_air = air_bc['psi_air']
+                    for node in air_bc['nodes']:
+                        rhs[self.indice[node]] -= k_air * psi_air
+
                 # Critical check for NaNs in rhs before soil BC
                 if np.any(np.isnan(rhs)):
                     print(f"CRITICAL: NaNs detected in rhs for scenario {i_scenario}!")
@@ -1273,13 +1355,19 @@ class Mecha:
         matrix_W, matrix_C, rhs_C, rhs_p, rhs_x, rhs_s, rhs, rhs_wa, Kmb =\
             self.build_matrices(h = h, i_maturity = i_maturity)
         matrix_W = matrix_W.tocsr()
-        # Add the persistent linearized wall-air (Kelvin) source term.  It is
+        # Add the persistent linearized wall-air (Kelvin) source term. It is
         # kept separate from the boundary-condition vectors and added here so
         # it is not overwritten by ``_apply_xylo_phloem_boundary``.
         rhs = rhs + rhs_wa
         # Cache for the per-scenario solves in ``water_flux`` where ``rhs`` is
         # re-initialised from scratch by ``initialize_scenarios``.
         self._rhs_wall_air = rhs_wa
+        # Evaporating-wall (air-space) Dirichlet BC — inert unless registered via
+        # ``set_air_wall_bc`` and the anatomy has ``wall_air`` edges (needle only).
+        if getattr(self, '_air_wall_bc', None) and self._air_wall_bc['nodes']:
+            matrix_W = matrix_W.tolil()
+            self._apply_air_wall_bc(matrix_W, rhs)
+            matrix_W = matrix_W.tocsr()
         # Solve system
         solution, verification_1 = self.solve(matrix = matrix_W, rhs = rhs, sparse_matrix = self.general.sparse_matrix)
 
