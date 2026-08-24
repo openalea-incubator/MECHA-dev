@@ -289,6 +289,7 @@ class NetworkBuilder(AbstractNetwork):
             type_mapper = {
                 'exodermis': 1,
                 'epidermis': 2,
+                'hypodermis': 2,
                 'endodermis': 3,
                 'passage': 3,
                 'cortex': 4,

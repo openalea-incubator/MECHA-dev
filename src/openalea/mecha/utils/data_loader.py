@@ -954,6 +954,9 @@ class HydraulicData:
             (1, 2):  'kw_exo_epi',        # exo–epidermis
             (1, 4):  'kw_exo_cortex',     # exo–cortex
 
+            # ── Hypodermis / epidermis ↔ mesophyll (needle) ─────────────────
+            (2, 4):  'kw_meso_hypo',      # hypodermis/epidermis–mesophyll
+
             # ── Cortex tangential walls ─────────────────────────────────────
             # TODO: Implement the MSC (outer cortex, how many layers?)
             (4, 4):  'kw_cortex_cortex',  # cortex–cortex
@@ -982,6 +985,12 @@ class HydraulicData:
     kw: List[float] = field(default_factory=lambda: [0.00024])
     kw_barrier: List[float] = field(default_factory=lambda: [1.00E-16])
     kw_septa: List[float] = field(default_factory=lambda: [0.00012])
+    # Hypodermis/epidermis–mesophyll apoplastic wall conductivity for the (2, 4)
+    # interface. ``None`` → inert: the (2, 4) wall falls back to the plain ``kw``
+    # value (root behaviour, where (2, 4) is the epidermis–cortex wall). Needle
+    # anatomies set this to a near-zero value (e.g. 1e-16) via
+    # ``needle_defaults`` to lignify/block the hypodermis–mesophyll wall.
+    kw_meso_hypo: Optional[float] = None
     kaqp: List[Dict[str, float]] = field(default_factory=lambda: [{'value': 0.000430, 'cortex_factor': 1.0, 'endo_factor': 1.0, 'epi_factor': 1.0, 'exo_factor': 1.0, 'stele_factor': 1.0}])
     kpl: List[Dict[str, float]] = field(default_factory=lambda: [{'value': 5.3E-12, 'phloem_companion_cell_factor': 0.0, 'pericycle_phloem_pole_factor': 0.0, 'phloem_sieve_tube_factor': 0.0, 'cortex_factor': 1.0}])
 
@@ -1295,6 +1304,9 @@ class HydraulicData:
 
         # Get the configuration for the specified barrier
         config = barrier_configs.get(barrier, barrier_configs[0])
+
+        # Hypodermis/epidermis–mesophyll (2, 4) wall
+        config['kw_meso_hypo'] = self.kw_meso_hypo if self.kw_meso_hypo is not None else kw
         return config
 
     def get_plasmodesmatal_conductance(self, h: int) -> Dict[str, float]:
@@ -1639,20 +1651,23 @@ class InData:
         data.hydraulic.xcontactrange = [1.0E10]
         data.hydraulic.n_xcontact = 1
 
-        # ROOT DEFAULT (needs needle evidence): bulk cell-wall conductivity
-        # (cm hPa⁻¹ d⁻¹).  Maize-root calibration.
-        # data.hydraulic.kw = [2.4E-4]
+        data.hydraulic.kw = [2.5634e-03] # needle calibration, root default was [2.4E-4]
 
         # Casparian-strip / suberised
-        # barrier wall conductivity (cm hPa⁻¹ d⁻¹).  Retained so barrier=1 blocks
-        # the endo–endo apoplastic path as intended.
+        # barrier wall conductivity (cm hPa⁻¹ d⁻¹)
+        # Retained so barrier=1 blocks the endo–endo apoplastic path as intended.
         data.hydraulic.kw_barrier = [1.0E-16]     # High default for numerical stability, 
                                                   # exact unknown
 
-        # ROOT DEFAULT (needs needle evidence): background (non-aquaporin)
-        # membrane conductivity (cm hPa⁻¹ d⁻¹).  Maize-root cortex calibration.
-        # no needle-specific evidence yet, so retain the root default for now.
-        # data.hydraulic.kmb = 3.0E-5
+        # Lignified hypodermis–epidermis / hypodermis–mesophyll layer.
+        # Apoplastic wall is blocked and the (2, 4) plasmodesmata are cut
+        # in the solver, isolating the outer ring both apoplastically and 
+        # symplastically. The transmembrane path (kmb + kaqp_epi) is retained
+        # so water/solutes still reach the outer ring through membranes 
+        # and the matrix stays non-singular.
+        data.hydraulic.kw_meso_hypo = 1.0E-16
+
+        data.hydraulic.kmb = 3.6314e-04 # needle calibration, root default was 3.0E-5
 
         # ROOT DEFAULT (needs needle evidence): aquaporin membrane conductivity
         # and per-tissue factors. Uniform factors inherited from the root; the
