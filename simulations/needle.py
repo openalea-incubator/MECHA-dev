@@ -118,7 +118,10 @@ class SimParams:
 class SteadyParams(SimParams):
     """Steady-state (fixed-input) sucrose transport."""
 
-    c_meso: float = 50.0e-6        # mol/cm³  mesophyll Dirichlet SOURCE
+    c_meso: float = 50.0e-6        # mol/cm³  mesophyll concentration
+    # True (default): mesophyll held at c_meso as a Dirichlet BC (constant source).
+    # False: c_meso seeds the initial field only; mesophyll is free to redistribute.
+    meso_as_source: bool = True
     couple_tol: float = 10.0       # hPa   convergence tol on max|Δψ_total|
     couple_maxiter: int = 25
     continuation: Optional[tuple] = None   # homotopy λ schedule (None → single stage)
@@ -128,7 +131,10 @@ class SteadyParams(SimParams):
 class DynamicParams(SimParams):
     """Transient (time-series) sucrose transport."""
 
-    c_pulse: float = 50.0e-6       # mol/cm³  initial mesophyll impulse
+    c_pulse: float = 50.0e-6       # mol/cm³  initial mesophyll concentration
+    # False (default): c_pulse is a free initial impulse; mesophyll is released at t>0.
+    # True: mesophyll is held at c_pulse as a Dirichlet BC (constant source term).
+    meso_as_source: bool = False
     dt: float = 1.0e-1             # d   time step (implicit Euler)
     theta: float = 1.0             # 1.0 implicit Euler | 0.5 Crank–Nicolson
     max_steps: int = 200
@@ -203,6 +209,10 @@ class SimResult:
     frac_to_sink: Optional[np.ndarray] = None
     stop_reason: Optional[str] = None
 
+    # Total transpiration water flux [cm³/d] out through the evaporating
+    # (wall_air) walls at the pulse-free baseline hydraulic solve.
+    water_flux_total: Optional[float] = None
+
     # ---- Steady-only ---------------------------------------------------------
     q_load: Optional[float] = None
     n_iterations: Optional[int] = None
@@ -232,6 +242,8 @@ class SimResult:
             n_iterations=(-1 if self.n_iterations is None else self.n_iterations),
             converged=(self.converged if self.converged is not None else False),
             stop_reason=(self.stop_reason or ''),
+            water_flux_total=(np.nan if self.water_flux_total is None
+                              else self.water_flux_total),
         )
         sidecar = os.path.splitext(path)[0] + '.params.json'
         with open(sidecar, 'w') as fh:
@@ -262,6 +274,9 @@ class SimResult:
                               else int(z['n_iterations'])),
                 converged=bool(z['converged']),
                 stop_reason=(str(z['stop_reason']) or None),
+                water_flux_total=(None if ('water_flux_total' not in z
+                                           or np.isnan(z['water_flux_total']))
+                                  else float(z['water_flux_total'])),
             )
         sidecar = os.path.splitext(path)[0] + '.params.json'
         if os.path.exists(sidecar):
@@ -277,7 +292,7 @@ class SimResult:
             out.update(
                 n_steps=(0 if self.times is None else int(self.times.size - 1)),
                 t_final=(None if self.times is None else float(self.times[-1])),
-                frac_to_sink=(None if self.frac_to_sink is None
+                mass_to_sink=(None if self.frac_to_sink is None
                               else float(self.frac_to_sink[-1])),
                 stop_reason=self.stop_reason,
             )
@@ -488,7 +503,7 @@ class NeedleSimulation:
         self._log(f"  Dirichlet sink/anchor nodes: {len(bc)}")
 
     def _apply_source_bc(self, bc: dict) -> None:
-        """Hook: steady adds a mesophyll Dirichlet source; dynamic does not."""
+        """Hook: add mesophyll Dirichlet source when meso_as_source=True."""
         pass
 
     # ---- per-bond Péclet scaffold (geometry-only; A refreshed per step) ------
@@ -508,6 +523,28 @@ class NeedleSimulation:
             d_edges.append(d_edge)
         seg = np.array(segments) if segments else np.empty((0, 2, 2))
         return seg, edge_ij, np.array(d_edges) if d_edges else np.empty(0)
+
+    def _total_transpiration_flux(self) -> float:
+        """Total water flux [cm³/d] leaving through the evaporating walls.
+
+        Sums the signed edge flux ``Q`` (stored by ``compute_edge_flows``) over
+        every ``wall_air`` edge, oriented wall→air, so a positive value is net
+        outward transpiration.  ``water_flux`` must have been solved first.
+        Zero for anatomies without ``wall_air`` edges (e.g. roots).
+        """
+        cm = self.mecha.network.cell_manager
+        total = 0.0
+        for u, v, eattr in self.mecha.network.graph.edges(data=True):
+            if eattr.get('path') != 'wall_air':
+                continue
+            Q = eattr.get('Q')
+            if Q is None:
+                continue
+            # Q is stored with the u→v convention; reorient to wall→air so the
+            # sum is unambiguously outward transpiration.
+            wall_is_u = cm.get_wall_by_node_id(u) is not None
+            total += float(Q) if wall_is_u else -float(Q)
+        return total
 
     def _cell_geometry(self):
         """Serialize cell polygons (WKB) + full-network node index per cell id,
@@ -555,8 +592,9 @@ class NeedleSteadySimulation(NeedleSimulation):
                                                     self.params.i_mat)
 
     def _apply_source_bc(self, bc: dict) -> None:
-        for cid in self.meso_cell_ids:
-            bc[self.nwj + cid] = self.params.c_meso
+        if self.params.meso_as_source:
+            for cid in self.meso_cell_ids:
+                bc[self.nwj + cid] = self.params.c_meso
 
     def run(self) -> SimResult:
         p = self.params
@@ -623,8 +661,11 @@ class NeedleDynamicSimulation(NeedleSimulation):
         self.D_mat = self.st.build_diffusion_matrix(self.params.h_idx,
                                                     self.params.i_mat)
 
-    # Dynamic has NO mesophyll Dirichlet source — the pulse is a free initial
-    # condition, so _apply_source_bc stays a no-op (inherited).
+    def _apply_source_bc(self, bc: dict) -> None:
+        # meso_as_source=True: mesophyll held at c_pulse throughout the march.
+        if self.params.meso_as_source:
+            for cid in self.meso_cell_ids:
+                bc[self.nwj + cid] = self.params.c_pulse
 
     def run(self) -> SimResult:
         p = self.params
@@ -637,6 +678,10 @@ class NeedleDynamicSimulation(NeedleSimulation):
         psi_os_baseline = np.array(
             [c.psi_os if c.psi_os is not None else 0.0 for c in manager])
 
+        # Total transpiration flux at the (sucrose-free) baseline: driven purely
+        # by the air/xylem water-potential BCs, so independent of d_pd.
+        water_flux_total = self._total_transpiration_flux()
+
         # Initial impulse field + Dirichlet values at t=0.
         c = np.zeros(self.n_total)
         for cid in self.meso_cell_ids:
@@ -647,6 +692,17 @@ class NeedleDynamicSimulation(NeedleSimulation):
 
         mass0 = float(np.sum(self.node_vols[self.interior_mask]
                              * c[self.interior_mask]))
+
+        # sink_stop: absolute mass threshold that triggers the sink_fraction stop.
+        # Impulse: fraction of finite initial load; source: fraction of c_pulse × free volume.
+        if p.meso_as_source:
+            mass_ref = float(np.sum(self.node_vols[self.interior_mask])) * p.c_pulse
+            mass_ref = mass_ref if mass_ref > 0 else 1.0
+        else:
+            mass_ref = mass0 if mass0 > 0 else 1.0
+        sink_stop = p.sink_fraction * mass_ref
+        mass_to_sink = 0.0   # cumulative absorbed mass (mol, both modes)
+
         seg, edge_ij, d_edges = self._peclet_scaffold()
         rhs0 = np.zeros(self.st._matrix_size)
 
@@ -671,11 +727,14 @@ class NeedleDynamicSimulation(NeedleSimulation):
                 rhs=rhs0.copy(), boundary_conditions=self.bc,
                 c_prev=c, theta=p.theta, operators=p.ops, scheme=p.scheme)
             dmax = float(np.max(np.abs(c_new - c)))
+            mass_prev = float(np.sum(self.node_vols[self.interior_mask]
+                                     * c[self.interior_mask]))
             c = c_new
 
             mass = float(np.sum(self.node_vols[self.interior_mask]
                                 * c[self.interior_mask]))
-            frac = 1.0 - mass / mass0 if mass0 > 0 else 0.0
+            # Net interior mass lost this step = absorbed by sink (both modes).
+            mass_to_sink += mass_prev - mass
 
             if edge_ij:
                 A = self.st.build_advection_matrix(p.i_mat, p.i_sce).tocsr()
@@ -687,14 +746,14 @@ class NeedleDynamicSimulation(NeedleSimulation):
             times.append(step * p.dt)
             frames.append(c.copy())
             masses.append(mass)
-            fracs.append(frac)
+            fracs.append(mass_to_sink)
             pe_all.append(pe_step)
 
             if step % 20 == 0 or step == 1:
                 self._log(f"  step {step:4d}  t={step*p.dt:6.3f} d  "
-                          f"max|Δc|={dmax:.3e}  to-sink={frac*100:5.1f}%")
-            if frac >= p.sink_fraction:
-                stop_reason = f"≥{p.sink_fraction*100:.0f}% transported to sink"
+                          f"max|Δc|={dmax:.3e}  to-sink={mass_to_sink*1e12:.4f} pmol")
+            if mass_to_sink >= sink_stop:
+                stop_reason = f"≥{p.sink_fraction*100:.0f}% of ref mass transported to sink"
                 break
             if dmax < equil_tol:
                 stop_reason = "equilibrium reached (max|Δc| < equil_tol)"
@@ -709,6 +768,7 @@ class NeedleDynamicSimulation(NeedleSimulation):
             cell_polygons=polys, cell_ids=cell_ids, node_of_cell=node_of_cell,
             times=np.asarray(times), interior_mass=np.asarray(masses),
             frac_to_sink=np.asarray(fracs), stop_reason=stop_reason,
+            water_flux_total=water_flux_total,
         )
 
 
@@ -779,7 +839,7 @@ def _render_cell_field_gif(gdf, concentration, node_of_cell, times, frac_to_sink
         ax.set_xlabel('x (µm)'); ax.set_ylabel('y (µm)')
         t = '' if times is None else f't = {times[fi]:.3f} d'
         s = ('' if frac_to_sink is None
-             else f'   |   to sink: {frac_to_sink[fi]*100:.1f}%')
+             else f'   |   to sink: {frac_to_sink[fi]*1e12:.4f} pmol')
         ax.set_title(f'{title}\n{t}{s}')
         return ax.collections
 
@@ -840,8 +900,8 @@ def _render_mass_balance(times, interior_mass, frac_to_sink, path):
     ax1.set_xlabel('t (d)'); ax1.set_ylabel('interior solute mass (pmol)', color='b')
     ax1.tick_params(axis='y', labelcolor='b')
     ax2 = ax1.twinx()
-    ax2.plot(times, np.asarray(frac_to_sink) * 100, 'r--', label='to sink')
-    ax2.set_ylabel('fraction to sink (%)', color='r')
+    ax2.plot(times, np.asarray(frac_to_sink) * 1e12, 'r--', label='to sink')
+    ax2.set_ylabel('cumulative mass to sink (pmol)', color='r')
     ax2.tick_params(axis='y', labelcolor='r')
     fig.suptitle('Solute mass balance')
     fig.tight_layout()
