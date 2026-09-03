@@ -641,8 +641,36 @@ class SoluteTransport:
         return coo_matrix((data, (rows, cols)), shape=(n, n)).tocsr()
 
     # ------------------------------------------------------------------
-    # Capacitance  C  (diagonal)
+    # Capacitance C and reaction R — both are diagonal, volume-weighted,
+    # mode-sliced matrices; only their per-node coefficient and gating
+    # condition differ, so that scaffolding lives in one helper.
     # ------------------------------------------------------------------
+
+    def _build_node_diagonal(self, i_maturity: int, coeff_wall: float,
+                              coeff_cell: float, gate: bool) -> sp.csr_matrix:
+        """
+        Diagonal matrix  diag_i = coeff_wall × V_i  (wall/junction nodes)
+                          diag_i = coeff_cell × V_i  (cell nodes)
+        sliced to the active mode ('full'/'apo'/'sym').  Returns an all-zero
+        matrix when `gate` is False, without touching node volumes.
+        """
+        n = self._matrix_size
+        if not gate:
+            return sp.diags(np.zeros(n), format='csr')
+
+        nwj  = self.n_wall_junction
+        vols = self._compute_node_volumes(i_maturity)
+        diag = np.zeros(n)
+
+        if self.mode == 'full':
+            diag[:nwj] = coeff_wall * vols[:nwj]
+            diag[nwj:] = coeff_cell * vols[nwj:]
+        elif self.mode == 'apo':
+            diag[:] = coeff_wall * vols[:nwj]
+        else:
+            diag[:] = coeff_cell * vols[nwj:]
+
+        return sp.diags(diag, format='csr')
 
     def _compute_node_volumes(self, i_maturity: int) -> np.ndarray:
         """Node volumes (cm³) for all n_total nodes."""
@@ -677,33 +705,16 @@ class SoluteTransport:
             (C/dt)_i = storage_fraction_i × V_i / dt   [cm³/d]
         so that [C/dt − θ T] has consistent units with T [cm³/d × mol/cm³ = mol/d].
         """
-        n   = self._matrix_size
-        nwj = self.n_wall_junction
-
-        if (self.capacitance_params is None
-                or self.capacitance_params.get('dt') is None):
-            return sp.diags(np.zeros(n), format='csr')
+        gate = (self.capacitance_params is not None
+                and self.capacitance_params.get('dt') is not None)
+        if not gate:
+            return self._build_node_diagonal(i_maturity, 0.0, 0.0, gate=False)
 
         dt  = float(self.capacitance_params['dt'])
         C_w = float(self.capacitance_params.get('C_wall', 1.0))
         C_c = float(self.capacitance_params.get('C_cell', 1.0))
 
-        vols     = self._compute_node_volumes(i_maturity)
-        cap_diag = np.zeros(n)
-
-        if self.mode == 'full':
-            cap_diag[:nwj] = C_w * vols[:nwj] / dt
-            cap_diag[nwj:] = C_c * vols[nwj:] / dt
-        elif self.mode == 'apo':
-            cap_diag[:] = C_w * vols[:nwj] / dt
-        else:
-            cap_diag[:] = C_c * vols[nwj:] / dt
-
-        return sp.diags(cap_diag, format='csr')
-
-    # ------------------------------------------------------------------
-    # Reaction (first-order degradation) matrix R
-    # ------------------------------------------------------------------
+        return self._build_node_diagonal(i_maturity, C_w / dt, C_c / dt, gate=True)
 
     def build_reaction_matrix(self, i_maturity: int) -> sp.csr_matrix:
         """
@@ -713,24 +724,11 @@ class SoluteTransport:
             R_i = k_deg × V_i   [cm³/d]
         so that subtracting R from T adds a −k_deg·c_i sink term to
         C dc/dt = (T c) + s, consistent with the units of D and A.
+        Degradation rate is uniform across wall and cell nodes (unlike
+        capacitance, which distinguishes C_wall/C_cell storage fractions).
         """
-        n   = self._matrix_size
-        nwj = self.n_wall_junction
-
-        if self.k_deg <= 0.0:
-            return sp.diags(np.zeros(n), format='csr')
-
-        vols = self._compute_node_volumes(i_maturity)
-        react_diag = np.zeros(n)
-
-        if self.mode == 'full':
-            react_diag[:] = self.k_deg * vols
-        elif self.mode == 'apo':
-            react_diag[:] = self.k_deg * vols[:nwj]
-        else:
-            react_diag[:] = self.k_deg * vols[nwj:]
-
-        return sp.diags(react_diag, format='csr')
+        return self._build_node_diagonal(i_maturity, self.k_deg, self.k_deg,
+                                          gate=self.k_deg > 0.0)
 
     # ------------------------------------------------------------------
     # Peclet number diagnostic
