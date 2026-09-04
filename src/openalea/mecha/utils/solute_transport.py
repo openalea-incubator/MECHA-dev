@@ -13,6 +13,55 @@ def _cgroup_canonical(cg: int) -> int:
     return {19: 13, 20: 13, 21: 16, 23: 11, 26: 12}.get(cg, cg)
 
 
+class SoluteGeometry:
+    """
+    Geometry-only quantities shared by every solute on a MECHA network.
+
+    Parameters
+    ----------
+    mecha : Mecha
+        Solved Mecha instance (provides network + geometry).
+    """
+
+    def __init__(self, mecha):
+        self.mecha           = mecha
+        self.network         = mecha.network
+        self.indice          = mecha.indice
+        self.n_total         = mecha.network.graph.number_of_nodes()
+        self.n_wall_junction = mecha.network.n_wall_junction
+        self.n_cells         = mecha.network.n_cells
+        self.n_walls         = mecha.network.n_walls
+        self._vol_cache: dict = {}   # i_maturity → ndarray(n_total,)
+
+    def node_volumes(self, i_maturity: int) -> np.ndarray:
+        """Node volumes (cm³) for all n_total nodes, cached per maturity stage."""
+        if i_maturity in self._vol_cache:
+            return self._vol_cache[i_maturity]
+
+        height    = float(self.mecha.geometry.maturity_stages[i_maturity].get('height'))
+        thickness = self.mecha.geometry.thickness
+        network   = self.network
+        vols      = np.zeros(self.n_total)
+
+        for wid in range(network.n_walls):
+            L = network.wall_lengths.get(wid, 0.0)
+            vols[wid] = L * height * thickness * 1e-12
+
+        for j in range(network.n_walls, network.n_wall_junction):
+            L = network.wall_lengths.get(j, 0.0)
+            vols[j] = height * thickness * L / 2.0 * 1e-12
+
+        for cid in range(network.n_cells):
+            vols[network.n_wall_junction + cid] = (
+                network.cell_areas[cid] * height * 1e-12)
+
+        # Prevent zero-volume nodes from creating singular rows in Cm − A.
+        # Nodes with L=0 (degenerate walls) carry c_prev unchanged at eps→0.
+        vols = np.maximum(vols, 1e-30)
+        self._vol_cache[i_maturity] = vols
+        return vols
+
+
 class SoluteTransport:
     """
     Convection-diffusion solute transport on a MECHA hydraulic network.
@@ -76,7 +125,8 @@ class SoluteTransport:
 
     def __init__(self, mecha, diffusion_params: dict,
                  capacitance_params: dict = None, mode: str = 'full',
-                 reaction_params: dict = None):
+                 reaction_params: dict = None, mobile: bool = True,
+                 geometry: "SoluteGeometry" = None):
         if mode not in ('full', 'apo', 'sym'):
             raise ValueError(f"mode must be 'full', 'apo', or 'sym'; got '{mode}'")
 
@@ -86,6 +136,9 @@ class SoluteTransport:
         self.capacitance_params = capacitance_params
         self.reaction_params    = reaction_params
         self.mode               = mode
+        # Immobile species carry no transport operator (T_s = 0): only storage
+        # and reaction. Used by MultiSoluteTransport for e.g. starch.
+        self.mobile             = mobile
 
         self.D_wall = float(diffusion_params.get('apo_wall',      0.0))
         self.D_pd   = float(diffusion_params.get('plasmodesmata', 0.0))
@@ -106,6 +159,8 @@ class SoluteTransport:
 
         self.position = mecha.position
         self.indice   = mecha.indice
+        # Shared geometry (node volumes); build a private one when not supplied
+        self._geometry = geometry if geometry is not None else SoluteGeometry(mecha)
 
         self._D_cache: dict = {}   # (h, i_maturity) → csr_matrix
         self._T_cache: dict = {}   # (scheme, mode, h, i_mat, i_scen, fp) → csr_matrix
@@ -127,6 +182,9 @@ class SoluteTransport:
         Passive membrane diffusion (D_mem) is appended separately.
         Result is cached per (h, i_maturity).
         """
+        if not self.mobile:
+            return sp.csr_matrix((self._matrix_size, self._matrix_size))
+
         cache_key = (h, i_maturity)
         if cache_key in self._D_cache:
             return self._D_cache[cache_key]
@@ -268,6 +326,9 @@ class SoluteTransport:
         fingerprint detects that change and rebuilds, while a static drive hits
         the cache — mirroring the Scharfetter–Gummel operator cache.
         """
+        if not self.mobile:
+            return sp.csr_matrix((self._matrix_size, self._matrix_size))
+
         cache_key = (self.mode, i_maturity, i_scenario,
                      self._operator_fingerprint(i_maturity, i_scenario))
         if cache_key in self._A_cache:
@@ -413,6 +474,9 @@ class SoluteTransport:
         # edge_flux_list and updates psi_os): a changed drive yields a different
         # fingerprint and forces a rebuild, while a static drive (e.g. a fixed
         # transport run) hits the cache on every step.
+        if not self.mobile:
+            return sp.csr_matrix((self._matrix_size, self._matrix_size))
+
         cache_key = (scheme, self.mode, h, i_maturity, i_scenario,
                      self._operator_fingerprint(i_maturity, i_scenario))
         if cache_key in self._T_cache:
@@ -645,27 +709,8 @@ class SoluteTransport:
     # ------------------------------------------------------------------
 
     def _compute_node_volumes(self, i_maturity: int) -> np.ndarray:
-        """Node volumes (cm³) for all n_total nodes."""
-        height    = float(self.mecha.geometry.maturity_stages[i_maturity].get('height'))
-        thickness = self.mecha.geometry.thickness
-        network   = self.network
-        vols      = np.zeros(self.n_total)
-
-        for wid in range(network.n_walls):
-            L = network.wall_lengths.get(wid, 0.0)
-            vols[wid] = L * height * thickness * 1e-12
-
-        for j in range(network.n_walls, network.n_wall_junction):
-            L = network.wall_lengths.get(j, 0.0)
-            vols[j] = height * thickness * L / 2.0 * 1e-12
-
-        for cid in range(network.n_cells):
-            vols[network.n_wall_junction + cid] = (
-                network.cell_areas[cid] * height * 1e-12)
-
-        # Prevent zero-volume nodes from creating singular rows in Cm − A.
-        # Nodes with L=0 (degenerate walls) carry c_prev unchanged at eps→0.
-        return np.maximum(vols, 1e-30)
+        """Node volumes (cm³) for all n_total nodes (delegates to shared geometry)."""
+        return self._geometry.node_volumes(i_maturity)
 
     def build_capacitance(self, i_maturity: int) -> sp.csr_matrix:
         """
@@ -881,3 +926,208 @@ class SoluteTransport:
             lhs = lhs.tocsr()
 
         return spla.spsolve(lhs, rhs_eff)
+
+    # ------------------------------------------------------------------
+    # Spatial transport operator (public, mode-sliced) for external assembly
+    # ------------------------------------------------------------------
+
+    def spatial_operator(self, h: int, i_maturity: int, i_scenario: int,
+                         operators: str = 'T',
+                         scheme: str = 'sg') -> sp.csr_matrix:
+        """Assemble the pure spatial operator T = D + A (no reaction, no
+        capacitance), sliced to the active mode.
+
+        This is the same operator ``solve`` builds, minus the reaction diagonal
+        R which a coupled multi-solute solve handles through its cross-species
+        rate matrix.  Immobile species (``mobile=False``) return a zero matrix.
+        """
+        n = self._matrix_size
+        if not self.mobile:
+            return sp.csr_matrix((n, n))
+        if scheme == 'sg':
+            # build_transport_operator returns D+A fused (no R); solve() subtracts
+            # R separately, so what we return here is already reaction-free.
+            return self.build_transport_operator(h, i_maturity, i_scenario,
+                                                  scheme='sg')
+        zero = sp.csr_matrix((n, n))
+        D = (self.build_diffusion_matrix(h, i_maturity)
+             if operators in ('D', 'T') else zero)
+        A = (self.build_advection_matrix(i_maturity, i_scenario)
+             if operators in ('A', 'T') else zero)
+        return (D + A).tocsr()
+
+
+class MultiSoluteTransport:
+    """
+    Fully-implicit coupled solver for S solute species on a MECHA network.
+
+    Each species is a :class:`SoluteTransport` with its own diffusivities,
+    reflection coefficients, mobility and storage fractions; all share one
+    :class:`SoluteGeometry` and the same water field. Local inter-species
+    reactions are encoded in a dense S×S rate matrix ``K`` [1/d]::
+
+        d c_s / dt |_rxn = Σ_r K[s, r] · c_r          (per node, × V_i)
+
+    so ``K[s, r]`` is the rate at which species r produces species s, and a
+    negative diagonal ``K[s, s] < 0`` is self-consumption. For a reversible
+    sugar (0) ↔ starch (1) interconversion with forward rate k_f and reverse
+    rate k_r::
+
+        K = [[-k_f,  k_r],
+             [ k_f, -k_r]]
+
+    The θ-method step for the stacked field c = (c_0, …, c_{S−1}) is the block
+    system  M c^{n+1} = b  with N = matrix size per species::
+
+        M[s, s] = C_s/dt − θ (T_s + K[s,s]·diag(V))     (sparse N×N)
+        M[s, r] = −θ K[s, r]·diag(V)          (r ≠ s;  diagonal N×N)
+        b_s     = [C_s/dt + (1−θ)(T_s + K[s,s]·diag(V))]·c_s^n
+                  + Σ_{r≠s} (1−θ) K[s,r]·diag(V)·c_r^n + rhs_s
+
+    Off-diagonal blocks are diagonal, so the full SN×SN system stays sparse and
+    is solved with a single :func:`scipy.sparse.linalg.spsolve`. Immobile
+    species contribute T_s = 0, giving a purely diagonal block (storage +
+    reaction) with no ``HydraulicMatrixBuilder`` call.
+
+    Parameters
+    ----------
+    geometry : SoluteGeometry
+        Shared geometry (node volumes) for every species.
+    species : list of SoluteTransport, length S
+        One instance per species, constructed with ``geometry=geometry`` and the
+        shared ``capacitance_params`` (so every species sees the same dt).
+    K_matrix : (S, S) array_like  [1/d]
+        Inter-species reaction rate matrix (see above).  ``None`` → no reaction.
+    """
+
+    def __init__(self, geometry: SoluteGeometry, species: list,
+                 K_matrix=None):
+        if not species:
+            raise ValueError("MultiSoluteTransport needs at least one species.")
+        self.geometry = geometry
+        self.species  = list(species)
+        self.S        = len(self.species)
+        self.N        = self.species[0]._matrix_size
+        if any(st._matrix_size != self.N for st in self.species):
+            raise ValueError("All species must share the same matrix size/mode.")
+
+        if K_matrix is None:
+            self.K = np.zeros((self.S, self.S))
+        else:
+            self.K = np.asarray(K_matrix, dtype=float)
+            if self.K.shape != (self.S, self.S):
+                raise ValueError(
+                    f"K_matrix must be ({self.S}, {self.S}); got {self.K.shape}.")
+
+        # Self-reaction is expressed via the K diagonal here; a per-species
+        # reaction_params k_deg would double-count it, so require it be unset.
+        if any(st.k_deg != 0.0 for st in self.species):
+            raise ValueError(
+                "MultiSoluteTransport encodes all reactions in K_matrix; leave "
+                "reaction_params['k_deg'] at 0 and put self-consumption on the "
+                "K diagonal (K[s, s] = -k_deg).")
+
+    def _mode_volumes(self, i_maturity: int) -> np.ndarray:
+        """Node volumes sliced to the shared mode (matches build_capacitance)."""
+        vols = self.geometry.node_volumes(i_maturity)
+        nwj  = self.geometry.n_wall_junction
+        mode = self.species[0].mode
+        if mode == 'apo':
+            return vols[:nwj]
+        if mode == 'sym':
+            return vols[nwj:]
+        return vols
+
+    def solve_coupled(self, h: int, i_maturity: int, i_scenario: int,
+                      c_prev: list, boundary_conditions: list = None,
+                      rhs: list = None, theta: float = 1.0,
+                      operators: str = 'T', scheme: str = 'sg') -> list:
+        """
+        Advance all species one θ-method step and return the new fields.
+
+        Parameters
+        ----------
+        h, i_maturity, i_scenario : int
+        c_prev : list of ndarray, length S
+            Previous-step concentration per species, each shape (N,).
+        boundary_conditions : list of dict, length S, optional
+            Per-species Dirichlet BCs {node_id: c_val} (full-network indices;
+            auto-shifted in 'sym' mode, matching SoluteTransport.solve).
+        rhs : list of ndarray, length S, optional
+            Optional external source per species (mol/d), added to b_s.
+        theta : float
+            θ ∈ [0, 1] (1.0 implicit Euler, 0.5 Crank–Nicolson).
+        operators, scheme : str
+            Forwarded to each species' spatial operator (see solve()).
+
+        Returns
+        -------
+        list of ndarray, length S
+            New concentration field per species, each shape (N,).
+        """
+        S, N = self.S, self.N
+        if len(c_prev) != S:
+            raise ValueError(f"c_prev must have {S} entries; got {len(c_prev)}.")
+        bcs = boundary_conditions or [None] * S
+        ext = rhs or [None] * S
+
+        vols = self._mode_volumes(i_maturity)
+        Vd   = sp.diags(vols, format='csr')
+
+        # Per-species spatial operator T_s and capacitance C_s/dt.
+        T = [st.spatial_operator(h, i_maturity, i_scenario,
+                                 operators=operators, scheme=scheme)
+             for st in self.species]
+        Cm = [st.build_capacitance(i_maturity) for st in self.species]
+
+        # A coupled step only makes sense in transient mode; require dt.
+        is_dynamic = all(
+            st.capacitance_params is not None
+            and st.capacitance_params.get('dt') is not None
+            for st in self.species
+        )
+        if not is_dynamic:
+            raise ValueError(
+                "solve_coupled requires capacitance_params with 'dt' on every "
+                "species (transient θ-method).")
+
+        # Block assembly: M[s][r], RHS b_s.  Diagonal reaction K[s,s] folds into
+        # the spatial block; off-diagonal K[s,r] is a diagonal coupling block.
+        blocks = [[None] * S for _ in range(S)]
+        b      = [None] * S
+        for s in range(S):
+            # Reaction-augmented spatial operator on the diagonal block.
+            Ts_aug = T[s] + self.K[s, s] * Vd
+            blocks[s][s] = (Cm[s] - theta * Ts_aug).tocsr()
+            b_s = (Cm[s] + (1.0 - theta) * Ts_aug).dot(c_prev[s])
+            for r in range(S):
+                if r == s:
+                    continue
+                Ksr = self.K[s, r]
+                if Ksr != 0.0:
+                    blocks[s][r] = (-theta * Ksr) * Vd
+                    b_s = b_s + (1.0 - theta) * Ksr * (vols * c_prev[r])
+            if ext[s] is not None:
+                b_s = b_s + np.asarray(ext[s], dtype=float)
+            b[s] = b_s
+
+        M = sp.bmat(blocks, format='lil')
+        b = np.concatenate(b)
+
+        # Dirichlet BCs: substitute the concatenated row  (s*N + idx)  so the
+        # solution equals c_val there, zeroing the whole row across all blocks.
+        nwj = self.geometry.n_wall_junction
+        mode = self.species[0].mode
+        for s in range(S):
+            if not bcs[s]:
+                continue
+            for node_id, c_val in bcs[s].items():
+                idx = node_id - nwj if mode == 'sym' else node_id
+                if 0 <= idx < N:
+                    row = s * N + idx
+                    M[row, :] = 0.0
+                    M[row, row] = 1.0
+                    b[row] = float(c_val)
+
+        sol = spla.spsolve(M.tocsr(), b)
+        return [sol[s * N:(s + 1) * N] for s in range(S)]

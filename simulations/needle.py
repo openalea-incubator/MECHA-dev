@@ -51,7 +51,8 @@ from openalea.granap.needle_class import NeedleAnatomy
 from openalea.mecha.mecha_class import Mecha
 from openalea.mecha.utils.data_loader import InData, BoundaryData
 from openalea.mecha.utils.network_builder import NetworkBuilder
-from openalea.mecha.utils.solute_transport import SoluteTransport
+from openalea.mecha.utils.solute_transport import (
+    SoluteTransport, SoluteGeometry, MultiSoluteTransport)
 from openalea.mecha.utils.coupled_solver import coupled_water_solute_solve
 from openalea.mecha.calibration.forward_model import rh_to_water_potential
 
@@ -76,7 +77,7 @@ class SimParams:
     d_pd: float = 5.0e-1           # cm²/d  plasmodesmatal diffusivity
     d_apo: float = 0.1             # cm²/d  apoplastic wall diffusivity
     d_mem: float = 1.0e-6          # cm²/d  passive transmembrane diffusivity
-    sigma_sucrose: float = 0.6     # -      membrane reflection coefficient
+    sigma_sucrose: float = 0.7     # -      membrane reflection coefficient
 
     # ---- Physical constant ---------------------------------------------------
     t_kelvin: float = 298.15       # K   (van't Hoff Ψ_os = −R·T·c)
@@ -113,11 +114,28 @@ class SimParams:
             sigma={cg: self.sigma_sucrose for cg in range(1, 20)},
         )
 
+    # Each params child names the simulation class that runs it (resolved lazily
+    # by name since the sim classes are defined later).  This is the invariant
+    # backbone: a new series adds a child + names its sim here, and _run_one /
+    # run_experiments never change.
+    _simulation_class_name: str = field(default='NeedleSimulation',
+                                        init=False, repr=False, compare=False)
+
+    def simulation_class(self) -> type:
+        cls = globals().get(self._simulation_class_name)
+        if cls is None:
+            raise ValueError(
+                f"Unknown simulation class {self._simulation_class_name!r} for "
+                f"{type(self).__name__}.")
+        return cls
+
 
 @dataclass(frozen=True)
 class SteadyParams(SimParams):
     """Steady-state (fixed-input) sucrose transport."""
 
+    _simulation_class_name: str = field(default='NeedleSteadySimulation',
+                                        init=False, repr=False, compare=False)
     c_meso: float = 50.0e-6        # mol/cm³  mesophyll concentration
     # True (default): mesophyll held at c_meso as a Dirichlet BC (constant source).
     # False: c_meso seeds the initial field only; mesophyll is free to redistribute.
@@ -131,6 +149,8 @@ class SteadyParams(SimParams):
 class DynamicParams(SimParams):
     """Transient (time-series) sucrose transport."""
 
+    _simulation_class_name: str = field(default='NeedleDynamicSimulation',
+                                        init=False, repr=False, compare=False)
     c_pulse: float = 50.0e-6       # mol/cm³  initial mesophyll concentration
     # False (default): c_pulse is a free initial impulse; mesophyll is released at t>0.
     # True: mesophyll is held at c_pulse as a Dirichlet BC (constant source term).
@@ -141,6 +161,12 @@ class DynamicParams(SimParams):
     equil_tol_frac: float = 1.0e-6  # equilibrium when max|Δc| < this × c_pulse
     sink_fraction: float = 0.90    # stop once ≥ this fraction has left the interior
     couple_maxiter: int = 12       # inner hydraulic-coupling iterations per step
+
+    # ---- Starch (immobile, reaction-coupled second solute) -------------------
+    include_starch: bool = False   # activate the coupled multisolute pathway
+    k_starch_syn: float = 1.0      # 1/d  sugar → starch synthesis rate
+    k_starch_deg: float = 0.5      # 1/d  starch → sugar remobilization rate
+    c_starch0: float = 0.0         # mol/cm³  initial starch (cells) at t=0
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -209,6 +235,10 @@ class SimResult:
     frac_to_sink: Optional[np.ndarray] = None
     stop_reason: Optional[str] = None
 
+    # Immobile starch field (dynamic multisolute run), same shape as
+    # ``concentration``; None when include_starch is False.
+    concentration_starch: Optional[np.ndarray] = None
+
     # Total transpiration water flux [cm³/d] out through the evaporating
     # (wall_air) walls at the pulse-free baseline hydraulic solve.
     water_flux_total: Optional[float] = None
@@ -218,12 +248,43 @@ class SimResult:
     n_iterations: Optional[int] = None
     converged: Optional[bool] = None
 
+    # ---- Open-ended, series-specific outputs --------------------------------
+    # First-class extensible slot: any array a series produces that has no named
+    # field goes here by key (e.g. 'j_w', 'j_s', 'm_starch').  Pickled with the
+    # object AND round-tripped by save/load (each key stored as 'extra__<key>'),
+    # so future series add outputs WITHOUT editing SimResult.
+    extras: dict = field(default_factory=dict)
+
+    # ---- Convenience read-only views over extras (established diurnal keys) --
+    @property
+    def j_w(self):
+        return self.extras.get('j_w')
+
+    @property
+    def j_s(self):
+        return self.extras.get('j_s')
+
+    @property
+    def m_starch(self):
+        return self.extras.get('m_starch')
+
+    @property
+    def f_drive(self):
+        return self.extras.get('f_drive')
+
+    @property
+    def g_drive(self):
+        return self.extras.get('g_drive')
+
+    def get_extra(self, name: str, default=None):
+        """Return a series-specific output array by name (None/default if absent)."""
+        return self.extras.get(name, default)
+
     # ─────────────────────────────────────────────────────────────────────────
     def save(self, path: str) -> str:
         """Persist to a compressed ``.npz`` (params stored as a JSON sidecar)."""
         import json
-        np.savez_compressed(
-            path,
+        arrays = dict(
             mode=self.mode,
             concentration=self.concentration,
             peclet=self.peclet,
@@ -244,7 +305,14 @@ class SimResult:
             stop_reason=(self.stop_reason or ''),
             water_flux_total=(np.nan if self.water_flux_total is None
                               else self.water_flux_total),
+            concentration_starch=(self.concentration_starch
+                                  if self.concentration_starch is not None
+                                  else np.empty(0)),
         )
+        # Series-specific extras: one array per key under an 'extra__' prefix.
+        for key, val in self.extras.items():
+            arrays[f'extra__{key}'] = np.asarray(val)
+        np.savez_compressed(path, **arrays)
         sidecar = os.path.splitext(path)[0] + '.params.json'
         with open(sidecar, 'w') as fh:
             json.dump(self.params, fh, indent=2, default=str)
@@ -277,6 +345,12 @@ class SimResult:
                 water_flux_total=(None if ('water_flux_total' not in z
                                            or np.isnan(z['water_flux_total']))
                                   else float(z['water_flux_total'])),
+                concentration_starch=(z['concentration_starch']
+                                      if ('concentration_starch' in z
+                                          and z['concentration_starch'].size)
+                                      else None),
+                extras={k[len('extra__'):]: z[k]
+                        for k in z.files if k.startswith('extra__')},
             )
         sidecar = os.path.splitext(path)[0] + '.params.json'
         if os.path.exists(sidecar):
@@ -656,10 +730,28 @@ class NeedleDynamicSimulation(NeedleSimulation):
     def _build_st(self) -> None:
         self._log("=== SoluteTransport (dynamic, capacitance C/dt) ===")
         cap = {'dt': self.params.dt}
+        geom = SoluteGeometry(self.mecha)
+        # Sugar: the mobile primary solute (existing behaviour).
         self.st = SoluteTransport(self.mecha, self.params.diffusion_params(),
-                                  cap, mode='full')
+                                  cap, mode='full', geometry=geom)
         self.D_mat = self.st.build_diffusion_matrix(self.params.h_idx,
                                                     self.params.i_mat)
+
+        # Optional immobile starch, coupled to sugar via a reversible reaction.
+        # Species order: [sugar, starch]; K[s,r] = production of s from r [1/d].
+        #   d(sugar)/dt  = -k_syn·sugar + k_deg·starch
+        #   d(starch)/dt = +k_syn·sugar - k_deg·starch
+        self.mst = None
+        if self.params.include_starch:
+            self._log("=== + immobile starch (coupled multisolute) ===")
+            st_starch = SoluteTransport(
+                self.mecha,
+                {'apo_wall': 0.0, 'plasmodesmata': 0.0, 'membrane': 0.0},
+                cap, mode='full', mobile=False, geometry=geom)
+            k_syn, k_deg = self.params.k_starch_syn, self.params.k_starch_deg
+            K = np.array([[-k_syn,  k_deg],
+                          [ k_syn, -k_deg]])
+            self.mst = MultiSoluteTransport(geom, [self.st, st_starch], K)
 
     def _apply_source_bc(self, bc: dict) -> None:
         # meso_as_source=True: mesophyll held at c_pulse throughout the march.
@@ -689,6 +781,15 @@ class NeedleDynamicSimulation(NeedleSimulation):
         for nid, val in self.bc.items():
             if 0 <= nid < self.n_total:
                 c[nid] = val
+
+        # Immobile starch field (cells only): no transport, no Dirichlet BCs, so
+        # it is free to accumulate/deplete via the sugar↔starch reaction alone.
+        use_starch = self.mst is not None
+        c_starch = np.zeros(self.n_total)
+        if use_starch and p.c_starch0 != 0.0:
+            for cid in range(n_cells):
+                c_starch[nwj + cid] = p.c_starch0
+        starch_frames = [c_starch.copy()] if use_starch else None
 
         mass0 = float(np.sum(self.node_vols[self.interior_mask]
                              * c[self.interior_mask]))
@@ -721,11 +822,20 @@ class NeedleDynamicSimulation(NeedleSimulation):
                 c[nwj: nwj + n_cells], nwj, p.t_kelvin, psi_os_baseline)
             self.mecha.water_flux(h=p.h_idx, use_stored_psi_os=True, verbose=False)
 
-            # (c) one implicit-Euler transport step on the fresh flow.
-            c_new = self.st.solve(
-                h=p.h_idx, i_maturity=p.i_mat, i_scenario=p.i_sce,
-                rhs=rhs0.copy(), boundary_conditions=self.bc,
-                c_prev=c, theta=p.theta, operators=p.ops, scheme=p.scheme)
+            # (c) one implicit-Euler transport step on the fresh flow.  When
+            # starch is active, solve sugar+starch as one fully-coupled block;
+            # starch is osmotically inactive so it never enters the Ψ_os update.
+            if use_starch:
+                c_new, c_starch = self.mst.solve_coupled(
+                    h=p.h_idx, i_maturity=p.i_mat, i_scenario=p.i_sce,
+                    c_prev=[c, c_starch],
+                    boundary_conditions=[self.bc, None],
+                    theta=p.theta, operators=p.ops, scheme=p.scheme)
+            else:
+                c_new = self.st.solve(
+                    h=p.h_idx, i_maturity=p.i_mat, i_scenario=p.i_sce,
+                    rhs=rhs0.copy(), boundary_conditions=self.bc,
+                    c_prev=c, theta=p.theta, operators=p.ops, scheme=p.scheme)
             dmax = float(np.max(np.abs(c_new - c)))
             mass_prev = float(np.sum(self.node_vols[self.interior_mask]
                                      * c[self.interior_mask]))
@@ -748,6 +858,8 @@ class NeedleDynamicSimulation(NeedleSimulation):
             masses.append(mass)
             fracs.append(mass_to_sink)
             pe_all.append(pe_step)
+            if use_starch:
+                starch_frames.append(c_starch.copy())
 
             if step % 20 == 0 or step == 1:
                 self._log(f"  step {step:4d}  t={step*p.dt:6.3f} d  "
@@ -769,6 +881,8 @@ class NeedleDynamicSimulation(NeedleSimulation):
             times=np.asarray(times), interior_mass=np.asarray(masses),
             frac_to_sink=np.asarray(fracs), stop_reason=stop_reason,
             water_flux_total=water_flux_total,
+            concentration_starch=(np.asarray(starch_frames, dtype=np.float32)
+                                  if use_starch else None),
         )
 
 
@@ -776,28 +890,59 @@ class NeedleDynamicSimulation(NeedleSimulation):
 # Parallel driver
 # ══════════════════════════════════════════════════════════════════════════════
 def _run_one(params: SimParams) -> SimResult:
-    """Top-level (picklable) worker: build sim from cached geometry and run it."""
+    """Top-level (picklable) worker: build sim from cached geometry and run it.
+
+    The params object names its own simulation class (``simulation_class()``),
+    so this dispatcher never changes when a new series is added.
+    """
     geometry = get_geometry_base(params.seed)
-    if isinstance(params, SteadyParams):
-        sim = NeedleSteadySimulation(params, geometry, verbose=False)
-    elif isinstance(params, DynamicParams):
-        sim = NeedleDynamicSimulation(params, geometry, verbose=False)
-    else:
-        raise TypeError(f"Unsupported params type: {type(params)!r}")
+    sim = params.simulation_class()(params, geometry, verbose=False)
     return sim.run()
 
 
-def run_experiments(param_list, max_workers: Optional[int] = None):
-    """Run several simulations in parallel (process pool) and return SimResults.
+def _pin_blas_single_thread():
+    """Pool initializer: force each worker's BLAS to one thread.
 
-    All experiments should share the same ``seed`` so every worker rebuilds the
-    identical anatomy (deterministic) and caches it once.  Each worker pays the
-    anatomy build cost a single time, then runs its assigned experiments cheaply.
+    The osmo-hydraulic coupling calls scipy ``spsolve``, whose BLAS backend is
+    multithreaded; with N worker processes each spawning K BLAS threads the
+    cores are oversubscribed (N×K threads).  Pinning to one thread per process
+    lets each worker cleanly own one core — the embarrassingly-parallel regime.
+    """
+    for var in ('OMP_NUM_THREADS', 'MKL_NUM_THREADS', 'OPENBLAS_NUM_THREADS',
+                'NUMEXPR_NUM_THREADS', 'VECLIB_MAXIMUM_THREADS'):
+        os.environ[var] = '1'
+
+
+def run_experiments(param_list, max_workers: Optional[int] = None):
+    """Run independent simulations and return SimResults, one per param object.
+
+    Experiments are fully independent and share the same anatomy (via ``seed``),
+    so they run embarrassingly parallel across a process pool.  Each worker pays
+    the anatomy build cost once (cached per process) and pins its BLAS to a
+    single thread to avoid core oversubscription.
+
+    Worker count is chosen adaptively from the job count unless ``max_workers``
+    is given: for a single job, or when the pool would not help, it runs inline;
+    otherwise it uses ``min(cpu_count, len(param_list))`` pinned processes.
     """
     from concurrent.futures import ProcessPoolExecutor
-    if max_workers == 1 or len(param_list) == 1:
+
+    n_jobs = len(param_list)
+    if n_jobs == 0:
+        return []
+
+    if max_workers is None:
+        cores = os.cpu_count() or 1
+        workers = min(cores, n_jobs)
+    else:
+        workers = max(1, int(max_workers))
+
+    # Inline (no pool) when parallelism cannot pay: 1 job or 1 worker.
+    if workers == 1 or n_jobs == 1:
         return [_run_one(p) for p in param_list]
-    with ProcessPoolExecutor(max_workers=max_workers) as pool:
+
+    with ProcessPoolExecutor(max_workers=workers,
+                             initializer=_pin_blas_single_thread) as pool:
         return list(pool.map(_run_one, param_list))
 
 
@@ -905,6 +1050,297 @@ def _render_mass_balance(times, interior_mass, frac_to_sink, path):
     ax2.tick_params(axis='y', labelcolor='r')
     fig.suptitle('Solute mass balance')
     fig.tight_layout()
+    fig.savefig(path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    return path
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Diurnal modulation helpers
+# ══════════════════════════════════════════════════════════════════════════════
+def f_transpiration(t, period: float = 1.0, phase: float = 0.0,
+                    baseline: float = 0.1):
+    """Transpirational driver f(t) ∈ [baseline, 1]: smooth cosine, peaks at noon.
+
+    ``baseline + (1-baseline)·(1-cos)/2``: a night floor of ``baseline`` (stomata
+    never fully close), rising to 1 at solar noon.  Never zero, so transpiration
+    does not shut down completely overnight.
+    """
+    wave = 0.5 * (1.0 - np.cos(2.0 * np.pi * (t / period) + phase))
+    return baseline + (1.0 - baseline) * wave
+
+
+def g_photosynthesis(t, period: float = 1.0, phase: float = 0.0):
+    """Photosynthetic sucrose source g(t) ∈ [0,1]: daytime-gated, zero at night.
+
+    Carbon fixation genuinely stops in the dark, so g keeps the rectified shape
+    ``max(0, -cos)`` — in phase with the noon peak of f_transpiration.
+    """
+    return np.maximum(0.0, -np.cos(2.0 * np.pi * (t / period) + phase))
+
+
+# Sucrose plasmodesmatal diffusivity: 0.1 × 5.2e-6 cm²/s × 86400 s/d → cm²/d.
+_D_PD_SUCROSE = 0.1 * 5.2e-6 * 86400.0
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Diurnal parameters
+# ══════════════════════════════════════════════════════════════════════════════
+@dataclass(frozen=True)
+class DiurnalParams(DynamicParams):
+    """Transient needle transport with diurnal transpiration & photosynthesis.
+
+    Set ``starch=True`` to activate the reversible sucrose ↔ starch chemistry;
+    ``k_starch_syn`` (k_f) and ``k_starch_deg`` (k_r) control the rates.
+    """
+
+    _simulation_class_name: str = field(default='NeedleDiurnalSimulation',
+                                        init=False, repr=False, compare=False)
+    d_pd: float = _D_PD_SUCROSE   # cm²/d  sucrose PD diffusivity
+    psi_xyl: float = -200.0       # hPa
+    psi_atm: float = -1.0e3       # hPa  peak (midday) air potential
+    c_pulse: float = 50.0e-6      # mol/cm³  reference mesophyll sucrose level
+
+    # Photosynthetic sucrose injection: each step adds c_photo·g(t) to the
+    # mesophyll (free interior nodes), so sucrose can accumulate above c_pulse.
+    c_photo: float = 5.0e-6       # mol/cm³  per-step sucrose increment at g=1
+    meso_as_source: bool = False
+
+    period: float = 1.0           # d   diurnal period
+    f_phase: float = 0.0          # rad phase of transpiration driver
+    g_phase: float = 0.0          # rad phase of photosynthesis source
+    f_baseline: float = 0.1       # -   night transpiration floor (fraction of peak)
+
+    dt: float = 1.0 / 24.0        # d   hourly steps
+    max_steps: int = 48            # two full days
+    sink_fraction: float = 1.0e9  # disable drain-out stop
+    equil_tol_frac: float = -1.0  # disable equilibrium stop
+
+    # ---- Starch interconversion (active when starch=True) -------------------
+    starch: bool = False          # activate sucrose ↔ starch coupling
+    k_starch_syn: float = 2.0     # 1/d  sucrose → starch synthesis rate (k_f)
+    k_starch_deg: float = 1.0     # 1/d  starch → sucrose remobilisation (k_r)
+    c_starch0: float = 0.0        # mol/cm³  initial starch concentration
+
+    label: str = 'diurnal'
+
+    def __post_init__(self):
+        # Keep include_starch in sync with the starch flag so _build_st works.
+        if self.starch and not self.include_starch:
+            object.__setattr__(self, 'include_starch', True)
+            object.__setattr__(self, 'k_starch_syn', self.k_starch_syn)
+            object.__setattr__(self, 'k_starch_deg', self.k_starch_deg)
+            object.__setattr__(self, 'c_starch0', self.c_starch0)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Diurnal simulation  (starch=False → sucrose only; starch=True → coupled)
+# ══════════════════════════════════════════════════════════════════════════════
+class NeedleDiurnalSimulation(NeedleDynamicSimulation):
+    """Diurnally forced needle transport.
+
+    At every implicit-Euler step: re-sets the air BC to PSI_AIR·f(t), holds the
+    mesophyll at c_meso·g(t), refreshes hydraulics, and advances solute transport.
+    When ``params.starch=True`` the coupled sucrose↔starch multisolute pathway is
+    used (via ``self.mst``); otherwise only sucrose is transported.
+    Records j_w, j_s, and (when starch active) mean interior starch concentration.
+    """
+
+    mode = 'dynamic'
+
+    def _sink_nodes(self) -> np.ndarray:
+        ids = list(self.phloem_loading_ids) + list(self.xylem_cell_ids)
+        return self.nwj + np.array(sorted(set(ids)), dtype=int)
+
+    def run(self) -> SimResult:
+        p = self.params
+        nwj, n_cells = self.nwj, self.n_cells
+        manager = self.mecha.network.cell_manager
+        use_starch = p.starch
+
+        self.mecha.water_flux(h=p.h_idx, verbose=False)
+        psi_os_baseline = np.array(
+            [c.psi_os if c.psi_os is not None else 0.0 for c in manager])
+
+        meso_nodes = np.array([nwj + cid for cid in self.meso_cell_ids], dtype=int)
+        sink_nodes = self._sink_nodes()
+
+        c = np.zeros(self.n_total)
+        for nid, val in self.bc.items():
+            if 0 <= nid < self.n_total:
+                c[nid] = val
+
+        c_sta = np.zeros(self.n_total)
+        if use_starch and p.c_starch0 != 0.0:
+            for cid in range(n_cells):
+                c_sta[nwj + cid] = p.c_starch0
+
+        seg, edge_ij, d_edges = self._peclet_scaffold()
+        rhs0 = np.zeros(self.st._matrix_size)
+
+        times     = [0.0]
+        frames    = [c.copy()]
+        sta_frames = [c_sta.copy()] if use_starch else None
+        masses    = [float(np.sum(self.node_vols[self.interior_mask]
+                                  * c[self.interior_mask]))]
+        j_w_ts    = [0.0]
+        j_s_ts    = [0.0]
+        m_sta_ts  = [float(np.mean(c_sta[nwj: nwj + n_cells]))] if use_starch else None
+        f_ts      = [float(f_transpiration(0.0, p.period, p.f_phase, p.f_baseline))]
+        g_ts      = [float(g_photosynthesis(0.0, p.period, p.g_phase))]
+        pe_all    = [np.zeros(len(edge_ij))]
+
+        starch_tag = (f" k_f={p.k_starch_syn:.2f} k_r={p.k_starch_deg:.2f}"
+                      if use_starch else "")
+        self._log(f"=== Diurnal march{starch_tag} (dt={p.dt:.4f} d,"
+                  f" {p.max_steps} steps, ops='{p.ops}', scheme='{p.scheme}') ===")
+        stop_reason = f"reached max_steps={p.max_steps}"
+        for step in range(1, p.max_steps + 1):
+            t = step * p.dt
+            f_t = float(f_transpiration(t, p.period, p.f_phase, p.f_baseline))
+            g_t = float(g_photosynthesis(t, p.period, p.g_phase))
+
+            # Diurnal air BC (never fully off — floors at p.f_baseline).
+            self.mecha.set_air_wall_bc(self.psi_air * f_t)
+            # Photosynthetic injection: ADD c_photo·g(t) to the mesophyll each
+            # step (free interior nodes, no Dirichlet pin), so sucrose can
+            # accumulate above c_pulse when production outpaces export.
+            bc_step = self.bc
+            c[meso_nodes] += p.c_photo * g_t
+
+            manager.set_osmotic_from_concentration(
+                c[nwj: nwj + n_cells], nwj, p.t_kelvin, psi_os_baseline)
+            self.mecha.water_flux(h=p.h_idx, use_stored_psi_os=True, verbose=False)
+            j_w = self._total_transpiration_flux()
+
+            if use_starch:
+                c, c_sta = self.mst.solve_coupled(
+                    h=p.h_idx, i_maturity=p.i_mat, i_scenario=p.i_sce,
+                    c_prev=[c, c_sta], boundary_conditions=[bc_step, None],
+                    theta=p.theta, operators=p.ops, scheme=p.scheme)
+            else:
+                c = self.st.solve(
+                    h=p.h_idx, i_maturity=p.i_mat, i_scenario=p.i_sce,
+                    rhs=rhs0.copy(), boundary_conditions=bc_step,
+                    c_prev=c, theta=p.theta, operators=p.ops, scheme=p.scheme)
+
+            T = self.st.spatial_operator(
+                h=p.h_idx, i_maturity=p.i_mat, i_scenario=p.i_sce,
+                operators=p.ops, scheme=p.scheme).tocsr()
+            j_s = float(np.sum(T.dot(c)[sink_nodes]))
+
+            if edge_ij:
+                A = self.st.build_advection_matrix(p.i_mat, p.i_sce).tocsr()
+                a_edge = np.abs(np.array([A[iv, iu] for (iv, iu) in edge_ij]))
+                pe_step = a_edge / d_edges
+            else:
+                pe_step = np.zeros(0)
+
+            mass = float(np.sum(self.node_vols[self.interior_mask]
+                                * c[self.interior_mask]))
+            times.append(t);  frames.append(c.copy());  masses.append(mass)
+            j_w_ts.append(j_w);  j_s_ts.append(j_s)
+            f_ts.append(f_t);  g_ts.append(g_t);  pe_all.append(pe_step)
+            if use_starch:
+                sta_frames.append(c_sta.copy())
+                m_sta_ts.append(float(np.mean(c_sta[nwj: nwj + n_cells])))
+
+            if step % 6 == 0 or step == 1:
+                starch_info = (f"  m_sta={m_sta_ts[-1]*1e6:.2f} µM"
+                               if use_starch else "")
+                self._log(f"  step {step:3d}  t={t:5.3f} d  f={f_t:.2f} g={g_t:.2f}"
+                          f"  j_w={j_w:.3e}  j_s={j_s*1e12:.3f} pmol/d{starch_info}")
+
+        polys, cell_ids, node_of_cell = self._cell_geometry()
+        self._log(f"  Finished {len(frames)-1} step(s): {stop_reason}")
+
+        extras = {
+            'j_w':     np.asarray(j_w_ts),
+            'j_s':     np.asarray(j_s_ts),
+            'f_drive': np.asarray(f_ts),
+            'g_drive': np.asarray(g_ts),
+        }
+        if use_starch:
+            extras['m_starch'] = np.asarray(m_sta_ts)
+
+        return SimResult(
+            mode='dynamic', params=asdict(p),
+            concentration=np.asarray(frames, dtype=np.float32),
+            concentration_starch=(np.asarray(sta_frames, dtype=np.float32)
+                                  if use_starch else None),
+            peclet=np.asarray(pe_all, dtype=np.float32), pe_segments=seg,
+            cell_polygons=polys, cell_ids=cell_ids, node_of_cell=node_of_cell,
+            times=np.asarray(times), interior_mass=np.asarray(masses),
+            frac_to_sink=np.asarray(j_s_ts), stop_reason=stop_reason,
+            water_flux_total=(j_w_ts[-1] if j_w_ts else None),
+            extras=extras,
+        )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Diurnal flux plot
+# ══════════════════════════════════════════════════════════════════════════════
+def diurnal_flux_plot(res: SimResult, path: str) -> str:
+    """Time evolution of a diurnal run: j_w, j_s, j_s/j_w (+ starch if present).
+
+    Reads the series from ``res.extras`` (via ``get_extra``); a starch panel is
+    added automatically when the run produced an ``m_starch`` series.
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    t   = np.asarray(res.times)
+    j_w = np.asarray(res.get_extra('j_w'))
+    j_s = np.asarray(res.get_extra('j_s'))
+    m_s = res.get_extra('m_starch')
+    with np.errstate(divide='ignore', invalid='ignore'):
+        ratio = np.where(np.abs(j_w) > 0, j_s / j_w, np.nan)
+
+    period  = float(res.params.get('period', 1.0))
+    g_phase = float(res.params.get('g_phase', 0.0))
+
+    n_panels = 4 if m_s is not None else 3
+    fig, axes = plt.subplots(n_panels, 1, figsize=(9, 3 * n_panels), sharex=True)
+    axes = np.atleast_1d(axes)
+
+    def _night_bands(ax):
+        # Night = dark period (no photosynthesis); f no longer reaches zero.
+        tt = np.linspace(t[0], t[-1], 2000)
+        night = g_photosynthesis(tt, period, g_phase) <= 0.0
+        ax.fill_between(tt, 0, 1, where=night, transform=ax.get_xaxis_transform(),
+                        color='0.85', zorder=0, step='mid')
+
+    ax_jw, ax_js, ax_rat = axes[0], axes[1], axes[-1]
+
+    _night_bands(ax_jw)
+    ax_jw.plot(t, j_w, 'b-o', ms=3, lw=1.2)
+    ax_jw.set_ylabel('j_w  (cm³/d)', color='b')
+    ax_jw.tick_params(axis='y', labelcolor='b')
+    ax_jw.set_title('Transpirational water flux j_w')
+
+    _night_bands(ax_js)
+    ax_js.plot(t, j_s * 1e12, 'r-o', ms=3, lw=1.2)
+    ax_js.set_ylabel('j_s  (pmol/d)', color='r')
+    ax_js.tick_params(axis='y', labelcolor='r')
+    ax_js.set_title('Transported solute flux j_s (to sink)')
+
+    if m_s is not None:
+        ax_st = axes[2]
+        _night_bands(ax_st)
+        ax_st.plot(t, np.asarray(m_s) * 1e6, 'g-o', ms=3, lw=1.2)
+        ax_st.set_ylabel('mean starch  (µM)', color='g')
+        ax_st.tick_params(axis='y', labelcolor='g')
+        ax_st.set_title('Interior starch concentration (cell mean)')
+
+    _night_bands(ax_rat)
+    ax_rat.plot(t, ratio * 1e3, 'k-o', ms=3, lw=1.2)
+    ax_rat.set_ylabel('j_s / j_w  (mM)')
+    ax_rat.set_xlabel('t  (d)')
+    ax_rat.set_title('Export ratio j_s / j_w')
+
+    fig.suptitle('Diurnal needle transport: water, solute, and their quotient')
+    fig.tight_layout(rect=(0, 0, 1, 0.98))
     fig.savefig(path, dpi=150, bbox_inches='tight')
     plt.close(fig)
     return path
