@@ -93,6 +93,15 @@ class SoluteTransport:
         self.sigma  = diffusion_params.get('sigma', {})
         self.k_deg  = float(reaction_params.get('k_deg', 0.0)) if reaction_params else 0.0
 
+        # Advective solute exchange with the domain boundary (soil contact,
+        # xylem/phloem axial BCs, elongation growth withdrawal). See
+        # _build_boundary_advection. Set False to reproduce the older,
+        # non-conservative behaviour.
+        self.conserve_boundary = bool(diffusion_params.get('conserve_boundary', True))
+        # Concentration of the water the boundary ADDS to the domain. Scalar,
+        # or {node_id: value}; defaults to clean water.
+        self.c_boundary = diffusion_params.get('c_boundary', 0.0)
+
         self.n_total         = mecha.network.graph.number_of_nodes()
         self.n_wall_junction = mecha.network.n_wall_junction
         self.n_cells         = mecha.network.n_cells
@@ -314,6 +323,8 @@ class SoluteTransport:
 
         A = coo_matrix((data, (rows, cols)), shape=(n, n)).tocsr()
         A = A + self._build_osmotic_advection(i_maturity)
+        if self.conserve_boundary:
+            A = A + self._build_boundary_advection(i_maturity, i_scenario)
 
         if self.mode == 'apo':
             A = A[:nwj, :nwj].tocsr()
@@ -327,6 +338,68 @@ class SoluteTransport:
             del self._A_cache[k]
         self._A_cache[cache_key] = A
         return A
+
+    def _boundary_flux(self, i_maturity: int, i_scenario: int) -> np.ndarray:
+        """Net water flux each node exchanges with the domain boundary [cm³/d].
+
+        The edge list only describes water moving *between* nodes.  Water also
+        crosses the domain boundary — soil uptake at the wetted walls, the
+        xylem and phloem axial boundary conditions, and the elongation growth
+        term that withdraws water from every living cell.  None of that appears
+        as a graph edge, so it shows up as a residual: at steady state the
+        signed edge fluxes at a node must be balanced by its boundary exchange.
+
+        Returns ``S`` with ``S[n] > 0`` where the boundary ADDS water to node
+        ``n`` and ``S[n] < 0`` where it REMOVES water.
+        """
+        S = np.zeros(self.n_total)
+        for edge in self.mecha.edge_flux_list[i_maturity][i_scenario]:
+            F = edge['flux']
+            if F == 0.0:
+                continue
+            # F > 0 flows source -> target.
+            S[edge['source']] += F
+            S[edge['target']] -= F
+        return S
+
+    def _build_boundary_advection(self, i_maturity: int,
+                                  i_scenario: int) -> sp.csr_matrix:
+        """Advective solute exchange with the domain boundary.
+
+        Without this term the operator conserves solute only along edges: at a
+        node the boundary drains, solute keeps arriving by advection and is
+        never carried out with the water, so the concentration climbs above the
+        source value (measured up to 1.8× a c=1 Dirichlet source on the
+        partially-wetted Arabidopsis section, where cell elongation withdraws
+        water from every epidermis and cortex cell).
+
+        Water LEAVING carries the local concentration out — a negative
+        diagonal.  Water ENTERING carries ``self.c_boundary``; that is a
+        constant, so it belongs in the right-hand side rather than the
+        operator, and is only represented here when it is zero (the default:
+        soil and phloem water carrying none of the tracer).
+        """
+        S = self._boundary_flux(i_maturity, i_scenario)
+        outflow = np.minimum(S, 0.0)          # ≤ 0, keeps the sign convention
+        idx = np.nonzero(outflow)[0]
+        return coo_matrix(
+            (outflow[idx], (idx, idx)), shape=(self.n_total, self.n_total)
+        ).tocsr()
+
+    def boundary_flux_rhs(self, i_maturity: int, i_scenario: int) -> np.ndarray:
+        """Right-hand side contribution of boundary water that carries solute.
+
+        Zero unless ``c_boundary`` is non-zero.  Pair it with ``solve(rhs=...)``
+        when the incoming soil or phloem water is not clean.
+        """
+        S = self._boundary_flux(i_maturity, i_scenario)
+        inflow = np.maximum(S, 0.0)
+        if isinstance(self.c_boundary, dict):
+            c_bc = np.array([float(self.c_boundary.get(n, 0.0))
+                             for n in range(self.n_total)])
+        else:
+            c_bc = float(self.c_boundary)
+        return inflow * c_bc
 
     @staticmethod
     def _bernoulli(x: float) -> float:

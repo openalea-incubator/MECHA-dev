@@ -898,6 +898,18 @@ class HydraulicData:
 
     interface_map: Dict[str, Any] = field(default_factory=dict)
 
+    # Raw {xml_tag: value} for every Fplxheight* tag found in the hydraulics
+    # file. Stashed at load time because interface_map (which translates a tag
+    # into cgroup pairs) needs the network and is only built later by
+    # set_pd_interface(); the values are applied to fplxheight_map there.
+    fplxheight_xml: Dict[str, float] = field(default_factory=dict)
+
+    # Optional spatial modulation of the plasmodesmatal aperture, as a function
+    # of the graph shortest-path distance to the soil-contact nodes. None (the
+    # default) leaves every plasmodesma at its interface aperture, i.e. no
+    # change in behaviour. See HydraulicMatrixBuilder._pd_spatial_coefficients.
+    pd_spatial_config: Optional[Dict[str, Any]] = None
+
     # Maps a sorted (cgroup_i, cgroup_j) interface tuple to a kpl_config key (str)
     # or a pair of keys (Tuple[str, str]) whose harmonic mean is used.
     # Used by HydraulicMatrixBuilder._fill_plasmodesmata() to look up the
@@ -925,7 +937,6 @@ class HydraulicData:
             (11, 16): 'phloem_sieve_tube_factor',  # sieve–peri
             (11, 13): 'phloem_sieve_tube_factor',  # sieve–xylem
             (5, 11):  'phloem_sieve_tube_factor',  # stele–sieve
-            (11, 11): 'phloem_phloem_tube_factor', # Inter phloem factor
 
             # Companion–pericycle: harmonic mean of the two pole factors
             (12, 16): 'pericycle_phloem_pole_factor',  # companion–peri
@@ -1018,15 +1029,21 @@ class HydraulicData:
         self.kmb = float(root.xpath('km')[0].get("value"))
         self.ratio_cortex = float(root.xpath('ratio_cortex')[0].get("value"))
         
-        # PD height parameters
-        # Populate the map from XML
-        for xml_tag, interfaces in self.interface_map.items():
-            elem = root.xpath(xml_tag) # might not work
-            if elem:
-                value = float(elem[0].get("value"))
-                for interface in interfaces:
-                    self.fplxheight_map[interface] = value
-           
+        # PD height parameters.
+        # interface_map is empty at this point (it needs the network and is
+        # built by set_pd_interface), so the tag -> cgroup-pair translation
+        # cannot happen here. Stash the raw values instead; set_pd_interface
+        # applies them to fplxheight_map.
+        self.fplxheight_xml = {}
+        for elem in root.xpath('*'):
+            tag = str(elem.tag)
+            if not tag.startswith('Fplxheight'):
+                continue
+            value = elem.get("value")
+            if value is not None:
+                self.fplxheight_xml[tag] = float(value)
+
+
         # Conductance parameters
         # 1: Poiseuille law (based on cross-section area); 2: Prescribed here below (for all sieve tubes, and vessel per vessel)
         self.axial_conductance_source = int(root.xpath('Kax_source')[0].get("value")) if root.xpath('Kax_source') else 1
@@ -1098,6 +1115,31 @@ class HydraulicData:
             'Fplxheight_peri_sieve': [(11, 16)],
             'Fplxheight_stele_sieve': [(5, 11), (11, 13)],
         }
+
+        # Apply the Fplxheight* values parsed from the hydraulics XML. This has
+        # to happen here rather than in _load_hydraulics because the tag ->
+        # cgroup-pair translation above depends on the network
+        # (outercortex_connec_rank).
+        for xml_tag, value in self.fplxheight_xml.items():
+            interfaces = self.interface_map.get(xml_tag)
+            if not interfaces:
+                continue
+            for interface in interfaces:
+                self.fplxheight_map[tuple(sorted(interface))] = value
+
+    def get_xcontact(self, h: int) -> float:
+        """Get the soil-contact x-threshold for scenario index *h*.
+
+        Mirrors get_kw_value's fallback: indexing xcontactrange[h] directly
+        raises for h > 0 whenever the XML declares a single <Xcontact> but the
+        run sweeps several hydraulic scenarios (e.g. a Kpl range).
+        """
+        if self.n_xcontact == self.n_hydraulics:
+            return self.xcontactrange[h]
+        elif self.n_xcontact == 1:
+            return self.xcontactrange[0]
+        else:
+            return self.xcontactrange[h % self.n_xcontact]
 
     def get_kw_value(self, h: int) -> float:
         """Get the kw value based on the scenario index."""
@@ -1364,16 +1406,28 @@ class HydraulicData:
 
         config = {
             'kpl': kpl,
-            'stele': stele_factor,
-            'endo_in': endo_in_factor,
-            'endo_out': endo_out_factor,
-            'exo': exo_factor,
-            'epi': epi_factor,
-            'cortex': cortex_factor,
+            # Canonical '<name>_factor' spellings — these are the keys that
+            # interface_kpl_factor_map looks up, so they are what actually
+            # reaches _fill_plasmodesmata.
+            'stele_factor': stele_factor,
+            'endo_in_factor': endo_in_factor,
+            'endo_out_factor': endo_out_factor,
+            'exo_factor': exo_factor,
+            'epi_factor': epi_factor,
+            'cortex_factor': cortex_factor,
             'phloem_companion_cell_factor': phloem_companion_cell_factor, # PCC
-            'phloem_pericycle_pole_factor': phloem_pericycle_pole_factor, # PPP
+            'pericycle_phloem_pole_factor': phloem_pericycle_pole_factor, # PPP
             'phloem_sieve_tube_factor': phloem_sieve_tube_factor # PST
         }
+        # Legacy short aliases, kept so that downstream code reading
+        # config['cortex'] / ['endo_in'] / ... keeps working.
+        config['stele'] = stele_factor
+        config['endo_in'] = endo_in_factor
+        config['endo_out'] = endo_out_factor
+        config['exo'] = exo_factor
+        config['epi'] = epi_factor
+        config['cortex'] = cortex_factor
+        config['phloem_pericycle_pole_factor'] = phloem_pericycle_pole_factor
         return config
 
     def get_aquaporin_contributions(self, h: int) -> Dict[str, float]:

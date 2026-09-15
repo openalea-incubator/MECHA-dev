@@ -220,6 +220,7 @@ def visualize(obj: Any,
         - ``'flow'``           – flow Q arrows on graph edges
         - ``'flow_pathway'``   – stacked area % by pathway vs. radius
         - ``'psi_profile'``    – Psi vs. radial distance profile
+        - ``'contact_distance'`` – contact-distance level-curve map + PD spatial coefficient
     **kwargs
         Forwarded verbatim to the selected function.  See each function's
         docstring for supported keyword arguments.
@@ -227,7 +228,7 @@ def visualize(obj: Any,
     if visu_type == 'polygon':
         _visualize_polygon(obj, **kwargs)
     elif visu_type == 'network':
-        visualize_network(obj, **kwargs)     
+        visualize_network(obj, **kwargs)
     elif visu_type == 'paraview':
         _visualize_pv(obj, **kwargs)
     elif visu_type == 'water_potential':
@@ -242,11 +243,14 @@ def visualize(obj: Any,
         plot_radial_profile(obj, **kwargs)
     elif visu_type == 'velocity':
         plot_velocity_network(obj, **kwargs)
+    elif visu_type == 'contact_distance':
+        plot_contact_distance_map(obj, **kwargs)
     else:
         raise ValueError(
             f"Unknown visualization type: '{visu_type}'. "
             "Choose from: 'polygon', 'network', 'paraview', 'water_potential', "
-            "'conductance', 'flow', 'flow_pathway', 'psi_profile', 'velocity'."
+            "'conductance', 'flow', 'flow_pathway', 'psi_profile', 'velocity', "
+            "'contact_distance'."
         )
 
 def _visualize_pv(
@@ -393,5 +397,159 @@ def _visualize_water_potential(obj: Any, **kwargs: Dict[str, Any]) -> None:
              return np.nan
 
     gdf['water_potential'] = gdf['id_cell'].apply(get_pot)
-    
+
     plot_water_potential_map(gdf, title=kwargs.get('title', "Water Potential Map"))
+
+
+def plot_contact_distance_map(obj: Any, **kwargs: Dict[str, Any]) -> None:
+    """Two-panel map of graph distance to the nearest soil-contact node.
+
+    Left panel: per-cell ``contact_distance`` (µm, graph shortest-path
+    distance to the nearest water-contact node — see
+    ``hydraulic_solver._apply_soil_boundary``) as a choropleth, with white
+    level-curve isolines drawn over the cell centroids.  Right panel: per-cell
+    mean ``pd_spatial_coef`` (plasmodesmata conductance attenuation with
+    distance from the wetted side) over that cell's plasmodesmata edges.
+
+    Both attributes come from an optional extension to the soil-boundary
+    stamping step; when they are absent from the graph the function degrades
+    gracefully (grey panel with a "not enabled" annotation, no isolines)
+    instead of raising.
+
+    Cells listed in ``obj.hormones.contact`` (the wetted/soil-contact cells)
+    are outlined in red on both panels.
+
+    Parameters
+    ----------
+    obj : Any
+        A solved ``Mecha`` instance.
+    save_path : str, optional
+        When given, save the figure to this path instead of showing it.
+    show_plot : bool, optional
+        Whether to call ``plt.show()`` (default ``True``).
+    title : str, optional
+        Figure title (default auto-generated).
+    levels : int, optional
+        Number of contour levels drawn on the left panel (default ``8``).
+    """
+    if not hasattr(obj, 'network') or obj.network is None:
+        print("Object must have a network attribute.")
+        return
+
+    # Use pre-computed _cells_gdf if available, else fall back to prep_section
+    if hasattr(obj.network, '_cells_gdf') and obj.network._cells_gdf is not None:
+        gdf = obj.network._cells_gdf.copy()
+    else:
+        gdf = prep_section(obj.cellset_data)
+
+    graph = obj.network.graph
+    nwj = obj.network.n_wall_junction
+
+    def get_dist(cid):
+        """Map cell ID to contact_distance using the n_wall_junction offset."""
+        node_id = nwj + cid
+        val = graph.nodes.get(node_id, {}).get('contact_distance')
+        return float(val) if val is not None else np.nan
+
+    gdf['contact_distance'] = gdf['id_cell'].apply(get_dist)
+
+    # Per-cell mean pd_spatial_coef, averaged over that cell's incident
+    # plasmodesmata edges (one pass over the edges rather than per-cell scans).
+    pd_coef_lists: Dict[int, List[float]] = {}
+    for u, v, eattr in graph.edges(data=True):
+        if eattr.get('path') != 'plasmodesmata':
+            continue
+        coef = eattr.get('pd_spatial_coef')
+        if coef is None:
+            continue
+        pd_coef_lists.setdefault(u, []).append(float(coef))
+        pd_coef_lists.setdefault(v, []).append(float(coef))
+    pd_enabled = bool(pd_coef_lists)
+
+    def get_pd_coef(cid):
+        node_id = nwj + cid
+        vals = pd_coef_lists.get(node_id)
+        return float(np.mean(vals)) if vals else np.nan
+
+    gdf['pd_spatial_coef'] = gdf['id_cell'].apply(get_pd_coef)
+
+    # Wetted (soil-contact) cells, for the outline on both panels.
+    hormones = getattr(obj, 'hormones', None)
+    contact_ids = set(getattr(hormones, 'contact', []) or [])
+    gdf['_is_contact'] = gdf['id_cell'].isin(contact_ids)
+
+    save_path = kwargs.get('save_path', None)
+    show_plot = kwargs.get('show_plot', True)
+    title = kwargs.get('title', None)
+    levels = kwargs.get('levels', 8)
+
+    from matplotlib.lines import Line2D
+
+    fig, (ax_left, ax_right) = plt.subplots(1, 2, figsize=(16, 8))
+
+    # --- Left panel: contact_distance choropleth + isolines -----------------
+    if gdf['contact_distance'].notna().any():
+        gdf.plot(
+            ax=ax_left, column='contact_distance', cmap='viridis',
+            edgecolor='black', linewidth=0.3, legend=True,
+            legend_kwds={'label': 'Contact distance (µm)', 'orientation': 'vertical'},
+            missing_kwds={'color': 'lightgrey'},
+        )
+
+        valid = gdf.dropna(subset=['contact_distance'])
+        if len(valid) >= 3:
+            centroids = valid.geometry.centroid
+            cx = centroids.x.to_numpy()
+            cy = centroids.y.to_numpy()
+            cz = valid['contact_distance'].to_numpy()
+            try:
+                cs = ax_left.tricontour(cx, cy, cz, levels=levels, colors='w', linewidths=0.8)
+                ax_left.clabel(cs, inline=True, fontsize=7, fmt='%.0f')
+            except Exception as exc:
+                # tricontour raises on degenerate triangulations (too few /
+                # colinear centroids, constant field, …) — skip the isolines.
+                print(f"[plot_contact_distance_map] Could not draw isolines: {exc}")
+    else:
+        gdf.plot(ax=ax_left, color='lightgrey', edgecolor='black', linewidth=0.3)
+        ax_left.annotate(
+            'contact_distance not enabled', xy=(0.5, 0.5), xycoords='axes fraction',
+            ha='center', va='center', fontsize=10, color='gray',
+        )
+    ax_left.set_title('Contact distance (µm)')
+
+    # --- Right panel: pd_spatial_coef choropleth -----------------------------
+    if pd_enabled and gdf['pd_spatial_coef'].notna().any():
+        gdf.plot(
+            ax=ax_right, column='pd_spatial_coef', cmap='magma',
+            edgecolor='black', linewidth=0.3, legend=True,
+            legend_kwds={'label': 'PD spatial coefficient', 'orientation': 'vertical'},
+            missing_kwds={'color': 'lightgrey'},
+        )
+    else:
+        gdf.plot(ax=ax_right, color='lightgrey', edgecolor='black', linewidth=0.3)
+        ax_right.annotate(
+            'pd_spatial_coef not enabled', xy=(0.5, 0.5), xycoords='axes fraction',
+            ha='center', va='center', fontsize=10, color='gray',
+        )
+    ax_right.set_title('PD spatial coefficient (mean per cell)')
+
+    # --- Mark wetted cells on both panels -------------------------------
+    contact_gdf = gdf[gdf['_is_contact']]
+    for ax in (ax_left, ax_right):
+        ax.set_aspect('equal')
+        ax.set_axis_off()
+        if not contact_gdf.empty:
+            contact_gdf.boundary.plot(ax=ax, edgecolor='red', linewidth=2, zorder=5)
+
+    if not contact_gdf.empty:
+        wet_handle = Line2D([0], [0], color='red', lw=2, label='Wetted cells (soil contact)')
+        fig.legend(handles=[wet_handle], loc='lower center', fontsize=9, frameon=False)
+
+    fig.suptitle(title or "Contact distance & PD spatial attenuation", fontsize=13)
+    plt.tight_layout()
+
+    if save_path is not None:
+        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"Saved → {save_path}")
+    elif show_plot:
+        plt.show()
