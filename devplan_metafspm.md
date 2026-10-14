@@ -372,7 +372,9 @@ Each step is committed with its comparison tests and a devlog entry.
 
 **Questions (with my recommendation):**
 - **Q-G1 — the phloem junctions in the water problem.** In MECHA's water problem the phloem only matters at barrier 0, as the standard problem's axial boundary. *Recommendation:* K = 0 on the phloem junctions for now; water then moves axially in the xylem only, and the phloem's own flow comes with the osmotic phase (Q-M6). Alternative: Poiseuille with η of phloem sap, which would carry water to and from the young (barrier 0) sections through the protophloem.
-- **Q-G2 — the plant problem's upper boundary.** *Recommendation:* a boundary set on the collar section's xylem vessels, of a kind given by a parameter: Dirichlet `collar_psi` (a root system alone, the standard problem's analogue at plant scale) or Neumann `collar_flow` (a transpiration demand split among the vessels in proportion to their Kx). In the seedling, neither: the collar is joined to the shoot (Q-G3).
+  answer: Yes to recommendation, but I want the metafspm component logic to be used further then, with axial conductances being defined from a decorated step, working with the filter argument, both of xylem and phloem axial conductances. By the way I don't get why now the solve is not declared as a @graph_system using the results of the Pre-processing
+- **Q-G2 — the plant problem's upper boundary.** *Recommendation:* a boundary set on the collar section's xylem vessels, of a kind given by a parameter: Dirichlet `collar_psi` (a root system alone, the standard problem's analogue at plant scale) or Neumann `collar_flow` (a transpiration demand split among the vessels in proportion to their Kx). In the seedling, neither: the collar is joined to the shoot (Q-G3)
+answer: yes to the design idea.
 - **Q-G3 — the seedling's shoot.** MECHA's rules are those of roots: its only boundary is the soil, at the epidermis. GRANAP generates stems and leaves, but MECHA has no rule for the air (stomata, cuticle) nor for the leaves' air spaces (`wall_air` and `air_link` edges are ignored, §2 i). *Recommendation:*
   - roots: GRANAP anatomies with MECHA's hydraulics;
   - shoot: kept as the SPAC example's (its simplified anatomy, its conductances, its evaporation at the stomatal cavities), joined to the root collar's xylem by axial junctions;
@@ -381,6 +383,33 @@ Each step is committed with its comparison tests and a devlog entry.
   Alternatives:
   - (b) GRANAP stems and leaves too, with new MECHA rules for the shoot: cuticle, evaporation from the leaf air spaces, the `wall_air` and `air_link` edges. A model extension, better after the legacy problems are fixed.
   - (c) roots only, the shoot as a collar transpiration demand (Q-G2's Neumann).
+  answer: yes to recommendation, Mecha will later be specialized to initialize more precise conductances for the stem and shoot elements. But you can still begin to specialize by transposing parameter from the root for common transmembrane, apoplastic and symplastic pathway to give realistic first estimations, so not just directly from the SPAC example.
 - **Q-G4 — where the graph system is declared.** *Recommendation:* in `MechaHydraulics` itself, so the component solves its own plant problem; the SPAC example then uses it in place of `PlantWaterTransport`. For that, the shoot's conductances and the evaporation must reach MECHA's system as inputs: `conductance` on non-MECHA edges, and an `evaporation_conductance` with the air's ψ. Alternative: MECHA only provides the conductances and the soil terms, and metafspm's generic `PlantWaterTransport` solves. That is simpler, but then MECHA has no plant-scale solve of its own.
+answer: yes to the recommendation of design, so that answers my question in Q-G1 relative to the graph_system
 
 **Order once agreed:** 5a (junction conductances, tested against Poiseuille and Kx), 5b–5d with a root alone (Dirichlet collar), then 5e the seedling.
+yes to order
+
+## 13. Your answers to Q-G1–Q-G4 (2026-10-14), and how I read them
+
+- **Q-G1:**
+  - water moves axially in the xylem only;
+  - both axial conductances, the xylem's and the phloem's, are computed, each by a decorated step selecting its junctions with `filters=` (an edge descriptor `axial_conduit`: 1 xylem, 2 phloem);
+  - the water problem reads the xylem's; the phloem's waits for the osmotic phase.
+- **The solves become `@graph_system`s**, using the pre-processing's results (your remark on Q-G1, answered by Q-G4). There are two systems in `MechaHydraulics`:
+  - `_standard_problem`: each section alone, the legacy's kr; the junctions carry no conductance in it, so the sections are independent blocks of one system;
+  - `_plant_problem`: the sections joined by the xylem junctions.
+
+  The plain `spsolve` of step 4 (`solve.py`) stays only as the comparison's reference path.
+- **Scheduling:**
+  - the pre-processing (geometry, conductances, junctions) at `@rate`;
+  - the two systems at `state`;
+  - the post-processing (uptake, kr, kr_effective, Kx) at `@totalstate`.
+- **Q-G2:** the collar condition as a boundary set with a per-node `kinds` variable (`collar_kind`: 1 Dirichlet ψ, 2 Neumann flow) on the collar section's xylem vessels.
+- **Q-G3:** the shoot's anatomies are GRANAP's, and their conductances MECHA's rules with the roots' parameters as first estimates (walls, membranes, plasmodesmata), to be specialised later. Specifically:
+  - no soil contact on stems and leaves;
+  - evaporation from the leaves' stomatal air spaces, as the SPAC example's (a Robin condition with the air's ψ), its conductance from GRANAP's stomatal cells.
+
+  I will detail this when I reach 5e.
+- **Q-G4:** the graph systems are declared in `MechaHydraulics`.
+- **Order:** 5a, then 5b–5d on a root alone, then 5e.
