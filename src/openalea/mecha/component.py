@@ -20,6 +20,8 @@ from openalea.metafspm.solve.decorator import state
 from openalea.mecha.conductance import (FPLXHEIGHT, Network, assemble, boundary_terms, cortex_parameters,
                                        edge_conductances, fplxheight_name, set_edge_ends)
 from openalea.mecha.geometry import phi_thick_cells, section_geometry, section_of, section_parts
+from openalea.mecha.postprocess import axial_conductances, radial_conductivity, soil_uptake
+from openalea.mecha.solve import section_potentials
 
 SCALES = ScalesConfig()
 
@@ -104,6 +106,12 @@ class MechaHydraulics(FunctionalComponent):
     n_phi_layers: float = _p("", "number of cortex layers with phi thickenings", 0.)
     phi_type: float = _p("", "phi thickenings: 1 inner cortex, 2 outer cortex, 3 mid cortex", 1.)
 
+    standard_solve: float = _p("", "1: solve MECHA's standard problem on each section alone (its kr; the legacy's "
+                                   "definition), 0: skip it", 1.)
+    standard_psi_soil: float = _p("hPa", "the soil's potential in the standard problem", 0.0)
+    standard_psi_xylem: float = _p("hPa", "the xylem's potential in the standard problem (barrier > 0)", -5.0E3)
+    standard_psi_sieve: float = _p("hPa", "the protophloem's potential in the standard problem (barrier 0; NaN: "
+                                   "no phloem boundary, the legacy's default)", float("nan"))
     # plasmodesmata per unit wall length and height, by interface (cell groups' names)
     fplxheight_exo_exo: float = _p("cm-1", "plasmodesmata frequency, exo–exo interfaces", 800000.0)
     fplxheight_epi_epi: float = _p("cm-1", "plasmodesmata frequency, epi–epi interfaces", 800000.0)
@@ -170,6 +178,27 @@ class MechaHydraulics(FunctionalComponent):
                                                               "the axial boundary, on the matrix diagonal (0 elsewhere)"),
                                                        initialize=0., scale=SCALES.Compartment, location="node",
                                                        state_variable_type="NonInertialIntensive")
+
+    # ── State variables: the standard problem's solution, and the sections' results ──
+    psi: float = state_variable(**_doc("hPa", "water potential, in the standard problem of its section"),
+                                initialize=np.nan, scale=SCALES.Compartment, location="node",
+                                state_variable_type="NonInertialIntensive")
+    flow: float = state_variable(**_doc("cm3 d-1", "water flow along the edge, from its first node to its second, in "
+                                                   "the standard problem"),
+                                 initialize=0., scale=SCALES.Connection, location="edge",
+                                 state_variable_type="NonInertialIntensive")
+    uptake: float = state_variable(**_doc("cm3 d-1", "the section's water uptake from the soil (standard problem)"),
+                                   initialize=np.nan, scale=SCALES.SubOrgan, state_variable_type="NonInertialIntensive")
+    kr: float = state_variable(**_doc("cm hPa-1 d-1", "the section's radial conductivity (standard problem): uptake / "
+                                                      "(ψ soil − ψ xylem) / surface"),
+                               initialize=np.nan, scale=SCALES.SubOrgan, state_variable_type="NonInertialIntensive")
+    Kx: float = state_variable(**_doc("cm4 hPa-1 d-1", "the section's xylem axial conductance (Poiseuille; 0 without "
+                                                       "mature xylem, barrier 0)"),
+                               initialize=np.nan, scale=SCALES.SubOrgan, state_variable_type="NonInertialIntensive")
+    Kx_phloem: float = state_variable(**_doc("cm4 hPa-1 d-1", "the section's phloem axial conductance (Poiseuille: "
+                                                              "sieve tubes, or protophloem at barrier 0)"),
+                                      initialize=np.nan, scale=SCALES.SubOrgan,
+                                      state_variable_type="NonInertialIntensive")
 
     def __post_init__(self):
         super().__post_init__()
@@ -260,6 +289,52 @@ class MechaHydraulics(FunctionalComponent):
         K, in_matrix = edge_conductances(net, P_edge, barrier_node[tail], height_node[tail])
         soil, axial, _ = boundary_terms(net, P_node, barrier_node, height_node)
         return np.where(in_matrix, K, 0.), "soil_conductance", soil, "axial_boundary_conductance", axial
+
+
+    @state(include_inactive=True)
+    def _psi(self, conductance, soil_conductance, axial_boundary_conductance, barrier, length) \
+            -> tuple[np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray]:
+        """
+        MECHA's standard problem, each section alone (Q-M5): its border walls and junctions at the soil's potential,
+        its xylem vessels (barrier > 0) or protophloem cells (barrier 0) at the axial potential. Then the flows, each
+        section's uptake and radial conductivity kr, and its axial conductances (Poiseuille). Optional
+        (standard_solve = 0: none of them is computed).
+        """
+        ds = self.data_structure
+        P = self.parameter_table("node")
+        if not (P["standard_solve"] > 0).any():
+            return None
+        geometries = self.section_geometries()
+        net = self.network(geometries)
+        K, soil, axial = (np.asarray(v, dtype=float) for v in (conductance, soil_conductance,
+                                                               axial_boundary_conductance))
+        barrier, height = np.asarray(barrier), np.asarray(length, dtype=float) * 1.0E6
+        psi, flow = np.full(ds.n_nodes(), np.nan), np.zeros(ds.n_edges())
+        segments = ds.entity_ids("SubOrgan")
+        results = {name: np.full(segments.size, np.nan) for name in ("uptake", "kr", "Kx", "Kx_phloem")}
+        where = {int(v): i for i, v in enumerate(segments)}
+        in_matrix = np.ones(K.size, dtype=bool)               # the edges MECHA leaves out have K = 0
+        for segment, (nodes, edges, geo) in geometries.items():
+            v = nodes[0]
+            if not P["standard_solve"][v] > 0:
+                continue
+            b, h = int(barrier[v]), float(height[v])
+            psi_soil = float(P["standard_psi_soil"][v])
+            psi_axial = float(P["standard_psi_xylem"][v] if b > 0 else P["standard_psi_sieve"][v])
+            k_axial = float(P["k_xyl"][v] if b > 0 else P["k_sieve"][v])
+            if np.isnan(psi_axial):                           # no axial boundary: the soil's alone
+                diag, rhs_axial, psi_axial_value = np.zeros_like(axial), np.zeros_like(axial), 0.
+            else:
+                diag, rhs_axial, psi_axial_value = axial, np.where(axial > 0, k_axial, 0.), psi_axial
+            psi[nodes] = section_potentials(net, K, in_matrix, soil, diag, rhs_axial, nodes, edges, psi_soil,
+                                            psi_axial_value)
+            flow[edges] = K[edges] * (psi[net.a[edges]] - psi[net.b[edges]])
+            i = where[segment]
+            results["uptake"][i] = soil_uptake(geo, soil[nodes], psi[nodes], psi_soil)
+            results["kr"][i] = radial_conductivity(results["uptake"][i], psi_soil, psi_axial, geo.perimeter, h)
+            results["Kx"][i], results["Kx_phloem"][i] = axial_conductances(geo, h, b)
+        return (psi, "flow", flow, "uptake", results["uptake"], "kr", results["kr"], "Kx", results["Kx"],
+                "Kx_phloem", results["Kx_phloem"])
 
 
 MechaHydraulics.PARAMETERS = tuple(MechaHydraulics._plant_parameter_fields())

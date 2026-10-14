@@ -102,3 +102,8 @@ def test_cell_sets(both):
     cm = net.cell_manager
     for name in ("intercellular", "passage", "xylem", "sieve", "protosieve"):
         assert sorted(legacy[geo.typed[name]].tolist()) == sorted(c.node_id for c in getattr(cm, name)), name
+
+
+def test_junction_ids(both):
+    geo, net = both["geo"], both["net"]
+    np.testing.assert_array_equal(both["legacy"][geo.junction_order], net.n_walls + np.arange(net.n_junctions))

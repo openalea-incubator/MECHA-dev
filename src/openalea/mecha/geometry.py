@@ -98,6 +98,7 @@ class SectionGeometry:
     intercellular_cells: np.ndarray  # local nodes (the network's list: by the elif chain)
     typed: dict = field(default_factory=dict)   # the cell manager's sets by tissue: intercellular, passage, xylem...
     wall_cells: np.ndarray = None # (n, 2) per wall: its membranes' cells (local nodes, in cell order), -1 if none
+    junction_order: np.ndarray = None  # the junctions (local nodes) in the legacy's rebuilt order (its junction ids)
 
 
 def _sequential_sum(values) -> float:
@@ -179,6 +180,12 @@ def section_geometry(section: Section) -> SectionGeometry:
     junction_edge = np.zeros(s.path.size, dtype=bool)
     junction_edge[j_edges[kept]] = True
     j_edges, j_wall, j_junc = j_edges[kept], j_wall[kept], j_junc[kept]
+
+    # the legacy's junction ids: in order of first appearance, scanning the walls in order and each wall's junctions
+    # in its neighbour order (connection order: the junctions come after the walls in networkx's node order)
+    scan = np.lexsort((j_edges, position[j_wall]))
+    first_seen = np.unique(j_junc[scan], return_index=True)[1]
+    junction_order = j_junc[scan][np.sort(first_seen)]
 
     # wall lengths (µm): the walls'; a border junction (two border walls) Σ of their length/4
     wall_length = np.zeros(n)
@@ -263,7 +270,8 @@ def section_geometry(section: Section) -> SectionGeometry:
         concentrated_outer_cortex=ratios[0], concentrated_cortex_cortex=ratios[1], concentrated_cortex_endo=ratios[2],
         xylem_cells=np.asarray(xylem, dtype=np.int64), sieve_cells=np.asarray(sieve, dtype=np.int64),
         protosieve_cells=np.asarray(protosieve, dtype=np.int64), passage_cells=np.asarray(passage, dtype=np.int64),
-        intercellular_cells=np.asarray(intercellular, dtype=np.int64), typed=typed, wall_cells=wall_cells)
+        intercellular_cells=np.asarray(intercellular, dtype=np.int64), typed=typed, wall_cells=wall_cells,
+        junction_order=junction_order)
 
 
 def _ranks(s, cells, cgroup, x, y, x_grav, y_grav):

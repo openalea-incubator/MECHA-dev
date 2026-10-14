@@ -21,28 +21,20 @@ from plants import anatomy_component, anatomy_data_structure, root, template_org
 
 from openalea.mecha.component import MechaHydraulics                          # noqa: E402
 from openalea.mecha.geometry import section_parts                             # noqa: E402
-from openalea.mecha.solve import edge_flows, section_potentials               # noqa: E402
 
 BARRIERS = (1, 3)
-PSI_SOIL, PSI_XYL = 0.0, -5.0E3                                               # hPa: the legacy's default scenario
 
 
 def port_stage(mecha, segment, barrier):
-    """The port's K (per edge), ψ (per node) and Q (per edge) on the segment's section, at *barrier*."""
+    """The port's K, ψ and Q on the segment's section at *barrier*: the component's own (its standard problem)."""
     ds = mecha.data_structure
     ds.set("barrier", np.full(ds.n_nodes(), float(barrier)))
     mecha()
     nodes, edges = section_parts(ds)[segment]
     net = mecha.network()
-    K = np.asarray(ds.get("conductance"))
-    in_matrix = np.zeros(K.size, dtype=bool)
-    in_matrix[edges] = K[edges] != 0
-    in_matrix[edges] |= np.isin(net.path[edges], (0, 3)) | net.junction_edge[edges]
-    soil, axial = np.asarray(ds.get("soil_conductance")), np.asarray(ds.get("axial_boundary_conductance"))
-    psi = np.full(ds.n_nodes(), np.nan)
-    psi[nodes] = section_potentials(net, K, in_matrix, soil, axial, axial, nodes, edges, PSI_SOIL, PSI_XYL)
-    e = edges[in_matrix[edges]]
-    return dict(net=net, nodes=nodes, edges=e, K=K[e], psi=psi, Q=edge_flows(net, K, psi, e))
+    e = edges[np.isin(net.path[edges], (0, 3)) | net.junction_edge[edges]]       # the edges of MECHA's matrix
+    return dict(net=net, nodes=nodes, edges=e, K=np.asarray(ds.get("conductance"))[e], psi=np.asarray(ds.get("psi")),
+                Q=np.asarray(ds.get("flow"))[e], kr=float(np.asarray(ds.get("kr"))[0]))
 
 
 def draw_edges(ax, segments, values, cmap, norm, width=0.4):
@@ -128,7 +120,8 @@ def main(preset=None):
         for ax, label in zip(axes[:, 0], ("conductance", "potential", "flow")):
             ax.set_ylabel(label)
         fig.suptitle(f"{name}, barrier {barrier}: max |ΔK|/K {rel_K.max():.1e}, max |Δψ| {d_psi.max():.1e} hPa, "
-                     f"max |ΔQ| {np.nanmax(d_Q):.1e} cm³/d (|Q| up to {np.nanmax(abs(legacy_Q)):.1e})")
+                     f"max |ΔQ| {np.nanmax(d_Q):.1e} cm³/d (|Q| up to {np.nanmax(abs(legacy_Q)):.1e})\n"
+                     f"kr: legacy {stage['kr']:.6e}, port {port['kr']:.6e} cm hPa⁻¹ d⁻¹")
         path = os.path.join(folder, f"hydraulics_{name}_barrier{barrier}.png")
         fig.savefig(path, dpi=130)
         plt.close(fig)

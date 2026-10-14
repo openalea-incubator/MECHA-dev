@@ -320,3 +320,23 @@ Each step is committed with its comparison tests and a devlog entry.
 - **What the comparison showed about the legacy:** `solve_W` returns its matrix after removing the axial terms in place (`remove_xyl_phloem_BC`). It adds them on the network's xylem cells (by cgroup) and removes them on the cell manager's (by tissue): a third case of §2 l. The comparison applies the same removal.
 - **Visual check:** `example/comparison/compare_hydraulics.py [dicot]`, legacy | port | difference of log K, ψ and log |Q|. On the monocot and dicot roots: ΔK = 0, |Δψ| ≤ 9e-10 hPa (of 5000), |ΔQ| ≤ 1.3e-15 cm³/d (of 9e-5).
 - **Cost:** on 10 sections (83k nodes, 204k edges), the conductance step takes 0.2 s per call; the geometry is cached per template.
+
+## 11. Step 4 done (2026-10-14): the standard problem, kr, Kx and the flows
+
+- **`postprocess.py`:**
+  - `soil_uptake` (Σ K_soil (ψ_soil − ψ), border walls then border junctions, in the legacy's junction-id order);
+  - `radial_conductivity` (kr);
+  - `axial_conductances` (Kx and Kx_phloem by Poiseuille; Kx = 0 at barrier 0, decision D3).
+- **The legacy's sums are numpy's.** `mecha_class` star-imports pylab, so its `sum` is numpy's pairwise sum (kr's total uptake, Kx's Σ). The port does the same, on arrays laid out as the legacy's.
+- **The legacy's rebuilt junction ids** (in order of first appearance in its wall scan) are reproduced by `geometry.junction_order` (tested).
+- **The component's `@state _psi` step:** MECHA's standard problem on each section alone. It writes `psi` (Compartment) and `flow` (Connection), plus `uptake`, `kr`, `Kx` and `Kx_phloem` (SubOrgan). It is optional (`standard_solve = 0`, Q-M5). The standard potentials are parameters (`standard_psi_soil` 0, `standard_psi_xylem` −5000 hPa, `standard_psi_sieve` NaN as the legacy's default: at barrier 0 the section is then at the soil's potential and kr is NaN).
+- **Against the legacy** (`test/comparison/test_postprocess.py`; monocot and dicot, barriers 1 and 3; 16 passed):
+  - on the legacy's solution, kr and every edge's flow are bit-exact;
+  - Kx is bit-exact;
+  - the port's own solve gives ψ, kr and the flows to 1e-12.
+- **Component tests:** ψ between the soil's and the xylem's potentials, each section's uptake equal to its flow into the xylem, kr falling with suberin, Kx, the optional switch (`test/component`, 11 passed).
+- **Examples:**
+  - `example/hydraulics/monocot_root.py`: three 5 mm segments at barriers 1, 3 and 4, GRANAP's and MECHA's components, one run, the K, ψ and Q of each section;
+  - `example/comparison/compare_hydraulics.py`: now draws the component's own ψ and Q, and prints both kr values.
+- **Deferred:** the layer-wise outputs (uptake per cortex/stele layer, transmembrane fractions) need the legacy's `create_layer_discretization` (200 lines). They are part of the optional downstream (Q-M5) and come after step 5.
+- **For the later fixes (the legacy's, not the port's):** `k_xyl` is one conductance per vessel, whatever the section's height. In a 5 mm section the membranes conduct 25 times more than in a 200 µm one, so the vessels no longer hold the stele at the xylem's potential. kr then depends on the height: 4.5e-5 at 5 mm against 1.0e-4 cm hPa⁻¹ d⁻¹ at 200 µm (barrier 1). A height-scaled (or Dirichlet) xylem condition would remove this; the graph system (step 5) imposes ψ through the plant's xylem instead.
