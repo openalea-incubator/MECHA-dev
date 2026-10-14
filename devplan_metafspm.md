@@ -205,3 +205,77 @@ Until §3d exists, the port solves each section with a plain sparse solve, only 
 - **The legacy's junction rebuild (by position) only renumbers GRANAP's junctions:** a bijection, with the same walls on each junction. So the port uses GRANAP's junctions as they are, and the comparison maps them by position.
 - **Environment:** the `mecha` env (yours) lacks `cv2`, which GRANAP imports. I ran in a clone of it, `mecha-port`, with `opencv-python-headless` added; `environment.yaml` already lists it.
 
+
+## 8. Design note: steps 2–4 (geometry, conductances, Kx and post-processing)
+
+**What the legacy computes before and after its solve** (read in `network_builder.populate_from_network`, `hydraulic_solver.HydraulicMatrixBuilder`, `Mecha.standard_water_flow` and `calculate_axial_conductance`):
+- **Per section, geometry:**
+  - units: mm → µm (×1000), areas ×1e6;
+  - the soil-border walls (one membrane, to an epidermis cell) and the aerenchyma borders;
+  - the border junctions (two border walls; length Σ wall length/4);
+  - the lateral distance of a wall (Σ of its membranes' `dist`);
+  - the gravity centre (mean of the endodermis cells' positions) and each wall's distance to it;
+  - the epidermis perimeter, 2π·(mean epidermis wall distance);
+  - the cell ranks: layers 40–49 in the cortex, 50–61 in the stele, from the plasmodesmata neighbours;
+  - the plasmodesmata ratios at the cortex interfaces (`concentrated_*`);
+  - the xylem, sieve and protosieve sets (cgroup), the passage and intercellular sets (tissue).
+- **Per edge, the conductance K:**
+  - wall: `kw_key·1e-4·((lat + h)·t − t²)/length`;
+  - membrane: kaqp by cgroup, the cortex gradient on the wall's distance to the centre;
+  - plasmodesmata: `kpl`, the interface factor, `fplxheight`, the barrier modifier.
+- **Per node, the boundary terms:**
+  - the soil Robin terms on the border walls and junctions;
+  - `k_xyl` on the xylem cells, or `k_sieve` on the protosieve cells at barrier 0.
+- **After the solve:**
+  - the soil-interface flows, `kr = ΣQ_soil/(ψ_soil − ψ_xyl)/perimeter/h`;
+  - the edge flows;
+  - the layer-wise uptake (on the ranks' layers).
+- **Kx:** Poiseuille over the xylem cells, `Σ area²/(8π·h·η)·h/1e4`, with η that of water at 10 °C.
+
+**Proposal:**
+- **Modules of the port, in `src/openalea/mecha/`:**
+  - `geometry.py`: pure array functions, per section, from the DataStructure's arrays;
+  - `conductance.py`: the K of every edge and the boundary terms, vectorised over all sections' edges at once;
+  - `parameters.py`: the flattened numeric parameters (Q-M3) with their units;
+  - `component.py`: `MechaHydraulics(FunctionalComponent)`.
+- **Inputs** (by `"Anatomy"`, i.e. `GranapAnatomy`; plus `length` by `"Architecture"`, and `barrier` on the SubOrgan, Q-M4):
+  - Compartment: `kind`, `cgroup`, `tissue`, `section_x`/`y`, `wall_length`, `cell_area`;
+  - Connection: `network_path`, `edge_length`, `edge_dist`.
+
+  The sections are the Compartments by owner (the DataStructure's `compartments_by_owner`).
+- **Steps:**
+  - `@postsegmentation _geometry`: runs only for sections whose anatomy changed. The anatomy signature is metafspm's, already used by GRANAP. The geometry is computed once per distinct anatomy and broadcast to the sections that share it, since GRANAP's class sections are identical in 2D.
+  - `@state _conductances`: depends on `length` and `barrier`. The legacy's elementwise formulas run over every edge of every section in one numpy expression, so it is exact, in the same operation order.
+  - `@state _axial_conductance` (Kx).
+  - The post-processing is a function of ψ, run after a solve. It is optional (Q-M5).
+
+  Until step 5, the solve is a plain `spsolve` per section, built from the DataStructure's incidence.
+- **Written on the DataStructure** (declared state variables):
+  - Compartment: `cell_rank`, `soil_boundary` (the soil term's K), `axial_boundary` (`k_xyl` or `k_sieve`), `psi`;
+  - Connection: `conductance` K, `flow` Q;
+  - SubOrgan: `perimeter`, `kr`, `Kx`, `uptake`.
+- **Kept in the component's per-anatomy cache, not declared:** MECHA's lateral distances, the gravity centre, the wall distances to the centre and the plasmodesmata ratios. Intermediates, readable by the comparison through a function.
+- **Exactness:**
+  - The sums whose order matters (the gravity centre, the perimeter, the plasmodesmata ratios, the layer distances, Kx's Σ) are taken in the legacy's order. Its node order is GRANAP's MECHA index; its neighbour order is the order of the connections in GRANAP's network. Sequential sums use `np.cumsum` or loops.
+  - Two-term sums (lateral distance, border-junction lengths) are order-free.
+  - The ranks' sweeps assign within one iteration only cells whose test reads the previous iteration's ranks, so each sweep vectorises exactly.
+- **The junctions** are GRANAP's (§7: the legacy's rebuild is a renumbering). The comparison maps the legacy's junction ids by position.
+- **Visual examples:**
+  - `example/comparison/compare_hydraulics.py`: legacy | port | difference, for K (edges coloured by log K, per path), ψ (nodes) and Q (edges, width and direction), on the monocot root at barriers 1 and 3;
+  - `example/hydraulics/monocot_root.py`: the simple one (GRANAP + MECHA components, run, the three plots).
+
+  The seedling SPAC example comes with step 5, since it needs the plant-wide solve.
+
+**Order:**
+- (2) geometry, compared quantity by quantity, exact;
+- (3) conductances and boundary terms, edge by edge, exact; then the matrix and the solve;
+- (4) Kx exact, kr and the edge flows on the legacy's solution (exact), then on the port's solve;
+- the two examples.
+
+Each step is committed with its comparison tests and a devlog entry.
+
+**Decisions (with my recommendation):**
+- **D1 — the matrix and solve comparison.** K and the boundary terms are bit-exact. The assembled matrix's diagonal is a sum whose order follows the legacy's networkx adjacency, and its node order differs (SuperLU then permutes differently). *Recommendation:* compare the matrix to 4 ulp and ψ, Q and kr to a relative 1e-12, rather than emulating networkx's order in the assembly. Everything before the solve stays bit-exact.
+- **D2 — units on the DataStructure.** *Recommendation:* MECHA's own units for now (K in cm³ hPa⁻¹ d⁻¹, ψ in hPa, kr in cm hPa⁻¹ d⁻¹, Kx in cm⁴ hPa⁻¹ d⁻¹), declared in each variable's doc. The conversion to the plant models' units happens at the coupling (step 5), through the translator.
+- **D3 — Kx at barrier 0** (the legacy crash, fixed at once per Q-M1). There the legacy fills the protosieve cells' Poiseuille terms (η of phloem sap), then leaves `K_xyl_spec` unbound. *Recommendation:* `Kx` = 0 at barrier 0 (no mature xylem), and a separate `Kx_phloem` = Σ of the protosieve terms. Alternative: `Kx` = that protophloem sum, in the conduit that carries the boundary at barrier 0.
+- **D4 — height.** The legacy's stage height (µm) is the segment's `length` (m → µm). The comparison sets the segment length to 200 µm. No decision needed unless you prefer a separate `height` input.
