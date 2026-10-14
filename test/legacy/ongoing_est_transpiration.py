@@ -1,6 +1,6 @@
 
 from openalea.granap import NeedleAnatomy
-from openalea.mecha import Mecha, InData, NetworkBuilder, visualize
+from openalea.mecha.legacy import Mecha, InData, NetworkBuilder, visualize
 
 
 needle_anatomy = NeedleAnatomy()

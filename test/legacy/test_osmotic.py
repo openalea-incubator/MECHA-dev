@@ -3,7 +3,7 @@
 Test osmotic scenarios
 """
 
-from openalea.mecha import Mecha, InData, NetworkBuilder, visualize
+from openalea.mecha.legacy import Mecha, InData, NetworkBuilder, visualize
 from openalea.granap.root_class import RootAnatomy
 import matplotlib.pyplot as plt
 

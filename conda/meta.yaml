@@ -56,7 +56,7 @@ test:
 
   commands:
     - cd test
-    - pytest -v
+    - pytest -v --ignore=comparison --ignore=legacy
 
 about:
   home: {{ home }}

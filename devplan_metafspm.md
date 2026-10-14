@@ -106,6 +106,7 @@ The legacy will be compared as it is, so these matter: a port that reproduces th
 - k. `tag_phi_thick_cells` is called with its arguments swapped (harmless only because of a guard).
 - l. Two sources for the same cell sets: cgroup-based in the solver, type-string-based in the class.
 - m. Debug prints, dead code, and results lists that grow on every call.
+- n. `list_ghostwalls` and `list_ghostjunctions` are created empty and never filled, so the ghost-wall bookkeeping is dead. The "ghost" branch of the wall conductance only depends on the intercellular count and the barrier (`kw_septa` factor when ≥ 2 intercellular neighbours and barrier > 0, else 1e-16 for xylem pieces).
 
 ## 3. Design
 
@@ -160,24 +161,47 @@ Until §3d exists, the port solves each section with a plain sparse solve, only 
 
 - **Q-M1 — exactness against the legacy and its problems (§2).** Port the legacy's behaviour exactly first, its problems included (a–i), so that the comparison holds to the last digit, then fix them one by one, each with its reviewed difference? Or fix them while porting?
   - **Recommendation:** exact first, then fix one by one (as GRANAP's Q8). A crash (e, the barrier-0 Kx) is fixed at once in the port, the comparison skipping that case.
-  - → answer:
+  - → answer: yes to Recommendation
 - **Q-M2 — the geometry MECHA rebuilds.** The legacy rebuilds GRANAP's junctions from positions, and recomputes its own lateral distance (the sum of the wall's membrane distances, not GRANAP's mean plus offset), a single wall thickness, and its own epidermis perimeter. On the DataStructure, use GRANAP's network as it is? Then the junctions, `lateral_distance` and the per-wall `wall_thickness` are GRANAP's, and the conductances differ from the legacy's. Or compute MECHA's own quantities from GRANAP's columns?
   - **Recommendation:** MECHA's quantities first, computed from GRANAP's columns in bulk, so the comparison holds. Then switch, as a reviewed change, to GRANAP's per-wall thickness and lateral distance, which are the better values.
-  - → answer:
+  - → answer: compute Mecha's approach first, and record ways to optimize it exactly, and then to remove steps not influential to the results in later step.
 - **Q-M3 — the parameters' form.**
   - Declare MECHA's scalars as metafspm parameters (`kw`, barrier values, `kmb`, `kaqp`, `kpl`, `pd_section`, `k_interc`, …, numeric, per plant)?
   - And its tables (per-tissue aquaporin factors, per-interface `fplxheight` and plasmodesmata factors) as object parameters? Or flattened into one numeric parameter each (`kaqp_endo_factor`, …)?
   - **Recommendation:** flattened numeric parameters. MECHA's tables are small (5 tissue factors, about 20 interfaces), and flattened parameters can then differ per plant and appear in the documentation like any parameter.
-  - → answer:
+  - → answer: yes to recommendation
 - **Q-M4 — maturity and barriers.** In MECHA a "maturity stage" is a (barrier code, height) pair, looped over in one run. In a growing plant, each segment has its own barrier state. Make the barrier code a SubOrgan input (given by a development model, or computed from the distance to the tip), with the height the segment's length?
   - **Recommendation:** yes, a SubOrgan input `barrier` (by `Development`). The legacy's loop over stages becomes one section per stage in the comparison tests.
-  - → answer:
+  - → answer: yes SubOrgan input
 - **Q-M5 — the standard kr and Kx.** MECHA's kr is defined by a standard solve: the xylem held at a pressure (Dirichlet) and the soil at another, each section alone. In a connected plant, the solved flows give an effective kr per section instead (uptake / (ψ_soil − ψ_xylem, local) / surface). Keep both: the standard one (each section solved alone, a restricted graph system) as MECHA's definition, and the effective one from the plant's solve?
   - **Recommendation:** both. The standard kr and Kx are the parameters a root architecture model (e.g. a Doussan-type root system model) takes; the effective ones are diagnostics of the coupled solve.
-  - → answer:
+  - → answer: both, and this downstream part should be optional when just wanting to solve flows on the hydraulic graph
 - **Q-M6 — what stays out of the first port.** MECHA's scenario loops (`h` over parameter combinations, BC scenarios), the osmotic and elongation terms, solute transport (`SoluteTransport`, `coupled_solver`), and the exports (paraview, graphml, plots). In metafspm, scenarios belong to the scene and to separate runs, not to the component. Port the hydraulics first (one parameter set, one boundary condition set per run), and leave the rest to later phases?
   - **Recommendation:** yes. Osmotic terms come next (they belong to the same balance), then solutes as their own component; the exports become plots of the DataStructure.
-  - → answer:
+  - → answer: Agree with this plan order
 - **Q-M7 — MECHA's own cellset XML input** (GRANAR files, without GRANAP). GRANAP's `CellSetOrgan` already reads GRANAR cellsets into the MPG. Drop MECHA's XML network builder from the port (the legacy keeps it), and read cellsets through GRANAP?
   - **Recommendation:** yes. One path into the DataStructure, and GRANAP's reader is the one that keeps the walls' topology.
-  - → answer:
+  - → answer: yes, I want the more direct link through metafspm DataStructure, as intended metafspm, between granap and mecha, all other input and output options stay functional but optional
+
+## 6. Your answers (2026-10-14) and what follows from them
+
+- **Q-M1:** exact first, the legacy's problems included; then fixed one by one, each with its reviewed difference. The barrier-0 Kx crash is fixed at once, with the comparison skipping that case.
+- **Q-M2:** MECHA's own geometry first (its junctions, lateral distance, thickness and perimeter, computed from GRANAP's columns). Exact optimisations are recorded as they appear, and the steps that do not influence the results are removed later.
+- **Q-M3:** MECHA's parameters as numeric per-plant metafspm parameters, the tables flattened (one parameter per tissue factor and per interface).
+- **Q-M4:** `barrier` is a SubOrgan input; the height is the segment's length.
+- **Q-M5:** both the standard kr and Kx (each section alone) and the effective ones from the plant's solve. This downstream part is optional: solving the flows on the hydraulic graph needs neither.
+- **Q-M6:** the hydraulics first (one parameter set and one boundary-condition set per run), then the osmotic terms, then solutes as their own component; exports as plots of the DataStructure.
+- **Q-M7:** the direct link GRANAP → DataStructure → MECHA is the port's path. The other inputs and outputs (cellset XML through GRANAP's `CellSetOrgan`, exports) stay functional but optional.
+- **Your additional requests:**
+  - **Visual examples at each step,** beside the quantitative checks: the conductance graph (edges coloured by K over the section), then the solved potentials (ψ on the nodes) and the solved flows (Q on the edges), port and legacy side by side, in `example/comparison/`.
+  - **A seedling example:** metafspm's soil–plant–atmosphere example (`examples/soil_plant_atmosphere` in metafspm), its anatomical scale populated by GRANAP and solved by the MECHA component. It comes once the graph system exists (step 5).
+- **Where the original tests and tutorials go:** they exercise the legacy's own API (`Mecha`, `InData`, `NetworkBuilder`), so they move to `test/legacy/` and `example/legacy/`, run against `openalea.mecha.legacy`, until their ported versions replace them. Like `comparison/`, `test/legacy/` is skipped in CI.
+
+## 7. Step 1 done (2026-10-14): the legacy copy and the harness
+
+- **Layout:** `src/openalea/mecha/legacy/` (frozen at 2b995b2, imports rewritten), `test/legacy/`, `example/legacy/`, `test/comparison/legacy_run.py`.
+- **The harness:** `legacy_section(organ, barriers, height)` runs the legacy on a GRANAP organ (main package, through its legacy exports) and records, per stage, the solution, matrix, `Kmb`, rhs, edge `K`, kr and Kx.
+- **On GRANAP's monocot root (seed 0, barriers 1 and 3):** 2.8 s; 4146 walls, 2763 junctions, 1384 cells, 20394 conductances; kr 1.025e-4 and 3.975e-5 cm/hPa/d, Kx 1.236.
+- **The legacy's junction rebuild (by position) only renumbers GRANAP's junctions:** a bijection, with the same walls on each junction. So the port uses GRANAP's junctions as they are, and the comparison maps them by position.
+- **Environment:** the `mecha` env (yours) lacks `cv2`, which GRANAP imports. I ran in a clone of it, `mecha-port`, with `opencv-python-headless` added; `environment.yaml` already lists it.
+

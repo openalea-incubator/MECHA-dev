@@ -15,8 +15,8 @@ Includes polygon visualization, ParaView export, water potential mapping,
 and network-level visualization functions.
 
 Examples:
-    >>> from openalea.mecha.utils.visu import visualize
-    >>> from openalea.mecha import Mecha
+    >>> from openalea.mecha.legacy.utils.visu import visualize
+    >>> from openalea.mecha.legacy import Mecha
     
     >>> # Basic visualization of the root organ section
     >>> visualize(mecha_instance, visu_type='polygon')
@@ -59,13 +59,13 @@ import numpy as np
 
 from shapely.geometry import LineString, Polygon
 from typing import Tuple, Dict, List, Any, Optional
-from openalea.mecha import Mecha, NetworkBuilder
+from openalea.mecha.legacy import Mecha, NetworkBuilder
 
 import networkx as nx
 import pandas as pd
 # Network visualization functions
-from openalea.mecha.utils.network_export import *
-from openalea.mecha.utils.paraview_export import export_to_vtk
+from openalea.mecha.legacy.utils.network_export import *
+from openalea.mecha.legacy.utils.paraview_export import export_to_vtk
 
 
 def prep_section(cellset_data) -> gpd.GeoDataFrame:

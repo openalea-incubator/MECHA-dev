@@ -2,8 +2,8 @@
 test for MECHA visualizations
 """
 
-from openalea.mecha import Mecha, visualize, InData, NetworkBuilder
-from openalea.mecha.utils.network_export import export_to_graphml
+from openalea.mecha.legacy import Mecha, visualize, InData, NetworkBuilder
+from openalea.mecha.legacy.utils.network_export import export_to_graphml
 from openalea.granap.root_class import RootAnatomy
 import matplotlib.pyplot as plt
 import numpy as np

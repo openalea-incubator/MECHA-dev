@@ -42,7 +42,7 @@ import matplotlib.pyplot as plt
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from openalea.mecha import Mecha, InData, SoluteTransport, ScenarioBuilder
+from openalea.mecha.legacy import Mecha, InData, SoluteTransport, ScenarioBuilder
 
 _OUT_DIR    = 'outputs'
 _CELLSET    = os.path.join('inputs', 'current_root.xml')

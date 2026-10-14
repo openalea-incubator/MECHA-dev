@@ -28,8 +28,8 @@ import matplotlib.cm as cm
 import numpy as np
 import pandas as pd
 
-from openalea.mecha import NetworkBuilder
-from openalea.mecha.utils.data_loader import BARRIER_KEY
+from openalea.mecha.legacy import NetworkBuilder
+from openalea.mecha.legacy.utils.data_loader import BARRIER_KEY
 
 # Constants moved from visu.py
 _PATH_COLORS = {
@@ -156,7 +156,7 @@ def visualize_network(
         Additional keyword arguments for customizing the plot.
     """
     # Import Mecha locally to avoid circular dependencies if needed
-    from openalea.mecha import Mecha
+    from openalea.mecha.legacy import Mecha
 
     if isinstance(obj, NetworkBuilder):
         graph = obj.graph
@@ -1204,7 +1204,7 @@ def _gather_edge_data(graph):
 # ---------------------------------------------------------------------------
 
 # Canonical cgroup → tissue name used in the boundary table.
-from openalea.mecha.utils.hydraulic_cell import CGROUP_TO_TYPE
+from openalea.mecha.legacy.utils.hydraulic_cell import CGROUP_TO_TYPE
 
 
 

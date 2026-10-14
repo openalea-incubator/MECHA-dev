@@ -21,15 +21,15 @@ Network builder for MECHA
 Constructs the hydraulic network graph from cell data
 """
 
-from openalea.mecha.utils.data_loader import HormonesData
+from openalea.mecha.legacy.utils.data_loader import HormonesData
 import networkx as nx
 import numpy as np
 from typing import Dict, Any, List, Optional, Tuple
 from lxml import etree
 import geopandas as gpd
 
-from openalea.mecha.utils.data_loader import GeneralData, GeometryData
-from openalea.mecha.utils.hydraulic_cell import HydraulicCellManager
+from openalea.mecha.legacy.utils.data_loader import GeneralData, GeometryData
+from openalea.mecha.legacy.utils.hydraulic_cell import HydraulicCellManager
 
 from openalea.granap.network_base import AbstractNetwork
 from shapely.geometry import Polygon
@@ -562,7 +562,7 @@ class NetworkBuilder(AbstractNetwork):
 
         # ---- XML path ------------------------------------------------
         if hasattr(self, 'cellset') and self.cellset:
-            from openalea.mecha.utils.visu import prep_section
+            from openalea.mecha.legacy.utils.visu import prep_section
             return prep_section(self.cellset)
 
         # ---- GRANAP path ---------------------------------------------
@@ -942,7 +942,7 @@ class NetworkBuilder(AbstractNetwork):
         
         poly_dict = {}
         if centroid_method == "shapely":
-            from openalea.mecha.utils.visu import prep_section
+            from openalea.mecha.legacy.utils.visu import prep_section
             gdf = prep_section(self.cellset)
             poly_dict = {row["id_cell"]: row["geometry"] for _, row in gdf.iterrows()}
         
