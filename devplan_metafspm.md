@@ -493,3 +493,21 @@ Your answer: E1–E6 and the recommendations of Q-E1 (the pores) and Q-E2 (the w
   - **The tip segments (barrier 0) carry no water axially** (D3): they stay at the soil's potential.
   - **A 3 cm suberin zone made most roots nearly impermeable** (root xylem −5.5 MPa); hence 10 cm in the stand-in.
 - **Tests:** `test/component/test_shoot.py` (a stem with a leaf and a root: soil only at the root, air only at the pores, uptake = transpiration, root quantities on roots only); 72 passed.
+
+## 17. Step 6 done (2026-10-14): the tutorials ported
+
+- **`example/tutorials/tutorial_01_input.py [cellset]`:**
+  - an anatomy into MECHA through GRANAP's component: the root preset, or a CellSet file (GRANAP's `CellSetOrgan`; the legacy's own XML builder is not ported, Q-M7);
+  - kr and Kx at barriers 1 and 3;
+  - the tutorial's views from `openalea.mecha.plots`: tissues, ψ map, radial ψ profile, conductances by pathway, the pathways' shares of the radial flow (the legacy's algorithm), flow vectors.
+- **`example/tutorials/tutorial_02_bc.py`:** the standard problem with the xylem's potential, then with its uptake as a flow into the xylem. New parameters `standard_axial_condition` (1 potential, 2 flow) and `standard_axial_flow`; a neumann set; the xylem's potential recovered as the legacy does.
+- **`example/comparison/tutorial_01_input.py [cellset]` and `tutorial_02_bc.py`:** the same sections through the legacy (on the same GRANAP organ) and the port. The numbers are side by side, and the views are drawn from both by the same functions (`legacy_frame` in `test/comparison/legacy_run.py`).
+  - GRANAP root: kr and Kx equal to the printed 7 digits;
+  - CellSet: kr 1.470809e-4 and 4.742011e-5, Kx 4.668696e-5, equal;
+  - tutorial 02: uptake and kr to ≤ 1.2e-12.
+- **Tests** (79 passed):
+  - `test/comparison/test_boundary_conditions.py`: the flow case's ψ to 1e-11 of its range (only the soil anchors it, a less well-conditioned system), its uptake and kr to 1e-12 and 1e-10;
+  - a component test of the flow condition.
+- **A 15th legacy problem (o):** the flow is split by the area ratios of the cell manager's xylem (by tissue: protoxylem, metaxylem, xylem), but given by rank to the network's xylem cells (by cgroup, in cell order). In the monocot root the two orders differ, so vessels get another vessel's share. The port reproduces it, for exactness.
+- **Tutorial 03 (diffusion) is not ported:** solute transport is the later solute component (Q-M6). Its legacy notebook stays in `example/legacy/`.
+- **Found in GRANAP:** `CellSetOrgan` misreads GRANAR's own XML output (`example/legacy/inputs/current_root.xml`, in mm, `<granardata>`). With `scale=1` it finds no cortex nor endodermis, and 4683 pericycle cells for a 1055-cell file. On it, the legacy MECHA crashes (no cortex–cortex plasmodesmata: a division by zero), and the port gives kr ≈ 0 at barrier 3. The tutorial uses GRANAP's own CellSet test file (a Brassicaceae root) instead.

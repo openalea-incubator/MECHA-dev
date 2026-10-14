@@ -21,8 +21,8 @@ from openalea.metafspm.solve.decorator import (boundary_set, graph_jacobian, gra
 
 from openalea.mecha.conductance import (FPLXHEIGHT, Network, assemble, boundary_terms, cortex_parameters,
                                        edge_conductances, fplxheight_name, set_edge_ends)
-from openalea.mecha.geometry import (AXIAL_JUNCTION, XYLEM_CGROUPS, phi_thick_cells, section_geometry, section_of,
-                                     section_parts)
+from openalea.mecha.geometry import (AXIAL_JUNCTION, XYLEM_CGROUPS, XYLEM_TYPES, phi_thick_cells, section_geometry,
+                                     section_of, section_parts)
 from openalea.mecha.postprocess import (VISCOSITY_PHLOEM, VISCOSITY_XYLEM, axial_conductances, poiseuille,
                                         radial_conductivity, soil_uptake)
 
@@ -126,6 +126,10 @@ class MechaHydraulics(FunctionalComponent):
     stomatal_conductance: float = _p("mol m-2 s-1", "stomatal conductance to water vapour (leaves' pores)", 0.2)
     vapour_factor: float = _p("mm3 s-1 MPa-1 per (mol m-2 s-1 m2)", "e_sat V_w² / (R T P): from a vapour conductance "
                               "to a liquid one (20 °C)", VAPOUR_FACTOR)
+    standard_axial_condition: float = _p("", "the standard problem's xylem condition: 1 its potential "
+                                         "(standard_psi_xylem, through k_xyl), 2 its flow (standard_axial_flow)", 1.)
+    standard_axial_flow: float = _p("cm3 d-1", "the flow into the xylem in the standard problem (condition 2), "
+                                    "split among the vessels as their areas (the legacy's distribution)", 0.)
     standard_psi_soil: float = _p("hPa", "the soil's potential in the standard problem", 0.0)
     standard_psi_xylem: float = _p("hPa", "the xylem's potential in the standard problem (barrier > 0)", -5.0E3)
     standard_psi_sieve: float = _p("hPa", "the protophloem's potential in the standard problem (barrier 0; NaN: "
@@ -206,6 +210,11 @@ class MechaHydraulics(FunctionalComponent):
                                                              "standard problem"),
                                                initialize=0., scale=SCALES.Compartment, location="node",
                                                state_variable_type="NonInertialIntensive")
+    standard_axial_inflow: float = state_variable(**_doc("cm3 d-1", "the water entering a xylem vessel from the axial "
+                                                         "boundary in the standard problem (condition 2; negative: "
+                                                         "the vessel's share of the flow into the xylem)"),
+                                                  initialize=0., scale=SCALES.Compartment, location="node",
+                                                  state_variable_type="NonInertialIntensive")
     in_standard_problem: float = state_variable(**_doc("", "1 on the Compartments of the plants solving the standard "
                                                            "problem (standard_solve)"),
                                                 initialize=0., scale=SCALES.Compartment, location="node",
@@ -389,7 +398,7 @@ class MechaHydraulics(FunctionalComponent):
     @rate(include_inactive=True)
     def _conductance(self, network_path, barrier, length, anatomy_template) \
             -> tuple[np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,
-                     str, np.ndarray]:
+                     str, np.ndarray, str, np.ndarray]:
         """
         Every edge's conductance, and the boundary conductances of the nodes (soil, axial), from MECHA's geometry,
         the segments' barriers and heights (their lengths), and the plants' parameters; the standard problem's
@@ -407,6 +416,9 @@ class MechaHydraulics(FunctionalComponent):
         soil, axial, _ = boundary_terms(net, P_node, barrier_node, height_node)
         axial_psi = np.where(barrier_node > 0, P_node["standard_psi_xylem"], P_node["standard_psi_sieve"])
         axial = np.where(np.isnan(axial_psi), 0., axial)
+        flow_condition = (P_node["standard_axial_condition"] == 2) & (barrier_node > 0)
+        axial = np.where(flow_condition, 0., axial)                    # the flow condition replaces k_xyl's
+        inflow = self._standard_axial_inflow(geometries, P_node, flow_condition)
         root = self._root_nodes(geometries)
         soil = np.where(root, soil, 0.)                               # stems and leaves: no soil (E1)
         evaporation = self._evaporation_conductance(geometries, height_node, P_node)
@@ -414,7 +426,27 @@ class MechaHydraulics(FunctionalComponent):
                 "standard_soil_psi", P_node["standard_psi_soil"].astype(float),
                 "standard_axial_psi", np.where(np.isnan(axial_psi), 0., axial_psi),
                 "in_standard_problem", ((P_node["standard_solve"] > 0) & root).astype(float),
-                "evaporation_conductance", evaporation)
+                "evaporation_conductance", evaporation, "standard_axial_inflow", inflow)
+
+    def _standard_axial_inflow(self, geometries, P_node, flow_condition) -> np.ndarray:
+        """
+        The standard problem's flow condition (2): the flow into the xylem split among the vessels as the legacy does
+        (``_distribute_xylem_flow``): the area ratios of its cell manager's xylem (by tissue: protoxylem, metaxylem,
+        xylem, each in cell order), given by rank to its network's xylem cells (by cgroup, in cell order).
+        """
+        out = np.zeros(self.data_structure.n_nodes())
+        for nodes, _, geo in geometries.values():
+            v = nodes[0]
+            if not flow_condition[v]:
+                continue
+            typed = [c for t in XYLEM_TYPES for c in geo.cells[geo.tissue[geo.cells] == t]]
+            total = 0.
+            for c in typed:
+                total += float(geo.cell_area[c])
+            ratios = [float(geo.cell_area[c]) / total for c in typed]
+            for c, ratio in zip(geo.xylem_cells, ratios):
+                out[nodes[c]] = -float(P_node["standard_axial_flow"][v]) * ratio
+        return out
 
     def _evaporation_conductance(self, geometries, height_node, P_node) -> np.ndarray:
         """
@@ -516,6 +548,8 @@ class MechaHydraulics(FunctionalComponent):
                             weight="soil_conductance", field="standard_psi")
         axial = boundary_set(filters={"axial_boundary_conductance": ">0"}, kind="robin", value="standard_axial_psi",
                              weight="axial_boundary_conductance", field="standard_psi")
+        axial_flow = boundary_set(filters={"standard_axial_inflow": "<0"}, kind="neumann", value="standard_axial_inflow",
+                                  field="standard_psi")
 
         @graph_jacobian
         def _jacobian(self, conductance):
@@ -593,6 +627,12 @@ class MechaHydraulics(FunctionalComponent):
             if P["standard_solve"][v] > 0:
                 psi_soil = float(P["standard_psi_soil"][v])
                 psi_axial = float(P["standard_psi_xylem"][v] if b > 0 else P["standard_psi_sieve"][v])
+                if b > 0 and P["standard_axial_condition"][v] == 2:      # the xylem's potential, recovered (legacy)
+                    vessels = [c for t in XYLEM_TYPES for c in geo.cells[geo.tissue[geo.cells] == t]]
+                    psi_axial = 0.0
+                    for c in vessels:
+                        psi_axial += standard[nodes[c]] / len(vessels)
+                    psi_axial = float(psi_axial)
                 out["standard_uptake"][i] = soil_uptake(geo, soil[nodes], standard[nodes], psi_soil)
                 out["kr"][i] = radial_conductivity(out["standard_uptake"][i], psi_soil, psi_axial, geo.perimeter, h)
             contact = nodes[soil[nodes] > 0]

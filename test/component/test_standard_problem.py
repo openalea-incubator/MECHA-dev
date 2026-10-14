@@ -58,3 +58,19 @@ def test_optional(solved):
         mecha.standard_solve = 1.
         ds.set("barrier", np.array([0., 1., 3.])[ds.owner("SubOrgan")])
         mecha()
+
+
+def test_flow_condition_at_the_xylem(solved):
+    """standard_axial_condition 2: the given flow leaves through the xylem; the section's uptake is that flow."""
+    g, ds, mecha = solved
+    mecha.standard_axial_condition, mecha.standard_axial_flow = 2., 1e-3
+    try:
+        mecha()
+        inflow, owner = ds.get("standard_axial_inflow"), ds.owner("SubOrgan")
+        for i in (1, 2):                                  # barriers 1 and 3 (barrier 0: no mature xylem)
+            assert inflow[owner == i].sum() == pytest.approx(-1e-3, rel=1e-12)
+            assert ds.get("standard_uptake")[i] == pytest.approx(1e-3, rel=1e-9)
+        assert np.isfinite(ds.get("kr")[1:]).all()
+    finally:
+        mecha.standard_axial_condition, mecha.standard_axial_flow = 1., 0.
+        mecha()
