@@ -1,9 +1,9 @@
 """
 Tutorial 01 against the legacy MECHA: the same section (GRANAP's root preset, or GRANAP's CellSet organ from a CellSet
-file) through the port and through the legacy (its NetworkBuilder on the same organ), kr and Kx at barriers 1 and 3,
+file or GRANAR's current_root.xml) through the port and through the legacy (its NetworkBuilder on the same organ), kr and Kx at barriers 1 and 3,
 and the tutorial's views drawn from both by the same functions (openalea.mecha.plots).
 
-    python tutorial_01_input.py [cellset]      (from MECHA-dev/example/comparison; figures in ./outputs/)
+    python tutorial_01_input.py [cellset|granar]    (from MECHA-dev/example/comparison; figures in ./outputs/)
 """
 import os
 import sys
@@ -15,7 +15,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path[:0] = [os.path.join(HERE, "..", "tutorials"), os.path.join(HERE, "..", "..", "test", "comparison")]
 
 from legacy_run import legacy_frame, legacy_section                             # noqa: E402
-from tutorial_01_input import BARRIERS, section                                  # noqa: E402
+from tutorial_01_input import BARRIERS, FILES, section                                 # noqa: E402
 
 from openalea.mecha import plots                                                # noqa: E402
 
@@ -61,4 +61,4 @@ def main(source="granap"):
 
 
 if __name__ == "__main__":
-    main("cellset" if "cellset" in sys.argv[1:] else "granap")
+    main(next((source for source in FILES if source in sys.argv[1:]), "granap"))

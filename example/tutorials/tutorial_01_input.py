@@ -3,11 +3,12 @@ Tutorial 01, ported (example/legacy/tutorial_01_input.ipynb): an anatomy into ME
 axial conductance Kx at two maturity stages, and the views of its hydraulics.
 
 In the port, MECHA is a metafspm component on the plant's DataStructure, and its anatomies come from GRANAP's
-component, either generated (the root preset) or read from a CellSet XML file (GRANAP's CellSetOrgan: the legacy's
-own XML builder is not ported, Q-M7; here a Brassicaceae root from GRANAP's tests). The same section is then solved at barrier 1 (Casparian strip) and 3
-(suberized endodermis).
+component, either generated (the root preset) or read from an XML file by GRANAP's CellSetOrgan (the legacy's own XML
+builder is not ported, Q-M7): a CellSet file (a Brassicaceae root from GRANAP's tests), or GRANAR's current_root.xml,
+the legacy tutorial's own section. The same section is then solved at barrier 1 (Casparian strip) and 3 (suberized
+endodermis).
 
-    python tutorial_01_input.py [cellset]     (from MECHA-dev/example/tutorials; figures in ./outputs/)
+    python tutorial_01_input.py [cellset|granar]     (from MECHA-dev/example/tutorials; figures in ./outputs/)
 """
 import os
 import sys
@@ -30,6 +31,8 @@ from openalea.mecha.component import MechaHydraulics
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CELLSET = os.path.join(HERE, "inputs", "partial_CellSet_brasicaceae.xml")    # a CellSet file (µm), from GRANAP
+GRANAR = os.path.join(HERE, "..", "legacy", "inputs", "current_root.xml")       # GRANAR's output (mm)
+FILES = {"cellset": CELLSET, "granar": GRANAR}
 HEIGHT = 200e-6                                  # m: the legacy's default section height (200 µm)
 BARRIERS = (1, 3)
 
@@ -51,10 +54,10 @@ class Root(StructuralComponent):
         g.property("distance_from_tip")[segment] = 0.
 
 
-def cellset_organ_class(path, scale=0.001):
+def cellset_organ_class(path, scale=None):
     """
-    An organ class for GRANAP's library reading the cellset at *path* (whatever the class's parameters); *scale*:
-    the file's unit in mm (GRANAR's files are in mm, CellSet's in µm: 0.001).
+    An organ class for GRANAP's library reading the XML at *path* (whatever the class's parameters); *scale*: the
+    file's unit in mm, by default from its root element (GRANAR's files are in mm, CellSet's in µm: 0.001).
     """
     def organ(parameters, seed=0):
         return CellSetOrgan(path, scale=scale, seed=seed)
@@ -66,7 +69,7 @@ def section(source):
 
     class Anatomy(GranapAnatomy):
         library = (AnatomyLibrary() if source == "granap" else
-                   AnatomyLibrary(organ_class=cellset_organ_class(CELLSET)))
+                   AnatomyLibrary(organ_class=cellset_organ_class(FILES[source])))
 
     Choregrapher().add_simulation_time_step(3600.)
     plants = pd.DataFrame([dict(plant="p0", model=None, x=0., y=0., z=0., rotation=0., scenario={"parameters": {}})])
@@ -116,4 +119,4 @@ def main(source="granap"):
 
 
 if __name__ == "__main__":
-    main("cellset" if "cellset" in sys.argv[1:] else "granap")
+    main(next((source for source in FILES if source in sys.argv[1:]), "granap"))
