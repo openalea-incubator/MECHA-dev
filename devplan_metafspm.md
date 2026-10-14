@@ -439,3 +439,36 @@ yes to order
 - **Cost:** 0.5 s per call on 10 sections (83k nodes, 204k edges); the two systems take 0.1 s together.
 - **Example `example/hydraulics/root_axis.py`:** six 5 mm sections (barriers 3, 3, 3, 1, 1, 0 from the collar), soil −1000 hPa, collar −5000 hPa. It draws the xylem ψ along the axis, the uptake per section, kr against kr_effective, and three sections coloured by ψ with their flows.
   - **kr_effective (7.3e-5) exceeds MECHA's kr (4.5e-5) in the barrier-1 sections:** in the plant the stele is held by its axial connection, not by the fixed `k_xyl`. This is the height dependence of §11, seen from the plant.
+
+## 15. Design note: step 5e, the seedling in the soil–plant–atmosphere continuum
+
+**What a first run of MECHA on GRANAP's seedling showed** (GRANAP's `example/mpg/seedling.py`: 3 stem elements, 4 leaf elements, 5 root segments; 212k Compartments, 526k Connections):
+- **Building it was slow, in metafspm (fixed, 4051fba).** Reading a coarse-scale property onto the Compartments was quadratic (each Compartment mapped to its owner one at a time): constructing GRANAP's component took 477 s, now 0.6 s; its call took 10 s, now 0.8 s.
+- **MECHA's rules break on the shoot sections:**
+  - stems and leaves have no endodermis, so the gravity centre, the distances to it and the perimeter are NaN, and with them the cortex aquaporin term, and the solve diverges;
+  - every epidermis border wall would be in contact with the soil.
+- **GRANAP's shoot tissues and MECHA cell groups:** epidermis 2; xylem 13; guard cells 12; parenchyma 5; mesophyll, sclerenchyma, the leaves' sieve elements and companion cells, air spaces and the stomatal pores 4.
+- **In the monocot leaf, each of the 20 stomatal pore cells** is joined to its walls by membranes and to its guard cells by plasmodesmata. The 33 air spaces have membranes and plasmodesmata; their 29 `wall_air` edges are extra links (ignored, §2 i).
+
+**Proposal (your Q-G3 answer: the shoot's conductances from MECHA's rules with the root's parameters, as first estimates):**
+- **E1 — the shoot sections in MECHA's geometry:**
+  - without an endodermis, the gravity centre is the mean of all the cells' positions (root sections unchanged, so the comparison with the legacy holds);
+  - kr, kr_effective and the perimeter are root quantities, NaN on stems and leaves;
+  - soil contact only on root sections (the SubOrgan label RootSegment): stems and leaves have no exchange through their epidermis (the cuticle).
+- **E2 — the shoot's barrier code:** 1, meaning mature xylem (its membranes ×1e4, no plasmodesmata to it). The Casparian rules need an endodermis, which the shoot has none of. The example's development stand-in gives the roots their codes from the distance to the tip: 0 on the tip segment, 1 up to 3 cm, 3 beyond.
+- **E3 — evaporation from the leaves, at the stomatal pores** (tissue 'pore'), as the SPAC example's: a robin set, ψ_air (an input by "Atmosphere", default −93.9 MPa = −9.39e5 hPa, 50 % RH at 20 °C) with weight
+  `K_vap = g_s · A · vapour_factor`, converted to cm³ d⁻¹ hPa⁻¹ (×8.64e-3 from mm³ s⁻¹ MPa⁻¹).
+  `A` is the leaf surface each pore serves: the section's outer epidermis (Σ length of its border walls × height) shared among its pores. The parameter is `stomatal_conductance` (mol m⁻² s⁻¹, 0.2 as the SPAC's). MECHA writes `evaporation_conductance` (node) and the graph output `evaporation`.
+- **E4 — the seedling:**
+  - the SPAC example's architecture (stem of 3 phytomers with a leaf of 3 elements each, 3 root axes with laterals, their 3D positions), without its anatomies;
+  - GRANAP's anatomies: roots by the root preset, its classes by diameter and distance to the tip; stems by the monocot stem preset at a 1 mm radius (2.5 mm gives 45k Compartments per section); leaves by the monocot leaf preset;
+  - MECHA's component, collar_condition 0 (the shoot above): the plant problem then goes from the soil through the roots, the stem and the leaves to the air.
+- **E5 — the coupling to the soil, as the SPAC scene's:**
+  - the same `Soil` grid model, the `root_surface` mask (MECHA's soil-contact nodes), a `CrossMapping` by overlap of the segments' 3D extents (`x1`…`z2`, broadcast to the Compartments);
+  - the translators carry units: `soil_psi` (hPa) ← soil `water_potential` (MPa) ×1e4; soil `plant_uptake` (mm³ s⁻¹) ← MECHA's `root_uptake` (cm³ d⁻¹, a new node graph output) ×1000/86400;
+  - the scene iterates to the plant–soil fixed point as the SPAC's (`largest_change`).
+- **E6 — outputs and plots** (`example/soil_plant_atmosphere/`): the plant at SubOrgan scale coloured by mean ψ, the anatomies (one per organ type) by ψ, the soil slice, transpiration = uptake, kr and kr_effective along the roots.
+
+**Questions (with my recommendation):**
+- **Q-E1 — the evaporating sites:** the pores, as above (*recommended*)? Or every leaf epidermis border wall with a cuticular conductance besides (a second robin set)? The latter can come later.
+- **Q-E2 — the seedling's size:** the SPAC seedling has about 48 segments, about 0.5–1 M Compartments with GRANAP anatomies. *Recommendation:* keep it whole, if the plant solve stays within a few seconds per scene step (to measure). Else halve the root axes' segments.
