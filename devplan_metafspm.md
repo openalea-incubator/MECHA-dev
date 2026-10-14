@@ -340,3 +340,47 @@ Each step is committed with its comparison tests and a devlog entry.
   - `example/comparison/compare_hydraulics.py`: now draws the component's own ψ and Q, and prints both kr values.
 - **Deferred:** the layer-wise outputs (uptake per cortex/stele layer, transmembrane fractions) need the legacy's `create_layer_discretization` (200 lines). They are part of the optional downstream (Q-M5) and come after step 5.
 - **For the later fixes (the legacy's, not the port's):** `k_xyl` is one conductance per vessel, whatever the section's height. In a 5 mm section the membranes conduct 25 times more than in a 200 µm one, so the vessels no longer hold the stele at the xylem's potential. kr then depends on the height: 4.5e-5 at 5 mm against 1.0e-4 cm hPa⁻¹ d⁻¹ at 200 µm (barrier 1). A height-scaled (or Dirichlet) xylem condition would remove this; the graph system (step 5) imposes ψ through the plant's xylem instead.
+
+## 12. Design note: step 5, the graph system over connected sections, and the seedling SPAC example
+
+**Where we are:**
+- Each section has MECHA's conductances on its edges (step 3) and is solved alone in MECHA's standard problem (step 4).
+- GRANAP joins successive sections by axial junctions (`network_path` 5), between their conducting cells: xylem with xylem, phloem with phloem. Their `edge_length` is the distance between the two sections' centres, and the junction rule gives their geometry.
+- MECHA gives these junctions no conductance yet (0).
+- metafspm's `@graph_system` solves a node balance with an edge law over the DataStructure's graph view: here all the Compartments and all the Connections, junctions included. Its boundary sets can be `robin` (weight, external value), `dirichlet` or `neumann`.
+- metafspm's SPAC example (`PlantWaterTransport`) is such a system for a seedling in MPa and mm³ s⁻¹: the soil and the air as Robin conditions on the root epidermis and the stomatal cavities, coupled to a soil grid by translators.
+
+**Proposal:**
+- **5a. The axial junctions' conductance** (`_conductance` step): Poiseuille through each junction's two cells, each over half its own segment's length, in series:
+  `1/K = 1/K_a(L_a/2) + 1/K_b(L_b/2)`, with `K(h) = A²/(8π h η)·1e-12` (the legacy's per-vessel term).
+  For the xylem, η is water's, and the conductance applies only when both sections have mature xylem (barrier > 0; at barrier 0, Kx = 0, D3). See Q-G1 for the phloem junctions.
+- **5b. The plant problem** (`@graph_system`, Newton, linear so one iteration, `schedule_as="state"`, after the conductances):
+  - unknown ψ on every Compartment; edge law `Q = K (ψ_a − ψ_b)`; node balance `Σ Q_out = boundary inflows`;
+  - **soil:** `boundary_set(kind="robin", weight="soil_conductance", value="soil_psi")`, with `soil_psi` an input by "Soil" (Compartment, hPa), broadcast from the segment or mapped from a soil grid by the scene;
+  - **upper boundary:** the collar section's xylem vessels (`is_collar_xylem`), Q-G2.
+- **5c. Outputs:**
+  - `psi` and `flow` become the plant problem's;
+  - the standard problem's (step 4) are renamed `standard_psi` and `standard_flow`;
+  - kr and Kx keep MECHA's definition (standard problem, Q-M5);
+  - new per section: `uptake` from the plant solve and `kr_effective` = uptake / (ψ_soil − mean ψ of the section's xylem) / surface (Q-M5's effective kr).
+- **5d. Checks:**
+  - a single section with its xylem held at ψ_xyl through `k_xyl` reproduces step 4's standard problem (same matrix: to 1e-12);
+  - two and more connected sections conserve mass (Σ uptake = collar flow);
+  - a uniform root behaves like a 1D cable (ψ along the xylem falls as the analytical solution of kr and Kx).
+- **5e. The seedling SPAC example** (`example/soil_plant_atmosphere/`, after metafspm's): the same scene (soil grid, water table, air), but the roots' anatomies are GRANAP's and their hydraulics MECHA's. See Q-G3 for the shoot. Plots: the plant at SubOrgan scale, the anatomies coloured by ψ, the soil slice, kr and kr_effective along the roots.
+- **Units:** MECHA's (hPa, cm³ d⁻¹) on its variables (D2). The coupling to the SPAC's soil (MPa, mm³ s⁻¹) goes through translator factors (1 MPa = 1e4 hPa; 1 cm³ d⁻¹ = 1/86.4 mm³ s⁻¹).
+
+**Questions (with my recommendation):**
+- **Q-G1 — the phloem junctions in the water problem.** In MECHA's water problem the phloem only matters at barrier 0, as the standard problem's axial boundary. *Recommendation:* K = 0 on the phloem junctions for now; water then moves axially in the xylem only, and the phloem's own flow comes with the osmotic phase (Q-M6). Alternative: Poiseuille with η of phloem sap, which would carry water to and from the young (barrier 0) sections through the protophloem.
+- **Q-G2 — the plant problem's upper boundary.** *Recommendation:* a boundary set on the collar section's xylem vessels, of a kind given by a parameter: Dirichlet `collar_psi` (a root system alone, the standard problem's analogue at plant scale) or Neumann `collar_flow` (a transpiration demand split among the vessels in proportion to their Kx). In the seedling, neither: the collar is joined to the shoot (Q-G3).
+- **Q-G3 — the seedling's shoot.** MECHA's rules are those of roots: its only boundary is the soil, at the epidermis. GRANAP generates stems and leaves, but MECHA has no rule for the air (stomata, cuticle) nor for the leaves' air spaces (`wall_air` and `air_link` edges are ignored, §2 i). *Recommendation:*
+  - roots: GRANAP anatomies with MECHA's hydraulics;
+  - shoot: kept as the SPAC example's (its simplified anatomy, its conductances, its evaporation at the stomatal cavities), joined to the root collar's xylem by axial junctions;
+  - the one graph system then covers the whole plant, reading `conductance` on every edge, whoever wrote it.
+
+  Alternatives:
+  - (b) GRANAP stems and leaves too, with new MECHA rules for the shoot: cuticle, evaporation from the leaf air spaces, the `wall_air` and `air_link` edges. A model extension, better after the legacy problems are fixed.
+  - (c) roots only, the shoot as a collar transpiration demand (Q-G2's Neumann).
+- **Q-G4 — where the graph system is declared.** *Recommendation:* in `MechaHydraulics` itself, so the component solves its own plant problem; the SPAC example then uses it in place of `PlantWaterTransport`. For that, the shoot's conductances and the evaporation must reach MECHA's system as inputs: `conductance` on non-MECHA edges, and an `evaporation_conductance` with the air's ψ. Alternative: MECHA only provides the conductances and the soil terms, and metafspm's generic `PlantWaterTransport` solves. That is simpler, but then MECHA has no plant-scale solve of its own.
+
+**Order once agreed:** 5a (junction conductances, tested against Poiseuille and Kx), 5b–5d with a root alone (Dirichlet collar), then 5e the seedling.
