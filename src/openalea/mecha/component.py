@@ -12,16 +12,21 @@ Compartments, Connections and segments.
 from dataclasses import dataclass
 
 import numpy as np
+from scipy.sparse import diags
 
 from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, parameter, state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig
-from openalea.metafspm.solve.decorator import state
+from openalea.metafspm.solve.decorator import (boundary_set, graph_jacobian, graph_output, graph_system,
+                                                node_balance, rate, totalstate)
 
 from openalea.mecha.conductance import (FPLXHEIGHT, Network, assemble, boundary_terms, cortex_parameters,
                                        edge_conductances, fplxheight_name, set_edge_ends)
-from openalea.mecha.geometry import phi_thick_cells, section_geometry, section_of, section_parts
-from openalea.mecha.postprocess import axial_conductances, radial_conductivity, soil_uptake
-from openalea.mecha.solve import section_potentials
+from openalea.mecha.geometry import (AXIAL_JUNCTION, XYLEM_CGROUPS, phi_thick_cells, section_geometry, section_of,
+                                     section_parts)
+from openalea.mecha.postprocess import (VISCOSITY_PHLOEM, VISCOSITY_XYLEM, axial_conductances, poiseuille,
+                                        radial_conductivity, soil_uptake)
+
+PHLOEM_CGROUPS = (11, 23)
 
 SCALES = ScalesConfig()
 
@@ -108,6 +113,10 @@ class MechaHydraulics(FunctionalComponent):
 
     standard_solve: float = _p("", "1: solve MECHA's standard problem on each section alone (its kr; the legacy's "
                                    "definition), 0: skip it", 1.)
+    collar_condition: float = _p("", "at the first root section's xylem vessels: 1 the potential collar_psi, 2 the "
+                                     "flow collar_flow, 0 none (e.g. a shoot above)", 1.)
+    collar_psi: float = _p("hPa", "the collar's xylem potential (collar_condition 1)", -5.0E3)
+    collar_flow: float = _p("cm3 d-1", "the flow leaving the root at the collar (collar_condition 2)", 0.)
     standard_psi_soil: float = _p("hPa", "the soil's potential in the standard problem", 0.0)
     standard_psi_xylem: float = _p("hPa", "the xylem's potential in the standard problem (barrier > 0)", -5.0E3)
     standard_psi_sieve: float = _p("hPa", "the protophloem's potential in the standard problem (barrier 0; NaN: "
@@ -179,19 +188,76 @@ class MechaHydraulics(FunctionalComponent):
                                                        initialize=0., scale=SCALES.Compartment, location="node",
                                                        state_variable_type="NonInertialIntensive")
 
-    # ── State variables: the standard problem's solution, and the sections' results ──
-    psi: float = state_variable(**_doc("hPa", "water potential, in the standard problem of its section"),
-                                initialize=np.nan, scale=SCALES.Compartment, location="node",
+    standard_soil_psi: float = state_variable(**_doc("hPa", "the soil's potential at the border walls and junctions in "
+                                                            "the standard problem (its plant's standard_psi_soil)"),
+                                              initialize=0., scale=SCALES.Compartment, location="node",
+                                              state_variable_type="NonInertialIntensive")
+    standard_axial_psi: float = state_variable(**_doc("hPa", "the axial boundary's potential at the xylem vessels "
+                                                             "(barrier > 0) or protophloem cells (barrier 0) in the "
+                                                             "standard problem"),
+                                               initialize=0., scale=SCALES.Compartment, location="node",
+                                               state_variable_type="NonInertialIntensive")
+    in_standard_problem: float = state_variable(**_doc("", "1 on the Compartments of the plants solving the standard "
+                                                           "problem (standard_solve)"),
+                                                initialize=0., scale=SCALES.Compartment, location="node",
+                                                state_variable_type="descriptor")
+
+    # ── State variables: the axial junctions between sections ──
+    axial_conduit: float = state_variable(**_doc("", "on the axial junctions: 1 between xylem vessels, 2 between "
+                                                     "phloem cells (0 elsewhere)"),
+                                          initialize=0., scale=SCALES.Connection, location="edge",
+                                          state_variable_type="descriptor")
+    xylem_axial_conductance: float = state_variable(**_doc("cm3 hPa-1 d-1", "a xylem junction's conductance: "
+                                                           "Poiseuille through its two vessels, each over half its "
+                                                           "segment, in series (0 without mature xylem)"),
+                                                    initialize=0., scale=SCALES.Connection, location="edge",
+                                                    state_variable_type="NonInertialIntensive")
+    phloem_axial_conductance: float = state_variable(**_doc("cm3 hPa-1 d-1", "a phloem junction's conductance "
+                                                            "(Poiseuille, phloem sap); not in the water problem (Q-G1)"),
+                                                     initialize=0., scale=SCALES.Connection, location="edge",
+                                                     state_variable_type="NonInertialIntensive")
+
+    # ── Inputs and state variables of the plant problem ──
+    soil_psi: float = input_variable(**_doc("hPa", "the soil's water potential around the Compartment"), by="Soil",
+                                     initialize=0., scale=SCALES.Compartment, location="node",
+                                     state_variable_type="intensive")
+    collar_kind: float = state_variable(**_doc("", "the collar condition of the node: 1 potential, 2 flow (0: none)"),
+                                        initialize=0., scale=SCALES.Compartment, location="node",
+                                        state_variable_type="descriptor")
+    collar_value: float = state_variable(**_doc("hPa or cm3 d-1", "the collar's potential (kind 1), or the node's "
+                                                "inflow (kind 2, negative: water leaving the root)"),
+                                         initialize=0., scale=SCALES.Compartment, location="node",
+                                         state_variable_type="NonInertialIntensive")
+
+    # ── State variables: the solutions, and the sections' results ──
+    standard_psi: float = state_variable(**_doc("hPa", "water potential, in its section's standard problem"),
+                                         initialize=0., scale=SCALES.Compartment, location="node",
+                                         state_variable_type="NonInertialIntensive")
+    standard_flow: float = state_variable(**_doc("cm3 d-1", "flow along the edge, from its first node to its second, "
+                                                            "in the standard problem"),
+                                          initialize=0., scale=SCALES.Connection, location="edge",
+                                          state_variable_type="NonInertialIntensive")
+    psi: float = state_variable(**_doc("hPa", "water potential, in the plant problem"),
+                                initialize=0., scale=SCALES.Compartment, location="node",
                                 state_variable_type="NonInertialIntensive")
-    flow: float = state_variable(**_doc("cm3 d-1", "water flow along the edge, from its first node to its second, in "
-                                                   "the standard problem"),
+    flow: float = state_variable(**_doc("cm3 d-1", "flow along the edge, from its first node to its second, in the "
+                                                   "plant problem"),
                                  initialize=0., scale=SCALES.Connection, location="edge",
                                  state_variable_type="NonInertialIntensive")
-    uptake: float = state_variable(**_doc("cm3 d-1", "the section's water uptake from the soil (standard problem)"),
+    standard_uptake: float = state_variable(**_doc("cm3 d-1", "the section's water uptake from the soil, standard "
+                                                              "problem"),
+                                            initialize=np.nan, scale=SCALES.SubOrgan,
+                                            state_variable_type="NonInertialIntensive")
+    uptake: float = state_variable(**_doc("cm3 d-1", "the section's water uptake from the soil, plant problem"),
                                    initialize=np.nan, scale=SCALES.SubOrgan, state_variable_type="NonInertialIntensive")
-    kr: float = state_variable(**_doc("cm hPa-1 d-1", "the section's radial conductivity (standard problem): uptake / "
-                                                      "(ψ soil − ψ xylem) / surface"),
+    kr: float = state_variable(**_doc("cm hPa-1 d-1", "the section's radial conductivity, MECHA's definition (standard "
+                                                      "problem): uptake / (ψ soil − ψ xylem) / surface"),
                                initialize=np.nan, scale=SCALES.SubOrgan, state_variable_type="NonInertialIntensive")
+    kr_effective: float = state_variable(**_doc("cm hPa-1 d-1", "the section's radial conductivity in the plant "
+                                                                "problem: uptake / (ψ soil − mean ψ of its xylem) / "
+                                                                "surface (NaN at barrier 0: no mature xylem)"),
+                                         initialize=np.nan, scale=SCALES.SubOrgan,
+                                         state_variable_type="NonInertialIntensive")
     Kx: float = state_variable(**_doc("cm4 hPa-1 d-1", "the section's xylem axial conductance (Poiseuille; 0 without "
                                                        "mature xylem, barrier 0)"),
                                initialize=np.nan, scale=SCALES.SubOrgan, state_variable_type="NonInertialIntensive")
@@ -225,7 +291,7 @@ class MechaHydraulics(FunctionalComponent):
             out[segment] = (nodes, edges, cached[1])
         return out
 
-    @state(include_inactive=True)
+    @rate(include_inactive=True)
     def _cell_rank(self, kind, anatomy_template) -> tuple[np.ndarray, str, np.ndarray]:
         """
         MECHA's cell ranks on the Compartments, and each section's perimeter. They depend on the sections' networks
@@ -271,12 +337,13 @@ class MechaHydraulics(FunctionalComponent):
                                                    float(height_by_node[v]))
         return a, b
 
-    @state(include_inactive=True)
+    @rate(include_inactive=True)
     def _conductance(self, network_path, barrier, length, anatomy_template) \
-            -> tuple[np.ndarray, str, np.ndarray, str, np.ndarray]:
+            -> tuple[np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray]:
         """
         Every edge's conductance, and the boundary conductances of the nodes (soil, axial), from MECHA's geometry,
-        the segments' barriers and heights (their lengths), and the plants' parameters.
+        the segments' barriers and heights (their lengths), and the plants' parameters; the standard problem's
+        boundary potentials (the axial boundary only where its potential is given: not at barrier 0 by default).
         """
         geometries = self.section_geometries()
         net = self.network(geometries)
@@ -288,53 +355,173 @@ class MechaHydraulics(FunctionalComponent):
         barrier_node = np.asarray(barrier)
         K, in_matrix = edge_conductances(net, P_edge, barrier_node[tail], height_node[tail])
         soil, axial, _ = boundary_terms(net, P_node, barrier_node, height_node)
-        return np.where(in_matrix, K, 0.), "soil_conductance", soil, "axial_boundary_conductance", axial
+        axial_psi = np.where(barrier_node > 0, P_node["standard_psi_xylem"], P_node["standard_psi_sieve"])
+        axial = np.where(np.isnan(axial_psi), 0., axial)
+        return (np.where(in_matrix, K, 0.), "soil_conductance", soil, "axial_boundary_conductance", axial,
+                "standard_soil_psi", P_node["standard_psi_soil"].astype(float),
+                "standard_axial_psi", np.where(np.isnan(axial_psi), 0., axial_psi),
+                "in_standard_problem", (P_node["standard_solve"] > 0).astype(float))
 
+    @rate(include_inactive=True)
+    def _axial_conduit(self, network_path, cgroup) -> np.ndarray:
+        """The axial junctions' conduit: 1 between two xylem vessels, 2 between two phloem cells."""
+        view = self.data_structure.to_graph_view()
+        junction = np.asarray(network_path) == AXIAL_JUNCTION
+        cg = np.asarray(cgroup)
+        a, b = cg[view.tail], cg[view.head]
+        xylem = np.isin(a, XYLEM_CGROUPS) & np.isin(b, XYLEM_CGROUPS)
+        phloem = np.isin(a, PHLOEM_CGROUPS) & np.isin(b, PHLOEM_CGROUPS)
+        return np.select([junction & xylem, junction & phloem], [1., 2.], 0.)
 
-    @state(include_inactive=True)
-    def _psi(self, conductance, soil_conductance, axial_boundary_conductance, barrier, length) \
-            -> tuple[np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray]:
+    def _junction_conductance(self, conduit, cell_area, length, viscosity, barrier=None) -> np.ndarray:
+        """Poiseuille through each junction of *conduit* (its two cells, each over half its segment, in series)."""
+        ds = self.data_structure
+        view = ds.to_graph_view()
+        edges = np.flatnonzero(np.asarray(ds.get("axial_conduit")) == conduit)
+        a, b = view.tail[edges], view.head[edges]
+        area = np.asarray(cell_area, dtype=float) * 1.0E6                          # mm2 -> µm2
+        half = np.asarray(length, dtype=float) * 1.0E6 / 2                         # m -> µm
+        k_a, k_b = (poiseuille(area[n], half[n], viscosity) for n in (a, b))
+        with np.errstate(divide="ignore"):
+            K = np.where((k_a > 0) & (k_b > 0), 1 / (1 / k_a + 1 / k_b), 0.)
+        if barrier is not None:
+            barrier = np.asarray(barrier)
+            K = np.where((barrier[a] > 0) & (barrier[b] > 0), K, 0.)
+        return K
+
+    @rate(filters={"axial_conduit": 1}, include_inactive=True)
+    def _xylem_axial_conductance(self, axial_conduit, cell_area, length, barrier) -> np.ndarray:
+        """The xylem junctions' conductances (water); none where either section has no mature xylem (barrier 0)."""
+        return self._junction_conductance(1, cell_area, length, VISCOSITY_XYLEM, barrier)
+
+    @rate(filters={"axial_conduit": 2}, include_inactive=True)
+    def _phloem_axial_conductance(self, axial_conduit, cell_area, length) -> np.ndarray:
+        """The phloem junctions' conductances (phloem sap)."""
+        return self._junction_conductance(2, cell_area, length, VISCOSITY_PHLOEM)
+
+    @rate(include_inactive=True)
+    def _collar_kind(self, kind, cgroup, cell_area) -> tuple[np.ndarray, str, np.ndarray]:
         """
-        MECHA's standard problem, each section alone (Q-M5): its border walls and junctions at the soil's potential,
-        its xylem vessels (barrier > 0) or protophloem cells (barrier 0) at the axial potential. Then the flows, each
-        section's uptake and radial conductivity kr, and its axial conductances (Poiseuille). Optional
-        (standard_solve = 0: none of them is computed).
+        The collar condition (Q-G2) on the xylem vessels of each root system's first section (a segment without a
+        parent): the collar's potential (collar_condition 1), or the flow collar_flow leaving the root, split among
+        the vessels as their Poiseuille conductances (∝ area², collar_condition 2).
         """
         ds = self.data_structure
         P = self.parameter_table("node")
-        if not (P["standard_solve"] > 0).any():
-            return None
-        geometries = self.section_geometries()
-        net = self.network(geometries)
-        K, soil, axial = (np.asarray(v, dtype=float) for v in (conductance, soil_conductance,
-                                                               axial_boundary_conductance))
-        barrier, height = np.asarray(barrier), np.asarray(length, dtype=float) * 1.0E6
-        psi, flow = np.full(ds.n_nodes(), np.nan), np.zeros(ds.n_edges())
+        kinds, values = np.zeros(ds.n_nodes()), np.zeros(ds.n_nodes())
         segments = ds.entity_ids("SubOrgan")
-        results = {name: np.full(segments.size, np.nan) for name in ("uptake", "kr", "Kx", "Kx_phloem")}
-        where = {int(v): i for i, v in enumerate(segments)}
-        in_matrix = np.ones(K.size, dtype=bool)               # the edges MECHA leaves out have K = 0
-        for segment, (nodes, edges, geo) in geometries.items():
-            v = nodes[0]
-            if not P["standard_solve"][v] > 0:
+        owner = ds.owner("SubOrgan")
+        xylem = np.isin(np.asarray(cgroup), XYLEM_CGROUPS)
+        area = np.asarray(cell_area, dtype=float)
+        cached = self.__dict__.get("_first_sections")
+        if cached is None or cached[0] != ds.topology_version:
+            g = ds.mtg                                    # read once per topology (it flushes the variables)
+            cached = self.__dict__["_first_sections"] = (ds.topology_version, {
+                int(v) for v in segments if g.parent(int(v)) is None})
+        for i, segment in enumerate(segments):
+            if int(segment) not in cached[1]:
                 continue
+            vessels = np.flatnonzero((owner == i) & xylem)
+            if vessels.size == 0:
+                continue
+            condition = int(P["collar_condition"][vessels[0]])
+            if condition == 1:
+                kinds[vessels], values[vessels] = 1., P["collar_psi"][vessels]
+            elif condition == 2:
+                share = area[vessels] ** 2 / (area[vessels] ** 2).sum()
+                kinds[vessels], values[vessels] = 2., -P["collar_flow"][vessels] * share
+        return kinds, "collar_value", values
+
+    # ── The standard problem: each section alone, MECHA's definition of kr (Q-M5) ──
+    @graph_system(node_unknowns=["standard_psi"], solver="newton", max_iter=3, schedule_as="state",
+                  filters={"in_standard_problem": ">0"})
+    class _standard_problem:
+        """
+        Each section alone (the junctions have no conductance here): its border walls and junctions exchange with
+        the soil, its xylem vessels (barrier > 0) or protophloem cells (barrier 0) with the axial boundary.
+        """
+
+        @node_balance(field="standard_psi")
+        def _balance(self, standard_psi, conductance):
+            B = self._graph_view.incidence
+            return np.asarray(B @ (conductance * np.asarray(B.T @ standard_psi).reshape(-1))).reshape(-1)
+
+        soil = boundary_set(filters={"soil_conductance": ">0"}, kind="robin", value="standard_soil_psi",
+                            weight="soil_conductance", field="standard_psi")
+        axial = boundary_set(filters={"axial_boundary_conductance": ">0"}, kind="robin", value="standard_axial_psi",
+                             weight="axial_boundary_conductance", field="standard_psi")
+
+        @graph_jacobian
+        def _jacobian(self, conductance):
+            B = self._graph_view.incidence
+            return (B @ diags(conductance) @ B.T).tocsr()
+
+        @graph_output("standard_flow", location="edge")
+        def _standard_flow(self, standard_psi, conductance):
+            return conductance * np.asarray(self._graph_view.incidence.T @ standard_psi).reshape(-1)
+
+    # ── The plant problem: the sections joined by their xylem junctions ──
+    @graph_system(node_unknowns=["psi"], solver="newton", max_iter=3, schedule_as="state")
+    class _plant_problem:
+        """
+        The whole plant: every section's edges and the xylem junctions between sections; the soil around the root
+        surface (soil_psi), the collar's condition on the first root section's vessels.
+        """
+
+        @node_balance(field="psi")
+        def _balance(self, psi, conductance, xylem_axial_conductance):
+            B = self._graph_view.incidence
+            K = conductance + xylem_axial_conductance
+            return np.asarray(B @ (K * np.asarray(B.T @ psi).reshape(-1))).reshape(-1)
+
+        soil = boundary_set(filters={"soil_conductance": ">0"}, kind="robin", value="soil_psi",
+                            weight="soil_conductance", field="psi")
+        collar = boundary_set(filters={"collar_kind": ">0"}, kinds="collar_kind", value="collar_value", weight=0.,
+                              field="psi")
+
+        @graph_jacobian
+        def _jacobian(self, conductance, xylem_axial_conductance):
+            B = self._graph_view.incidence
+            return (B @ diags(conductance + xylem_axial_conductance) @ B.T).tocsr()
+
+        @graph_output("flow", location="edge")
+        def _flow(self, psi, conductance, xylem_axial_conductance):
+            return (conductance + xylem_axial_conductance) * np.asarray(self._graph_view.incidence.T @ psi).reshape(-1)
+
+    # ── The sections' results ──
+    @totalstate(include_inactive=True)
+    def _kr(self, standard_psi, psi, soil_conductance, soil_psi, barrier, length) \
+            -> tuple[np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray]:
+        """
+        Each section's uptake and radial conductivity: MECHA's (its standard problem, the legacy's operations) and
+        the effective ones of the plant problem; its axial conductances (Poiseuille).
+        """
+        ds = self.data_structure
+        P = self.parameter_table("node")
+        soil, standard, plant = (np.asarray(v, dtype=float) for v in (soil_conductance, standard_psi, psi))
+        soil_psi = np.asarray(soil_psi, dtype=float)
+        barrier, height = np.asarray(barrier), np.asarray(length, dtype=float) * 1.0E6
+        segments = ds.entity_ids("SubOrgan")
+        names = ("kr", "standard_uptake", "uptake", "kr_effective", "Kx", "Kx_phloem")
+        out = {name: np.full(segments.size, np.nan) for name in names}
+        where = {int(v): i for i, v in enumerate(segments)}
+        cgroup = np.asarray(ds.get("cgroup"))
+        for segment, (nodes, edges, geo) in self.section_geometries().items():
+            i, v = where[segment], nodes[0]
             b, h = int(barrier[v]), float(height[v])
-            psi_soil = float(P["standard_psi_soil"][v])
-            psi_axial = float(P["standard_psi_xylem"][v] if b > 0 else P["standard_psi_sieve"][v])
-            k_axial = float(P["k_xyl"][v] if b > 0 else P["k_sieve"][v])
-            if np.isnan(psi_axial):                           # no axial boundary: the soil's alone
-                diag, rhs_axial, psi_axial_value = np.zeros_like(axial), np.zeros_like(axial), 0.
-            else:
-                diag, rhs_axial, psi_axial_value = axial, np.where(axial > 0, k_axial, 0.), psi_axial
-            psi[nodes] = section_potentials(net, K, in_matrix, soil, diag, rhs_axial, nodes, edges, psi_soil,
-                                            psi_axial_value)
-            flow[edges] = K[edges] * (psi[net.a[edges]] - psi[net.b[edges]])
-            i = where[segment]
-            results["uptake"][i] = soil_uptake(geo, soil[nodes], psi[nodes], psi_soil)
-            results["kr"][i] = radial_conductivity(results["uptake"][i], psi_soil, psi_axial, geo.perimeter, h)
-            results["Kx"][i], results["Kx_phloem"][i] = axial_conductances(geo, h, b)
-        return (psi, "flow", flow, "uptake", results["uptake"], "kr", results["kr"], "Kx", results["Kx"],
-                "Kx_phloem", results["Kx_phloem"])
+            out["Kx"][i], out["Kx_phloem"][i] = axial_conductances(geo, h, b)
+            if P["standard_solve"][v] > 0:
+                psi_soil = float(P["standard_psi_soil"][v])
+                psi_axial = float(P["standard_psi_xylem"][v] if b > 0 else P["standard_psi_sieve"][v])
+                out["standard_uptake"][i] = soil_uptake(geo, soil[nodes], standard[nodes], psi_soil)
+                out["kr"][i] = radial_conductivity(out["standard_uptake"][i], psi_soil, psi_axial, geo.perimeter, h)
+            contact = nodes[soil[nodes] > 0]
+            out["uptake"][i] = float(np.sum(soil[contact] * (soil_psi[contact] - plant[contact])))
+            vessels = nodes[np.isin(cgroup[nodes], XYLEM_CGROUPS)]
+            if contact.size and vessels.size and b > 0:                # no mature xylem at barrier 0 (D3)
+                out["kr_effective"][i] = radial_conductivity(out["uptake"][i], soil_psi[contact].mean(),
+                                                             plant[vessels].mean(), geo.perimeter, h)
+        return tuple(x for name in names for x in ((out[name],) if name == "kr" else (name, out[name])))
 
 
 MechaHydraulics.PARAMETERS = tuple(MechaHydraulics._plant_parameter_fields())

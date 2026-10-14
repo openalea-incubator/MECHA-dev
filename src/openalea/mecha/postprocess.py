@@ -29,6 +29,11 @@ def radial_conductivity(uptake, psi_soil, psi_axial, perimeter, height) -> float
     return uptake / (psi_soil - psi_axial) / perimeter / height / 1.0E-04
 
 
+def poiseuille(area, height, viscosity):
+    """Poiseuille conductances (cm³ hPa⁻¹ d⁻¹) of conduits of cross-section *area* (µm²) over *height* (µm), arrays."""
+    return area ** 2 / (8 * 3.141592 * height * viscosity / 3600 / 24) * 1.0E-12
+
+
 def _poiseuille(area, height, viscosity) -> float:
     """One conduit's axial conductance, as the legacy writes it (Python scalars: area ** 2 is libm's pow)."""
     return float(area) ** 2 / (8 * 3.141592 * height * viscosity / 3600 / 24) * 1.0E-12

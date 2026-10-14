@@ -66,12 +66,12 @@ def main():
     mecha()
     for i, segment in enumerate(segments):
         print(f"segment {segment}: barrier {BARRIERS[::-1][i]}, kr {ds.get('kr')[i]:.3e} cm/hPa/d, "
-              f"Kx {ds.get('Kx')[i]:.3e} cm4/hPa/d, uptake {ds.get('uptake')[i]:.3e} cm3/d")
+              f"Kx {ds.get('Kx')[i]:.3e} cm4/hPa/d, uptake {ds.get('standard_uptake')[i]:.3e} cm3/d")
 
     # 4. Plot each section: conductances and flows on the edges, potentials on the nodes
     x, y = ds.get("section_x"), ds.get("section_y")                   # mm
     view = ds.to_graph_view()
-    K, Q, psi = ds.get("conductance"), ds.get("flow"), ds.get("psi")
+    K, Q, psi = ds.get("conductance"), ds.get("standard_flow"), ds.get("standard_psi")
     drawn = (K > 0) & (owner[view.tail] == owner[view.head])
     fig, axes = plt.subplots(3, len(segments), figsize=(4.4 * len(segments), 13))
     for col, i in enumerate(range(len(segments))[::-1]):              # tip first

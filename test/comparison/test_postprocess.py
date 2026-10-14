@@ -32,7 +32,8 @@ def port(case):
         ds.set("barrier", np.full(ds.n_nodes(), float(barrier)))
         mecha()
         stages[barrier] = {name: np.asarray(ds.get(name)).copy() for name in
-                           ("conductance", "soil_conductance", "psi", "flow", "uptake", "kr", "Kx", "Kx_phloem")}
+                           ("conductance", "soil_conductance", "standard_psi", "standard_flow", "standard_uptake", "kr", "Kx",
+                            "Kx_phloem")}
         stages[barrier]["legacy"] = case["legacy"].stages[i]
     return dict(mecha=mecha, nodes=nodes, edges=edges, geo=geo, legacy=legacy, stages=stages,
                 height=case["height"], net=mecha.network())
@@ -78,9 +79,9 @@ def test_flows_on_the_legacy_solution(port, barrier):
 def test_port_solve(port, barrier):
     stage, legacy = port["stages"][barrier], port["legacy"]
     reference = stage["legacy"]["solution"]
-    psi = stage["psi"][port["nodes"]]
+    psi = stage["standard_psi"][port["nodes"]]
     np.testing.assert_allclose(psi, reference[legacy], rtol=0, atol=1e-12 * abs(reference).max())
     assert stage["kr"][0] == pytest.approx(stage["legacy"]["kr"], rel=1e-12, abs=0)
-    flows = stage["flow"][port["edges"]]
+    flows = stage["standard_flow"][port["edges"]]
     q_max = max(abs(q) for q in stage["legacy"]["edge_Q"].values())
     assert np.isfinite(flows).all() and abs(flows).max() == pytest.approx(q_max, rel=1e-10)

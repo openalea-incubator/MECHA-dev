@@ -413,3 +413,29 @@ yes to order
   I will detail this when I reach 5e.
 - **Q-G4:** the graph systems are declared in `MechaHydraulics`.
 - **Order:** 5a, then 5b–5d on a root alone, then 5e.
+
+## 14. Steps 5a–5d done (2026-10-14): the junctions, and the two graph systems
+
+- **Pre-processing (`@rate`):**
+  - geometry and conductances, as before;
+  - `_axial_conduit` (edge descriptor: 1 xylem, 2 phloem junction);
+  - `_xylem_axial_conductance` and `_phloem_axial_conductance`, two steps with `filters={"axial_conduit": 1 | 2}`: Poiseuille through the junction's two cells, each over half its segment, in series; the xylem's 0 where either section has no mature xylem (barrier 0);
+  - `_collar_kind`: the collar condition on the first root section's vessels (parameters `collar_condition` 1 potential or 2 flow, `collar_psi`, `collar_flow`; the flow split as the vessels' area²).
+- **`_standard_problem`** (`@graph_system`, `state`):
+  - ψ `standard_psi`; balance `B diag(conductance) Bᵀ ψ`; the junctions carry none, so each section is its own block;
+  - robin sets: the soil (`soil_conductance`, `standard_soil_psi`) and the axial boundary (`axial_boundary_conductance`, `standard_axial_psi`; none where the axial potential is NaN);
+  - analytic sparse Jacobian; `standard_flow` as a graph output;
+  - restricted by `filters={"in_standard_problem": ">0"}` (standard_solve, Q-M5).
+- **`_plant_problem`** (`@graph_system`, `state`):
+  - ψ `psi`; balance with `conductance + xylem_axial_conductance`;
+  - robin soil (`soil_psi`, an input by "Soil"); the collar set with per-node kinds (`collar_kind`, `collar_value`);
+  - analytic sparse Jacobian; `flow` as a graph output.
+- **Post-processing (`@totalstate _kr`):** `kr`, `standard_uptake` (the legacy's operations), `uptake` and `kr_effective` (plant problem; NaN at barrier 0), `Kx`, `Kx_phloem`.
+- **Renamed:** the standard problem's outputs are now `standard_psi`, `standard_flow`, `standard_uptake`; `psi` and `flow` are the plant problem's. The plain-solve module `solve.py` is removed (the comparison builds the legacy's matrix itself).
+- **metafspm (71340de):** a `@graph_jacobian` may return a sparse matrix, kept sparse, the boundary sets' terms added sparse. The dense path was out of reach for 10⁵ nodes, and the sparse one failed on robin sets.
+- **Tests** (69 passed):
+  - the comparison tests now run on the graph-system standard problem (ψ, kr, flows to 1e-12 of the legacy);
+  - `test/component/test_plant_problem.py`: Poiseuille in series; Σ junction K between identical sections = Kx·1e4/h to 1e-12; no water through immature xylem; mass balance (collar extraction = Σ uptake) with a potential and with a flow at the collar; ψ between the collar's and the soil's; xylem ψ rising and uptake falling away from the collar.
+- **Cost:** 0.5 s per call on 10 sections (83k nodes, 204k edges); the two systems take 0.1 s together.
+- **Example `example/hydraulics/root_axis.py`:** six 5 mm sections (barriers 3, 3, 3, 1, 1, 0 from the collar), soil −1000 hPa, collar −5000 hPa. It draws the xylem ψ along the axis, the uptake per section, kr against kr_effective, and three sections coloured by ψ with their flows.
+  - **kr_effective (7.3e-5) exceeds MECHA's kr (4.5e-5) in the barrier-1 sections:** in the plant the stele is held by its axial connection, not by the fixed `k_xyl`. This is the height dependence of §11, seen from the plant.

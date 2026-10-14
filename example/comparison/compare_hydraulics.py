@@ -33,8 +33,8 @@ def port_stage(mecha, segment, barrier):
     nodes, edges = section_parts(ds)[segment]
     net = mecha.network()
     e = edges[np.isin(net.path[edges], (0, 3)) | net.junction_edge[edges]]       # the edges of MECHA's matrix
-    return dict(net=net, nodes=nodes, edges=e, K=np.asarray(ds.get("conductance"))[e], psi=np.asarray(ds.get("psi")),
-                Q=np.asarray(ds.get("flow"))[e], kr=float(np.asarray(ds.get("kr"))[0]))
+    return dict(net=net, nodes=nodes, edges=e, K=np.asarray(ds.get("conductance"))[e], psi=np.asarray(ds.get("standard_psi")),
+                Q=np.asarray(ds.get("standard_flow"))[e], kr=float(np.asarray(ds.get("kr"))[0]))
 
 
 def draw_edges(ax, segments, values, cmap, norm, width=0.4):

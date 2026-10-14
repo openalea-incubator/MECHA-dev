@@ -19,7 +19,7 @@ def solved():
 
 def test_potentials_between_soil_and_xylem(solved):
     g, ds, mecha = solved
-    psi, owner = ds.get("psi"), ds.owner("SubOrgan")
+    psi, owner = ds.get("standard_psi"), ds.owner("SubOrgan")
     assert np.isfinite(psi).all()
     for i in (1, 2):                                   # barriers: between the xylem's -5000 hPa and the soil's 0
         assert psi[owner == i].min() >= -5000. - 1e-6 and psi[owner == i].max() <= 1e-6
@@ -29,8 +29,8 @@ def test_potentials_between_soil_and_xylem(solved):
 def test_mass_balance(solved):
     """Each section's uptake from the soil is the flow into its xylem (the axial boundary)."""
     g, ds, mecha = solved
-    psi, axial, owner = ds.get("psi"), ds.get("axial_boundary_conductance"), ds.owner("SubOrgan")
-    uptake = ds.get("uptake")
+    psi, axial, owner = ds.get("standard_psi"), ds.get("axial_boundary_conductance"), ds.owner("SubOrgan")
+    uptake = ds.get("standard_uptake")
     for i in (1, 2):
         into_xylem = (axial * (psi - mecha.standard_psi_xylem))[owner == i].sum()
         assert uptake[i] > 0 and into_xylem == pytest.approx(uptake[i], rel=1e-9)
@@ -45,13 +45,15 @@ def test_kr_kx(solved):
 
 
 def test_optional(solved):
+    """standard_solve = 0: the standard problem is not solved, kr not computed (NaN); Kx still is."""
     g, ds, mecha = solved
-    before = ds.get("kr").copy()
+    before = ds.get("standard_psi").copy()
     mecha.standard_solve = 0.
     try:
         ds.set("barrier", np.full(ds.n_nodes(), 1.))
         mecha()
-        np.testing.assert_array_equal(ds.get("kr"), before)          # not recomputed
+        assert np.isnan(ds.get("kr")).all() and (ds.get("Kx") > 0).all()
+        np.testing.assert_array_equal(ds.get("standard_psi"), before)
     finally:
         mecha.standard_solve = 1.
         ds.set("barrier", np.array([0., 1., 3.])[ds.owner("SubOrgan")])
