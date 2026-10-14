@@ -472,3 +472,24 @@ yes to order
 **Questions (with my recommendation):**
 - **Q-E1 — the evaporating sites:** the pores, as above (*recommended*)? Or every leaf epidermis border wall with a cuticular conductance besides (a second robin set)? The latter can come later.
 - **Q-E2 — the seedling's size:** the SPAC seedling has about 48 segments, about 0.5–1 M Compartments with GRANAP anatomies. *Recommendation:* keep it whole, if the plant solve stays within a few seconds per scene step (to measure). Else halve the root axes' segments.
+
+## 16. Step 5e done (2026-10-14): the seedling in the soil–plant–atmosphere continuum
+
+Your answer: E1–E6 and the recommendations of Q-E1 (the pores) and Q-E2 (the whole seedling).
+
+- **MECHA:**
+  - **E1:** gravity centre of all cells without an endodermis (root sections unchanged: the comparison still passes); soil contact, perimeter, kr, kr_effective and the standard problem on root sections only (labels read once per topology, `section_roles`).
+  - **E3:** `evaporation_conductance` on the stomatal pores (g_s × served leaf surface × vapour factor), the robin set `air` (input `air_psi`, by "Atmosphere"); graph outputs `root_uptake` and `evaporation` (node, extensive: the scene exchanges them).
+- **`example/soil_plant_atmosphere/`:**
+  - `seedling_spac.py`: metafspm's seedling architecture (48 segments, 3D extents), GRANAP's anatomies (stems 1 mm), a development stand-in (barrier 0 on the tip segment, 1 up to 10 cm, 3 beyond), `SeedlingHydraulics` (GRANAP + MECHA), the scene translator with the unit factors, metafspm's `Soil` model reused from its example;
+  - `one_plant.py`: the scene;
+  - `plots.py`: the plant over the soil, one section per organ by ψ, ψ along the path, the roots' kr.
+- **Result:**
+  - 524k Compartments, 1.29M Connections; built in 35 s, converged in 6 steps (51 s);
+  - transpiration = root uptake = the soil's sink = 0.148 mm³ s⁻¹ (the SPAC example's simplified plant: 0.076);
+  - ψ along the path (MPa): soil at the roots −2.11, root xylem −3.44, stem xylem −3.53, leaf xylem −3.59, leaf cells −3.66, stomatal pores −4.44.
+- **For your review:**
+  - **The leaves are larger than the SPAC's.** GRANAP's monocot leaf section is about 4 mm wide, against the SPAC's 5 mm leaf_width counted as a strip, so transpiration is about twice the SPAC's. The soil around the roots then dries to −2 MPa (its conductivity is the SPAC's).
+  - **The tip segments (barrier 0) carry no water axially** (D3): they stay at the soil's potential.
+  - **A 3 cm suberin zone made most roots nearly impermeable** (root xylem −5.5 MPa); hence 10 cm in the stand-in.
+- **Tests:** `test/component/test_shoot.py` (a stem with a leaf and a root: soil only at the root, air only at the pores, uptake = transpiration, root quantities on roots only); 72 passed.

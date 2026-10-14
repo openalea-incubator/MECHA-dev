@@ -76,7 +76,7 @@ class SectionGeometry:
     edge_length: np.ndarray       # µm per edge: rebuilt wall edges wall length/2; others GRANAP's ×1000
     edge_lateral_distance: np.ndarray  # µm per edge: rebuilt wall edges, the wall's lateral distance
     edge_dist: np.ndarray         # µm per edge (membranes, plasmodesmata)
-    gravity_center: tuple         # (x, y) µm: mean of the endodermis cells' positions
+    gravity_center: tuple         # (x, y) µm: mean of the endodermis cells' positions (of all cells without one)
     distance_center_grav: np.ndarray  # µm per node (walls)
     distance_max_cortex: float
     distance_min_cortex: float
@@ -203,6 +203,8 @@ def section_geometry(section: Section) -> SectionGeometry:
 
     # gravity centre: the endodermis cells, in cell order
     endo = cells[cgroup[cells] == 3]
+    if endo.size == 0:                    # no endodermis (stems, leaves: E1): the centre of all the cells
+        endo = cells
     if endo.size:
         x_grav = np.float64(_sequential_sum(x[endo]) / endo.size)
         y_grav = np.float64(_sequential_sum(y[endo]) / endo.size)

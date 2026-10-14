@@ -27,6 +27,12 @@ from openalea.mecha.postprocess import (VISCOSITY_PHLOEM, VISCOSITY_XYLEM, axial
                                         radial_conductivity, soil_uptake)
 
 PHLOEM_CGROUPS = (11, 23)
+R, WATER_MOLAR_VOLUME, PRESSURE = 8.314, 1.8e-5, 101325.          # J mol-1 K-1, m3 mol-1, Pa
+CELSIUS = 20.
+AIR_PSI = R * (CELSIUS + 273.15) / WATER_MOLAR_VOLUME * np.log(0.5) * 1e-2      # hPa: 50 % RH at 20 °C
+VAPOUR_FACTOR = (610.78 * np.exp(17.27 * CELSIUS / (CELSIUS + 237.3)) * WATER_MOLAR_VOLUME ** 2
+                 / (R * (CELSIUS + 273.15) * PRESSURE) * 1e6 * 1e9)          # as metafspm's SPAC example
+TO_MECHA = 1e-3 * 86400 * 1e-4         # mm3 s-1 MPa-1 -> cm3 d-1 hPa-1
 
 SCALES = ScalesConfig()
 
@@ -117,6 +123,9 @@ class MechaHydraulics(FunctionalComponent):
                                      "flow collar_flow, 0 none (e.g. a shoot above)", 1.)
     collar_psi: float = _p("hPa", "the collar's xylem potential (collar_condition 1)", -5.0E3)
     collar_flow: float = _p("cm3 d-1", "the flow leaving the root at the collar (collar_condition 2)", 0.)
+    stomatal_conductance: float = _p("mol m-2 s-1", "stomatal conductance to water vapour (leaves' pores)", 0.2)
+    vapour_factor: float = _p("mm3 s-1 MPa-1 per (mol m-2 s-1 m2)", "e_sat V_w² / (R T P): from a vapour conductance "
+                              "to a liquid one (20 °C)", VAPOUR_FACTOR)
     standard_psi_soil: float = _p("hPa", "the soil's potential in the standard problem", 0.0)
     standard_psi_xylem: float = _p("hPa", "the xylem's potential in the standard problem (barrier > 0)", -5.0E3)
     standard_psi_sieve: float = _p("hPa", "the protophloem's potential in the standard problem (barrier 0; NaN: "
@@ -221,6 +230,21 @@ class MechaHydraulics(FunctionalComponent):
     soil_psi: float = input_variable(**_doc("hPa", "the soil's water potential around the Compartment"), by="Soil",
                                      initialize=0., scale=SCALES.Compartment, location="node",
                                      state_variable_type="intensive")
+    air_psi: float = input_variable(**_doc("hPa", "the air's water potential around the leaves (default: 50 % relative "
+                                                   "humidity at 20 °C)"), by="Atmosphere", initialize=AIR_PSI,
+                                    scale=SCALES.Compartment, location="node", state_variable_type="intensive")
+    evaporation_conductance: float = state_variable(**_doc("cm3 hPa-1 d-1", "liquid–vapour conductance of a stomatal "
+                                                           "pore to the air: g_s × the leaf surface it serves × the "
+                                                           "vapour factor (0 elsewhere)"),
+                                                    initialize=0., scale=SCALES.Compartment, location="node",
+                                                    state_variable_type="NonInertialIntensive")
+    root_uptake: float = state_variable(**_doc("cm3 d-1", "water entering a border wall or junction from the soil "
+                                                          "(plant problem)"),
+                                        initialize=0., scale=SCALES.Compartment, location="node",
+                                        state_variable_type="extensive")
+    evaporation: float = state_variable(**_doc("cm3 d-1", "water leaving a stomatal pore to the air (plant problem)"),
+                                        initialize=0., scale=SCALES.Compartment, location="node",
+                                        state_variable_type="extensive")
     collar_kind: float = state_variable(**_doc("", "the collar condition of the node: 1 potential, 2 flow (0: none)"),
                                         initialize=0., scale=SCALES.Compartment, location="node",
                                         state_variable_type="descriptor")
@@ -291,6 +315,29 @@ class MechaHydraulics(FunctionalComponent):
             out[segment] = (nodes, edges, cached[1])
         return out
 
+    def section_roles(self) -> tuple:
+        """
+        (first, roots): the SubOrgan vids without a parent (a root system's first section) and those labelled
+        RootSegment; read from the MPG once per topology (reading it flushes the DataStructure's variables).
+        """
+        ds = self.data_structure
+        cached = self.__dict__.get("_section_roles")
+        if cached is None or cached[0] != ds.topology_version:
+            g = ds.mtg
+            labels, root = g.property("label"), g.labels.SubOrgan.RootSegment
+            segments = [int(v) for v in ds.entity_ids("SubOrgan")]
+            cached = self.__dict__["_section_roles"] = (ds.topology_version, (
+                {v for v in segments if g.parent(v) is None}, {v for v in segments if labels.get(v) == root}))
+        return cached[1]
+
+    def _root_nodes(self, geometries) -> np.ndarray:
+        """bool per node: in a root section."""
+        roots = self.section_roles()[1]
+        out = np.zeros(self.data_structure.n_nodes(), dtype=bool)
+        for segment, (nodes, _, _) in geometries.items():
+            out[nodes] = segment in roots
+        return out
+
     @rate(include_inactive=True)
     def _cell_rank(self, kind, anatomy_template) -> tuple[np.ndarray, str, np.ndarray]:
         """
@@ -302,9 +349,11 @@ class MechaHydraulics(FunctionalComponent):
         segments = ds.entity_ids("SubOrgan")
         perimeter = np.full(segments.size, np.nan)
         where = {int(v): i for i, v in enumerate(segments)}
+        roots = self.section_roles()[1]
         for segment, (nodes, _, geometry) in self.section_geometries().items():
             rank[nodes] = geometry.cell_rank
-            perimeter[where[segment]] = geometry.perimeter
+            if segment in roots:                                       # a root quantity (E1)
+                perimeter[where[segment]] = geometry.perimeter
         return rank, "perimeter", perimeter
 
     # ── Conductances ──
@@ -339,7 +388,8 @@ class MechaHydraulics(FunctionalComponent):
 
     @rate(include_inactive=True)
     def _conductance(self, network_path, barrier, length, anatomy_template) \
-            -> tuple[np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray]:
+            -> tuple[np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,
+                     str, np.ndarray]:
         """
         Every edge's conductance, and the boundary conductances of the nodes (soil, axial), from MECHA's geometry,
         the segments' barriers and heights (their lengths), and the plants' parameters; the standard problem's
@@ -357,10 +407,30 @@ class MechaHydraulics(FunctionalComponent):
         soil, axial, _ = boundary_terms(net, P_node, barrier_node, height_node)
         axial_psi = np.where(barrier_node > 0, P_node["standard_psi_xylem"], P_node["standard_psi_sieve"])
         axial = np.where(np.isnan(axial_psi), 0., axial)
+        root = self._root_nodes(geometries)
+        soil = np.where(root, soil, 0.)                               # stems and leaves: no soil (E1)
+        evaporation = self._evaporation_conductance(geometries, height_node, P_node)
         return (np.where(in_matrix, K, 0.), "soil_conductance", soil, "axial_boundary_conductance", axial,
                 "standard_soil_psi", P_node["standard_psi_soil"].astype(float),
                 "standard_axial_psi", np.where(np.isnan(axial_psi), 0., axial_psi),
-                "in_standard_problem", (P_node["standard_solve"] > 0).astype(float))
+                "in_standard_problem", ((P_node["standard_solve"] > 0) & root).astype(float),
+                "evaporation_conductance", evaporation)
+
+    def _evaporation_conductance(self, geometries, height_node, P_node) -> np.ndarray:
+        """
+        Per stomatal pore (tissue 'pore', E3): g_s × A × the vapour factor, A the leaf surface it serves (the
+        section's outer walls' length × its height, shared among its pores), in cm³ d⁻¹ hPa⁻¹.
+        """
+        out = np.zeros(self.data_structure.n_nodes())
+        for nodes, _, geo in geometries.values():
+            pores = geo.cells[geo.tissue[geo.cells] == "pore"]
+            if pores.size == 0:
+                continue
+            outer = geo.walls[geo.border_wall[geo.walls] | geo.border_aerenchyma[geo.walls]]
+            v = nodes[pores]
+            area = geo.wall_length[outer].sum() * height_node[v] * 1e-12 / pores.size        # m²
+            out[v] = P_node["stomatal_conductance"][v] * area * P_node["vapour_factor"][v] * TO_MECHA
+        return out
 
     @rate(include_inactive=True)
     def _axial_conduit(self, network_path, cgroup) -> np.ndarray:
@@ -413,13 +483,9 @@ class MechaHydraulics(FunctionalComponent):
         owner = ds.owner("SubOrgan")
         xylem = np.isin(np.asarray(cgroup), XYLEM_CGROUPS)
         area = np.asarray(cell_area, dtype=float)
-        cached = self.__dict__.get("_first_sections")
-        if cached is None or cached[0] != ds.topology_version:
-            g = ds.mtg                                    # read once per topology (it flushes the variables)
-            cached = self.__dict__["_first_sections"] = (ds.topology_version, {
-                int(v) for v in segments if g.parent(int(v)) is None})
+        first = self.section_roles()[0]
         for i, segment in enumerate(segments):
-            if int(segment) not in cached[1]:
+            if int(segment) not in first:
                 continue
             vessels = np.flatnonzero((owner == i) & xylem)
             if vessels.size == 0:
@@ -465,7 +531,8 @@ class MechaHydraulics(FunctionalComponent):
     class _plant_problem:
         """
         The whole plant: every section's edges and the xylem junctions between sections; the soil around the root
-        surface (soil_psi), the collar's condition on the first root section's vessels.
+        surface (soil_psi), the collar's condition on the first root section's vessels, the air at the leaves'
+        stomatal pores (air_psi).
         """
 
         @node_balance(field="psi")
@@ -478,6 +545,8 @@ class MechaHydraulics(FunctionalComponent):
                             weight="soil_conductance", field="psi")
         collar = boundary_set(filters={"collar_kind": ">0"}, kinds="collar_kind", value="collar_value", weight=0.,
                               field="psi")
+        air = boundary_set(filters={"evaporation_conductance": ">0"}, kind="robin", value="air_psi",
+                           weight="evaporation_conductance", field="psi")
 
         @graph_jacobian
         def _jacobian(self, conductance, xylem_axial_conductance):
@@ -487,6 +556,14 @@ class MechaHydraulics(FunctionalComponent):
         @graph_output("flow", location="edge")
         def _flow(self, psi, conductance, xylem_axial_conductance):
             return (conductance + xylem_axial_conductance) * np.asarray(self._graph_view.incidence.T @ psi).reshape(-1)
+
+        @graph_output("root_uptake", location="node")
+        def _root_uptake(self, psi, soil_conductance, soil_psi):
+            return soil_conductance * (soil_psi - psi)
+
+        @graph_output("evaporation", location="node")
+        def _evaporation(self, psi, evaporation_conductance, air_psi):
+            return evaporation_conductance * (psi - air_psi)
 
     # ── The sections' results ──
     @totalstate(include_inactive=True)
@@ -506,10 +583,13 @@ class MechaHydraulics(FunctionalComponent):
         out = {name: np.full(segments.size, np.nan) for name in names}
         where = {int(v): i for i, v in enumerate(segments)}
         cgroup = np.asarray(ds.get("cgroup"))
+        roots = self.section_roles()[1]
         for segment, (nodes, edges, geo) in self.section_geometries().items():
             i, v = where[segment], nodes[0]
             b, h = int(barrier[v]), float(height[v])
             out["Kx"][i], out["Kx_phloem"][i] = axial_conductances(geo, h, b)
+            if segment not in roots:                                  # kr, uptake: root quantities (E1)
+                continue
             if P["standard_solve"][v] > 0:
                 psi_soil = float(P["standard_psi_soil"][v])
                 psi_axial = float(P["standard_psi_xylem"][v] if b > 0 else P["standard_psi_sieve"][v])
