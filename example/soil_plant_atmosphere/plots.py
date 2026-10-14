@@ -78,8 +78,16 @@ def sections_by_organ(built, path):
         collection.set_array(q)
         collection.set_clim(np.percentile(q, 5), q.max())
         ax.add_collection(collection)
-        points = ax.scatter(x[nodes], y[nodes], c=psi[nodes], s=0.6, cmap="coolwarm_r")
-        fig.colorbar(points, ax=ax, label="ψ (MPa)", shrink=0.8)
+        pores = nodes & (np.asarray(plant.get("evaporation_conductance")) > 0)
+        low, high = np.percentile(psi[nodes], (0.5, 100))
+        norm = matplotlib.colors.Normalize(min(low, psi[pores].min()) if pores.any() else low, high)
+        points = ax.scatter(x[nodes & ~pores], y[nodes & ~pores], c=psi[nodes & ~pores], s=0.6, cmap="coolwarm_r",
+                            norm=norm)
+        if pores.any():                                                # the stomatal pores, enlarged
+            ax.scatter(x[pores], y[pores], c=psi[pores], s=40, cmap="coolwarm_r", norm=norm, edgecolors="k",
+                       linewidths=0.6, zorder=3)
+        fig.colorbar(points, ax=ax, label="ψ (MPa)" + ("; circled: stomatal pores" if pores.any() else ""),
+                     shrink=0.8)
         ax.set_aspect("equal")
         ax.set_title(f"{kinds[i]} section {int(segments[i])} (edges: log |Q|, grey)")
         ax.set_xlabel("mm")
@@ -142,5 +150,122 @@ def all_figures(built, folder):
     sections_by_organ(built, os.path.join(folder, "sections_by_organ.png"))
     steps = potential_profile(built, os.path.join(folder, "potential_profile.png"))
     root_kr(built, os.path.join(folder, "root_kr.png"))
+    for name, chain in chains(built).items():
+        draw_chain(built, chain, os.path.join(folder, f"chain_{name.replace(' ', '_').replace('-', '_')}.png"),
+                   f"{name}: successive sections, joined by their xylem vessels")
+    print("ψ by tissue (MPa; organ, tissue, nodes, mean, min):")
+    for organ, tissue, n, mean, low in tissue_table(built):
+        print(f"  {organ:5s} {tissue:28s} {n:7d} {mean:7.3f} {low:7.3f}")
     print("ψ along the path (MPa): " + ", ".join(f"{name} {value:.2f}" for name, value in steps))
     print(folder)
+
+
+def tissue_table(built):
+    """Mean ψ (MPa) of each tissue of each organ, xylem first: where the drops are."""
+    plant = built.populations[0].data_structure
+    segments, kinds, _, _, _ = section_table(plant)
+    owner, psi = plant.owner("SubOrgan"), np.asarray(plant.get("psi")) / HPA_PER_MPA
+    kind_of_node, tissue = np.array(kinds)[owner], np.asarray(plant.get("tissue"), dtype=object)
+    conducting = np.asarray(plant.get("barrier")) > 0
+    rows = []
+    for organ in ("root", "stem", "leaf"):
+        nodes = (kind_of_node == organ) & conducting
+        for t in sorted({t for t in tissue[nodes] if t is not None}):
+            chosen = nodes & (tissue == t)
+            rows.append((organ, t, int(chosen.sum()), psi[chosen].mean(), psi[chosen].min()))
+        walls = nodes & (plant.get("kind") > 0)
+        rows.append((organ, "apoplast (walls, junctions)", int(walls.sum()), psi[walls].mean(), psi[walls].min()))
+    return rows
+
+
+# ── Chains of connected anatomies ──
+
+def _children(g, v):
+    return [int(c) for c in g.children(v)]
+
+
+def chains(built):
+    """
+    Three chains of successive sections (SubOrgan vids, in the water's direction):
+    a root axis' last segments up from its apex, the shoot–root junction (the first segments of the three root axes,
+    the collar's stem element, the stem element above), and a leaf (its bearing stem element, then its elements).
+    """
+    plant = built.populations[0].data_structure
+    g = plant.mtg
+    labels, L = g.property("label"), g.labels.SubOrgan
+    segments = [int(v) for v in plant.entity_ids("SubOrgan")]
+    roots = [v for v in segments if labels[v] == L.RootSegment]
+    stems = [v for v in segments if labels[v] == L.StemElement]
+    collar = next(v for v in stems if g.parent(v) is None)
+    first_roots = [c for c in _children(g, collar) if labels.get(c) == L.RootSegment]
+    # the pivot (the first root axis): follow its segments down to its apex
+    axis, v = [first_roots[0]], first_roots[0]
+    while True:
+        nxt = [c for c in _children(g, v) if labels.get(c) == L.RootSegment and g.edge_type(c) == '<']
+        if not nxt:
+            break
+        v = nxt[0]
+        axis.append(v)
+    apex = axis[-4:][::-1]                                            # apex first, up the axis
+    above = [c for c in _children(g, collar) if labels.get(c) == L.StemElement]
+    junction = first_roots + [collar] + above[:1]
+    bearer = above[0] if above else collar
+    leaf, v = [], next(c for c in _children(g, bearer) if labels.get(c) == L.LeafElement)
+    while v is not None:
+        leaf.append(v)
+        nxt = [c for c in _children(g, v) if labels.get(c) == L.LeafElement]
+        v = nxt[0] if nxt else None
+    return {"root apex": apex, "shoot-root junction": junction, "leaf": [bearer] + leaf}
+
+
+def draw_chain(built, chain, path, title):
+    """The chain's sections side by side (real size, spaced), ψ on one colour scale, the xylem junctions between them
+    as lines coloured by their flow."""
+    plant = built.populations[0].data_structure
+    segments = plant.entity_ids("SubOrgan")
+    index = {int(v): i for i, v in enumerate(segments)}
+    owner, psi = plant.owner("SubOrgan"), np.asarray(plant.get("psi")) / HPA_PER_MPA
+    x, y = np.asarray(plant.get("section_x")), np.asarray(plant.get("section_y"))
+    _, kinds, _, _, _ = section_table(plant)
+    pores = np.asarray(plant.get("evaporation_conductance")) > 0
+    members = [owner == index[v] for v in chain]
+    widths = [x[m].max() - x[m].min() for m in members]
+    offsets, cursor = [], 0.
+    for w, m in zip(widths, members):
+        offsets.append(cursor - x[m].min())
+        cursor += w + 0.35 * max(widths)
+    X = np.full(x.size, np.nan)
+    for off, m in zip(offsets, members):
+        X[m] = x[m] + off
+    shown = np.logical_or.reduce(members)
+    low, high = np.percentile(psi[shown], (0.5, 100))
+    norm = matplotlib.colors.Normalize(min(low, psi[shown & pores].min()) if (shown & pores).any() else low, high)
+    fig, ax = plt.subplots(figsize=(4.2 * len(chain) + 2, 5.6))
+    points = ax.scatter(X[shown & ~pores], y[shown & ~pores], c=psi[shown & ~pores], s=0.5, cmap="coolwarm_r",
+                        norm=norm)
+    if (shown & pores).any():
+        ax.scatter(X[shown & pores], y[shown & pores], c=psi[shown & pores], s=35, cmap="coolwarm_r", norm=norm,
+                   edgecolors="k", linewidths=0.5, zorder=3)
+    view = plant.to_graph_view()
+    junction = (np.asarray(plant.get("axial_conduit")) == 1) & shown[view.tail] & shown[view.head]
+    junction &= owner[view.tail] != owner[view.head]
+    e = np.flatnonzero(junction)
+    flow = abs(np.asarray(plant.get("flow"))[e]) * 1e3 / 86400                     # mm3 s-1
+    lines = np.stack([np.c_[X[view.tail[e]], y[view.tail[e]]], np.c_[X[view.head[e]], y[view.head[e]]]], axis=1)
+    collection = LineCollection(lines, cmap="Greens", linewidths=0.6, alpha=0.8, zorder=2)
+    collection.set_array(flow)
+    ax.add_collection(collection)
+    for off, m, v, w in zip(offsets, members, chain, widths):
+        i = index[v]
+        label = f"{kinds[i]} {v}\nψ xylem {psi[m & np.isin(plant.get('cgroup'), XYLEM)].mean():.2f}"
+        ax.annotate(label, (x[m].min() + off + w / 2, y[m].max() + 0.05), ha="center", va="bottom", fontsize=8)
+    fig.colorbar(points, ax=ax, label="ψ (MPa)" + ("; circled: stomatal pores" if (shown & pores).any() else ""),
+                 shrink=0.8, pad=0.01)
+    fig.colorbar(collection, ax=ax, label="xylem junction flow (mm³ s⁻¹)", shrink=0.8, pad=0.01)
+    ax.set_aspect("equal")
+    ax.set_yticks([])
+    ax.set_xlabel("sections at their real size, spaced (mm)")
+    ax.set_title(title, pad=28)
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
