@@ -60,6 +60,7 @@ class SectionGeometry:
     walls: np.ndarray             # local nodes, in legacy order
     junctions: np.ndarray
     cells: np.ndarray             # local nodes, in cell order (cell id = position)
+    kind: np.ndarray              # GRANAP's kind per node
     cgroup: np.ndarray            # int per node (cells; -1 on the apoplast)
     tissue: np.ndarray
     x: np.ndarray                 # µm per node (junctions rounded to 1e-6 µm, as the legacy's rebuild)
@@ -96,6 +97,7 @@ class SectionGeometry:
     passage_cells: np.ndarray     # local nodes (tissue 'passage')
     intercellular_cells: np.ndarray  # local nodes (the network's list: by the elif chain)
     typed: dict = field(default_factory=dict)   # the cell manager's sets by tissue: intercellular, passage, xylem...
+    wall_cells: np.ndarray = None # (n, 2) per wall: its membranes' cells (local nodes, in cell order), -1 if none
 
 
 def _sequential_sum(values) -> float:
@@ -237,10 +239,18 @@ def section_geometry(section: Section) -> SectionGeometry:
         ("intercellular", INTERCELLULAR_TYPES), ("passage", ("passage",)), ("xylem", XYLEM_TYPES),
         ("sieve", SIEVE_TYPES), ("protosieve", PROTOSIEVE_TYPES))}
 
+    wall_cells = np.full((n, 2), -1, dtype=np.int64)
+    by_cell = np.lexsort((position[m_cell], m_wall))                # a wall's cells in cell order
+    first = np.r_[True, m_wall[by_cell][1:] != m_wall[by_cell][:-1]]
+    wall_cells[m_wall[by_cell][first], 0] = m_cell[by_cell][first]
+    second = ~first
+    wall_cells[m_wall[by_cell][second], 1] = m_cell[by_cell][second]
+
     ratios = _plasmodesmata_ratios(s, position, cgroup, np.asarray(intercellular, dtype=np.int64), outer, edge_length)
 
     return SectionGeometry(
-        legacy_order=legacy_order, walls=walls, junctions=junctions, cells=cells, cgroup=cgroup, tissue=tissue,
+        legacy_order=legacy_order, walls=walls, junctions=junctions, cells=cells, kind=s.kind, cgroup=cgroup,
+        tissue=tissue,
         x=x, y=y, wall_length=wall_length, cell_area=s.cell_area * 1000 ** 2, lateral_distance=lateral,
         n_membranes=n_membranes, border_wall=border_wall, border_aerenchyma=border_aerenchyma,
         border_junction=border_junction, junction_edge=junction_edge, edge_length=edge_length,
@@ -253,7 +263,7 @@ def section_geometry(section: Section) -> SectionGeometry:
         concentrated_outer_cortex=ratios[0], concentrated_cortex_cortex=ratios[1], concentrated_cortex_endo=ratios[2],
         xylem_cells=np.asarray(xylem, dtype=np.int64), sieve_cells=np.asarray(sieve, dtype=np.int64),
         protosieve_cells=np.asarray(protosieve, dtype=np.int64), passage_cells=np.asarray(passage, dtype=np.int64),
-        intercellular_cells=np.asarray(intercellular, dtype=np.int64), typed=typed)
+        intercellular_cells=np.asarray(intercellular, dtype=np.int64), typed=typed, wall_cells=wall_cells)
 
 
 def _ranks(s, cells, cgroup, x, y, x_grav, y_grav):
@@ -403,3 +413,30 @@ def section_of(ds, nodes, edges) -> Section:
                    wall_length=node["wall_length"].astype(float), cell_area=node["cell_area"].astype(float),
                    a=local[view.tail[edges]], b=local[view.head[edges]], path=edge["network_path"].astype(np.int64),
                    length=edge["edge_length"].astype(float), dist=edge["edge_dist"].astype(float))
+
+
+CORTEX_TYPES = ("cortex", "outercortex", "innercortex")
+
+
+def phi_thick_cells(geometry: SectionGeometry, n_phi_layers: int, phi_type: int) -> np.ndarray:
+    """
+    The legacy's φ-thickened cortex cells (``tag_phi_thick_cells``), bool per node: *n_phi_layers* rank layers of the
+    cortex (by tissue) from its inner side (phi_type 1), its outer side (2), or both sides of its median rank (3).
+    """
+    out = np.zeros(geometry.cgroup.size, dtype=bool)
+    cortex = geometry.cells[np.isin(geometry.tissue[geometry.cells], CORTEX_TYPES)]
+    if cortex.size == 0 or n_phi_layers <= 0:
+        return out
+    rank = geometry.cell_rank[cortex]
+    lo, hi, median = rank.min(), rank.max(), np.median(rank.tolist())
+    tagged = []
+    for i in range(int(n_phi_layers)):
+        if phi_type == 1:
+            tagged.append(rank == lo + i)
+        elif phi_type == 2:
+            tagged.append(rank == hi - i)
+        elif phi_type == 3:
+            tagged += [rank == int(median) - i, rank == int(median) + i]
+    if tagged:
+        out[cortex[np.logical_or.reduce(tagged)]] = True
+    return out

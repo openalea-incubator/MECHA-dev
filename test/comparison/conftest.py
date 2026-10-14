@@ -15,5 +15,6 @@ PRESETS = {"monocot_root": None, "dicot_root": "for_dicot_root"}
 def case(request):
     g, ds, anatomy = anatomy_data_structure(root(1), anatomy_component(PRESETS[request.param]))
     segment = int(ds.entity_ids("SubOrgan")[0])
-    run = legacy_section(template_organ(anatomy, g, segment), barriers=BARRIERS, height=200.)
-    return dict(g=g, ds=ds, anatomy=anatomy, segment=segment, legacy=run)
+    height = float(np.asarray(ds.get("length"))[0]) * 1.0E6            # the port's height (µm), given to the legacy
+    run = legacy_section(template_organ(anatomy, g, segment), barriers=BARRIERS, height=height)
+    return dict(g=g, ds=ds, anatomy=anatomy, segment=segment, legacy=run, height=height)

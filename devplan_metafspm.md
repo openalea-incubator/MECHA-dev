@@ -300,3 +300,23 @@ Each step is committed with its comparison tests and a devlog entry.
   - geometry cached per anatomy template (`test/component`, 3 passed).
 - **Cost:** 10 ms per anatomy (4 ms extraction, 6 ms geometry), against 0.47 s for the legacy's `populate_from_network` on the monocot root.
 - **Not reachable from GRANAP's presets:** the passage-cell and protophloem branches (no such tissues), the aerenchyma borders (roots' air spaces keep two membranes), and the "no exodermis" and "no pericycle" connection ranks. They are ported, but only covered by the code itself; they will be tested on cellset XML sections (Q-M7's optional path).
+
+## 10. Step 3 done (2026-10-14): conductances, boundary terms, matrix and a plain solve
+
+- **`conductance.py`:**
+  - the legacy's rules: kw per barrier code (the 10 configurations), the wall interfaces' keys, the plasmodesmata factor and frequency tables, the cortex aquaporin gradient (`ratio_cortex`);
+  - `edge_conductances` (walls, membranes, plasmodesmata), `boundary_terms` (soil; `k_xyl` or `k_sieve`), `section_matrix`.
+
+  Vectorised over all the sections' edges at once, one parameter value per edge (its plant's), so plants can differ.
+- **`solve.py`:** a plain per-section solve (`spsolve`) and the edge flows, until the graph system (step 5).
+- **The component:**
+  - **parameters,** per plant, flattened (Q-M3): kw and the barrier values, thickness, kmb, kaqp and its factors, ratio_cortex, k_interc, kpl, the two plasmodesmata factors the legacy actually applies (§2 a: the others resolve to 1), `fplxheight_default` and one `fplxheight_<tissue>_<tissue>` per interface (41), x_contact, k_xyl, k_sieve, the φ-thickening layers;
+  - **inputs:** `barrier` (SubOrgan, by "Development") and `length` (the height);
+  - **state variables:** `conductance` (Connection), `soil_conductance` and `axial_boundary_conductance` (Compartment).
+- **Against the legacy** (`test/comparison/test_conductance.py`; monocot and dicot roots, barriers 1 and 3; 16 passed):
+  - every edge's K and every soil term bit-exact;
+  - the matrix to 4 ulp (D1);
+  - the solution to 1e-12 of its range.
+- **What the comparison showed about the legacy:** `solve_W` returns its matrix after removing the axial terms in place (`remove_xyl_phloem_BC`). It adds them on the network's xylem cells (by cgroup) and removes them on the cell manager's (by tissue): a third case of §2 l. The comparison applies the same removal.
+- **Visual check:** `example/comparison/compare_hydraulics.py [dicot]`, legacy | port | difference of log K, ψ and log |Q|. On the monocot and dicot roots: ΔK = 0, |Δψ| ≤ 9e-10 hPa (of 5000), |ΔQ| ≤ 1.3e-15 cm³/d (of 9e-5).
+- **Cost:** on 10 sections (83k nodes, 204k edges), the conductance step takes 0.2 s per call; the geometry is cached per template.

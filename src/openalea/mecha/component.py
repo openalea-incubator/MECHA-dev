@@ -13,11 +13,13 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, state_variable
+from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, parameter, state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig
 from openalea.metafspm.solve.decorator import state
 
-from openalea.mecha.geometry import section_geometry, section_of, section_parts
+from openalea.mecha.conductance import (FPLXHEIGHT, Network, assemble, boundary_terms, cortex_parameters,
+                                       edge_conductances, fplxheight_name, set_edge_ends)
+from openalea.mecha.geometry import phi_thick_cells, section_geometry, section_of, section_parts
 
 SCALES = ScalesConfig()
 
@@ -30,6 +32,10 @@ def _doc(unit, description, **values):
 def _node(unit, description):
     return dict(**_doc(unit, description), by="Anatomy", scale=SCALES.Compartment, location="node",
                 state_variable_type="descriptor")
+
+
+def _p(unit, description, default):
+    return parameter(**_doc(unit, description), by="MECHA", default=default)
 
 
 def _edge(unit, description):
@@ -61,6 +67,86 @@ class MechaHydraulics(FunctionalComponent):
                                                         "same template share MECHA's geometry"),
                                              by="Anatomy", scale=SCALES.SubOrgan, state_variable_type="descriptor")
 
+    barrier: float = input_variable(**_doc("", "the segment's apoplastic barriers (MECHA's maturity code: 0 none, 1 "
+                                                 "endodermal Casparian strip, 2 + suberin with passage cells, 3 "
+                                                 "endodermis fully suberized, 4-9 exodermis variants)"),
+                                    by="Development", initialize=1., scale=SCALES.SubOrgan, location="node",
+                                    mapping="broadcast", state_variable_type="descriptor")
+    length: float = input_variable(**_doc("m", "the segment's length (MECHA's section height)"),
+                                   by="Architecture", scale=SCALES.SubOrgan, location="node",
+                                   state_variable_type="intensive")
+
+    # ── Parameters (per plant; MECHA's units: cm hPa-1 d-1 for kw, kmb, kaqp; cm3 hPa-1 d-1 for kpl, k_xyl) ──
+    kw: float = _p("cm2 hPa-1 d-1", "cell wall hydraulic conductivity", 0.00024)
+    kw_septa: float = _p("cm2 hPa-1 d-1", "conductivity of the septa between aerenchyma (intercellular) cells", 0.00012)
+    kw_casparian: float = _p("cm2 hPa-1 d-1", "wall conductivity across a Casparian strip", 1.00E-16)
+    kw_suberin_in: float = _p("cm2 hPa-1 d-1", "conductivity of suberized walls, inner face", 1.00E-16)
+    kw_suberin_out: float = _p("cm2 hPa-1 d-1", "conductivity of suberized walls, outer face", 1.00E-16)
+    kw_lignin: float = _p("cm2 hPa-1 d-1", "conductivity of lignified walls (lignin cap, phi thickenings)", 1.00E-16)
+    thickness: float = _p("µm", "cell wall thickness (one value for every wall, as MECHA's)", 1.5)
+    xylem_pieces: float = _p("", "1: the walls between two xylem cells are septa of near-zero conductance", 0.)
+    kmb: float = _p("cm hPa-1 d-1", "membrane hydraulic conductivity, without aquaporins", 3.0E-5)
+    kaqp: float = _p("cm hPa-1 d-1", "aquaporin contribution to the membrane conductivity", 0.000430)
+    kaqp_stele_factor: float = _p("", "factor of kaqp in the stele", 1.0)
+    kaqp_endo_factor: float = _p("", "factor of kaqp in the endodermis", 1.0)
+    kaqp_exo_factor: float = _p("", "factor of kaqp in the exodermis", 1.0)
+    kaqp_epi_factor: float = _p("", "factor of kaqp in the epidermis", 1.0)
+    kaqp_cortex_factor: float = _p("", "factor of kaqp in the cortex", 1.0)
+    ratio_cortex: float = _p("", "ratio of the cortex's outer to inner aquaporin activity (1: uniform)", 1.0)
+    k_interc: float = _p("cm hPa-1 d-1", "membrane conductivity of intercellular spaces (with barriers)", 0.0)
+    kpl: float = _p("cm3 hPa-1 d-1", "conductance of one plasmodesma", 5.3E-12)
+    kpl_phloem_companion_cell_factor: float = _p("", "plasmodesmata factor at the companion-cell interfaces", 0.0)
+    kpl_phloem_sieve_tube_factor: float = _p("", "plasmodesmata factor at the sieve-tube interfaces", 0.0)
+    fplxheight_default: float = _p("cm-1", "plasmodesmata per unit wall length and height, other interfaces", 8.0E5)
+    x_contact: float = _p("µm", "the border walls at x >= x_contact are in contact with the soil", -15E9)
+    k_xyl: float = _p("cm3 hPa-1 d-1", "conductance between a xylem vessel and the xylem boundary", 1.0E-6)
+    k_sieve: float = _p("cm3 hPa-1 d-1", "conductance between a protophloem cell and the phloem boundary", 1.0E-6)
+    n_phi_layers: float = _p("", "number of cortex layers with phi thickenings", 0.)
+    phi_type: float = _p("", "phi thickenings: 1 inner cortex, 2 outer cortex, 3 mid cortex", 1.)
+
+    # plasmodesmata per unit wall length and height, by interface (cell groups' names)
+    fplxheight_exo_exo: float = _p("cm-1", "plasmodesmata frequency, exo–exo interfaces", 800000.0)
+    fplxheight_epi_epi: float = _p("cm-1", "plasmodesmata frequency, epi–epi interfaces", 800000.0)
+    fplxheight_exo_epi: float = _p("cm-1", "plasmodesmata frequency, exo–epi interfaces", 1080000.0)
+    fplxheight_exo_cortex: float = _p("cm-1", "plasmodesmata frequency, exo–cortex interfaces", 2280000.0)
+    fplxheight_cortex_cortex: float = _p("cm-1", "plasmodesmata frequency, cortex–cortex interfaces", 860000.0)
+    fplxheight_endo_cortex: float = _p("cm-1", "plasmodesmata frequency, endo–cortex interfaces", 880000.0)
+    fplxheight_endo_endo: float = _p("cm-1", "plasmodesmata frequency, endo–endo interfaces", 640000.0)
+    fplxheight_endo_peri: float = _p("cm-1", "plasmodesmata frequency, endo–peri interfaces", 960000.0)
+    fplxheight_endo_stele: float = _p("cm-1", "plasmodesmata frequency, endo–stele interfaces", 960000.0)
+    fplxheight_endo_tparenchyma: float = _p("cm-1", "plasmodesmata frequency, endo–tparenchyma interfaces", 1080000.0)
+    fplxheight_endo_ttracheid: float = _p("cm-1", "plasmodesmata frequency, endo–ttracheid interfaces", 0.0)
+    fplxheight_stele_peri: float = _p("cm-1", "plasmodesmata frequency, stele–peri interfaces", 1080000.0)
+    fplxheight_stele_sieve: float = _p("cm-1", "plasmodesmata frequency, stele–sieve interfaces", 900000.0)
+    fplxheight_stele_protophloem: float = _p("cm-1", "plasmodesmata frequency, stele–protophloem interfaces", 900000.0)
+    fplxheight_stele_comp: float = _p("cm-1", "plasmodesmata frequency, stele–comp interfaces", 980000.0)
+    fplxheight_stele_xylem: float = _p("cm-1", "plasmodesmata frequency, stele–xylem interfaces", 640000.0)
+    fplxheight_stele_stele: float = _p("cm-1", "plasmodesmata frequency, stele–stele interfaces", 640000.0)
+    fplxheight_stele_tparenchyma: float = _p("cm-1", "plasmodesmata frequency, stele–tparenchyma interfaces", 640000.0)
+    fplxheight_stele_ttracheid: float = _p("cm-1", "plasmodesmata frequency, stele–ttracheid interfaces", 0.0)
+    fplxheight_sieve_comp: float = _p("cm-1", "plasmodesmata frequency, sieve–comp interfaces", 1760000.0)
+    fplxheight_sieve_peri: float = _p("cm-1", "plasmodesmata frequency, sieve–peri interfaces", 720000.0)
+    fplxheight_sieve_xylem: float = _p("cm-1", "plasmodesmata frequency, sieve–xylem interfaces", 0.0)
+    fplxheight_sieve_sieve: float = _p("cm-1", "plasmodesmata frequency, sieve–sieve interfaces", 0.0)
+    fplxheight_sieve_protophloem: float = _p("cm-1", "plasmodesmata frequency, sieve–protophloem interfaces", 0.0)
+    fplxheight_sieve_tparenchyma: float = _p("cm-1", "plasmodesmata frequency, sieve–tparenchyma interfaces", 640000.0)
+    fplxheight_sieve_ttracheid: float = _p("cm-1", "plasmodesmata frequency, sieve–ttracheid interfaces", 0.0)
+    fplxheight_comp_xylem: float = _p("cm-1", "plasmodesmata frequency, comp–xylem interfaces", 980000.0)
+    fplxheight_comp_peri: float = _p("cm-1", "plasmodesmata frequency, comp–peri interfaces", 700000.0)
+    fplxheight_comp_comp: float = _p("cm-1", "plasmodesmata frequency, comp–comp interfaces", 680000.0)
+    fplxheight_comp_protophloem: float = _p("cm-1", "plasmodesmata frequency, comp–protophloem interfaces", 680000.0)
+    fplxheight_comp_tparenchyma: float = _p("cm-1", "plasmodesmata frequency, comp–tparenchyma interfaces", 1080000.0)
+    fplxheight_comp_ttracheid: float = _p("cm-1", "plasmodesmata frequency, comp–ttracheid interfaces", 0.0)
+    fplxheight_xylem_peri: float = _p("cm-1", "plasmodesmata frequency, xylem–peri interfaces", 1080000.0)
+    fplxheight_xylem_xylem: float = _p("cm-1", "plasmodesmata frequency, xylem–xylem interfaces", 640000.0)
+    fplxheight_xylem_protophloem: float = _p("cm-1", "plasmodesmata frequency, xylem–protophloem interfaces", 0.0)
+    fplxheight_xylem_tparenchyma: float = _p("cm-1", "plasmodesmata frequency, xylem–tparenchyma interfaces", 1080000.0)
+    fplxheight_xylem_ttracheid: float = _p("cm-1", "plasmodesmata frequency, xylem–ttracheid interfaces", 1760000.0)
+    fplxheight_tparenchyma_tparenchyma: float = _p("cm-1", "plasmodesmata frequency, tparenchyma–tparenchyma interfaces", 800000.0)
+    fplxheight_tparenchyma_ttracheid: float = _p("cm-1", "plasmodesmata frequency, tparenchyma–ttracheid interfaces", 0.0)
+    fplxheight_ttracheid_ttracheid: float = _p("cm-1", "plasmodesmata frequency, ttracheid–ttracheid interfaces", 0.0)
+    fplxheight_protophloem_protophloem: float = _p("cm-1", "plasmodesmata frequency, protophloem–protophloem interfaces", 0.0)
+
     # ── State variables: MECHA's geometry ──
     cell_rank: float = state_variable(**_doc("", "MECHA's cell rank: the cgroup, or the cortex (40-49) and stele "
                                                  "(50-61) layer (-1: apoplast)"),
@@ -69,6 +155,21 @@ class MechaHydraulics(FunctionalComponent):
     perimeter: float = state_variable(**_doc("cm", "the section's perimeter: 2π × the epidermis walls' mean distance "
                                                    "to the endodermis' centre"),
                                       initialize=np.nan, scale=SCALES.SubOrgan, state_variable_type="descriptor")
+
+    # ── State variables: the conductances ──
+    conductance: float = state_variable(**_doc("cm3 hPa-1 d-1", "the edge's hydraulic conductance (walls, membranes, "
+                                                                "plasmodesmata; 0 on the edges MECHA leaves out)"),
+                                        initialize=0., scale=SCALES.Connection, location="edge",
+                                        state_variable_type="NonInertialIntensive")
+    soil_conductance: float = state_variable(**_doc("cm3 hPa-1 d-1", "conductance between a border wall or junction "
+                                                                     "and the soil (0 elsewhere)"),
+                                             initialize=0., scale=SCALES.Compartment, location="node",
+                                             state_variable_type="NonInertialIntensive")
+    axial_boundary_conductance: float = state_variable(**_doc("cm3 hPa-1 d-1", "conductance between a xylem vessel "
+                                                              "(barrier > 0) or a protophloem cell (barrier 0) and "
+                                                              "the axial boundary, on the matrix diagonal (0 elsewhere)"),
+                                                       initialize=0., scale=SCALES.Compartment, location="node",
+                                                       state_variable_type="NonInertialIntensive")
 
     def __post_init__(self):
         super().__post_init__()
@@ -110,3 +211,56 @@ class MechaHydraulics(FunctionalComponent):
             rank[nodes] = geometry.cell_rank
             perimeter[where[segment]] = geometry.perimeter
         return rank, "perimeter", perimeter
+
+    # ── Conductances ──
+    PARAMETERS = ()                       # filled below: the names of the numeric parameters
+
+    def parameter_table(self, location: str) -> dict:
+        """{parameter: value per entity of *location*} (each entity its plant's value)."""
+        return {name: np.asarray(self.parameter_values(name, location)) for name in self.PARAMETERS}
+
+    def network(self, geometries: dict = None) -> Network:
+        """The sections' MECHA geometry on the whole DataStructure, their φ-thickened cells included."""
+        ds = self.data_structure
+        geometries = self.section_geometries() if geometries is None else geometries
+        items = list(geometries.values())
+        layers = self.parameter_table("node")
+        phi = [phi_thick_cells(geo, int(layers["n_phi_layers"][nodes[0]]), int(layers["phi_type"][nodes[0]]))
+               for nodes, _, geo in items]
+        net = assemble(ds.n_nodes(), ds.n_edges(), items, phi)
+        view = ds.to_graph_view()
+        set_edge_ends(net, view.tail, view.head, np.asarray(ds.get("network_path")))
+        return net
+
+    def cortex_gradient(self, geometries: dict, height_by_node, P_node) -> tuple:
+        """Per node: (a_cortex, b_cortex) of its section, from its plant's parameters and its height."""
+        a, b = np.zeros(self.data_structure.n_nodes()), np.zeros(self.data_structure.n_nodes())
+        for nodes, _, geo in geometries.values():
+            v = nodes[0]
+            kaqp_cortex = float(P_node["kaqp"][v]) * float(P_node["kaqp_cortex_factor"][v])
+            a[nodes], b[nodes] = cortex_parameters(geo, kaqp_cortex, float(P_node["ratio_cortex"][v]),
+                                                   float(height_by_node[v]))
+        return a, b
+
+    @state(include_inactive=True)
+    def _conductance(self, network_path, barrier, length, anatomy_template) \
+            -> tuple[np.ndarray, str, np.ndarray, str, np.ndarray]:
+        """
+        Every edge's conductance, and the boundary conductances of the nodes (soil, axial), from MECHA's geometry,
+        the segments' barriers and heights (their lengths), and the plants' parameters.
+        """
+        geometries = self.section_geometries()
+        net = self.network(geometries)
+        height_node = np.asarray(length, dtype=float) * 1.0E6                     # m -> µm
+        P_node, P_edge = self.parameter_table("node"), self.parameter_table("edge")
+        a_cortex, b_cortex = self.cortex_gradient(geometries, height_node, P_node)
+        tail = np.maximum(net.a, 0)
+        P_edge["a_cortex"], P_edge["b_cortex"] = a_cortex[tail], b_cortex[tail]
+        barrier_node = np.asarray(barrier)
+        K, in_matrix = edge_conductances(net, P_edge, barrier_node[tail], height_node[tail])
+        soil, axial, _ = boundary_terms(net, P_node, barrier_node, height_node)
+        return np.where(in_matrix, K, 0.), "soil_conductance", soil, "axial_boundary_conductance", axial
+
+
+MechaHydraulics.PARAMETERS = tuple(MechaHydraulics._plant_parameter_fields())
+
