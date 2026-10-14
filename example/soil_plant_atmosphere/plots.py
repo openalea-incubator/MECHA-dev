@@ -54,7 +54,7 @@ def plant_over_soil(built, path):
     fig.colorbar(collection, ax=ax, label="xylem ψ (MPa)", shrink=0.6)
     ax.set(xlabel="x (m)", ylabel="z (m)", title="the seedling (side view) over the soil")
     ax.set_ylim(extent[2], max(0.1, coords["z2"].max() * 1.1))
-    fig.savefig(path, dpi=140, bbox_inches="tight")
+    fig.savefig(path, dpi=400, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -92,7 +92,7 @@ def sections_by_organ(built, path):
         ax.set_title(f"{kinds[i]} section {int(segments[i])} (edges: log |Q|, grey)")
         ax.set_xlabel("mm")
     fig.tight_layout()
-    fig.savefig(path, dpi=140)
+    fig.savefig(path, dpi=400)
     plt.close(fig)
 
 
@@ -121,7 +121,7 @@ def potential_profile(built, path):
     ax.set_title("the water potential along the path (the air at "
                  f"{float(np.asarray(plant.get('air_psi'))[0]) / HPA_PER_MPA:.1f} MPa)")
     fig.tight_layout()
-    fig.savefig(path, dpi=140)
+    fig.savefig(path, dpi=400)
     plt.close(fig)
     return steps
 
@@ -140,8 +140,102 @@ def root_kr(built, path):
            title="the roots' radial conductivity (barriers: 0 at the tip, 1 to 10 cm, 3 beyond)")
     ax.legend()
     fig.tight_layout()
-    fig.savefig(path, dpi=140)
+    fig.savefig(path, dpi=400)
     plt.close(fig)
+
+
+UPSCALING_SCALES = ("SubOrgan", "Organ", "Phytomer", "GrowthUnit", "Axis", "Plant")
+
+
+def upscale(ds, name="psi", scales=UPSCALING_SCALES) -> dict:
+    """
+    *name* derived at each of *scales* in turn, each the mean of the previous one (as metafspm's SPAC example's
+    upscaling.py), recomputed when the potentials change. Returns {scale: variable name}, "Compartment" the solved one.
+    """
+    names, source = {"Compartment": name}, name
+    for scale in scales:
+        target = f"{name}_{scale}"
+        if not ds.has(target):
+            ds.derive(target, {source: 1.}, location=scale, aggregation="mean")
+        names[scale], source = target, target
+    return names
+
+
+def _node_positions(ds, spread=6.0):
+    """
+    Side-view (x, z) positions of the Compartments: their segment's middle, offset across the segment by their
+    position in the section (section_x, mm, magnified *spread* times), so that each anatomy shows at its segment.
+    """
+    x1, x2, z1, z2 = (np.asarray(ds.get(n), dtype=float) for n in ("x1", "x2", "z1", "z2"))
+    middle = np.c_[(x1 + x2) / 2., (z1 + z2) / 2.]
+    normal = np.c_[-(z2 - z1), x2 - x1]
+    normal /= np.maximum(np.linalg.norm(normal, axis=1, keepdims=True), 1e-12)
+    across = np.asarray(ds.get("section_x"), dtype=float) * 1e-3 * spread
+    return middle, middle + across[:, None] * normal
+
+
+def _scale_graph(ds, scale, name, middle, view):
+    """The graph of *scale*: its entities (at the mean of their nodes' segment middles), the pairs of entities joined
+    by an edge of the solver graph, their values."""
+    entity = np.asarray(ds.owner(scale))
+    n = len(ds.entity_ids(scale))
+    counts = np.bincount(entity, minlength=n).astype(float)
+    position = np.c_[np.bincount(entity, middle[:, 0], n), np.bincount(entity, middle[:, 1], n)] / counts[:, None]
+    a, b = entity[view.tail], entity[view.head]
+    between = a != b
+    pairs = np.unique(np.sort(np.c_[a[between], b[between]], axis=1), axis=0) if between.any() else np.empty((0, 2), int)
+    return position, pairs, np.asarray(ds.get(name), dtype=float)
+
+
+def upscaling_series(built, path):
+    """
+    The upscaling of ψ, as in metafspm's SPAC example: Compartment (solved), SubOrgan, Organ, Phytomer, GrowthUnit,
+    Axis, Plant, each scale the mean of the scale below, side by side at the same spacing: each scale's graph, its
+    entities as nodes coloured by their value, the links between them coloured by the mean of their two ends.
+    """
+    ds = built.populations[0].data_structure
+    names = upscale(ds)
+    view = ds.to_graph_view()
+    middle, anatomy = _node_positions(ds)
+    psi = np.asarray(ds.get("psi"), dtype=float) / HPA_PER_MPA
+    norm = matplotlib.colors.Normalize(psi.min(), psi.max())
+    low, high = anatomy[:, 0].min(), anatomy[:, 0].max()
+    shift, bottom = 1.25 * (high - low), anatomy[:, 1].min()
+    fig, ax = plt.subplots(figsize=(3.0 * len(names), 6.))
+    for rank, (scale, name) in enumerate(names.items()):
+        offset = np.array([rank * shift, 0.])
+        if scale == "Compartment":
+            junctions = np.flatnonzero(np.asarray(ds.get("network_path")) == 5)       # between successive sections
+            ax.add_collection(LineCollection(np.stack([anatomy[view.tail[junctions]], anatomy[view.head[junctions]]],
+                                                      axis=1) + offset, colors="0.75", linewidths=0.15, zorder=1))
+            ax.scatter(*(anatomy + offset).T, c=psi, cmap="viridis", norm=norm, s=0.4, linewidths=0, zorder=2)
+            count = psi.size
+        else:
+            position, pairs, values = _scale_graph(ds, scale, name, middle, view)
+            values = values / HPA_PER_MPA
+            position = position + offset
+            if len(pairs):
+                lines = LineCollection(position[pairs], cmap="viridis", norm=norm, linewidths=2., zorder=2)
+                lines.set_array(values[pairs].mean(axis=1))
+                ax.add_collection(lines)
+            ax.scatter(*position.T, c=values, cmap="viridis", norm=norm, s=30, edgecolors="k", linewidths=0.5,
+                       zorder=3)
+            count = len(values)
+        ax.text(rank * shift + (low + high) / 2., bottom - 0.015,
+                f"{scale}\n{count} {'entity' if count == 1 else 'entities'}", ha="center", va="top", fontsize=9)
+    ax.axhline(0., color="saddlebrown", linewidth=0.8)
+    ax.autoscale()
+    ax.set_ylim(bottom=bottom - 0.06)
+    ax.set_aspect("equal")
+    ax.set_xticks([])
+    ax.set_ylabel("z (m)")
+    ax.set_title("ψ upscaled from the Compartments (solved by MECHA on GRANAP's anatomies) to the plant, each scale "
+                 "the mean of the scale below", fontsize=10)
+    colour_bar = ax.inset_axes([1.01, 0., 0.012, 1.])
+    fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap="viridis"), cax=colour_bar, label="ψ (MPa)")
+    fig.savefig(path, dpi=400, bbox_inches="tight")
+    plt.close(fig)
+    return {scale: np.asarray(ds.get(name)) / HPA_PER_MPA for scale, name in names.items()}
 
 
 def all_figures(built, folder):
@@ -150,6 +244,9 @@ def all_figures(built, folder):
     sections_by_organ(built, os.path.join(folder, "sections_by_organ.png"))
     steps = potential_profile(built, os.path.join(folder, "potential_profile.png"))
     root_kr(built, os.path.join(folder, "root_kr.png"))
+    upscaled = upscaling_series(built, os.path.join(folder, "upscaling.png"))
+    print("ψ upscaled (MPa): " + ", ".join(f"{scale} {values.size} [{values.min():.2f}, {values.max():.2f}]"
+                                          for scale, values in upscaled.items()))
     for name, chain in chains(built).items():
         draw_chain(built, chain, os.path.join(folder, f"chain_{name.replace(' ', '_').replace('-', '_')}.png"),
                    f"{name}: successive sections, joined by their xylem vessels")
@@ -267,5 +364,5 @@ def draw_chain(built, chain, path, title):
     ax.set_xlabel("sections at their real size, spaced (mm)")
     ax.set_title(title, pad=28)
     fig.tight_layout()
-    fig.savefig(path, dpi=150)
+    fig.savefig(path, dpi=400)
     plt.close(fig)
