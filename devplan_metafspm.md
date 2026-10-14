@@ -279,3 +279,24 @@ Each step is committed with its comparison tests and a devlog entry.
 - **D2 — units on the DataStructure.** *Recommendation:* MECHA's own units for now (K in cm³ hPa⁻¹ d⁻¹, ψ in hPa, kr in cm hPa⁻¹ d⁻¹, Kx in cm⁴ hPa⁻¹ d⁻¹), declared in each variable's doc. The conversion to the plant models' units happens at the coupling (step 5), through the translator.
 - **D3 — Kx at barrier 0** (the legacy crash, fixed at once per Q-M1). There the legacy fills the protosieve cells' Poiseuille terms (η of phloem sap), then leaves `K_xyl_spec` unbound. *Recommendation:* `Kx` = 0 at barrier 0 (no mature xylem), and a separate `Kx_phloem` = Σ of the protosieve terms. Alternative: `Kx` = that protophloem sum, in the conduit that carries the boundary at barrier 0.
 - **D4 — height.** The legacy's stage height (µm) is the segment's `length` (m → µm). The comparison sets the segment length to 200 µm. No decision needed unless you prefer a separate `height` input.
+
+**Your answer (2026-10-14):** D1–D4 agreed as recommended (matrix to 4 ulp, ψ/Q/kr to 1e-12 relative; MECHA's units for now; `Kx` = 0 and a separate `Kx_phloem` at barrier 0; height = the segment's length). opencv now in the `mecha` env, which the port uses (the `mecha-port` clone is removed).
+
+
+## 9. Step 2 done (2026-10-14): MECHA's geometry from the DataStructure
+
+- **`geometry.py`:**
+  - `section_parts(ds)` gives each section's Compartments and Connections;
+  - `section_of` reads its GRANAP variables;
+  - `section_geometry` returns MECHA's derived geometry, in µm and cm: positions, wall lengths, border walls and junctions, the rebuilt wall–junction edges, lateral distances, gravity centre, distances to the centre, perimeter, ranks and layers, plasmodesmata ratios, and the cell sets (the network's and the cell manager's).
+- **Bit-exact against the legacy's `NetworkBuilder`** (`test/comparison/test_geometry.py`, 9 checks × the monocot and dicot roots, 18 passed). The legacy's sum orders are reproduced:
+  - cell order for the gravity centre and the layers;
+  - wall order for the epidermis distances;
+  - for the plasmodesmata ratios, the neighbour order that networkx's `Graph.copy()` produces: earlier nodes first, by node order, then the later ones in insertion order.
+- **Exactness lesson:** numpy's scalar `x ** 2` calls libm's `pow` and can differ by 1 ulp from the arrays' `x ** 2` (computed `x*x`). So the walls' distances to the centre are computed per scalar, as the legacy does.
+- **The component** `MechaHydraulics`:
+  - inputs by `"Anatomy"`;
+  - `cell_rank` (Compartment) and `perimeter` (SubOrgan) written by a `@state` step;
+  - geometry cached per anatomy template (`test/component`, 3 passed).
+- **Cost:** 10 ms per anatomy (4 ms extraction, 6 ms geometry), against 0.47 s for the legacy's `populate_from_network` on the monocot root.
+- **Not reachable from GRANAP's presets:** the passage-cell and protophloem branches (no such tissues), the aerenchyma borders (roots' air spaces keep two membranes), and the "no exodermis" and "no pericycle" connection ranks. They are ported, but only covered by the code itself; they will be tested on cellset XML sections (Q-M7's optional path).
