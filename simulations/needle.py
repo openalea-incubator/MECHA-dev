@@ -19,8 +19,7 @@ Design
 
 ``SimResult``
     Plain-array container (fully picklable, ``float32`` frames) returned by
-    ``run()``.  Holds the raw data only; allows for GIF rendering as a *post-processing*
-    step.
+    ``run()``.  Holds the raw data only; allows for *post-processing*.
     
 Units: lengths µm/cm, volumes cm³, conc mol/cm³ (=10³ M), rates mol/d, time d.
 """
@@ -59,13 +58,17 @@ from openalea.mecha.calibration.forward_model import rh_to_water_potential
 # Gas constant used by MECHA for van't Hoff Ψ_os = −R·T·c  [hPa cm³ mol⁻¹ K⁻¹].
 _R_HPA = 8.314e4
 
+# Default base plasmodesmata frequency (Fplxheight); 
+# the whole per-interface density profile is a ratio to this.
+_FPLXHEIGHT_BASE = 8.0e5
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Parameters
 # ══════════════════════════════════════════════════════════════════════════════
 @dataclass(frozen=True)
 class SimParams:
-    """Configuration common to steady and dynamic needle simulations."""
+    """Configuration common to needle simulations."""
 
     # ---- Water boundary conditions (Dirichlet) -------------------------------
     psi_xyl: float = -200.0        # hPa  xylem water potential (supply)
@@ -78,6 +81,15 @@ class SimParams:
     d_apo: float = 0.1             # cm²/d  apoplastic wall diffusivity
     d_mem: float = 1.0e-6          # cm²/d  passive transmembrane diffusivity
     sigma_sucrose: float = 0.7     # -      membrane reflection coefficient
+
+    # ---- Plasmodesmata density (base Fplxheight frequency) -------------------
+    # Absolute base PD frequency factor (Fplxheight); None → use the anatomy's
+    # XML/data_loader defaults untouched.  When set, the whole per-interface
+    # Fplxheight map is rescaled by pm_den / 8.0E5 so the default profile is
+    # preserved and pm_den == 8.0E5 reproduces the defaults exactly.  Scales
+    # base_area → temp_factor linearly, i.e. BOTH the PD hydraulic conductance K
+    # and the PD solute conductance DF.
+    pm_den: Optional[float] = None   # PD base frequency (default 8.0E5)
 
     # ---- Physical constant ---------------------------------------------------
     t_kelvin: float = 298.15       # K   (van't Hoff Ψ_os = −R·T·c)
@@ -115,9 +127,9 @@ class SimParams:
         )
 
     # Each params child names the simulation class that runs it (resolved lazily
-    # by name since the sim classes are defined later).  This is the invariant
+    # by name since the sim classes are defined later). This is the invariant
     # backbone: a new series adds a child + names its sim here, and _run_one /
-    # run_experiments never change.
+    # run_experiments should not change.
     _simulation_class_name: str = field(default='NeedleSimulation',
                                         init=False, repr=False, compare=False)
 
@@ -212,7 +224,7 @@ class SimResult:
 
     Frames are stored as ``float32`` to halve the memory / disk footprint; the
     concentration and Péclet arrays are 1-D (steady) or 2-D ``(n_steps, N)``
-    (dynamic).  GIFs are NOT stored here — render them on demand from this
+    (dynamic). GIFs are NOT stored here — render them on demand from this
     object via ``concentration_gif`` / ``peclet_gif``.
     """
 
@@ -250,7 +262,7 @@ class SimResult:
 
     # ---- Open-ended, series-specific outputs --------------------------------
     # First-class extensible slot: any array a series produces that has no named
-    # field goes here by key (e.g. 'j_w', 'j_s', 'm_starch').  Pickled with the
+    # field goes here by key (e.g. 'j_w', 'j_s', 'm_starch'). Pickled with the
     # object AND round-tripped by save/load (each key stored as 'extra__<key>'),
     # so future series add outputs WITHOUT editing SimResult.
     extras: dict = field(default_factory=dict)
@@ -378,55 +390,9 @@ class SimResult:
             )
         return out
 
-    # ---- Rendering helpers (post-processing) --------------------------------
-    def _cell_gdf(self):
-        """Rebuild a GeoDataFrame of cell polygons from stored geometry."""
-        import geopandas as gpd
-        from shapely import wkb
-        if self.cell_polygons is None:
-            raise ValueError("No stored cell geometry; render with a live Mecha "
-                             "via NeedleSimulation.concentration_gif instead.")
-        geoms = [wkb.loads(b) for b in self.cell_polygons]
-        return gpd.GeoDataFrame({'id_cell': self.cell_ids}, geometry=geoms)
-
-    def _field_at(self, step: Optional[int]) -> np.ndarray:
-        """Return the concentration field (1-D) for a step (dynamic) or steady."""
-        if self.concentration.ndim == 1:
-            return self.concentration
-        return self.concentration[-1 if step is None else step]
-
-    def concentration_gif(self, path: str, max_frames: int = 150, fps: int = 12,
-                          cmap: str = 'plasma') -> str:
-        """Render the transient concentration field as an animated GIF.
-
-        Post-processing step: heavy render memory is only used here, one
-        simulation at a time, decoupled from the (parallel) march.
-        """
-        if self.mode != 'dynamic':
-            raise ValueError("concentration_gif is only defined for dynamic runs.")
-        return _render_cell_field_gif(
-            self._cell_gdf(), self.concentration, self.node_of_cell,
-            self.times, self.frac_to_sink, path,
-            max_frames=max_frames, fps=fps, cmap=cmap,
-            title='Needle sucrose transport — impulse release',
-            cbar_label='c (µM sucrose)', scale=1e6,
-        )
-
-    def peclet_gif(self, path: str, max_frames: int = 150, fps: int = 12) -> str:
-        """Render the per-bond local Péclet field as an animated GIF."""
-        if self.mode != 'dynamic':
-            raise ValueError("peclet_gif is only defined for dynamic runs.")
-        return _render_peclet_gif(
-            self.pe_segments, self.peclet, self.times, path,
-            max_frames=max_frames, fps=fps,
-        )
-
-    def mass_balance_plot(self, path: str) -> str:
-        """Interior mass / fraction-to-sink vs. time (dynamic only)."""
-        if self.mode != 'dynamic':
-            raise ValueError("mass_balance_plot is only defined for dynamic runs.")
-        return _render_mass_balance(self.times, self.interior_mass,
-                                    self.frac_to_sink, path)
+    # Rendering / plotting moved to post_sim.py (post-processing on a loaded or
+    # in-memory SimResult): concentration_gif, peclet_gif, mass_balance_plot,
+    # diurnal_flux_plot, starch_comparison_plot.
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -477,6 +443,18 @@ class NeedleSimulation:
         s1['s_factor']           = p.sigma_sucrose
         data.boundary.add_scenario(s1)
 
+        # Set the plasmodesmata density: pm_den is the base Fplxheight frequency
+        # (default 8.0E5).  Rescale the whole per-interface map by the ratio to
+        # the base so the default density profile is preserved; this feeds
+        # base_area → temp_factor linearly → both the PD hydraulic conductance K
+        # and the PD solute conductance DF.
+        if p.pm_den is not None:
+            scale = p.pm_den / _FPLXHEIGHT_BASE
+            data.hydraulic.fplxheight_map = {
+                interface: height * scale
+                for interface, height in data.hydraulic.fplxheight_map.items()
+            }
+
         self.mecha = Mecha(data, network=network)
         self.nwj     = self.mecha.network.n_wall_junction
         self.n_cells = self.mecha.network.n_cells
@@ -517,7 +495,7 @@ class NeedleSimulation:
         self.phloem_cell_ids     = phloem
         self.xylem_cell_ids      = xylem
         self.airspace_cell_ids   = airspace
-        self.phloem_loading_ids  = strasburger + phloem
+        self.phloem_loading_ids  = strasburger if strasburger else phloem
         self._log(f"  mesophyll={len(meso)}  phloem-loading={len(self.phloem_loading_ids)}"
                   f"  xylem={len(xylem)}  air={len(airspace)}")
 
@@ -636,17 +614,6 @@ class NeedleSimulation:
 
     def run(self) -> SimResult:
         raise NotImplementedError
-
-    # ---- live-object rendering (optional; SimResult can also self-render) ----
-    def concentration_gif(self, result: SimResult, path: str, **kw) -> str:
-        gdf = self.mecha.network._cells_gdf.copy()
-        node_of_cell = np.array(
-            [self.mecha.indice[self.nwj + int(c)] for c in gdf['id_cell']])
-        return _render_cell_field_gif(
-            gdf, result.concentration, node_of_cell, result.times,
-            result.frac_to_sink, path,
-            title='Needle sucrose transport — impulse release',
-            cbar_label='c (µM sucrose)', scale=1e6, **kw)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -947,115 +914,6 @@ def run_experiments(param_list, max_workers: Optional[int] = None):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Rendering helpers (post-processing — heavy memory, used one run at a time)
-# ══════════════════════════════════════════════════════════════════════════════
-def _import_mpl():
-    import matplotlib
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
-    return plt
-
-
-def _render_cell_field_gif(gdf, concentration, node_of_cell, times, frac_to_sink,
-                           path, max_frames=150, fps=12, cmap='plasma',
-                           title='', cbar_label='', scale=1.0):
-    plt = _import_mpl()
-    from matplotlib.animation import FuncAnimation, PillowWriter
-
-    frames = concentration if concentration.ndim == 2 else concentration[None, :]
-    n = frames.shape[0]
-    stride = max(1, n // max_frames)
-    idx = list(range(0, n, stride))
-    if idx[-1] != n - 1:
-        idx.append(n - 1)
-    vmax = float(np.nanpercentile(frames[-1] * scale, 99)) or 1.0
-
-    gdf = gdf.copy()
-    fig, ax = plt.subplots(figsize=(9, 7))
-
-    def _draw(k):
-        fi = idx[k]
-        ax.clear()
-        gdf['value'] = [float(frames[fi][n_i]) * scale for n_i in node_of_cell]
-        gdf.plot(ax=ax, column='value', cmap=cmap, edgecolor='black',
-                 linewidth=0.3, vmin=0.0, vmax=vmax,
-                 missing_kwds={'color': 'lightgray'})
-        ax.set_aspect('equal', 'box')
-        ax.set_xlabel('x (µm)'); ax.set_ylabel('y (µm)')
-        t = '' if times is None else f't = {times[fi]:.3f} d'
-        s = ('' if frac_to_sink is None
-             else f'   |   to sink: {frac_to_sink[fi]*1e12:.4f} pmol')
-        ax.set_title(f'{title}\n{t}{s}')
-        return ax.collections
-
-    sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(0.0, vmax))
-    fig.colorbar(sm, ax=ax, label=cbar_label)
-    anim = FuncAnimation(fig, _draw, frames=len(idx), blit=False)
-    anim.save(path, writer=PillowWriter(fps=fps))
-    plt.close(fig)
-    return path
-
-
-def _render_peclet_gif(pe_segments, peclet, times, path, max_frames=150, fps=12):
-    plt = _import_mpl()
-    from matplotlib.animation import FuncAnimation, PillowWriter
-    from matplotlib.collections import LineCollection
-
-    frames = peclet if peclet.ndim == 2 else peclet[None, :]
-    n = frames.shape[0]
-    stride = max(1, n // max_frames)
-    idx = list(range(0, n, stride))
-    if idx[-1] != n - 1:
-        idx.append(n - 1)
-
-    finite = frames[np.isfinite(frames) & (frames > 0)]
-    vmin = float(np.percentile(finite, 1)) if finite.size else 1e-3
-    vmax = float(np.percentile(finite, 99)) if finite.size else 1.0
-    xs = pe_segments[:, :, 0]; ys = pe_segments[:, :, 1]
-
-    fig, ax = plt.subplots(figsize=(9, 7))
-    norm = plt.matplotlib.colors.LogNorm(vmin=max(vmin, 1e-6), vmax=max(vmax, 1e-3))
-
-    def _draw(k):
-        fi = idx[k]
-        ax.clear()
-        lc = LineCollection(pe_segments, cmap='coolwarm', norm=norm)
-        lc.set_array(np.clip(frames[fi], 1e-6, None))
-        lc.set_linewidth(0.8)
-        ax.add_collection(lc)
-        ax.set_xlim(xs.min(), xs.max()); ax.set_ylim(ys.min(), ys.max())
-        ax.set_aspect('equal', 'box')
-        ax.set_xlabel('x (µm)'); ax.set_ylabel('y (µm)')
-        t = '' if times is None else f't = {times[fi]:.3f} d'
-        ax.set_title(f'Per-bond local Péclet |A_edge|/D_edge\n{t}')
-        return [lc]
-
-    sm = plt.cm.ScalarMappable(cmap='coolwarm', norm=norm)
-    fig.colorbar(sm, ax=ax, label='local Péclet (log)')
-    anim = FuncAnimation(fig, _draw, frames=len(idx), blit=False)
-    anim.save(path, writer=PillowWriter(fps=fps))
-    plt.close(fig)
-    return path
-
-
-def _render_mass_balance(times, interior_mass, frac_to_sink, path):
-    plt = _import_mpl()
-    fig, ax1 = plt.subplots(figsize=(8, 5))
-    ax1.plot(times, np.asarray(interior_mass) * 1e12, 'b-', label='interior mass')
-    ax1.set_xlabel('t (d)'); ax1.set_ylabel('interior solute mass (pmol)', color='b')
-    ax1.tick_params(axis='y', labelcolor='b')
-    ax2 = ax1.twinx()
-    ax2.plot(times, np.asarray(frac_to_sink) * 1e12, 'r--', label='to sink')
-    ax2.set_ylabel('cumulative mass to sink (pmol)', color='r')
-    ax2.tick_params(axis='y', labelcolor='r')
-    fig.suptitle('Solute mass balance')
-    fig.tight_layout()
-    fig.savefig(path, dpi=150, bbox_inches='tight')
-    plt.close(fig)
-    return path
-
-
-# ══════════════════════════════════════════════════════════════════════════════
 # Diurnal modulation helpers
 # ══════════════════════════════════════════════════════════════════════════════
 def f_transpiration(t, period: float = 1.0, phase: float = 0.0,
@@ -1077,6 +935,17 @@ def g_photosynthesis(t, period: float = 1.0, phase: float = 0.0):
     ``max(0, -cos)`` — in phase with the noon peak of f_transpiration.
     """
     return np.maximum(0.0, -np.cos(2.0 * np.pi * (t / period) + phase))
+
+
+def s_diel(t, period: float = 1.0, phase: float = 0.0):
+    """Diel conversion signal s(t) ∈ [-1, 1], in phase with photosynthesis.
+
+    ``-cos(2π t/period + phase)`` is +1 at solar noon and −1 at solar midnight,
+    so it shares the day/night rhythm of ``g_photosynthesis`` and
+    ``f_transpiration``.  Positive ⇒ day (starch synthesis wins); negative ⇒
+    night (starch remobilisation wins).
+    """
+    return -np.cos(2.0 * np.pi * (t / period) + phase)
 
 
 # Sucrose plasmodesmatal diffusivity: 0.1 × 5.2e-6 cm²/s × 86400 s/d → cm²/d.
@@ -1278,78 +1147,204 @@ class NeedleDiurnalSimulation(NeedleDynamicSimulation):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Diurnal flux plot
+# Diel (time-dependent rate) starch parameters
 # ══════════════════════════════════════════════════════════════════════════════
-def diurnal_flux_plot(res: SimResult, path: str) -> str:
-    """Time evolution of a diurnal run: j_w, j_s, j_s/j_w (+ starch if present).
+@dataclass(frozen=True)
+class DielStarchParams(DiurnalParams):
+    """Diurnal transport where the sucrose ↔ starch rates are TIME dependent.
 
-    Reads the series from ``res.extras`` (via ``get_extra``); a starch panel is
-    added automatically when the run produced an ``m_starch`` series.
+    Instead of sweeping fixed ``k_starch_syn``/``k_starch_deg``, the effective
+    rates follow the day/night rhythm (in phase with photosynthesis):
+
+      * day   (``s_diel > 0``): forward-dominated  sucrose → starch
+      * night (``s_diel < 0``): backward-dominated starch → sucrose
+
+    The instantaneous rates are
+
+      ``k_f(t) = k_f_day  · max(0,  s)``   (synthesis, daytime only)
+      ``k_r(t) = k_r_night · max(0, -s)``  (remobilisation, night only)
+
+    with ``s = s_diel(t, period, s_phase)``.  ``k_f_day`` / ``k_r_night`` are the
+    peak (noon / midnight) rates.  ``starch`` is forced on.
     """
-    import matplotlib
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
 
-    t   = np.asarray(res.times)
-    j_w = np.asarray(res.get_extra('j_w'))
-    j_s = np.asarray(res.get_extra('j_s'))
-    m_s = res.get_extra('m_starch')
-    with np.errstate(divide='ignore', invalid='ignore'):
-        ratio = np.where(np.abs(j_w) > 0, j_s / j_w, np.nan)
+    _simulation_class_name: str = field(default='NeedleDiurnalDielStarchSimulation',
+                                         init=False, repr=False, compare=False)
 
-    period  = float(res.params.get('period', 1.0))
-    g_phase = float(res.params.get('g_phase', 0.0))
+    # Peak diel rates (1/d).  Applied through the s_diel(t) day/night envelope.
+    k_f_day: float = 6.0          # 1/d  peak daytime synthesis rate (sucrose→starch)
+    k_r_night: float = 6.0        # 1/d  peak night remobilisation rate (starch→sucrose)
+    s_phase: float = 0.0          # rad  phase of the diel conversion signal
 
-    n_panels = 4 if m_s is not None else 3
-    fig, axes = plt.subplots(n_panels, 1, figsize=(9, 3 * n_panels), sharex=True)
-    axes = np.atleast_1d(axes)
+    starch: bool = True           # always coupled for the diel scenario
+    label: str = 'diurnal_starch_diel'
 
-    def _night_bands(ax):
-        # Night = dark period (no photosynthesis); f no longer reaches zero.
-        tt = np.linspace(t[0], t[-1], 2000)
-        night = g_photosynthesis(tt, period, g_phase) <= 0.0
-        ax.fill_between(tt, 0, 1, where=night, transform=ax.get_xaxis_transform(),
-                        color='0.85', zorder=0, step='mid')
-
-    ax_jw, ax_js, ax_rat = axes[0], axes[1], axes[-1]
-
-    _night_bands(ax_jw)
-    ax_jw.plot(t, j_w, 'b-o', ms=3, lw=1.2)
-    ax_jw.set_ylabel('j_w  (cm³/d)', color='b')
-    ax_jw.tick_params(axis='y', labelcolor='b')
-    ax_jw.set_title('Transpirational water flux j_w')
-
-    _night_bands(ax_js)
-    ax_js.plot(t, j_s * 1e12, 'r-o', ms=3, lw=1.2)
-    ax_js.set_ylabel('j_s  (pmol/d)', color='r')
-    ax_js.tick_params(axis='y', labelcolor='r')
-    ax_js.set_title('Transported solute flux j_s (to sink)')
-
-    if m_s is not None:
-        ax_st = axes[2]
-        _night_bands(ax_st)
-        ax_st.plot(t, np.asarray(m_s) * 1e6, 'g-o', ms=3, lw=1.2)
-        ax_st.set_ylabel('mean starch  (µM)', color='g')
-        ax_st.tick_params(axis='y', labelcolor='g')
-        ax_st.set_title('Interior starch concentration (cell mean)')
-
-    _night_bands(ax_rat)
-    ax_rat.plot(t, ratio * 1e3, 'k-o', ms=3, lw=1.2)
-    ax_rat.set_ylabel('j_s / j_w  (mM)')
-    ax_rat.set_xlabel('t  (d)')
-    ax_rat.set_title('Export ratio j_s / j_w')
-
-    fig.suptitle('Diurnal needle transport: water, solute, and their quotient')
-    fig.tight_layout(rect=(0, 0, 1, 0.98))
-    fig.savefig(path, dpi=150, bbox_inches='tight')
-    plt.close(fig)
-    return path
+    def __post_init__(self):
+        super().__post_init__()
+        # Seed the constructor rates so _build_st creates the coupled multisolute
+        # path; the actual K matrix is overwritten every step by the diel driver.
+        if self.k_starch_syn == 0.0 and self.k_starch_deg == 0.0:
+            object.__setattr__(self, 'k_starch_syn', self.k_f_day)
+            object.__setattr__(self, 'k_starch_deg', self.k_r_night)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Demo / smoke test
+# Diel starch simulation: sucrose ↔ starch rates modulated by day/night
+# ══════════════════════════════════════════════════════════════════════════════
+class NeedleDiurnalDielStarchSimulation(NeedleDiurnalSimulation):
+    """Diurnal needle transport with a time-dependent sucrose ↔ starch reaction.
+
+    Identical hydraulic/solute machinery to ``NeedleDiurnalSimulation`` (starch
+    branch), except the coupled reaction matrix ``self.mst.K`` is rebuilt at
+    every step from the diel signal so synthesis wins by day and remobilisation
+    wins by night.  Also records the instantaneous ``k_f``/``k_r`` time series.
+    """
+
+    mode = 'dynamic'
+
+    def _set_diel_rates(self, t: float) -> tuple[float, float]:
+        """Rebuild ``self.mst.K`` for time ``t`` and return (k_f, k_r) [1/d]."""
+        p = self.params
+        s = float(s_diel(t, p.period, p.s_phase))
+        k_f = p.k_f_day * max(0.0, s)      # daytime: sucrose → starch
+        k_r = p.k_r_night * max(0.0, -s)   # night:  starch → sucrose
+        # Species order [sugar, starch]; K[s,r] = production of s from r.
+        self.mst.K = np.array([[-k_f,  k_r],
+                               [ k_f, -k_r]])
+        return k_f, k_r
+
+    def run(self) -> SimResult:
+        p = self.params
+        nwj, n_cells = self.nwj, self.n_cells
+        manager = self.mecha.network.cell_manager
+        if self.mst is None:
+            raise RuntimeError("DielStarch run requires the coupled starch path "
+                               "(params.starch must be True).")
+
+        self.mecha.water_flux(h=p.h_idx, verbose=False)
+        psi_os_baseline = np.array(
+            [c.psi_os if c.psi_os is not None else 0.0 for c in manager])
+
+        meso_nodes = np.array([nwj + cid for cid in self.meso_cell_ids], dtype=int)
+        sink_nodes = self._sink_nodes()
+
+        c = np.zeros(self.n_total)
+        for nid, val in self.bc.items():
+            if 0 <= nid < self.n_total:
+                c[nid] = val
+
+        c_sta = np.zeros(self.n_total)
+        if p.c_starch0 != 0.0:
+            for cid in range(n_cells):
+                c_sta[nwj + cid] = p.c_starch0
+
+        seg, edge_ij, d_edges = self._peclet_scaffold()
+
+        times      = [0.0]
+        frames     = [c.copy()]
+        sta_frames = [c_sta.copy()]
+        masses     = [float(np.sum(self.node_vols[self.interior_mask]
+                                   * c[self.interior_mask]))]
+        j_w_ts   = [0.0]
+        j_s_ts   = [0.0]
+        m_sta_ts = [float(np.mean(c_sta[nwj: nwj + n_cells]))]
+        f_ts     = [float(f_transpiration(0.0, p.period, p.f_phase, p.f_baseline))]
+        g_ts     = [float(g_photosynthesis(0.0, p.period, p.g_phase))]
+        kf_ts    = [0.0]
+        kr_ts    = [0.0]
+        pe_all   = [np.zeros(len(edge_ij))]
+
+        self._log(f"=== Diurnal DIEL starch march (dt={p.dt:.4f} d,"
+                  f" {p.max_steps} steps, k_f_day={p.k_f_day:.2f},"
+                  f" k_r_night={p.k_r_night:.2f}, ops='{p.ops}',"
+                  f" scheme='{p.scheme}') ===")
+        stop_reason = f"reached max_steps={p.max_steps}"
+        for step in range(1, p.max_steps + 1):
+            t = step * p.dt
+            f_t = float(f_transpiration(t, p.period, p.f_phase, p.f_baseline))
+            g_t = float(g_photosynthesis(t, p.period, p.g_phase))
+            k_f, k_r = self._set_diel_rates(t)
+
+            self.mecha.set_air_wall_bc(self.psi_air * f_t)
+            bc_step = self.bc
+            c[meso_nodes] += p.c_photo * g_t
+
+            manager.set_osmotic_from_concentration(
+                c[nwj: nwj + n_cells], nwj, p.t_kelvin, psi_os_baseline)
+            self.mecha.water_flux(h=p.h_idx, use_stored_psi_os=True, verbose=False)
+            j_w = self._total_transpiration_flux()
+
+            c, c_sta = self.mst.solve_coupled(
+                h=p.h_idx, i_maturity=p.i_mat, i_scenario=p.i_sce,
+                c_prev=[c, c_sta], boundary_conditions=[bc_step, None],
+                theta=p.theta, operators=p.ops, scheme=p.scheme)
+
+            T = self.st.spatial_operator(
+                h=p.h_idx, i_maturity=p.i_mat, i_scenario=p.i_sce,
+                operators=p.ops, scheme=p.scheme).tocsr()
+            j_s = float(np.sum(T.dot(c)[sink_nodes]))
+
+            if edge_ij:
+                A = self.st.build_advection_matrix(p.i_mat, p.i_sce).tocsr()
+                a_edge = np.abs(np.array([A[iv, iu] for (iv, iu) in edge_ij]))
+                pe_step = a_edge / d_edges
+            else:
+                pe_step = np.zeros(0)
+
+            mass = float(np.sum(self.node_vols[self.interior_mask]
+                                * c[self.interior_mask]))
+            times.append(t);  frames.append(c.copy());  masses.append(mass)
+            sta_frames.append(c_sta.copy())
+            j_w_ts.append(j_w);  j_s_ts.append(j_s)
+            f_ts.append(f_t);  g_ts.append(g_t)
+            kf_ts.append(k_f);  kr_ts.append(k_r)
+            m_sta_ts.append(float(np.mean(c_sta[nwj: nwj + n_cells])))
+            pe_all.append(pe_step)
+
+            if step % 12 == 0 or step == 1:
+                self._log(f"  step {step:4d}  t={t:6.3f} d  f={f_t:.2f} g={g_t:.2f}"
+                          f"  k_f={k_f:.2f} k_r={k_r:.2f}"
+                          f"  j_s={j_s*1e12:.2f} pmol/d"
+                          f"  m_sta={m_sta_ts[-1]*1e6:.2f} µM")
+
+        polys, cell_ids, node_of_cell = self._cell_geometry()
+        self._log(f"  Finished {len(frames)-1} step(s): {stop_reason}")
+
+        extras = {
+            'j_w':     np.asarray(j_w_ts),
+            'j_s':     np.asarray(j_s_ts),
+            'f_drive': np.asarray(f_ts),
+            'g_drive': np.asarray(g_ts),
+            'm_starch': np.asarray(m_sta_ts),
+            'k_f':     np.asarray(kf_ts),
+            'k_r':     np.asarray(kr_ts),
+        }
+        # Tissue-type cell-id arrays so the anatomy map can be rendered offline.
+        extras['tissue_meso']        = np.asarray(self.meso_cell_ids, dtype=int)
+        extras['tissue_strasburger'] = np.asarray(self.strasburger_cell_ids, dtype=int)
+        extras['tissue_phloem']      = np.asarray(self.phloem_cell_ids, dtype=int)
+        extras['tissue_xylem']       = np.asarray(self.xylem_cell_ids, dtype=int)
+        extras['tissue_airspace']    = np.asarray(self.airspace_cell_ids, dtype=int)
+
+        return SimResult(
+            mode='dynamic', params=asdict(p),
+            concentration=np.asarray(frames, dtype=np.float32),
+            concentration_starch=np.asarray(sta_frames, dtype=np.float32),
+            peclet=np.asarray(pe_all, dtype=np.float32), pe_segments=seg,
+            cell_polygons=polys, cell_ids=cell_ids, node_of_cell=node_of_cell,
+            times=np.asarray(times), interior_mass=np.asarray(masses),
+            frac_to_sink=np.asarray(j_s_ts), stop_reason=stop_reason,
+            water_flux_total=(j_w_ts[-1] if j_w_ts else None),
+            extras=extras,
+        )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Demo / smoke test  (compute here; render via post_sim.py)
 # ══════════════════════════════════════════════════════════════════════════════
 if __name__ == '__main__':
+    from post_sim import mass_balance_plot, concentration_gif
+
     SEED = 42
     experiments = [
         DynamicParams(seed=SEED, label='dyn_lowPD',  d_pd=1e-1, max_steps=40),
@@ -1360,5 +1355,5 @@ if __name__ == '__main__':
         print(res.summary())
         stem = os.path.join(_OUT_DIR, f"needle_{res.params['label']}")
         res.save(stem + '.npz')
-        res.mass_balance_plot(stem + '_massbalance.png')
-        res.concentration_gif(stem + '_concentration.gif')
+        mass_balance_plot(res, stem + '_massbalance.png')
+        concentration_gif(res, stem + '_concentration.gif')

@@ -10,7 +10,7 @@ Configuration (per specification):
     PSI_AIR = -1e3 * f(t)  hPa   (diurnally modulated, peaks at noon)
     c_meso  = 50e-6 * g(t)  mol/cm³  (photosynthetic source, daytime only)
 
-Measured outputs: j_w, j_s, j_s/j_w  — see needle.diurnal_flux_plot.
+Measured outputs: j_w, j_s, j_s/j_w  — see post_sim.diurnal_flux_plot.
 """
 
 import os
@@ -21,13 +21,13 @@ from needle import (
     NeedleDiurnalSimulation,
     SimResult,
     get_geometry_base,
-    diurnal_flux_plot,
 )
+from post_sim import diurnal_flux_plot
 
 
 def run_diurnal(params: DiurnalParams = None,
                 geometry: GeometryBase = None,
-                verbose: bool = True) -> SimResult:
+                verbose: bool = False) -> SimResult:
     params   = params   or DiurnalParams(seed=42)
     geometry = geometry or get_geometry_base(params.seed)
     return NeedleDiurnalSimulation(params, geometry, verbose=verbose).run()
