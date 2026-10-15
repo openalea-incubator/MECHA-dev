@@ -1,27 +1,47 @@
 name: mecha
 channels:
+  - openalea3            # openalea.mtg / plantgl (metafspm)
   - conda-forge
-  - https://conda.anaconda.org/openalea3
-  - https://conda.anaconda.org/openalea3/label/dev
-channel_priority: strict
+  - nodefaults           # ignore the defaults channels added by ~/miniconda3/.condarc
+# flexible: strict priority doubled GRANAP's solve time with no different outcome
+channel_priority: flexible
+
+# GRANAP and metafspm are not packaged yet in the versions this port needs: install them from source in this
+# environment once it is created, from the folder holding the three repositories:
+#
+#     conda activate mecha
+#     pip install -e metafspm          # branch data_structure_api
+#     pip install -e GRANAP            # branch to_metafspm
+#
+# The dependencies below are theirs and MECHA's. The geometry stack is pinned as in GRANAP (its golden regression
+# suite pins an exact cell census, and a different GEOS build shifts it).
 dependencies:
-  - python
+  - python                # openalea.plantgl (via openalea.mtg) has no 3.14 build
   - pip
-  - pytest
+  - geos =3.14.1          # geometry engine — decides GRANAP's golden census
+  - shapely =2.1.2        # GEOS bindings
+  - scipy >=1.13,<1.18    # sparse solvers; GRANAP's Voronoi / cKDTree
   - numpy
-  - scipy
-  - ipykernel
+  - geopandas
+  - pandas
+  - matplotlib            # bundles pylab
   - networkx
   - lxml
-  - geopandas
-  - matplotlib # bundles pylab
-  - shapely
-  - pydantic
-  - opencv
+  - munkres               # GRANAP
+  - pydantic >=2.7
+  - roifile               # GRANAP
+  - ipykernel             # notebooks
+  # metafspm
   - openalea.mtg
-  - openalea.granap
-  - pyan3 
-  - graphviz 
+  - numba
+  - pyyaml
+  - pytest
+  # MECHA's documentation tools
+  - pyan3
+  - graphviz
   - python-graphviz
   - pip:
+    # cv2 (GRANAP's geometry_collection). From pip rather than conda: every conda opencv 4.13 build needs icu 78,
+    # while openalea.plantgl (required by openalea.mtg) is built on Qt 5 / icu 75, so the solve never ends.
+    - "opencv-python-headless==4.13.0.*"
     - "-e ..[doc]"
