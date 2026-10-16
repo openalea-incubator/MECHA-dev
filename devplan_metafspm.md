@@ -826,3 +826,23 @@ answer: yes to recommendation
   - **The root xylem is below the stem's:** the presets give the roots' xylem sap π = −0.18 MPa and the shoot none. The pressure is continuous through the junctions, but the water potential steps at the collar. It disappears when a solute model gives the sap its π along the whole plant (the `reaction` branch), or with presets for the shoot.
 - **Tests:** 172 passed, 1 skipped.
 - **Not in this step:** the elongation sink (barrier 0), a phloem boundary at barrier > 0, the profiles' convection velocity.
+
+### 21a. Legacy problems p and q fixed (2026-10-16, your request)
+
+- **`presets_rules`** (MechaOsmoticPresets): 1 the original MECHA's (default), 2 the legacy's (set by the osmotic comparison).
+- **p, the cortex layers:**
+  - **The original's rule** (`src_old`, its `Os_c1`…`Os_c8`): c1 on the outer cortex row (`row_outercortex`), c2 on the next row inward, …, c8 on the 8th row and deeper, and c8 when the cortex has a single row.
+  - **The legacy departs from it twice.** Its lookup tests the rank against the row values, which puts every cortex cell in row 0. Its formula `8 − (row_outer − row)` also runs outward (c8 on the outer row).
+  - **The port** now takes each cell's row from its rank, with the original's order.
+- **q:** with os_hetero 4, the endodermis cells take their own `osmotic_endo_cell`. The legacy's rules read `osmotic_endo`, the stelar apoplast's value at the endodermis.
+- **Reviewed difference** (standard problem with the osmotic terms, default scenario otherwise, the standard uptake in cm³ d⁻¹):
+
+| root, barrier | os_hetero 1: fixed / legacy | os_hetero 2: fixed / legacy |
+|---|---|---|
+| monocot, 1 | 4.0107e-3 / 3.6444e-3 (+10.1 %) | 4.0183e-3 / 3.8697e-3 (+3.8 %) |
+| monocot, 3 | 1.9793e-3 / 1.4919e-3 (+32.7 %) | 1.9328e-3 / 1.7348e-3 (+11.4 %) |
+| dicot, 1 | 7.0791e-3 / 6.4316e-3 (+10.1 %) | 7.0890e-3 / 6.8263e-3 (+3.8 %) |
+| dicot, 3 | 4.0151e-3 / 3.0268e-3 (+32.6 %) | 3.9147e-3 / 3.5132e-3 (+11.4 %) |
+
+  The fixed profiles take the inner cortex down to −9300 hPa (os_hetero 1). The legacy kept the whole cortex at c1's −6400. The stronger osmotic gradient raises the uptake, most where the endodermis is suberized (barrier 3), since the symplastic path then carries the flow.
+- **Tests** (`test_legacy_fixes.py`): every cortex cell's π against its layer (os_hetero 1, the original's order; the legacy's single value with rules 2); the endodermis cells' own value with os_hetero 4.

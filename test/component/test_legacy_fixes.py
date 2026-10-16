@@ -195,3 +195,43 @@ def test_q_l4_each_wall_its_own_thickness():
     junctions = np.flatnonzero((soil1 > 0) & (net.kind != WALL))
     np.testing.assert_allclose(soil2[junctions] / soil1[junctions], t1 / net.wall_thickness[junctions], rtol=1e-12)
     assert np.isfinite(net.wall_thickness[junctions]).all() and junctions.size > 0
+
+
+def _presets_section(**parameters):
+    from openalea.mecha.osmotic import MechaOsmoticPresets, legacy_rows
+    g, ds, anatomy = anatomy_data_structure(root(1))
+    ds.register("barrier", np.full(ds.n_nodes(), 1.), location="node")
+    presets = MechaOsmoticPresets(data_structure=ds)
+    for name, value in parameters.items():
+        setattr(presets, name, value)
+    presets()
+    nodes, _, geo = presets.section_geometries()[int(ds.entity_ids("SubOrgan")[0])]
+    rank_to_row, _, row_outer = legacy_rows(geo.n_layer, geo.layer_dist)
+    return ds, nodes, geo, rank_to_row, row_outer
+
+
+def test_p_cortex_layers_from_the_outer_cortex():
+    """Problem p: with os_hetero 1, each cortex cell takes its layer's value, c1 on the outer cortex row, c2 the next
+    inward, ..., c8 the 8th and deeper (the original's); the legacy gives them all c1's."""
+    from openalea.mecha.osmotic import tissue_values
+    ds, nodes, geo, rank_to_row, row_outer = _presets_section(os_hetero=1., presets_rules=1.)
+    pi = np.asarray(ds.get("osmotic_potential"))[nodes]
+    vals, _ = tissue_values({"os_hetero": 1, "os_cortex": -4800., "osmotic_sieve": -1e4, "s_factor": 1., "s_hetero": 0})
+    interc = np.zeros(geo.kind.size, dtype=bool)
+    interc[geo.typed["intercellular"]] = True
+    cortex = [c for c in geo.cells if 40 <= geo.cell_rank[c] < 50 and not interc[c]]
+    for c in cortex:
+        depth = row_outer - int(rank_to_row[geo.cell_rank[c]]) + 1
+        assert pi[c] == vals[f"c{depth}" if 1 <= depth <= 8 else "c8"]
+    assert len({pi[c] for c in cortex}) > 1
+    ds, nodes, *_ = _presets_section(os_hetero=1., presets_rules=2.)
+    assert len({np.asarray(ds.get("osmotic_potential"))[nodes][c] for c in cortex}) == 1
+
+
+def test_q_endodermis_cells_own_potential():
+    """Problem q: with os_hetero 4, the endodermis cells take osmotic_endo_cell, whatever the stelar apoplast's
+    osmotic_endo."""
+    ds, nodes, geo, *_ = _presets_section(os_hetero=4., presets_rules=1., osmotic_endo_cell=-6100., osmotic_endo=-4800.)
+    pi = np.asarray(ds.get("osmotic_potential"))[nodes]
+    endo = [c for c in geo.cells if geo.cell_rank[c] == 3]
+    assert endo and all(pi[c] == -6100. for c in endo)

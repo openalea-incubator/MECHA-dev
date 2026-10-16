@@ -18,9 +18,8 @@ SCENARIOS = [dict(os_hetero=0, s_hetero=0, s_factor=1.0), dict(os_hetero=1, s_he
              dict(os_hetero=2, s_hetero=2, s_factor=1.0), dict(os_hetero=3, s_hetero=0, s_factor=0.7),
              dict(os_hetero=4, s_hetero=1, s_factor=0.9, osmotic_epi=-5100., osmotic_exo=-5300., osmotic_peri=-5600.,
                   osmotic_stele=-6000.)]
-# os_hetero 4: the legacy reads the endodermis cells' potential from osmotic_endo, the key of the stelar apoplast's
-# value at the endodermis; the port has its own (osmotic_endo_cell), here set to it
-PORT_ONLY = dict(osmotic_endo_cell=-4.80E3)
+# the legacy's presets (its problems p and q, fixed in the port's default rules)
+PORT_ONLY = dict(presets_rules=2.)
 
 
 @pytest.fixture(scope="module", params=[(b, i) for b in (1, 3) for i in range(len(SCENARIOS))],

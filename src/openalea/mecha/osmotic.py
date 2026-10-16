@@ -212,7 +212,8 @@ def tissue_values(P):
         vals.update({"endo": (os_cortex - 5000.0) / 2.0, "peri": -5000.0, "stele": -5000.0})
         vals["comp"] = (os_sieve - 5000.0) / 2
     else:
-        vals = {"epi": P["osmotic_epi"], "exo": P["osmotic_exo"], "endo": P["osmotic_endo_cell"],
+        endo = P["osmotic_endo_cell"] if P["presets_rules"] == 1 else P["osmotic_endo"]     # legacy problem q
+        vals = {"epi": P["osmotic_epi"], "exo": P["osmotic_exo"], "endo": endo,
                 "peri": P["osmotic_peri"], "stele": P["osmotic_stele"], "cortex": os_cortex}
         vals.update({f"c{i}": os_cortex for i in range(1, 9)})
         vals["comp"] = (os_sieve + P["osmotic_stele"]) / 2
@@ -244,6 +245,8 @@ def section_presets(geo, P, barrier, membranes):
     position[geo.legacy_order] = np.arange(geo.legacy_order.size)
     order = np.argsort(position[np.asarray([w for w, _ in membranes], dtype=np.int64)], kind="stable")
     rows_present = rank_to_row[~np.isnan(rank_to_row)]
+    legacy = P["presets_rules"] == 2
+    cortex_rows = {int(rank_to_row[r]) for r in range(40, 50) if not np.isnan(rank_to_row[r])}
     for k in order:
         i, j = (int(v) for v in membranes[k])
         r_val = float(r_rel[i]) if not np.isnan(r_rel[i]) else 0.0
@@ -267,7 +270,7 @@ def section_presets(geo, P, barrier, membranes):
         elif P["osmotic_symmetry_xyl"] == 1:
             os_xyl = float((P["osmotic_xyl"] + P["osmotic_endo"]) / 2)
         rank = int(geo.cell_rank[j])
-        row = int(rank_to_row[rank]) if rank in rows_present else 0     # the legacy's test: a row value, not a rank
+        row = int(rank_to_row[rank]) if rank in rows_present else 0     # the legacy's test (p): a row value, not a rank
         cell_os, wall_os, sig = 0.0, os_soil, 0.0
         cgroup = geo.cgroup[j]
         mature = barrier > 0
@@ -287,7 +290,11 @@ def section_presets(geo, P, barrier, membranes):
             if interc[j]:
                 cell_os, wall_os, sig = os_soil, os_soil, 0
             else:
-                key = f"c{max(1, min(8, 8 - (row_outer_cortex - row)))}"
+                if legacy:                       # problem p: every cortex cell in row 0, and the layers reversed
+                    key = f"c{max(1, min(8, 8 - (row_outer_cortex - row)))}"
+                else:                            # the original's: c1 the outer cortex row, c8 the 8th and deeper
+                    depth = row_outer_cortex - int(rank_to_row[rank]) + 1
+                    key = f"c{depth}" if 1 <= depth <= 8 and len(cortex_rows) > 1 else "c8"
                 cell_os, sig = vals.get(key, vals.get("c1", 1)), s_vals["cortex"]
         elif cgroup == 5:
             cell_os, sig, wall_os = vals["stele"], s_vals["stele"], (os_xyl if mature else os_soil)
@@ -314,14 +321,18 @@ class MechaOsmoticPresets(MechaSections):
     reflection coefficients, from the legacy's scenario rules (os_hetero, s_hetero, the soil's and the xylem's
     profiles). Their outputs are MechaHydraulics' "Solutes" inputs.
     """
+    presets_rules: float = _p("", "1: the original MECHA's presets (its cortex layers c1-c8 from the outer cortex "
+                                  "inward; the endodermis cells' own osmotic_endo_cell), 2: the legacy's (all cortex "
+                                  "cells in c1, problem p; the endodermis cells at osmotic_endo, problem q), for the "
+                                  "comparison", 1.)
     os_hetero: float = _p("", "the cells' osmotic potentials: 0 os_cortex everywhere, 1 and 2 the legacy's profiles, "
                               "3 cortex os_cortex and stele -5000 hPa, 4 per tissue (osmotic_epi...)", 0.)
     os_cortex: float = _p("hPa", "the cortex cells' osmotic potential", -4.8E3)
     osmotic_sieve: float = _p("hPa", "the sieve tubes' osmotic potential (NaN: the stele's)", -1.0E4)
     osmotic_epi: float = _p("hPa", "the epidermis cells' osmotic potential (os_hetero 4)", -4.8E3)
     osmotic_exo: float = _p("hPa", "the exodermis cells' osmotic potential (os_hetero 4)", -4.8E3)
-    osmotic_endo_cell: float = _p("hPa", "the endodermis cells' osmotic potential (os_hetero 4; the legacy reads it "
-                                         "from osmotic_endo, the stelar apoplast's)", -4.8E3)
+    osmotic_endo_cell: float = _p("hPa", "the endodermis cells' osmotic potential (os_hetero 4; presets_rules 2, the "
+                                         "legacy's: osmotic_endo, the stelar apoplast's)", -4.8E3)
     osmotic_peri: float = _p("hPa", "the pericycle cells' osmotic potential (os_hetero 4)", -4.8E3)
     osmotic_stele: float = _p("hPa", "the stele cells' osmotic potential (os_hetero 4)", -4.8E3)
     s_hetero: float = _p("", "the reflection coefficients: 0 uniform, 1 the stele's halved, 2 the cortex's halved", 0.)
