@@ -846,3 +846,12 @@ answer: yes to recommendation
 
   The fixed profiles take the inner cortex down to −9300 hPa (os_hetero 1). The legacy kept the whole cortex at c1's −6400. The stronger osmotic gradient raises the uptake, most where the endodermis is suberized (barrier 3), since the symplastic path then carries the flow.
 - **Tests** (`test_legacy_fixes.py`): every cortex cell's π against its layer (os_hetero 1, the original's order; the legacy's single value with rules 2); the endodermis cells' own value with os_hetero 4.
+
+### 21b. Soil potential gradients around a section: not ported (2026-10-16, your decision)
+
+The legacy reads `psi_soil_left`/`psi_soil_right` (and `osmotic_left`/`osmotic_right`) only in its scenario loop (`water_flux`). No scenario in the branch being ported sets the two sides apart: the default scenario, `extdata/BCs.xml`, the tests and the tutorials all give equal values. So the gradient is not ported until a real scenario needs it. The osmotic presets keep the legacy's left–right weighting of the soil solution (`osmotic_symmetry_soil` 1), which is uniform with equal sides. If one is ported later, the consequences listed in the recap of 2026-10-16 apply:
+- the standard problem only;
+- kr needs a soil reference;
+- net versus gross uptake;
+- x_rel from the cells' centroids rather than GRANAP's seeds;
+- the anatomy's own x axis.
