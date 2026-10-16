@@ -210,6 +210,10 @@ def development(ds, is_root, tip_segment=1e-9, strip=0.1):
     return np.where(is_root, code, 1.)
 
 
+# the potential of the leaves' air spaces (hPa): RH 97 % at 20 °C (Kelvin's equation, R T / V_w ln RH)
+AIR_SPACE_PSI = 8.314 * 293.15 / 1.8e-5 * np.log(0.97) * 1e-2
+
+
 class SeedlingHydraulics(CompositeModel):
     """
     The plant population model: the seedlings' architecture (initiators), their GRANAP anatomies (anatomy mode: the
@@ -231,6 +235,11 @@ class SeedlingHydraulics(CompositeModel):
         self.osmotic = MechaOsmoticPresets(data_structure=data_structure, time_step=time_step)
         self.hydraulics = MechaHydraulics(data_structure=data_structure, time_step=time_step)
         self.hydraulics.collar_condition = 0.                          # the shoot above the roots
+        # the leaves transpire through their stomatal pores (transpiration_model 1) for now: with their air spaces'
+        # walls pinned (2, §25), nothing limits the leaves' outflow, and the scene's plant-soil iteration diverges
+        # (§25a); AIR_SPACE_PSI is their pinned potential when they are used
+        self.hydraulics.transpiration_model = 1.
+        self.hydraulics.air_space_psi = AIR_SPACE_PSI
         self.declare_data_and_couple_components(translator_path=Translator(),
                                                 components=(self.architecture, self.anatomy, self.osmotic,
                                                             self.hydraulics))

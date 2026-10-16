@@ -19,8 +19,8 @@ from openalea.metafspm.data_structure.configs import ScalesConfig
 from openalea.metafspm.solve.decorator import (boundary_set, graph_jacobian, graph_output, graph_system,
                                                 node_balance, rate, totalstate)
 
-from openalea.mecha.conductance import (Network, assemble, boundary_terms, cortex_parameters, edge_conductances,
-                                       set_edge_ends, set_wall_thickness, wall_air_terms)
+from openalea.mecha.conductance import (GAS_CONSTANT_HPA, Network, assemble, boundary_terms, cortex_parameters,
+                                       edge_conductances, set_edge_ends, set_wall_thickness, wall_air_terms)
 from openalea.mecha.geometry import (AXIAL_JUNCTION, MEMBRANE, WALL, WALL_AIR, XYLEM_CGROUPS, phi_thick_cells, section_geometry,
                                      section_of, section_parts)
 from openalea.mecha.postprocess import (VISCOSITY_PHLOEM, VISCOSITY_XYLEM, axial_conductances, poiseuille,
@@ -369,6 +369,10 @@ class MechaHydraulics(MechaSections):
     air_offset: float = state_variable(**_doc("cm3 d-1", "wall_air edges: see air_tail_conductance"),
                                        initialize=0., scale=SCALES.Connection, location="edge",
                                        state_variable_type="NonInertialIntensive")
+    vapour_node: float = state_variable(**_doc("", "1 on the air spaces joined to walls by wall_air edges: their ψ "
+                                                   "holds their vapour pressure (in p_sat units)"),
+                                        initialize=0., scale=SCALES.Compartment, location="node",
+                                        state_variable_type="descriptor")
     air_wall_conductance: float = state_variable(**_doc("cm3 hPa-1 d-1", "a pinned (evaporating) wall's penalty: "
                                                         "1e3 × its section's largest diagonal term (0 elsewhere)"),
                                                  initialize=0., scale=SCALES.Compartment, location="node",
@@ -514,7 +518,7 @@ class MechaHydraulics(MechaSections):
     def _conductance(self, network_path, barrier, length, anatomy_template) \
             -> tuple[np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,
                      str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str,
-                     np.ndarray]:
+                     np.ndarray, str, np.ndarray]:
         """
         Every edge's conductance, and the boundary conductances of the nodes (soil, axial), from MECHA's geometry,
         the segments' barriers and heights (their lengths), and the plants' parameters; the standard problem's
@@ -556,7 +560,19 @@ class MechaHydraulics(MechaSections):
                 "evaporation_conductance", evaporation, "standard_axial_inflow", inflow,
                 "air_tail_conductance", np.where(wall_end >= 0, air_tail, 0.),
                 "air_head_conductance", np.where(wall_end >= 0, air_head, 0.),
-                "air_offset", np.where(wall_end >= 0, air_offset, 0.), "air_wall_conductance", penalty)
+                "air_offset", np.where(wall_end >= 0, air_offset, 0.), "air_wall_conductance", penalty,
+                "vapour_node", np.isin(np.arange(net.cgroup.size), air_end[wall_end >= 0]).astype(float))
+
+    def _liquid_equivalent(self, value, vapour_node, location="node"):
+        """The water potential (hPa): ψ + π, and on the vapour nodes Kelvin's liquid equivalent of their vapour
+        pressure, ln(x / p_sat) / α (α = M_w / (R T))."""
+        P = {name: np.asarray(self.parameter_values(name, location), dtype=float) for name in
+             ("p_sat", "water_molar_mass", "wall_air_temperature")}
+        alpha = P["water_molar_mass"] / (GAS_CONSTANT_HPA * P["wall_air_temperature"])
+        vapour = np.asarray(vapour_node) > 0
+        with np.errstate(divide="ignore", invalid="ignore"):
+            kelvin = np.log(np.maximum(value, 1e-300) / P["p_sat"]) / alpha
+        return vapour, kelvin
 
     def _air_wall_penalty(self, geometries, net, P_node, K, soil, axial, K_wall, K_air, wall_end, air_end, root):
         """
@@ -802,8 +818,9 @@ class MechaHydraulics(MechaSections):
             return evaporation_conductance * (psi - evaporation_psi) + air_wall_conductance * (psi - air_wall_psi)
 
         @graph_output("water_potential", location="node")
-        def _water_potential(self, psi, osmotic_potential):
-            return psi + osmotic_potential
+        def _water_potential(self, psi, osmotic_potential, vapour_node):
+            vapour, kelvin = self._liquid_equivalent(psi, vapour_node)
+            return np.where(vapour, kelvin, psi + osmotic_potential)
 
     # ── The sections' results ──
     @totalstate(include_inactive=True)
@@ -851,6 +868,8 @@ class MechaHydraulics(MechaSections):
                                                              plant[vessels].mean(), geo.perimeter, h)
         with_osmotic = np.asarray(self.parameter_values("standard_osmotic", "node")) > 0
         water = standard + np.where(with_osmotic, np.asarray(osmotic_potential, dtype=float), 0.)
+        vapour, kelvin = self._liquid_equivalent(standard, ds.get("vapour_node"))
+        water = np.where(vapour, kelvin, water)
         return tuple(x for name in names for x in ((out[name],) if name == "kr" else (name, out[name]))) + (
             "standard_water_potential", water)
 

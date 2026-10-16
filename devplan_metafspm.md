@@ -1039,3 +1039,37 @@ answer: yes, the intent is rather a photosynthetic source flow.
 2. **The water model above,** compared with `legacy_reactions`' scenarios 0 (the standard problem: xylem at 0, walls pinned at −1e4 hPa) and 1 (ψ_xyl −200 hPa, its osmotic presets with s_factor 0.7) on the needle, to D1's tolerances.
 3. **All leaves:** the defaults above in the plant problem. The seedling SPAC example then transpires through its leaves' air spaces' walls; its new numbers are a reviewed difference.
 4. **Then the solutes** (§23–24).
+
+### 25a. Steps 1–2 done; step 3 stopped on a question (2026-10-16)
+
+**The needle in the port:** GRANAP's library with `NeedleAnatomy` and `for_needle`, seed 42 (`test/plants.py`: `needle`, `needle_anatomy_component`): the simulations' network exactly.
+
+**The water model** (`conductance.py`, `component.py`):
+- **The `wall_air` exchange:** `wall_air_terms`, the reactions' `_fill_wall_air`, with the flanking membrane's own K. In the balances and flows it is an asymmetric flux `a ψ_tail − b ψ_head + c` (`air_tail_conductance`, `air_head_conductance`, `air_offset`), with its Jacobian.
+- **The air links:** `k_air_link` × height × length, in `conductance`.
+- **The pinned walls:** `air_wall_conductance` (the penalty), held at `air_wall_psi` / `standard_air_wall_psi` by robin sets in both problems.
+- **Which walls:** by default every wall of a leaf section's air spaces, at the water potential (`evaporating_walls` 1). Stems keep theirs free: you said leaves.
+- **`kw_meso_hypo`:** the (2, 4) walls, their membranes and plasmodesmata.
+- **Options for the comparison:** `membrane_floor_rules`, `standard_solve_shoot`, `presets_sections`.
+- **The pores (E3)** as `transpiration_model` 1.
+- **The air spaces' water potential** (`water_potential`, `standard_water_potential`) is Kelvin's liquid equivalent of their vapour pressure, ln(x / p_sat) / α. Their ψ holds that vapour pressure (`vapour_node`).
+- **The Newton tolerance** is 1e-8 cm³ d⁻¹, from 1e-10: the penalty's round-off is ~1e-9. The systems are linear, solved by the first step.
+
+**Against the reactions' needle** (`test/comparison/test_needle_water.py`, 5 tests):
+- the same 1104 pinned walls, the penalty bit-exact (1000.5091151343986);
+- every edge's K and every wall_air coefficient bit-exact;
+- scenario 0's solution to 1.8e-12 of its range (tested at 1e-11: the penalty's conditioning);
+- scenario 1's presets: π to 1e-13, σ exact.
+
+**Problems found in the reactions' needle:**
+- **r9:** `kw_meso_hypo` ("hypodermis–mesophyll") applies to the (2, 4) interface. GRANAP's hypodermis is cgroup 1, so it cuts the epidermis–cgroup 4 walls (mesophyll, transfusion, air spaces), not the hypodermis' (1, 4).
+- **r10:** the legacy sets a wall's osmotic potential per membrane. On 165 needle walls, between a cortical-rule and a stelar-rule cell (transfusion tissue, cgroup 4 inside the endodermis, against Strasburger and parenchyma cells; the guard cells' walls), its equations carry two apoplastic potentials, one per side. The port keeps one per wall (the last set), the physically consistent choice.
+  - With the legacy's per-membrane values as drives, the legacy's scenario-1 solution satisfies the port's equations to 7e-16 of the penalty's scale (the test).
+  - With one value per wall it differs by up to 374 hPa (3.7 %), at those walls.
+- **Tests:** 180 passed, 1 skipped.
+
+**Step 3, all leaves, is stopped on a question.**
+- **The run diverged:** with the seedling's leaves transpiring through their air spaces' walls (pinned at RH 97 %, −4.12 MPa), the SPAC scene went from soil potentials of −2 MPa to −200 MPa, its change per step growing 1.16× each step, the transpiration reversed.
+- **One plant alone transpires about as much as with the pores:** at a soil of −0.1 MPa, 0.38 cm³ d⁻¹ against 0.24.
+- **The cause:** the pinned walls are a fixed potential with no limiting conductance (the pores had their stomatal one). The scene's plant–soil iteration, without relaxation, amplifies: a drier soil gives a smaller uptake; below −4.12 MPa, the pinned walls feed the soil.
+- **For now:** the seedling example keeps its stomatal pores (`transpiration_model` 1, with a note), and gives back its earlier numbers. The question is Q-T1 (recap of 2026-10-16).

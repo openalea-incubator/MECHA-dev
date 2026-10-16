@@ -78,15 +78,16 @@ def sections_by_organ(built, path):
         collection.set_array(q)
         collection.set_clim(np.percentile(q, 5), q.max())
         ax.add_collection(collection)
-        pores = nodes & (np.asarray(plant.get("evaporation_conductance")) > 0)
+        pores = nodes & ((np.asarray(plant.get("evaporation_conductance")) > 0)
+                         | (np.asarray(plant.get("air_wall_conductance")) > 0))           # the evaporating sites
         low, high = np.percentile(psi[nodes], (0.5, 100))
         norm = matplotlib.colors.Normalize(min(low, psi[pores].min()) if pores.any() else low, high)
         points = ax.scatter(x[nodes & ~pores], y[nodes & ~pores], c=psi[nodes & ~pores], s=0.6, cmap="coolwarm_r",
                             norm=norm)
-        if pores.any():                                                # the stomatal pores, enlarged
+        if pores.any():                                                # the evaporating sites, enlarged
             ax.scatter(x[pores], y[pores], c=psi[pores], s=40, cmap="coolwarm_r", norm=norm, edgecolors="k",
                        linewidths=0.6, zorder=3)
-        fig.colorbar(points, ax=ax, label="ψ (MPa)" + ("; circled: stomatal pores" if pores.any() else ""),
+        fig.colorbar(points, ax=ax, label="ψ (MPa)" + ("; circled: evaporating sites" if pores.any() else ""),
                      shrink=0.8)
         ax.set_aspect("equal")
         ax.set_title(f"{kinds[i]} section {int(segments[i])} (edges: log |Q|, grey)")
@@ -97,7 +98,8 @@ def sections_by_organ(built, path):
 
 
 def potential_profile(built, path):
-    """Mean ψ along the path: soil at the roots, root xylem, stem xylem, leaf xylem, leaf cells, stomatal pores, air."""
+    """Mean ψ along the path: soil at the roots, root xylem, stem xylem, leaf xylem, leaf cells, evaporating sites (the
+    pinned walls of the leaves' air spaces, or their stomatal pores with transpiration_model 1), air."""
     plant = built.populations[0].data_structure
     segments, kinds, _, psi_x, _ = section_table(plant)
     owner, psi = plant.owner("SubOrgan"), np.asarray(plant.get("water_potential")) / HPA_PER_MPA
@@ -105,7 +107,7 @@ def potential_profile(built, path):
     soil = plant.get("soil_conductance") > 0
     barrier = np.asarray(plant.get("barrier"))
     conducting = np.array([barrier[owner == i][0] > 0 for i in range(segments.size)])   # mature xylem (not tips)
-    pores = plant.get("evaporation_conductance") > 0
+    pores = (plant.get("evaporation_conductance") > 0) | (plant.get("air_wall_conductance") > 0)   # evaporating
     leaf = kind_of_node == "leaf"
     steps = [("soil (at the roots)", float(np.mean(plant.get("soil_psi")[soil])) / HPA_PER_MPA),
              ("root surface", psi[soil].mean()),
@@ -113,7 +115,7 @@ def potential_profile(built, path):
              ("stem xylem", psi_x[np.array(kinds) == "stem"].mean()),
              ("leaf xylem", psi_x[np.array(kinds) == "leaf"].mean()),
              ("leaf cells", psi[leaf & (plant.get("kind") == 0) & ~pores].mean()),
-             ("stomatal pores", psi[pores].mean())]
+             ("evaporating sites", psi[pores].mean())]
     fig, ax = plt.subplots(figsize=(8, 4.5))
     ax.plot(range(len(steps)), [v for _, v in steps], "o-")
     ax.set_xticks(range(len(steps)), [name for name, _ in steps], rotation=25, ha="right")
@@ -324,7 +326,7 @@ def draw_chain(built, chain, path, title):
     owner, psi = plant.owner("SubOrgan"), np.asarray(plant.get("water_potential")) / HPA_PER_MPA
     x, y = np.asarray(plant.get("section_x")), np.asarray(plant.get("section_y"))
     _, kinds, _, _, _ = section_table(plant)
-    pores = np.asarray(plant.get("evaporation_conductance")) > 0
+    pores = (np.asarray(plant.get("evaporation_conductance")) > 0) | (np.asarray(plant.get("air_wall_conductance")) > 0)
     members = [owner == index[v] for v in chain]
     widths = [x[m].max() - x[m].min() for m in members]
     offsets, cursor = [], 0.
@@ -356,7 +358,7 @@ def draw_chain(built, chain, path, title):
         i = index[v]
         label = f"{kinds[i]} {v}\nψ xylem {psi[m & np.isin(plant.get('cgroup'), XYLEM)].mean():.2f}"
         ax.annotate(label, (x[m].min() + off + w / 2, y[m].max() + 0.05), ha="center", va="bottom", fontsize=8)
-    fig.colorbar(points, ax=ax, label="ψ (MPa)" + ("; circled: stomatal pores" if (shown & pores).any() else ""),
+    fig.colorbar(points, ax=ax, label="ψ (MPa)" + ("; circled: evaporating sites" if (shown & pores).any() else ""),
                  shrink=0.8, pad=0.01)
     fig.colorbar(collection, ax=ax, label="xylem junction flow (mm³ s⁻¹)", shrink=0.8, pad=0.01)
     ax.set_aspect("equal")
