@@ -1150,3 +1150,24 @@ answer: Keep only this third model, I don't want several options for now, to kee
 - **Q-T5:** only this model (flow at the leaf surface). No options: the stomatal pores' evaporation (E3) and the pinned walls are removed from the component, to keep its syntax simple.
   - Consequence: the needle's water state can no longer be compared exactly with the reactions' (its pinned walls). The solute comparison then feeds both transports the same water flows (the legacy's), which compares the transport itself.
 - **Q-T2 and Q-T4:** not understood, so reformulated in the recap of 2026-10-16 (plain-language versions to answer here).
+
+### 26f. Your answers to the reformulated Q-T2 and Q-T4, and the stomatal conductance from the anatomy (2026-10-16)
+
+- **Q-T2:** yes, no boundary layer for now: only the pore → leaf-surface edges, the organ's transpiration imposed at its surface node.
+- **Q-T4:** yes, the vapour conductances in physical units:
+  - the walls' evaporation by the Kelvin coefficient;
+  - the air links by the vapour's diffusivity in air;
+  - the stomata as below.
+
+  The reactions' placeholders (`kwa`, `k_air`) go with its pinned walls (Q-T5).
+- **The solutes:** the comparison feeds both transports the legacy's water flows.
+- **Your question: can the stomatal conductance come from GRANAP's stomata dimensions?** Yes, as the anatomical maximum, the standard way (Brown & Escombe's diffusion through a pore with its end correction; Franks & Beerling 2009, the "anatomical g_max"):
+  - **Per pore:** g_max = D_v a / (l + (π/2) √(a/π)), with a the pore's area, l its depth, D_v the vapour's diffusivity.
+  - **From the section:** the aperture's width and the depth through the epidermis (the pore polygon). Not in a 2D section, so parameters: the pore's length along the leaf (a = width × length), and how many stomata the section's pores stand for over the segment's length (a stomatal density, or a count per section).
+  - **The actual conductance** is regulated by the guard cells (turgor, light, CO2): g_s = aperture fraction × g_max. The aperture fraction is a per-pore input for a stomatal model later, 1 by default.
+  - So GRANAP gives the pores' geometry, MECHA computes each pore edge's conductance, and a stomatal model can open or close them one by one.
+
+**Order:**
+1. The GRANAP step (Q-T3): pores as air nodes, air links in every leaf preset, the leaf-surface Compartment and the stomatal Connections. A design note in GRANAP's plan first, from the code map.
+2. MECHA: the single transpiration model. The organ's flow; the surface nodes' Neumann set; the walls' Kelvin evaporation, the air links' and the stomata's conductances in physical units. The pores (E3) and the pinned walls removed.
+3. The solutes, compared on the legacy's water flows.
