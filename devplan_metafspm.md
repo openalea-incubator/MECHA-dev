@@ -1013,3 +1013,29 @@ answer: yes, the intent is rather a photosynthetic source flow.
     - in MECHA: vapour conductances along the air links, and the stomatal conductance between the pore and the atmosphere as the only boundary to the air. The evaporating sites are then every wall facing an air space (Kelvin), the same basis for needles and leaves.
 
   That is the generalisation you describe. Its design, and whether the comparison with the reactions' needle runs (with its pinned walls) comes first, is question Q-S1b.
+
+## 25. Transpiration by the air spaces' walls (your direction, 2026-10-16), and the plan for it
+
+**Your direction:** apply the `reactions` branch's logic to all leaves: pin the potential of all walls of the air spaces. The air transfers out of the leaf come later.
+
+**What the port takes from the `reactions` water side,** exactly first (compared with its needle on `NeedleAnatomy(seed=42)`), each choice that differs from your direction kept as an option for that comparison only:
+- **The evaporating walls are pinned** to the air spaces' potential, by the `reactions`' penalty (a robin set of weight `max(1e3 × max |diag W|, 1)`, its value per section).
+  - Which walls: all walls bounding an air space (your direction, default); `reactions` pins only the wall ends of its `wall_air` edges (option).
+- **`wall_air` edges** (wall ↔ air space, GRANAP's `network_path` 1): the linearised Kelvin exchange in series with the flanking membrane, an asymmetric flux `K_wall ψ_w − K_air x_a + offset`. The air space's unknown is then its vapour pressure (relative to p_sat).
+  - Parameters `kwa`, `p_sat`, `psi_ref_wall_air`, `T` and the water's molar mass, at the `reactions`' values.
+- **`air_link` edges** (air ↔ air, `network_path` 4): `k_air_link × height × length`, a symmetric vapour diffusion.
+- **`kw_meso_hypo`** (NaN: none): the needle's (2, 4) walls (and their plasmodesmata) cut. This is a needle parametrisation, not a fix, so it stays a parameter.
+- **The air spaces' potential:** a parameter `air_space_psi`, the `reactions`' default −1e4 hPa (its `psi_atm`, or a relative humidity through Kelvin).
+  - It is not the outside air's potential: at 50 % RH that is −935 bar, absurd for a liquid-filled wall.
+  - When the air transfers out of the leaf come, the atmosphere will set it through the stomata.
+- **The leaves' transpiration model:** `transpiration_model` 2, the air spaces' walls (default). 1 keeps the stomatal pores (E3, the seedling's so far), as an option.
+- **For the comparison only:**
+  - the `reactions`' membrane floor (`membrane_floor_rules` 2: its 26 air-space membranes conduct);
+  - the osmotic presets on all sections (`presets_sections` 2; the needle's cells have the root ranks the presets read);
+  - the standard problem on shoot sections (`standard_solve_shoot` 1: the needle alone, its xylem and its pinned walls).
+
+**Steps:**
+1. **The needle in the port:** GRANAP's library with `NeedleAnatomy` and `for_needle`. Its sections: tissues, protect_topology, the `wall_air` and `air_link` edges, ranks.
+2. **The water model above,** compared with `legacy_reactions`' scenarios 0 (the standard problem: xylem at 0, walls pinned at −1e4 hPa) and 1 (ψ_xyl −200 hPa, its osmotic presets with s_factor 0.7) on the needle, to D1's tolerances.
+3. **All leaves:** the defaults above in the plant problem. The seedling SPAC example then transpires through its leaves' air spaces' walls; its new numbers are a reviewed difference.
+4. **Then the solutes** (§23–24).
