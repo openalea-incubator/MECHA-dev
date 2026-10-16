@@ -14,6 +14,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from openalea.mecha.geometry import MEMBRANE, PLASMODESMATA, WALL, WALL_PATH, XYLEM_CGROUPS
+from openalea.mecha.postprocess import VISCOSITY_PHLOEM, VISCOSITY_XYLEM, poiseuille
 
 # ── The legacy's tables ──
 # kw per barrier code (HydraulicData.get_wall_conductivities): each key's source parameter
@@ -95,6 +96,7 @@ class Network:
     wall_cells: np.ndarray        # (n, 2) global nodes, -1
     distance_center_grav: np.ndarray
     x: np.ndarray
+    cell_area: np.ndarray         # µm² per node (0 on the apoplast)
     wall_length: np.ndarray
     border_wall: np.ndarray
     border_junction: np.ndarray
@@ -123,7 +125,7 @@ def assemble(n_nodes: int, n_edges: int, geometries: list, phi_thick=None) -> Ne
         kind=nodes_full(-1, np.int64),
         rank=nodes_full(-1, np.int64), intercellular=nodes_full(False, bool), passage=nodes_full(False, bool),
         phi_thick=nodes_full(False, bool), wall_cells=nodes_full(-1, np.int64, (2,)),
-        distance_center_grav=nodes_full(np.nan), x=nodes_full(np.nan), wall_length=nodes_full(0.),
+        distance_center_grav=nodes_full(np.nan), x=nodes_full(np.nan), cell_area=nodes_full(0.), wall_length=nodes_full(0.),
         border_wall=nodes_full(False, bool), border_junction=nodes_full(False, bool), xylem=nodes_full(0, np.int64),
         protosieve=nodes_full(0, np.int64), outercortex_connec_rank=np.zeros(len(geometries), dtype=np.int64),
         concentrated=np.zeros((len(geometries), 3)))
@@ -142,6 +144,7 @@ def assemble(n_nodes: int, n_edges: int, geometries: list, phi_thick=None) -> Ne
         net.wall_cells[nodes] = np.where(cells >= 0, nodes[np.maximum(cells, 0)], -1)
         net.distance_center_grav[nodes] = geo.distance_center_grav
         net.x[nodes] = geo.x
+        net.cell_area[nodes] = np.nan_to_num(geo.cell_area)
         net.wall_length[nodes] = geo.wall_length
         net.border_wall[nodes] = geo.border_wall
         net.border_junction[nodes] = geo.border_junction
@@ -301,8 +304,10 @@ def edge_conductances(net: Network, P: dict, barrier, height):
 def boundary_terms(net: Network, P: dict, barrier, height):
     """
     Per node (cm³ hPa⁻¹ d⁻¹): the soil term of the border walls and junctions in contact (``_apply_soil_boundary``),
-    and the axial term of the xylem cells (barrier > 0, ``k_xyl``) or protosieve cells (barrier 0, ``k_sieve``):
-    (soil, axial on the matrix diagonal, axial in the right-hand side). P, barrier, height per node.
+    and the axial term of the xylem cells (barrier > 0) or protosieve cells (barrier 0): (soil, axial on the matrix
+    diagonal, axial in the right-hand side). P, barrier, height per node. The axial term (``standard_axial_source``):
+    1 each conduit's Poiseuille conductance over the height (water in the xylem, phloem sap in the protosieve: the
+    original MECHA's ``Kax_source`` 1), 2 the prescribed ``k_xyl`` and ``k_sieve`` (the legacy's, whatever its source).
     """
     n = net.cgroup.size
     kw = np.asarray(P["kw"], dtype=float)
@@ -319,6 +324,11 @@ def boundary_terms(net: Network, P: dict, barrier, height):
     k_xyl, k_sieve = np.asarray(P["k_xyl"], dtype=float), np.asarray(P["k_sieve"], dtype=float)
     xylem = (barrier > 0) & (net.xylem > 0)
     protosieve = (barrier == 0) & (net.protosieve > 0)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        k_xyl = np.where(np.asarray(P["standard_axial_source"]) == 1,
+                         poiseuille(net.cell_area, height, VISCOSITY_XYLEM), k_xyl)
+        k_sieve = np.where(np.asarray(P["standard_axial_source"]) == 1,
+                           poiseuille(net.cell_area, height, VISCOSITY_PHLOEM), k_sieve)
     axial = np.where(xylem, k_xyl, np.where(protosieve, k_sieve, 0.))
     return soil, axial, axial.copy()          # each protosieve cell once (the legacy adds k_sieve per duplicate, §2 f)
 

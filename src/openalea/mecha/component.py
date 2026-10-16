@@ -119,8 +119,13 @@ class MechaHydraulics(FunctionalComponent):
     kpl_PST_factor: float = _p("", "plasmodesmata aperture factor of the sieve tubes (the legacy's rules only; the "
                                    "original uses it for the axial plasmodesmata of 3D sections)", 1.0)
     x_contact: float = _p("µm", "the border walls at x >= x_contact are in contact with the soil", -15E9)
-    k_xyl: float = _p("cm3 hPa-1 d-1", "conductance between a xylem vessel and the xylem boundary", 1.0E-6)
-    k_sieve: float = _p("cm3 hPa-1 d-1", "conductance between a protophloem cell and the phloem boundary", 1.0E-6)
+    standard_axial_source: float = _p("", "the standard problem's conductance between a conduit and the axial "
+                                          "boundary: 1 its Poiseuille conductance over the height (the original "
+                                          "MECHA's), 2 k_xyl and k_sieve (the legacy's)", 1.)
+    k_xyl: float = _p("cm3 hPa-1 d-1", "conductance between a xylem vessel and the xylem boundary "
+                                       "(standard_axial_source 2)", 1.0E-6)
+    k_sieve: float = _p("cm3 hPa-1 d-1", "conductance between a protophloem cell and the phloem boundary "
+                                         "(standard_axial_source 2)", 1.0E-6)
     n_phi_layers: float = _p("", "number of cortex layers with phi thickenings", 0.)
     phi_type: float = _p("", "phi thickenings: 1 inner cortex, 2 outer cortex, 3 mid cortex", 1.)
 
@@ -134,7 +139,7 @@ class MechaHydraulics(FunctionalComponent):
     vapour_factor: float = _p("mm3 s-1 MPa-1 per (mol m-2 s-1 m2)", "e_sat V_w² / (R T P): from a vapour conductance "
                               "to a liquid one (20 °C)", VAPOUR_FACTOR)
     standard_axial_condition: float = _p("", "the standard problem's xylem condition: 1 its potential "
-                                         "(standard_psi_xylem, through k_xyl), 2 its flow (standard_axial_flow)", 1.)
+                                         "(standard_psi_xylem, see standard_axial_source), 2 its flow (standard_axial_flow)", 1.)
     standard_axial_flow: float = _p("cm3 d-1", "the flow into the xylem in the standard problem (condition 2), "
                                     "split among the vessels as their areas (the legacy's distribution)", 0.)
     standard_psi_soil: float = _p("hPa", "the soil's potential in the standard problem", 0.0)

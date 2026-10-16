@@ -4,6 +4,7 @@ import pytest
 
 from openalea.mecha.component import MechaHydraulics
 from openalea.mecha.geometry import MEMBRANE, PLASMODESMATA, WALL, section_parts
+from openalea.mecha.postprocess import VISCOSITY_XYLEM, poiseuille
 
 from plants import anatomy_data_structure, root
 
@@ -43,12 +44,27 @@ def test_barriers_close_the_endodermis(coupled):
 
 def test_boundary_terms(coupled):
     g, ds, mecha = coupled
+    mecha.standard_axial_source = 2.                                  # the prescribed k_xyl (the legacy's)
+    try:
+        mecha()
+        axial = ds.get("axial_boundary_conductance")
+        xylem = np.isin(ds.get("cgroup"), (13, 19, 20)) & (ds.owner("SubOrgan") > 0)
+        assert (axial[xylem] == mecha.k_xyl).all()
+    finally:
+        mecha.standard_axial_source = 1.
+        mecha()
     soil, axial = ds.get("soil_conductance"), ds.get("axial_boundary_conductance")
     kind, cgroup = ds.get("kind"), ds.get("cgroup")
     assert (soil[kind == 0] == 0).all() and (soil > 0).sum() > 0
     owner = ds.owner("SubOrgan")
     xylem = np.isin(cgroup, (13, 19, 20))
-    assert (axial[(owner > 0) & xylem] == mecha.k_xyl).all() and (axial[(owner > 0) & ~xylem] == 0).all()
+    # the vessels' Poiseuille conductance over the height (standard_axial_source 1, the original MECHA's)
+    area = np.asarray(ds.get("cell_area")) * 1e6                                   # mm2 -> µm2
+    height = np.asarray(ds.get("length")) * 1e6
+    expected = poiseuille(area, height, VISCOSITY_XYLEM)
+    vessels = (owner > 0) & xylem
+    np.testing.assert_allclose(axial[vessels], expected[vessels], rtol=1e-12)
+    assert (axial[(owner > 0) & ~xylem] == 0).all()
 
 
 def test_plant_parameters(coupled):

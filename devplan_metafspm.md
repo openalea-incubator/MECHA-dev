@@ -675,3 +675,24 @@ MECHA uses one thickness (1.5 µm) for every wall. GRANAP gives each wall its ow
   - every plasmodesmata edge of the dicot root (barriers 0, 1, 3, with and without xylem pieces) against a transcription of the original's code, with factors away from 1;
   - the same on its network with random cgroups, for the branches GRANAP's presets do not reach (phloem-pole pericycle, companion–sieve, pericycle–companion, an epidermis as outer layer, the newer CellSet groups).
   - 86 passed, 1 skipped.
+
+### 19a. Q-L3 done: the standard problem's axial boundary
+
+- **`standard_axial_source`:**
+  - 1 (default, the original's `Kax_source` 1): each conduit's Poiseuille conductance over the section's height, water's viscosity in the xylem vessels, phloem sap's in the protosieve cells (barrier 0);
+  - 2: the prescribed `k_xyl` and `k_sieve` (the legacy's choice, whatever its source; set by `legacy_options`).
+- **The viscosity** is the port's `VISCOSITY_XYLEM` (1.3076e-3 Pa s, water at 10 °C, as the legacy's Kx), not the original's 1.0e-3 in its boundary term, so that the boundary and Kx agree.
+- **The vessels' conductances** are 0.005 to 14 cm³ hPa⁻¹ d⁻¹ on the monocot root at 200 µm, against `k_xyl` = 1e-6. They hold the vessels near ψ_xylem, so the standard kr is now nearly the section's own.
+- **Reviewed difference** (kr, cm hPa⁻¹ d⁻¹):
+
+| root, height | barrier 1: Poiseuille / k_xyl | barrier 3: Poiseuille / k_xyl |
+|---|---|---|
+| monocot, 200 µm | 1.0619e-4 / 1.0253e-4 (+3.6 %) | 4.0295e-5 / 3.9757e-5 (+1.4 %) |
+| monocot, 5 mm | 7.2992e-5 / 4.5304e-5 (+61 %) | 2.0045e-6 / 1.9714e-6 (+1.7 %) |
+| dicot, 200 µm | 1.2120e-4 / 1.1764e-4 (+3.0 %) | 5.4089e-5 / 5.3370e-5 (+1.3 %) |
+| dicot, 5 mm | 8.8157e-5 / 5.7670e-5 (+53 %) | 2.9899e-06 / 2.9372e-06 (+1.8 %) |
+
+- **The height dependence that remains** (barrier 3 at 5 mm) is the plasmodesmata's, kept with the height logic (Q-L2: per-tissue cell heights later).
+- **Tests:**
+  - the boundary is checked against Poiseuille, and `k_xyl` with source 2;
+  - the mass balance of the standard problem is now checked to the round-off of the boundary's terms (64 ε Σ K_ax |ψ_xylem|): with conductances of ~10, the flows into the vessels are small differences of large terms (imbalance 2e-8 of the uptake, at a node residual of 4e-11 cm³ d⁻¹, the solver's round-off).

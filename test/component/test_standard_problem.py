@@ -27,13 +27,16 @@ def test_potentials_between_soil_and_xylem(solved):
 
 
 def test_mass_balance(solved):
-    """Each section's uptake from the soil is the flow into its xylem (the axial boundary)."""
+    """Each section's uptake from the soil is the flow into its xylem (the axial boundary), to the round-off of the
+    boundary's terms (the vessels' Poiseuille conductances, up to ~10 cm3 hPa-1 d-1, hold them near the xylem's
+    potential: their flows are small differences of large terms)."""
     g, ds, mecha = solved
     psi, axial, owner = ds.get("standard_psi"), ds.get("axial_boundary_conductance"), ds.owner("SubOrgan")
     uptake = ds.get("standard_uptake")
     for i in (1, 2):
         into_xylem = (axial * (psi - mecha.standard_psi_xylem))[owner == i].sum()
-        assert uptake[i] > 0 and into_xylem == pytest.approx(uptake[i], rel=1e-9)
+        scale = (axial * abs(mecha.standard_psi_xylem))[owner == i].sum()
+        assert uptake[i] > 0 and abs(into_xylem - uptake[i]) <= 64 * np.finfo(float).eps * scale
 
 
 def test_kr_kx(solved):
