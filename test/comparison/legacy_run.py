@@ -109,3 +109,34 @@ def legacy_frame(run, stage, organ):
                         K=np.array([data["edge_K"][k] for k in keys]), psi=data["solution"],
                         Q=np.array([data["edge_Q"][k] for k in keys]), polygons=polygons,
                         centre=(net.x_grav, net.y_grav))
+
+
+def legacy_osmotic(organ, barrier, height=200.0, **overrides):
+    """
+    The legacy's osmotic scenario (``Mecha.water_flux``, its scenario 1: the default scenario with *overrides*, e.g.
+    os_hetero, s_hetero) on one maturity stage. Returns dict(solution, psi_os {node: π}, sigma {(wall, cell): σ},
+    edge_Q {(u, v): Q}, total_flow).
+    """
+    organ.export_to_adjencymatrix()
+    data = InData()
+    data.geometry.set_maturity_stages([barrier], height=[height])
+    scenario = dict(data.boundary.scenarios[0])
+    scenario.update(overrides)
+    data.boundary.add_scenario(scenario)
+    network = NetworkBuilder(organ)
+    network.populate_from_network()
+    mecha = Mecha(data, network=network)
+    mecha.water_flux(verbose=False)
+    result = [r for r in mecha.results if r.get("scenario") == 1][-1]
+    cm = network.cell_manager
+    psi_os, sigma = {}, {}
+    for u, v, attrs in network.graph.edges(data=True):
+        if attrs.get("path") != "membrane":
+            continue
+        wall, cell = (int(u), int(v)) if int(u) < network.n_walls else (int(v), int(u))
+        w, c, mb = cm.get_wall_by_node_id(wall), cm.get_by_node_id(cell), cm.get_membrane_by_edge(wall, cell)
+        psi_os[wall], psi_os[cell] = w.psi_os, c.psi_os
+        sigma[(wall, cell)] = mb.sigma
+    edge_Q = {(int(u), int(v)): float(attrs["Q"]) for u, v, attrs in network.graph.edges(data=True) if "Q" in attrs}
+    return dict(solution=np.asarray(result["solution"]).reshape(-1), psi_os=psi_os, sigma=sigma, edge_Q=edge_Q,
+                total_flow=float(np.asarray(mecha.total_flow[0][1]).reshape(-1)[0]))

@@ -57,12 +57,11 @@ def _edge(unit, description):
 
 
 @dataclass
-class MechaHydraulics(FunctionalComponent):
+class MechaSections(FunctionalComponent):
     """
-    MECHA's cross-section hydraulics on every section of the DataStructure.
-
-    Inputs (role "Anatomy": GRANAP's anatomy component): each section's network, its nodes (protoplasts, walls,
-    wall junctions) and edges (membranes, walls, plasmodesmata), in GRANAP's units (mm, mm2).
+    The sections MECHA's components work on: their networks (role "Anatomy": GRANAP's anatomy component; its nodes,
+    protoplasts, walls and wall junctions, and edges, membranes, walls and plasmodesmata, in GRANAP's units, mm and
+    mm2), their barriers and heights, and MECHA's geometry derived from them, once per distinct anatomy.
     """
     # ── Inputs: the sections' networks ──
     kind: float = input_variable(**_node("", "0 protoplast, 1 wall, 2 wall junction"))
@@ -91,6 +90,65 @@ class MechaHydraulics(FunctionalComponent):
                                    by="Architecture", scale=SCALES.SubOrgan, location="node",
                                    state_variable_type="intensive")
 
+    # ── Geometry, per distinct anatomy ──
+    def section_geometries(self) -> dict:
+        """
+        {SubOrgan vid: (nodes, edges, SectionGeometry)} of every section with an anatomy: its Compartments and
+        Connections (DataStructure indices) and MECHA's geometry, computed once per anatomy template.
+        """
+        ds = self.data_structure
+        template = dict(zip(ds.entity_ids("SubOrgan").tolist(), np.asarray(ds.get("anatomy_template")).tolist()))
+        out = {}
+        for segment, (nodes, edges) in section_parts(ds).items():
+            if nodes.size == 0:
+                continue
+            index = template.get(segment, -1.)
+            key = ("template", int(index)) if index >= 0 else ("segment", segment)
+            cache = self.__dict__.setdefault("_geometries", {})      # {anatomy key: (sizes, SectionGeometry)}
+            cached = cache.get(key)
+            if cached is None or cached[0] != (nodes.size, edges.size):
+                cached = cache[key] = ((nodes.size, edges.size),
+                                                  section_geometry(section_of(ds, nodes, edges)))
+            out[segment] = (nodes, edges, cached[1])
+        return out
+
+    def section_roles(self) -> tuple:
+        """
+        (first, roots): the SubOrgan vids without a parent (a root system's first section) and those labelled
+        RootSegment; read from the MPG once per topology (reading it flushes the DataStructure's variables).
+        """
+        ds = self.data_structure
+        cached = self.__dict__.get("_section_roles")
+        if cached is None or cached[0] != ds.topology_version:
+            g = ds.mtg
+            labels, root = g.property("label"), g.labels.SubOrgan.RootSegment
+            segments = [int(v) for v in ds.entity_ids("SubOrgan")]
+            cached = self.__dict__["_section_roles"] = (ds.topology_version, (
+                {v for v in segments if g.parent(v) is None}, {v for v in segments if labels.get(v) == root}))
+        return cached[1]
+
+    def _root_nodes(self, geometries) -> np.ndarray:
+        """bool per node: in a root section."""
+        roots = self.section_roles()[1]
+        out = np.zeros(self.data_structure.n_nodes(), dtype=bool)
+        for segment, (nodes, _, _) in geometries.items():
+            out[nodes] = segment in roots
+        return out
+
+
+@dataclass
+class MechaHydraulics(MechaSections):
+    """
+    MECHA's cross-section hydraulics on every section of the DataStructure (its sections: MechaSections).
+    """
+    # ── Inputs: the osmotic potentials (role "Solutes": a metabolism model, or MECHA's presets, MechaOsmoticPresets) ──
+    osmotic_potential: float = input_variable(**_doc("hPa", "osmotic potential of the protoplast or the wall's solution "
+                                                            "(0: none)"),
+                                              by="Solutes", initialize=0., scale=SCALES.Compartment, location="node",
+                                              state_variable_type="NonInertialIntensive")
+    reflection_coefficient: float = input_variable(**_doc("", "the membrane's reflection coefficient (0: none)"),
+                                                   by="Solutes", initialize=0., scale=SCALES.Connection,
+                                                   location="edge", state_variable_type="NonInertialIntensive")
     # ── Parameters (per plant; MECHA's units: cm hPa-1 d-1 for kw, kmb, kaqp; cm3 hPa-1 d-1 for kpl, k_xyl) ──
     kw: float = _p("cm2 hPa-1 d-1", "cell wall hydraulic conductivity", 0.00024)
     kw_septa: float = _p("cm2 hPa-1 d-1", "conductivity of the septa between aerenchyma (intercellular) cells", 0.00012)
@@ -135,6 +193,8 @@ class MechaHydraulics(FunctionalComponent):
 
     standard_solve: float = _p("", "1: solve MECHA's standard problem on each section alone (its kr; the legacy's "
                                    "definition), 0: skip it", 1.)
+    standard_osmotic: float = _p("", "1: the standard problem with the membranes' osmotic terms (the legacy's scenarios "
+                                     "≥ 1), 0: without (its scenario 0, MECHA's kr)", 0.)
     collar_condition: float = _p("", "at the first root section's xylem vessels: 1 the potential collar_psi, 2 the "
                                      "flow collar_flow, 0 none (e.g. a shoot above)", 1.)
     collar_psi: float = _p("hPa", "the collar's xylem potential (collar_condition 1)", -5.0E3)
@@ -229,6 +289,29 @@ class MechaHydraulics(FunctionalComponent):
                                                 initialize=0., scale=SCALES.Compartment, location="node",
                                                 state_variable_type="descriptor")
 
+    # ── State variables: the osmotic terms ──
+    osmotic_drive: float = state_variable(**_doc("hPa", "σ × the osmotic potentials' difference along the edge (as its "
+                                                        "potentials': tail − head); its flow is K (Δψ + this)"),
+                                          initialize=0., scale=SCALES.Connection, location="edge",
+                                          state_variable_type="NonInertialIntensive")
+    standard_osmotic_drive: float = state_variable(**_doc("hPa", "the osmotic drive in the standard problem (0 unless "
+                                                                 "standard_osmotic)"),
+                                                   initialize=0., scale=SCALES.Connection, location="edge",
+                                                   state_variable_type="NonInertialIntensive")
+    evaporation_psi: float = state_variable(**_doc("hPa", "the pressure potential at which a stomatal pore does not "
+                                                          "evaporate: the air's water potential − its osmotic "
+                                                          "potential (Q-O4: the pore's water potential drives it)"),
+                                            initialize=0., scale=SCALES.Compartment, location="node",
+                                            state_variable_type="NonInertialIntensive")
+    water_potential: float = state_variable(**_doc("hPa", "water potential, plant problem: psi (the pressure "
+                                                          "potential) + osmotic_potential"),
+                                            initialize=0., scale=SCALES.Compartment, location="node",
+                                            state_variable_type="NonInertialIntensive")
+    standard_water_potential: float = state_variable(**_doc("hPa", "water potential, standard problem: standard_psi + "
+                                                                   "osmotic_potential (with standard_osmotic)"),
+                                                     initialize=0., scale=SCALES.Compartment, location="node",
+                                                     state_variable_type="NonInertialIntensive")
+
     # ── State variables: the axial junctions between sections ──
     axial_conduit: float = state_variable(**_doc("", "on the axial junctions: 1 between xylem vessels, 2 between "
                                                      "phloem cells (0 elsewhere)"),
@@ -307,54 +390,6 @@ class MechaHydraulics(FunctionalComponent):
                                                               "sieve tubes, or protophloem at barrier 0)"),
                                       initialize=np.nan, scale=SCALES.SubOrgan,
                                       state_variable_type="NonInertialIntensive")
-
-    def __post_init__(self):
-        super().__post_init__()
-        self._geometries = {}                 # {anatomy key: (node count, SectionGeometry)}
-
-    # ── Geometry, per distinct anatomy ──
-    def section_geometries(self) -> dict:
-        """
-        {SubOrgan vid: (nodes, edges, SectionGeometry)} of every section with an anatomy: its Compartments and
-        Connections (DataStructure indices) and MECHA's geometry, computed once per anatomy template.
-        """
-        ds = self.data_structure
-        template = dict(zip(ds.entity_ids("SubOrgan").tolist(), np.asarray(ds.get("anatomy_template")).tolist()))
-        out = {}
-        for segment, (nodes, edges) in section_parts(ds).items():
-            if nodes.size == 0:
-                continue
-            index = template.get(segment, -1.)
-            key = ("template", int(index)) if index >= 0 else ("segment", segment)
-            cached = self._geometries.get(key)
-            if cached is None or cached[0] != (nodes.size, edges.size):
-                cached = self._geometries[key] = ((nodes.size, edges.size),
-                                                  section_geometry(section_of(ds, nodes, edges)))
-            out[segment] = (nodes, edges, cached[1])
-        return out
-
-    def section_roles(self) -> tuple:
-        """
-        (first, roots): the SubOrgan vids without a parent (a root system's first section) and those labelled
-        RootSegment; read from the MPG once per topology (reading it flushes the DataStructure's variables).
-        """
-        ds = self.data_structure
-        cached = self.__dict__.get("_section_roles")
-        if cached is None or cached[0] != ds.topology_version:
-            g = ds.mtg
-            labels, root = g.property("label"), g.labels.SubOrgan.RootSegment
-            segments = [int(v) for v in ds.entity_ids("SubOrgan")]
-            cached = self.__dict__["_section_roles"] = (ds.topology_version, (
-                {v for v in segments if g.parent(v) is None}, {v for v in segments if labels.get(v) == root}))
-        return cached[1]
-
-    def _root_nodes(self, geometries) -> np.ndarray:
-        """bool per node: in a root section."""
-        roots = self.section_roles()[1]
-        out = np.zeros(self.data_structure.n_nodes(), dtype=bool)
-        for segment, (nodes, _, _) in geometries.items():
-            out[nodes] = segment in roots
-        return out
 
     @rate(include_inactive=True)
     def _cell_rank(self, kind, anatomy_template) -> tuple[np.ndarray, str, np.ndarray]:
@@ -474,6 +509,21 @@ class MechaHydraulics(FunctionalComponent):
         return out
 
     @rate(include_inactive=True)
+    def _osmotic_drive(self, osmotic_potential, reflection_coefficient, air_psi) \
+            -> tuple[np.ndarray, str, np.ndarray, str, np.ndarray]:
+        """
+        Each edge's osmotic drive σ (π_tail − π_head) (the membranes': the legacy's ``rhs_o``, as a flow K σ Δπ added
+        to K Δψ), the standard problem's (its plants with standard_osmotic), and the pores' evaporation reference.
+        """
+        ds = self.data_structure
+        view = ds.to_graph_view()
+        pi = np.asarray(osmotic_potential, dtype=float)
+        drive = np.asarray(reflection_coefficient, dtype=float) * (pi[view.tail] - pi[view.head])
+        standard = np.asarray(self.parameter_values("standard_osmotic", "edge")) > 0
+        return (drive, "standard_osmotic_drive", np.where(standard, drive, 0.),
+                "evaporation_psi", np.asarray(air_psi, dtype=float) - pi)
+
+    @rate(include_inactive=True)
     def _axial_conduit(self, network_path, cgroup) -> np.ndarray:
         """The axial junctions' conduit: 1 between two xylem vessels, 2 between two phloem cells."""
         view = self.data_structure.to_graph_view()
@@ -549,9 +599,10 @@ class MechaHydraulics(FunctionalComponent):
         """
 
         @node_balance(field="standard_psi")
-        def _balance(self, standard_psi, conductance):
+        def _balance(self, standard_psi, conductance, standard_osmotic_drive):
             B = self._graph_view.incidence
-            return np.asarray(B @ (conductance * np.asarray(B.T @ standard_psi).reshape(-1))).reshape(-1)
+            drop = np.asarray(B.T @ standard_psi).reshape(-1) + standard_osmotic_drive
+            return np.asarray(B @ (conductance * drop)).reshape(-1)
 
         soil = boundary_set(filters={"soil_conductance": ">0"}, kind="robin", value="standard_soil_psi",
                             weight="soil_conductance", field="standard_psi")
@@ -566,8 +617,9 @@ class MechaHydraulics(FunctionalComponent):
             return (B @ diags(conductance) @ B.T).tocsr()
 
         @graph_output("standard_flow", location="edge")
-        def _standard_flow(self, standard_psi, conductance):
-            return conductance * np.asarray(self._graph_view.incidence.T @ standard_psi).reshape(-1)
+        def _standard_flow(self, standard_psi, conductance, standard_osmotic_drive):
+            return conductance * (np.asarray(self._graph_view.incidence.T @ standard_psi).reshape(-1)
+                                  + standard_osmotic_drive)
 
     # ── The plant problem: the sections joined by their xylem junctions ──
     @graph_system(node_unknowns=["psi"], solver="newton", max_iter=3, schedule_as="state")
@@ -579,16 +631,16 @@ class MechaHydraulics(FunctionalComponent):
         """
 
         @node_balance(field="psi")
-        def _balance(self, psi, conductance, xylem_axial_conductance):
+        def _balance(self, psi, conductance, xylem_axial_conductance, osmotic_drive):
             B = self._graph_view.incidence
             K = conductance + xylem_axial_conductance
-            return np.asarray(B @ (K * np.asarray(B.T @ psi).reshape(-1))).reshape(-1)
+            return np.asarray(B @ (K * (np.asarray(B.T @ psi).reshape(-1) + osmotic_drive))).reshape(-1)
 
         soil = boundary_set(filters={"soil_conductance": ">0"}, kind="robin", value="soil_psi",
                             weight="soil_conductance", field="psi")
         collar = boundary_set(filters={"collar_kind": ">0"}, kinds="collar_kind", value="collar_value", weight=0.,
                               field="psi")
-        air = boundary_set(filters={"evaporation_conductance": ">0"}, kind="robin", value="air_psi",
+        air = boundary_set(filters={"evaporation_conductance": ">0"}, kind="robin", value="evaporation_psi",
                            weight="evaporation_conductance", field="psi")
 
         @graph_jacobian
@@ -597,24 +649,31 @@ class MechaHydraulics(FunctionalComponent):
             return (B @ diags(conductance + xylem_axial_conductance) @ B.T).tocsr()
 
         @graph_output("flow", location="edge")
-        def _flow(self, psi, conductance, xylem_axial_conductance):
-            return (conductance + xylem_axial_conductance) * np.asarray(self._graph_view.incidence.T @ psi).reshape(-1)
+        def _flow(self, psi, conductance, xylem_axial_conductance, osmotic_drive):
+            return (conductance + xylem_axial_conductance) * (np.asarray(self._graph_view.incidence.T @ psi).reshape(-1)
+                                                              + osmotic_drive)
 
         @graph_output("root_uptake", location="node")
         def _root_uptake(self, psi, soil_conductance, soil_psi):
             return soil_conductance * (soil_psi - psi)
 
         @graph_output("evaporation", location="node")
-        def _evaporation(self, psi, evaporation_conductance, air_psi):
-            return evaporation_conductance * (psi - air_psi)
+        def _evaporation(self, psi, evaporation_conductance, evaporation_psi):
+            return evaporation_conductance * (psi - evaporation_psi)
+
+        @graph_output("water_potential", location="node")
+        def _water_potential(self, psi, osmotic_potential):
+            return psi + osmotic_potential
 
     # ── The sections' results ──
     @totalstate(include_inactive=True)
-    def _kr(self, standard_psi, psi, soil_conductance, soil_psi, barrier, length) \
-            -> tuple[np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray]:
+    def _kr(self, standard_psi, psi, soil_conductance, soil_psi, barrier, length, osmotic_potential) \
+            -> tuple[np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,
+                     str, np.ndarray]:
         """
         Each section's uptake and radial conductivity: MECHA's (its standard problem, the legacy's operations) and
-        the effective ones of the plant problem; its axial conductances (Poiseuille).
+        the effective ones of the plant problem; its axial conductances (Poiseuille); the standard problem's water
+        potentials (with the osmotic potentials where it has their terms, standard_osmotic).
         """
         ds = self.data_structure
         P = self.parameter_table("node")
@@ -650,7 +709,10 @@ class MechaHydraulics(FunctionalComponent):
             if contact.size and vessels.size and b > 0:                # no mature xylem at barrier 0 (D3)
                 out["kr_effective"][i] = radial_conductivity(out["uptake"][i], soil_psi[contact].mean(),
                                                              plant[vessels].mean(), geo.perimeter, h)
-        return tuple(x for name in names for x in ((out[name],) if name == "kr" else (name, out[name])))
+        with_osmotic = np.asarray(self.parameter_values("standard_osmotic", "node")) > 0
+        water = standard + np.where(with_osmotic, np.asarray(osmotic_potential, dtype=float), 0.)
+        return tuple(x for name in names for x in ((out[name],) if name == "kr" else (name, out[name]))) + (
+            "standard_water_potential", water)
 
 
 MechaHydraulics.PARAMETERS = tuple(MechaHydraulics._plant_parameter_fields())

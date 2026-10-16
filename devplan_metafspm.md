@@ -768,6 +768,61 @@ MECHA uses one thickness (1.5 µm) for every wall. GRANAP gives each wall its ow
 ### 20c. Questions
 
 - **Q-O1 — the source of π.** As above: `osmotic_source` 0 (none, default), 1 (MECHA's presets), 2 (an input by "Solutes"). *Alternative:* only the input, with the presets as an example-side helper writing it.
+answer: rather 2, cause we'll have dynamic metabolism models wiring it later, but we must still compare to standard MECHA simulations now for the port.
 - **Q-O2 — the unknown.** Keep `psi` as the unknown (the pressure potential once π ≠ 0), with a new `water_potential` = psi + π. *Alternative:* solve for the water potential directly and write the pressure as the derived one. The balance is then written in water potentials, with (1 − σ) π terms on the membranes; this is equivalent, but further from the legacy.
+answer: first option
 - **Q-O3 — the plant problem's apoplast π.** In the plant, should the cortical walls' π come from the soil model (an input `soil_osmotic_potential`, by "Soil"), and the stelar walls' from the xylem sap, the solutes' later? Or MECHA's presets, as in the standard problem, until the `reaction` branch? *Recommendation:* the presets now (`osmotic_source` 1), and the soil's and the solutes' inputs with `osmotic_source` 2, when the `reaction` branch comes.
+answer: the preset now. The inputs from another model can later be provided and apply to nodes with filter and multiscale coupling if that is how the components will be wired.
 - **Q-O4 — the leaves' evaporation:** driven by the pores' water potential (psi + π) rather than psi. *Recommendation:* yes. It equals psi while π = 0.
+answer: yes to recommendation
+
+## 21. Your answers to Q-O1–Q-O4 (2026-10-16), and the osmotic step done
+
+**Answers** (in §20c):
+- **Q-O1:** the input (by "Solutes"), since dynamic metabolism models will be wired to it, with MECHA's presets still available for the comparison now;
+- **Q-O2:** `psi` stays the unknown, with `water_potential` = psi + π;
+- **Q-O3:** the presets now. Other models' inputs later, applied to the nodes through filters and the multiscale coupling;
+- **Q-O4:** evaporation driven by the water potential.
+
+**Done:**
+- **`MechaSections`** (`component.py`): the anatomy inputs, the barrier, the length and the per-anatomy geometry cache, shared by MECHA's components. `MechaHydraulics` derives from it.
+- **`MechaOsmoticPresets`** (`osmotic.py`), a component on the same sections that writes `osmotic_potential` (nodes) and `reflection_coefficient` (edges), MechaHydraulics' "Solutes" inputs, from the legacy's scenario rules. Its pieces:
+  - `legacy_rows` (the legacy's layer rows, transcribed);
+  - `relative_positions` (r_rel, x_rel);
+  - `wall_counts` (its elif chain);
+  - `tissue_values` (os_hetero 0–4, s_hetero 0–2);
+  - `section_presets` (per membrane, a cell's π the one its last membrane sets, in the legacy's wall order).
+
+  It applies to root sections only: the presets are root rules, and shoot sections keep π = σ = 0. Its parameters are the legacy's default scenario's values (os_cortex −4800 hPa, sieve −10 000, soil solution −500, xylem sap −1800 with the endodermis' −4800, σ 1).
+- **`MechaHydraulics`:**
+  - the inputs `osmotic_potential` and `reflection_coefficient` (by "Solutes", 0 by default: nothing changes without a solute model);
+  - a rate step `_osmotic_drive`: σ (π_tail − π_head) per edge (`osmotic_drive`), the standard problem's (`standard_osmotic_drive`, with the new parameter `standard_osmotic`, 0 by default), and the pores' `evaporation_psi` = air_psi − π;
+  - both node balances and the flows are `K (Δψ + drive)`. The Jacobians do not change, since π and σ do not depend on ψ;
+  - the evaporation is `g (ψ − evaporation_psi)`, its water potential's (Q-O4);
+  - new outputs `water_potential` = psi + π, and `standard_water_potential` (+ π where standard_osmotic).
+- **Against the legacy** (`test/comparison/test_osmotic.py`; monocot and dicot roots, barriers 1 and 3, five scenarios: os_hetero 0–4 with s_hetero 0–2 and s_factor 1, 0.7, 0.9; 80 passed):
+  - **σ:** every membrane's, bit-exact;
+  - **π:** every cell's and wall's, to 1e-13. The legacy's x range is GRANAP's cell seeds (`_cells_gdf['x']`), which the DataStructure does not carry; the port takes the cells' centroids. With equal left and right soil values this is one ulp of rounding; it would weigh a left–right soil profile;
+  - **the solution:** to 1e-12 of its range;
+  - **the edge flows** K (Δψ + σΔπ): to 1e-12 of K × the potentials they are differences of;
+  - **the uptake:** to 1e-12.
+- **Legacy quirks, reproduced and recorded for the fixes:**
+  - **(p) the cortex layers of the presets:** the legacy finds a cortex cell's row with `rank in rank_to_row`, a test on the array's values (rows), not its indices (ranks). Every cortex cell gets row 0, hence layer c1. `os_hetero` 1 and 2 give the whole cortex c1's potential instead of their c1–c8 profiles;
+  - **(q) os_hetero 4** reads the endodermis cells' potential from `osmotic_endo`, the key that also sets the stelar apoplast's potential at the endodermis. The port has its own `osmotic_endo_cell` (set equal for the comparison).
+  - The `r_rel` concern of §20a is unfounded: the legacy's `distance_from_center` is per row, as the original's `Layer_dist2`.
+- **Component tests** (`test/component/test_osmotic_component.py`, 5):
+  - no solutes, no change;
+  - σ on the membranes only;
+  - every node's balance with the drives in the plant problem;
+  - uniform π cancels;
+  - cells more negative than the soil solution increase the uptake.
+- **Seedling SPAC example:** the presets run before the hydraulics at each step (the barriers move), and the plots and the upscaling show the water potential. It converges in 6 steps; transpiration = uptake = 0.1483 mm³ s⁻¹ (0.1481 without). Water potentials along the path (MPa):
+
+| soil (matric) | root surface | root xylem | stem xylem | leaf xylem | leaf cells | pores |
+|---|---|---|---|---|---|---|
+| −2.11 | −2.14 | −3.45 | −3.35 | −3.40 | −3.46 | −4.18 |
+
+  - **The root surface** is below the soil's matric potential by the soil solution's π (−0.05 MPa). The soil model carries no osmotic potential.
+  - **The root xylem is below the stem's:** the presets give the roots' xylem sap π = −0.18 MPa and the shoot none. The pressure is continuous through the junctions, but the water potential steps at the collar. It disappears when a solute model gives the sap its π along the whole plant (the `reaction` branch), or with presets for the shoot.
+- **Tests:** 172 passed, 1 skipped.
+- **Not in this step:** the elongation sink (barrier 0), a phloem boundary at barrier > 0, the profiles' convection velocity.

@@ -29,7 +29,7 @@ def _segments(ds):
 def section_table(ds):
     """Per segment: its organ, its xylem's mean ψ and its mean ψ (MPa)."""
     segments, kinds, coords = _segments(ds)
-    owner, psi, cgroup = ds.owner("SubOrgan"), np.asarray(ds.get("psi")) / HPA_PER_MPA, ds.get("cgroup")
+    owner, psi, cgroup = ds.owner("SubOrgan"), np.asarray(ds.get("water_potential")) / HPA_PER_MPA, ds.get("cgroup")
     xylem = np.isin(cgroup, XYLEM)
     psi_x = np.array([psi[(owner == i) & xylem].mean() for i in range(segments.size)])
     psi_mean = np.array([psi[owner == i].mean() for i in range(segments.size)])
@@ -62,7 +62,7 @@ def sections_by_organ(built, path):
     """One section per organ type (the root's at the collar, the stem's base, the first leaf element) by ψ."""
     plant = built.populations[0].data_structure
     segments, kinds, _, _, _ = section_table(plant)
-    owner, psi = plant.owner("SubOrgan"), np.asarray(plant.get("psi")) / HPA_PER_MPA
+    owner, psi = plant.owner("SubOrgan"), np.asarray(plant.get("water_potential")) / HPA_PER_MPA
     x, y = plant.get("section_x"), plant.get("section_y")
     view = plant.to_graph_view()
     flow = np.asarray(plant.get("flow"))
@@ -100,7 +100,7 @@ def potential_profile(built, path):
     """Mean ψ along the path: soil at the roots, root xylem, stem xylem, leaf xylem, leaf cells, stomatal pores, air."""
     plant = built.populations[0].data_structure
     segments, kinds, _, psi_x, _ = section_table(plant)
-    owner, psi = plant.owner("SubOrgan"), np.asarray(plant.get("psi")) / HPA_PER_MPA
+    owner, psi = plant.owner("SubOrgan"), np.asarray(plant.get("water_potential")) / HPA_PER_MPA
     kind_of_node = np.array(kinds)[owner]
     soil = plant.get("soil_conductance") > 0
     barrier = np.asarray(plant.get("barrier"))
@@ -147,7 +147,7 @@ def root_kr(built, path):
 UPSCALING_SCALES = ("SubOrgan", "Organ", "Phytomer", "GrowthUnit", "Axis", "Plant")
 
 
-def upscale(ds, name="psi", scales=UPSCALING_SCALES) -> dict:
+def upscale(ds, name="water_potential", scales=UPSCALING_SCALES) -> dict:
     """
     *name* derived at each of *scales* in turn, each the mean of the previous one (as metafspm's SPAC example's
     upscaling.py), recomputed when the potentials change. Returns {scale: variable name}, "Compartment" the solved one.
@@ -197,7 +197,7 @@ def upscaling_series(built, path):
     names = upscale(ds)
     view = ds.to_graph_view()
     middle, anatomy = _node_positions(ds)
-    psi = np.asarray(ds.get("psi"), dtype=float) / HPA_PER_MPA
+    psi = np.asarray(ds.get("water_potential"), dtype=float) / HPA_PER_MPA
     norm = matplotlib.colors.Normalize(psi.min(), psi.max())
     low, high = anatomy[:, 0].min(), anatomy[:, 0].max()
     shift, bottom = 1.25 * (high - low), anatomy[:, 1].min()
@@ -261,7 +261,7 @@ def tissue_table(built):
     """Mean ψ (MPa) of each tissue of each organ, xylem first: where the drops are."""
     plant = built.populations[0].data_structure
     segments, kinds, _, _, _ = section_table(plant)
-    owner, psi = plant.owner("SubOrgan"), np.asarray(plant.get("psi")) / HPA_PER_MPA
+    owner, psi = plant.owner("SubOrgan"), np.asarray(plant.get("water_potential")) / HPA_PER_MPA
     kind_of_node, tissue = np.array(kinds)[owner], np.asarray(plant.get("tissue"), dtype=object)
     conducting = np.asarray(plant.get("barrier")) > 0
     rows = []
@@ -321,7 +321,7 @@ def draw_chain(built, chain, path, title):
     plant = built.populations[0].data_structure
     segments = plant.entity_ids("SubOrgan")
     index = {int(v): i for i, v in enumerate(segments)}
-    owner, psi = plant.owner("SubOrgan"), np.asarray(plant.get("psi")) / HPA_PER_MPA
+    owner, psi = plant.owner("SubOrgan"), np.asarray(plant.get("water_potential")) / HPA_PER_MPA
     x, y = np.asarray(plant.get("section_x")), np.asarray(plant.get("section_y"))
     _, kinds, _, _, _ = section_table(plant)
     pores = np.asarray(plant.get("evaporation_conductance")) > 0

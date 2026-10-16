@@ -11,7 +11,10 @@ GRANAP and its hydraulics by MECHA (devplan_metafspm.md, §15):
     development            a stand-in for a root development model: each root segment's apoplastic barriers from its
                            distance to the tip (none on the tip segment, a Casparian strip up to 10 cm, suberin
                            beyond); the shoot's mature xylem (1)
-    SeedlingHydraulics     the plant population model: GRANAP's and MECHA's components on the seedlings' anatomies
+    SeedlingHydraulics     the plant population model: GRANAP's and MECHA's components on the seedlings' anatomies,
+                           MECHA's osmotic presets standing for a solute model (the roots' cells and walls' osmotic
+                           potentials, the membranes' reflection coefficients; ψ is then the pressure potential and
+                           water_potential = ψ + π)
     SCENE_TRANSLATOR       the plant–soil exchange with metafspm's soil model, in each model's units: the soil's
                            potential (MPa) to MECHA's soil_psi (hPa), MECHA's root uptake (cm³ d⁻¹) to the soil's sink
                            (mm³ s⁻¹)
@@ -35,6 +38,7 @@ from openalea.granap.stem_class import StemAnatomy
 from openalea.granap.metafspm.component import GranapAnatomy, OrganAnatomy, junction_rules
 from openalea.granap.metafspm.library import AnatomyLibrary, preset_parameters
 from openalea.mecha.component import MechaHydraulics
+from openalea.mecha.osmotic import MechaOsmoticPresets
 
 # metafspm's soil model, from its example (examples/soil_plant_atmosphere/models.py)
 SPAC = os.path.join(os.path.dirname(openalea.metafspm.__file__), "..", "..", "..", "examples", "soil_plant_atmosphere")
@@ -223,10 +227,13 @@ class SeedlingHydraulics(CompositeModel):
         self.anatomy()                                                 # the 3D quantities
         if not data_structure.has("barrier"):
             data_structure.register("barrier", np.ones(data_structure.n_nodes()), location="node")
+        # MECHA's osmotic presets as the "Solutes" model (§20, Q-O3), until a metabolism model is coupled
+        self.osmotic = MechaOsmoticPresets(data_structure=data_structure, time_step=time_step)
         self.hydraulics = MechaHydraulics(data_structure=data_structure, time_step=time_step)
         self.hydraulics.collar_condition = 0.                          # the shoot above the roots
         self.declare_data_and_couple_components(translator_path=Translator(),
-                                                components=(self.architecture, self.anatomy, self.hydraulics))
+                                                components=(self.architecture, self.anatomy, self.osmotic,
+                                                            self.hydraulics))
         # the root surface, as a mask: the soil mapping maps it only
         data_structure.define_mask("root_surface", {"soil_conductance": ">0"})
         self._is_root = None
@@ -239,6 +246,7 @@ class SeedlingHydraulics(CompositeModel):
             owner_vids = ds.entity_ids("SubOrgan")[ds.owner("SubOrgan")]
             self._is_root = np.isin(owner_vids, list(roots))
         ds.set("barrier", development(ds, self._is_root))
+        self.osmotic()
         self.hydraulics()
 
 
