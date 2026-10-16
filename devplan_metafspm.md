@@ -713,3 +713,61 @@ MECHA uses one thickness (1.5 µm) for every wall. GRANAP gives each wall its ow
 
 - **Test:** each wall edge's and soil term's conductance against MECHA's formula with its own thickness, a junction's with its walls' mean.
 - **Together, Q-L1, Q-L3 and Q-L4** move the standard kr at 200 µm from the legacy's 1.0252e-4 to 1.1000e-4 on the monocot root at barrier 1 (+7.3 %), and from 3.9753e-5 to 4.0703e-5 at barrier 3 (+2.4 %).
+
+## 20. Design note: the osmotic potentials (Q-M6's next phase)
+
+**Your direction (2026-10-16):** include the osmotic potentials now. Solute transport and leaf transpiration are your colleague's (the `reaction` branch), to be integrated later.
+
+### 20a. What the legacy does (`Mecha.initialize_scenarios`, `water_flux`, `compute_edge_flows`)
+
+- **Scenario 0 is the standard problem** (no osmotic term), which gives MECHA's kr. Each scenario ≥ 1 solves the same section again, its matrix with the xylem boundary re-added, plus:
+  - **the osmotic term on the membranes:** `rhs_o[wall] += K σ (π_wall − π_cell)` and the opposite on the cell. The flow of a membrane is then `K [(P_cell − P_wall) + σ (π_cell − π_wall)]`: the unknown is the pressure potential P, and the water potential is P + π. Walls and plasmodesmata have σ = 0;
+  - **the soil's potential across the section** (`psi_soil_left`, `psi_soil_right`, by the wall's relative x);
+  - **at barrier 0, the elongation sink** (`elongation_BC`), and a phloem boundary (barrier 0 on the protosieve; barrier > 0 on the sieve tubes) when given.
+- **The cells' osmotic potentials π_cell, by `os_hetero`:**
+  - 0: `os_cortex` everywhere; companion cells at the mean of `os_cortex` and the sieve's;
+  - 1, 2: fixed profiles (epidermis, exodermis, endodermis, pericycle, stele, and 8 cortex layers c1–c8 counted from the outer cortex, by the legacy's layer rows);
+  - 3: the cortex at `os_cortex`, the stele at −5000 hPa, the endodermis between them;
+  - 4: one value per tissue, given.
+
+  The sieve tubes have `osmotic_sieve` (the stele's when NaN). Intercellular spaces take the soil's, with σ = 0. Mature xylem (barrier > 0) takes the xylem's, with σ = 0.
+- **The walls' osmotic potentials π_wall** depend on which side of the endodermis the wall is: cortical walls take the soil solution's, stelar walls (barrier > 0) the xylem sap's.
+  - The soil's: uniform, or from left to right (`osmotic_symmetry_soil` 1, by x_rel), or radial (2, by `r_rel` with a shape exponent).
+  - The xylem's: radial between `osmotic_endo` and `osmotic_xyl`, or their mean.
+  - With a diffusivity, an exponential profile in a convection velocity u. u is never computed (always 0), so the profile is flat.
+- **The reflection coefficients σ, by `s_hetero` × `s_factor`:** uniform; the stele half; or the cortex half. Per tissue: epidermis, exodermis on its two sides, cortex, endodermis on its two sides, pericycle, stele, companion, sieve.
+- **The geometry this needs, not yet in the port:**
+  - the legacy's layer rows (`rank_to_row`, `row_outer_cortex`);
+  - each wall's radial position relative to the endodermis (`r_rel`, from the rows' distances and the xylem's 80th-percentile distance) and its relative x (`x_rel`).
+
+  To verify while porting: the legacy's `r_rel` reads `distance_from_center` by row, where the original reads its rows' distances (`Layer_dist2`). A possible 16th legacy problem.
+
+### 20b. Proposed design
+
+- **New state variables:**
+  - `osmotic_potential` (π, hPa; Compartment: every cell, wall and junction);
+  - `reflection_coefficient` (σ; Connection: the membranes, 0 elsewhere).
+
+  Both are written by a `@rate` step `_osmotic_potential`, from:
+  - `osmotic_source` 0: π = 0, σ = 0, nothing changes. *Default*: the results stay those of §19;
+  - `osmotic_source` 1: MECHA's presets, the legacy's rules above, as per-plant parameters (`os_hetero`, `os_cortex`, `os_sieve`, the tissues' values for 4, the soil's and the xylem's profile parameters, `s_hetero`, `s_factor`);
+  - `osmotic_source` 2: an input `solute_osmotic_potential` (by "Solutes", Compartment), where the `reaction` branch's solutes will plug in (π = −c R T, theirs), with σ from the presets.
+- **In both problems:** the membranes' term `K σ (π_cell − π_wall)` is added to each node's balance in the graph systems (`@node_balance`; its Jacobian does not change, since π and σ do not depend on the unknown), and to the edge flows.
+- **Unknowns and outputs:**
+  - `psi` and `standard_psi` stay the unknowns; with π ≠ 0 they are the pressure potential;
+  - a new `water_potential` (Compartment) = psi + π, for the plots, the upscaling and the leaves' evaporation (which is driven by the water potential).
+  - With `osmotic_source` 0 they are equal.
+- **The standard problem:** a parameter `standard_osmotic` (0 by default: MECHA's kr stays the definition without osmotic terms, the legacy's scenario 0; 1: with them, the legacy's scenarios ≥ 1). That gives the per-section comparison with the legacy's `water_flux`.
+- **The soil's potential across the section** (`psi_soil_left`/`right`): not ported. In the plant problem the soil's potential is the soil model's, node by node (`soil_psi`). For the comparison, the scenarios are run with left = right.
+- **Not in this step:**
+  - the elongation sink (barrier 0) and a phloem boundary at barrier > 0: they are other source terms of the same balance, for after this step (or with the `reaction` branch, if it carries them);
+  - the convection velocity u of the profiles (never computed in the legacy).
+
+**Checked against the legacy:** `water_flux` scenarios with `os_hetero` 0–4 and `s_hetero` 0–2, at barriers 1 and 3: π, σ, the osmotic right-hand side, the solution and the edge flows, to D1's tolerances.
+
+### 20c. Questions
+
+- **Q-O1 — the source of π.** As above: `osmotic_source` 0 (none, default), 1 (MECHA's presets), 2 (an input by "Solutes"). *Alternative:* only the input, with the presets as an example-side helper writing it.
+- **Q-O2 — the unknown.** Keep `psi` as the unknown (the pressure potential once π ≠ 0), with a new `water_potential` = psi + π. *Alternative:* solve for the water potential directly and write the pressure as the derived one. The balance is then written in water potentials, with (1 − σ) π terms on the membranes; this is equivalent, but further from the legacy.
+- **Q-O3 — the plant problem's apoplast π.** In the plant, should the cortical walls' π come from the soil model (an input `soil_osmotic_potential`, by "Soil"), and the stelar walls' from the xylem sap, the solutes' later? Or MECHA's presets, as in the standard problem, until the `reaction` branch? *Recommendation:* the presets now (`osmotic_source` 1), and the soil's and the solutes' inputs with `osmotic_source` 2, when the `reaction` branch comes.
+- **Q-O4 — the leaves' evaporation:** driven by the pores' water potential (psi + π) rather than psi. *Recommendation:* yes. It equals psi while π = 0.
