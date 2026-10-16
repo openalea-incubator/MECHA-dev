@@ -34,7 +34,8 @@ BARRIER_KEY = {
     6 : "En_cs + En_sub",
     7 : "Ex_cs",
     8 : "En_sub + Ex_sub",
-    9 : "Ex_Lcap"
+    9 : "Ex_Lcap",
+    11 : "En_sub + Ex_sub + Scl_lig"
 }
 
 @dataclass
@@ -1328,6 +1329,19 @@ class HydraulicData:
                 'kw_endo_cortex': kw,
                 'kw_passage': kw,
                 'kw_phi_thick': kw_barrier_lignin
+            },
+            11: {  # Exodermis and endodermis fully suberized + lignified sclerenchyma
+                'kw_endo_endo': kw_barrier_casparian,
+                'kw_exo_exo': kw_barrier_casparian,
+                'kw_exo_epi': kw_barrier_suberin[1],
+                'kw_exo_cortex': kw_barrier_suberin[0],
+                'kw_septa': kw_septa,
+                'kw_cortex_cortex': kw,
+                'kw_endo_peri': kw_barrier_suberin[0],
+                'kw_endo_cortex': kw_barrier_suberin[1],
+                'kw_passage': kw,
+                'kw_phi_thick': kw_barrier_lignin,
+                'kw_scler': kw_barrier_lignin
             },
             10: {  # Exodermis sub + lignin
                 'kw_endo_endo': kw,
