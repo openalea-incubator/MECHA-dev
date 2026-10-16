@@ -16,7 +16,7 @@ from matplotlib.collections import LineCollection
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path[:0] = [os.path.join(HERE, "..", "..", "test"), os.path.join(HERE, "..", "..", "test", "comparison")]
 
-from legacy_run import legacy_section                                          # noqa: E402
+from legacy_run import legacy_options, legacy_section                          # noqa: E402
 from plants import anatomy_component, anatomy_data_structure, root, template_organ  # noqa: E402
 
 from openalea.mecha.component import MechaHydraulics                          # noqa: E402
@@ -54,7 +54,7 @@ def main(preset=None):
     height = float(np.asarray(ds.get("length"))[0]) * 1.0E6
     run = legacy_section(template_organ(anatomy, g, segment), barriers=BARRIERS, height=height)
     ds.register("barrier", np.ones(ds.n_nodes()), location="node")
-    mecha = MechaHydraulics(data_structure=ds)
+    mecha = legacy_options(MechaHydraulics(data_structure=ds))
     graph = run.network.graph
     position = {n: graph.nodes[n]["position"] for n in graph.nodes}
     folder = os.path.join(HERE, "outputs")

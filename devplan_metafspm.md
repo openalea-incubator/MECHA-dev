@@ -630,3 +630,48 @@ MECHA uses one thickness (1.5 µm) for every wall. GRANAP gives each wall its ow
   - On the dicot root the two xylem orders agree, and the comparison stays exact. `test_boundary_conditions` keeps the exact checks there, and skips ψ on the monocot (documented).
 - **Tests:** 80 passed, 1 skipped (`--ignore=test/legacy`, the frozen legacy's own tests, as in CI).
 - **Next:** Q-L1 to Q-L4 wait for your answers.
+
+## 19. Your answers to Q-L1–Q-L4 (2026-10-16), and Q-L1 done
+
+**Answers:**
+- **Q-L1, Q-L3, Q-L4:** yes to the recommendations.
+- **Q-L2:** no. The height stays MECHA's logic (the segment's length, D4) for now, so that the comparisons do not change. Per-tissue cell heights come later.
+- **Q-L3 then reads:** Poiseuille over the section's height (the original's `Kax_source` 1, with its height), not over a cell length.
+- **Osmotic potentials:** to be included now. Your colleague works on solute transport and leaf transpiration (the `reaction` branch).
+- **Recaps:** each says what changed in metafspm itself.
+
+**How the legacy stays comparable:** each changed default keeps the legacy's choice as an option, which the comparison sets through `legacy_options(mecha)` (`test/comparison/legacy_run.py`). The comparison suite therefore still checks everything else bit-exactly. So far:
+- `plasmodesmata_rules` = 2;
+- `kpl_PCC_factor` = `kpl_PST_factor` = 0.
+
+**Q-L1 done:**
+- **`plasmodesmata_rules`:** 1 the original MECHA's (default), 2 the legacy's.
+- **The original's rules** (`_plasmodesmata_original` in `conductance.py`), first match wins:
+  - intercellular spaces (barrier > 0): 0;
+  - the walls splitting a vessel (`xylem_pieces`): 10000 × default;
+  - mature xylem: 0;
+  - epidermis–exodermis;
+  - outer layer–cortex, cortex–cortex, cortex–endodermis (`kpl_cortex_factor`, the aerenchyma concentration at barrier > 0);
+  - endodermis–endodermis;
+  - pericycle–endodermis, –stele and –sieve (`kpl_PPP_factor` on the phloem-pole pericycle);
+  - stele–companion, pericycle–companion, companion–companion, companion–sieve (`kpl_PCC_factor`);
+  - stele–sieve, stele–stele;
+  - the tissues the legacy added (17, 18, 23), with its frequencies;
+  - the default.
+
+  Then × `kpl_endo_in_factor` (both cells endodermis or stele, or a section without xylem) or `kpl_endo_out_factor`.
+- **Parameters:**
+  - new: `kpl_cortex_factor`, `kpl_endo_in_factor`, `kpl_endo_out_factor`, `kpl_PPP_factor`, `kpl_PCC_factor`, `kpl_PST_factor` (the legacy's rules only), all 1.0;
+  - removed: `kpl_phloem_companion_cell_factor` and `kpl_phloem_sieve_tube_factor`;
+  - the 41 per-cgroup-pair frequencies become the original's 15 (`fplxheight_default`, `_epi_exo`, `_outer_cortex`, `_cortex_cortex`, `_cortex_endo`, `_endo_endo`, `_endo_peri`, `_peri_stele`, `_stele_stele`, `_stele_comp`, `_peri_comp`, `_comp_comp`, `_comp_sieve`, `_peri_sieve`, `_stele_sieve`, its GRANAR project's values) plus the 18 of the added tissues.
+- **Correction to §18b:** the original reads `Fplxheight_peri_peri` but none of its radial rules uses it, so pericycle–pericycle keeps the default, as in the legacy.
+- **Reviewed difference** (standard problem, barriers 0, 1 and 3). Only plasmodesmata edges change:
+  - monocot root: stele–sieve (96 edges, 0 in the legacy) opened. kr +0.01 % (1.0253e-4 against 1.0252e-4 at barrier 1; 3.9757e-5 against 3.9753e-5 at barrier 3);
+  - dicot root:
+    - stele–sieve (91), sieve–sieve (108, the default frequency: the original has no rule closing it) and companion–companion (81) opened;
+    - xylem–xylem (52): the stele's frequency at barrier 0 and none at barriers > 0, instead of 10000× everywhere;
+    - kr −0.06 % (1.1764e-4 against 1.1771e-4) at barrier 1, −0.03 % at barrier 3.
+- **Tests** (`test/component/test_legacy_fixes.py`):
+  - every plasmodesmata edge of the dicot root (barriers 0, 1, 3, with and without xylem pieces) against a transcription of the original's code, with factors away from 1;
+  - the same on its network with random cgroups, for the branches GRANAP's presets do not reach (phloem-pole pericycle, companion–sieve, pericycle–companion, an epidermis as outer layer, the newer CellSet groups).
+  - 86 passed, 1 skipped.

@@ -14,7 +14,7 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path[:0] = [os.path.join(HERE, "..", "tutorials"), os.path.join(HERE, "..", "..", "test", "comparison")]
 
-from legacy_run import legacy_frame, legacy_section                             # noqa: E402
+from legacy_run import legacy_frame, legacy_options, legacy_section             # noqa: E402
 from tutorial_01_input import BARRIERS, FILES, section                                 # noqa: E402
 
 from openalea.mecha import plots                                                # noqa: E402
@@ -22,6 +22,7 @@ from openalea.mecha import plots                                                
 
 def main(source="granap"):
     ds, mecha, library = section(source)
+    legacy_options(mecha)
     segment = int(ds.entity_ids("SubOrgan")[0])
     organ = library.by_index(int(ds.get("anatomy_template")[0])).organ
     height = float(np.asarray(ds.get("length"))[0]) * 1.0E6

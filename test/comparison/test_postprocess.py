@@ -11,6 +11,7 @@ from openalea.mecha.geometry import section_parts
 from openalea.mecha.postprocess import radial_conductivity, soil_uptake
 
 from conftest import BARRIERS
+from legacy_run import legacy_options
 
 PSI_SOIL, PSI_XYL = 0.0, -5.0E3
 
@@ -20,7 +21,7 @@ def port(case):
     ds, g = case["ds"], case["g"]
     if not ds.has("barrier"):
         ds.register("barrier", np.ones(ds.n_nodes()), location="node")
-    mecha = MechaHydraulics(data_structure=ds)
+    mecha = legacy_options(MechaHydraulics(data_structure=ds))
     nodes, edges = section_parts(ds)[case["segment"]]
     geo = mecha.section_geometries()[case["segment"]][2]
     net = case["legacy"].network

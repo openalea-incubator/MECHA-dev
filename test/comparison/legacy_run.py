@@ -17,6 +17,18 @@ import numpy as np
 from openalea.mecha.legacy import InData, Mecha, NetworkBuilder
 
 
+# The port's options that reproduce the legacy where it departs from the original MECHA (devplan_metafspm.md §18):
+# its plasmodesmata rules and its aperture factors' defaults
+LEGACY_OPTIONS = dict(plasmodesmata_rules=2., kpl_PCC_factor=0., kpl_PST_factor=0.)
+
+
+def legacy_options(mecha):
+    """*mecha* (a MechaHydraulics) set to the legacy's choices, for the comparison; returns it."""
+    for name, value in LEGACY_OPTIONS.items():
+        setattr(mecha, name, value)
+    return mecha
+
+
 @dataclass
 class LegacyRun:
     network: object

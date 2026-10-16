@@ -12,6 +12,7 @@ from openalea.mecha.conductance import section_matrix
 from openalea.mecha.geometry import section_parts
 
 from conftest import BARRIERS
+from legacy_run import legacy_options
 
 PSI_SOIL, PSI_XYL = 0.0, -5.0E3                    # the legacy's default scenario (hPa)
 
@@ -21,7 +22,7 @@ def port(case):
     ds, g = case["ds"], case["g"]
     if not ds.has("barrier"):
         ds.register("barrier", np.ones(ds.n_nodes()), location="node")
-    mecha = MechaHydraulics(data_structure=ds)
+    mecha = legacy_options(MechaHydraulics(data_structure=ds))
     nodes, edges = section_parts(ds)[case["segment"]]
     net = case["legacy"].network
     mecha_index = g.property("mecha_index")

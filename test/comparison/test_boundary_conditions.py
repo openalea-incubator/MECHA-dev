@@ -13,7 +13,7 @@ import pytest
 from openalea.mecha.component import MechaHydraulics
 from openalea.mecha.geometry import XYLEM_TYPES, section_parts
 
-from legacy_run import legacy_neumann
+from legacy_run import legacy_neumann, legacy_options
 from plants import template_organ
 
 BARRIER = 3
@@ -25,7 +25,7 @@ def both(case):
     if not ds.has("barrier"):
         ds.register("barrier", np.ones(ds.n_nodes()), location="node")
     ds.set("barrier", np.full(ds.n_nodes(), float(BARRIER)))
-    mecha = MechaHydraulics(data_structure=ds)
+    mecha = legacy_options(MechaHydraulics(data_structure=ds))
     mecha()                                                         # Dirichlet: the uptake
     dirichlet = dict(uptake=float(ds.get("standard_uptake")[0]), kr=float(ds.get("kr")[0]))
     mecha.standard_axial_condition, mecha.standard_axial_flow = 2., dirichlet["uptake"]

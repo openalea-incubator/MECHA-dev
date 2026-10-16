@@ -36,14 +36,19 @@ _KW_CONFIGS = {   # barrier: sources of _KW_KEYS (kw_septa is always kw_septa, k
 _KW_INTERFACES = {(3, 3): "kw_endo_endo", (3, 4): "kw_endo_cortex", (3, 5): "kw_endo_peri", (3, 11): "kw_endo_peri",
                   (3, 12): "kw_endo_peri", (3, 13): "kw_endo_peri", (3, 16): "kw_endo_peri", (1, 1): "kw_exo_exo",
                   (1, 2): "kw_exo_epi", (1, 4): "kw_exo_cortex", (4, 4): "kw_cortex_cortex"}
-# plasmodesmata: the interfaces whose conductance factor applies (HydraulicData.interface_kpl_factor_map, as resolved
-# against the legacy's kpl configuration: the other keys are not found and give 1, §2 a)
-KPL_FACTOR_INTERFACES = {(12, 12): "kpl_phloem_companion_cell_factor", (11, 12): "kpl_phloem_companion_cell_factor",
-                         (11, 16): "kpl_phloem_sieve_tube_factor", (11, 13): "kpl_phloem_sieve_tube_factor",
-                         (5, 11): "kpl_phloem_sieve_tube_factor"}
-# plasmodesmata frequency per unit height, by interface (HydraulicData.fplxheight_map); others: fplxheight_default
+# ── Plasmodesmata ──
+# The original MECHA's rules (src_old/6_MECHAv4_SRS2025.py, its radial plasmodesmata; devplan_metafspm.md §18b,
+# plasmodesmata_rules 1): per interface, a frequency (per unit wall length and height) and an aperture factor, then
+# the endodermis side's factor. Its frequencies' parameters and its projects' values (GRANAR):
+FPLXHEIGHT_ORIGINAL = {"fplxheight_default": 8.0E5, "fplxheight_epi_exo": 1.08E6, "fplxheight_outer_cortex": 2.28E6,
+                       "fplxheight_cortex_cortex": 8.6E5, "fplxheight_cortex_endo": 8.8E5,
+                       "fplxheight_endo_endo": 6.4E5, "fplxheight_endo_peri": 9.6E5, "fplxheight_peri_stele": 1.08E6,
+                       "fplxheight_stele_stele": 6.4E5, "fplxheight_stele_comp": 9.8E5, "fplxheight_peri_comp": 7.0E5,
+                       "fplxheight_comp_comp": 6.8E5, "fplxheight_comp_sieve": 1.76E6, "fplxheight_peri_sieve": 7.2E5,
+                       "fplxheight_stele_sieve": 9.0E5}
 CGROUP_NAMES = {1: "exo", 2: "epi", 3: "endo", 4: "cortex", 5: "stele", 11: "sieve", 12: "comp", 13: "xylem",
                 16: "peri", 17: "tparenchyma", 18: "ttracheid", 23: "protophloem"}
+# The legacy's per-interface frequencies (HydraulicData.fplxheight_map; others 8e5), plasmodesmata_rules 2
 FPLXHEIGHT = {(1, 1): 8.0E5, (2, 2): 8.0E5, (1, 2): 1.08E6, (1, 4): 2.28E6, (4, 4): 8.6E5, (3, 4): 8.8E5,
               (3, 3): 6.4E5, (3, 16): 9.6E5, (3, 5): 9.6E5, (3, 17): 1.08E6, (3, 18): 0.0, (5, 16): 1.08E6,
               (5, 11): 9.0E5, (5, 23): 9.0E5, (5, 12): 9.8E5, (5, 13): 6.4E5, (5, 5): 6.4E5, (5, 17): 6.4E5,
@@ -51,13 +56,21 @@ FPLXHEIGHT = {(1, 1): 8.0E5, (2, 2): 8.0E5, (1, 2): 1.08E6, (1, 4): 2.28E6, (4, 
               (11, 17): 6.4E5, (11, 18): 0.0, (12, 13): 9.8E5, (12, 16): 7.0E5, (12, 12): 6.8E5, (12, 23): 6.8E5,
               (12, 17): 1.08E6, (12, 18): 0.0, (13, 16): 1.08E6, (13, 13): 6.4E5, (13, 23): 0.0, (13, 17): 1.08E6,
               (13, 18): 1.76E6, (17, 17): 8.0e5, (17, 18): 0.0, (18, 18): 0.0, (23, 23): 0.0}
+FPLXHEIGHT_LEGACY_DEFAULT = 8.0E5
+# the legacy's aperture factors, as resolved against its kpl configuration (§2 a: the other keys give 1)
+KPL_FACTOR_INTERFACES = {(12, 12): "kpl_PCC_factor", (11, 12): "kpl_PCC_factor", (11, 16): "kpl_PST_factor",
+                         (11, 13): "kpl_PST_factor", (5, 11): "kpl_PST_factor"}
 
 
 def fplxheight_name(interface) -> str:
     return "fplxheight_" + "_".join(CGROUP_NAMES[c] for c in interface)
 
 
-FPLXHEIGHT_PARAMETERS = {fplxheight_name(k): v for k, v in FPLXHEIGHT.items()}
+# The interfaces of the tissues the legacy added (transfusion parenchyma 17, tracheids 18, protophloem 23), which
+# the original's rules do not know: kept, with the legacy's frequencies, as parameters (in the original rules)
+ADDED_TISSUES = (17, 18, 23)
+FPLXHEIGHT_ADDED = {k: v for k, v in FPLXHEIGHT.items() if set(k) & set(ADDED_TISSUES)}
+FPLXHEIGHT_PARAMETERS = {**FPLXHEIGHT_ORIGINAL, **{fplxheight_name(k): v for k, v in FPLXHEIGHT_ADDED.items()}}
 
 
 @dataclass
@@ -275,28 +288,12 @@ def edge_conductances(net: Network, P: dict, barrier, height):
     K_mb = np.where(~barrier_interface & (kaqp_curr == 0.0), 1.00E-16, K_mb)
     K[e] = K_mb
 
-    # ── plasmodesmata (HydraulicMatrixBuilder._fill_plasmodesmata) ──
+    # ── plasmodesmata ──
     e = np.flatnonzero(plasmodesmata)
-    gi, gj = net.cgroup[net.a[e]], net.cgroup[net.b[e]]
-    code = _interface_codes(gi, gj)
     b = barrier[e]
     kpl = np.asarray(P["kpl"], dtype=float)[e]
-    sub = {name: np.asarray(P[name], dtype=float)[e] for name in FPLXHEIGHT_PARAMETERS}
-    fplx = _select(code, {k: fplxheight_name(k) for k in FPLXHEIGHT}, sub,
-                   np.asarray(P["fplxheight_default"], dtype=float)[e])
-    base_area = fplx * 1.0E-04 * net.edge_length[e]
-    factors = {name: np.asarray(P[name], dtype=float)[e] for name in set(KPL_FACTOR_INTERFACES.values())}
-    factor = _select(code, KPL_FACTOR_INTERFACES, factors, np.ones(e.size))
-    with np.errstate(divide="ignore", invalid="ignore"):
-        aperture = np.where(gi == gj, factor, 2.0 * factor / (factor + 1.0))
-    section = net.section_of_edge[e]
-    outer = net.outercortex_connec_rank[section]
-    modifier = np.select([code == np.minimum(outer, 4) * 1000 + np.maximum(outer, 4), code == 4004, code == 3004],
-                         [net.concentrated[section, 0], net.concentrated[section, 1], net.concentrated[section, 2]], 1.0)
-    modifier = np.where(b > 0, modifier, 1.0)
-    interc = net.intercellular[net.a[e]] | net.intercellular[net.b[e]]
-    temp_factor = np.select([interc & (b > 0), code == 13013, (b > 0) & ((gi == 13) | (gj == 13))],
-                            [0.0, 10000.0 * base_area, 0.0], aperture * base_area * modifier)
+    original = np.asarray(P["plasmodesmata_rules"], dtype=float)[e] == 1
+    temp_factor = np.where(original, _plasmodesmata_original(net, e, P, b), _plasmodesmata_legacy(net, e, P, b))
     K[e] = kpl * temp_factor
     return K, in_matrix
 
@@ -370,3 +367,110 @@ def section_matrix(net: Network, K, in_matrix, soil, axial, nodes, edges):
     cols = np.r_[i, j, i, j, np.arange(nodes.size), np.arange(nodes.size)]
     data = np.r_[-k, k, k, -k, -soil[nodes], -axial[nodes]]
     return coo_matrix((data, (rows, cols)), shape=(nodes.size, nodes.size)).tocsr()
+
+
+def _harmonic(t1, t2):
+    """2 t1 t2 / (t1 + t2), 0 where both are 0 (the original's aperture of an interface between two cell types)."""
+    t1, t2 = np.broadcast_arrays(np.asarray(t1, dtype=float), np.asarray(t2, dtype=float))
+    total = t1 + t2
+    return np.divide(2 * t1 * t2, total, out=np.zeros(total.shape), where=total != 0)
+
+
+def _plasmodesmata_legacy(net: Network, e, P, b):
+    """The legacy's plasmodesmata (HydraulicMatrixBuilder._fill_plasmodesmata): quantity × aperture per edge *e*."""
+    gi, gj = net.cgroup[net.a[e]], net.cgroup[net.b[e]]
+    code = _interface_codes(gi, gj)
+    fplx = np.full(e.size, FPLXHEIGHT_LEGACY_DEFAULT)
+    for (i, j), value in FPLXHEIGHT.items():
+        fplx[code == i * 1000 + j] = value
+    base_area = fplx * 1.0E-04 * net.edge_length[e]
+    factors = {name: np.asarray(P[name], dtype=float)[e] for name in set(KPL_FACTOR_INTERFACES.values())}
+    factor = _select(code, KPL_FACTOR_INTERFACES, factors, np.ones(e.size))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        aperture = np.where(gi == gj, factor, 2.0 * factor / (factor + 1.0))
+    section = net.section_of_edge[e]
+    outer = net.outercortex_connec_rank[section]
+    modifier = np.select([code == np.minimum(outer, 4) * 1000 + np.maximum(outer, 4), code == 4004, code == 3004],
+                         [net.concentrated[section, 0], net.concentrated[section, 1], net.concentrated[section, 2]], 1.0)
+    modifier = np.where(b > 0, modifier, 1.0)
+    interc = net.intercellular[net.a[e]] | net.intercellular[net.b[e]]
+    return np.select([interc & (b > 0), code == 13013, (b > 0) & ((gi == 13) | (gj == 13))],
+                     [0.0, 10000.0 * base_area, 0.0], aperture * base_area * modifier)
+
+
+def _phloem_pole_pericycle(net: Network, e):
+    """Per node: the phloem-pole pericycle cells, pericycle cells (cgroup 16, 21) joined to a sieve tube (11, 23) by
+    plasmodesmata (the original's ``PPP``)."""
+    out = np.zeros(net.cgroup.size, dtype=bool)
+    a, b = net.a[e], net.b[e]
+    ga, gb = net.cgroup[a], net.cgroup[b]
+    peri, sieve = (16, 21), (11, 23)
+    out[a[np.isin(ga, peri) & np.isin(gb, sieve)]] = True
+    out[b[np.isin(gb, peri) & np.isin(ga, sieve)]] = True
+    return out
+
+
+def _plasmodesmata_original(net: Network, e, P, b):
+    """
+    The original MECHA's plasmodesmata (its radial rules, first match wins): quantity × aperture per edge *e*, then
+    × endo_in_factor on the stelar side of the endodermis (both cells endodermis or stele: the wall they share is in
+    the original's rows up to the endodermis'), × endo_out_factor on the cortical side. The cgroups of its newer
+    CellSet versions are read as it does (19, 20: xylem; 21: pericycle).
+    """
+    def param(name):
+        return np.asarray(P[name], dtype=float)[e]
+
+    gi, gj = net.cgroup[net.a[e]].copy(), net.cgroup[net.b[e]].copy()
+    for g in (gi, gj):
+        g[np.isin(g, (19, 20))] = 13
+        g[g == 21] = 16
+
+    def pair(x, y):
+        x, y = np.atleast_1d(x), np.atleast_1d(y)
+        return (np.isin(gi, x) & np.isin(gj, y)) | (np.isin(gj, x) & np.isin(gi, y))
+
+    length = 1.0E-04 * net.edge_length[e]
+    section = net.section_of_edge[e]
+    outer = net.outercortex_connec_rank[section]
+    concentrated = np.where(b[:, None] > 0, net.concentrated[section], 1.0)
+    ppp = _phloem_pole_pericycle(net, np.flatnonzero(net.in_section & (net.path == PLASMODESMATA)))
+    t_ppp = np.where(ppp[net.a[e]] | ppp[net.b[e]], param("kpl_PPP_factor"), 1.0)
+    t_cortex, t_pcc = param("kpl_cortex_factor"), param("kpl_PCC_factor")
+    interc = net.intercellular[net.a[e]] | net.intercellular[net.b[e]]
+    stele = (5, 13)
+    added = np.zeros(e.size, dtype=bool)
+    added_value = np.zeros(e.size)
+    code = _interface_codes(gi, gj)
+    for interface in FPLXHEIGHT_ADDED:
+        match = code == interface[0] * 1000 + interface[1]
+        added |= match
+        added_value = np.where(match, param(fplxheight_name(interface)), added_value)
+    rules = [
+        (interc & (b > 0), 0.0),
+        ((param("xylem_pieces") > 0) & (gi == 13) & (gj == 13), 10000 * param("fplxheight_default") * length),
+        ((b > 0) & ((gi == 13) | (gj == 13)), 0.0),
+        (pair(2, 1), param("fplxheight_epi_exo") * length),
+        ((np.minimum(gi, gj) == np.minimum(outer, 4)) & (np.maximum(gi, gj) == np.maximum(outer, 4)) & (outer != 4),
+         _harmonic(t_cortex, 1.0) * param("fplxheight_outer_cortex") * length * concentrated[:, 0]),
+        (pair(4, 4), t_cortex * param("fplxheight_cortex_cortex") * length * concentrated[:, 1]),
+        (pair(3, 4), _harmonic(t_cortex, 1.0) * param("fplxheight_cortex_endo") * length * concentrated[:, 2]),
+        (pair(3, 3), param("fplxheight_endo_endo") * length),
+        (pair(3, 16), _harmonic(t_ppp, 1.0) * param("fplxheight_endo_peri") * length),
+        (pair(16, stele), _harmonic(t_ppp, 1.0) * param("fplxheight_peri_stele") * length),
+        (pair(stele, 12), _harmonic(t_pcc, 1.0) * param("fplxheight_stele_comp") * length),
+        (pair(16, 12), _harmonic(t_pcc, t_ppp) * param("fplxheight_peri_comp") * length),
+        (pair(12, 12), t_pcc * param("fplxheight_comp_comp") * length),
+        (pair(12, 11), _harmonic(t_pcc, 1.0) * param("fplxheight_comp_sieve") * length),
+        (pair(16, 11), _harmonic(t_ppp, 1.0) * param("fplxheight_peri_sieve") * length),
+        (pair(stele, 11), param("fplxheight_stele_sieve") * length),
+        (pair(stele, stele), param("fplxheight_stele_stele") * length),
+        (added, added_value * length),
+    ]
+    quantity = np.select([c for c, _ in rules], [np.broadcast_to(v, e.size) for _, v in rules],
+                         param("fplxheight_default") * length)
+    inner = lambda g: (g == 3) | (g > 4)                                   # noqa: E731
+    has_xylem = np.zeros(int(section.max(initial=-1)) + 1, dtype=bool)
+    xylem_sections = net.section_of_node[np.isin(net.cgroup, XYLEM_CGROUPS) & (net.section_of_node >= 0)]
+    has_xylem[xylem_sections] = True
+    stelar_side = (inner(gi) & inner(gj)) | ~has_xylem[section]       # no xylem: the original's r_rel is NaN
+    return quantity * np.where(stelar_side, param("kpl_endo_in_factor"), param("kpl_endo_out_factor"))
