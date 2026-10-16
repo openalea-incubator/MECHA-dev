@@ -696,3 +696,20 @@ MECHA uses one thickness (1.5 µm) for every wall. GRANAP gives each wall its ow
 - **Tests:**
   - the boundary is checked against Poiseuille, and `k_xyl` with source 2;
   - the mass balance of the standard problem is now checked to the round-off of the boundary's terms (64 ε Σ K_ax |ψ_xylem|): with conductances of ~10, the flows into the vessels are small differences of large terms (imbalance 2e-8 of the uptake, at a node residual of 4e-11 cm³ d⁻¹, the solver's round-off).
+
+### 19b. Q-L4 done: the walls' thickness
+
+- **`thickness_source`:** 1 MECHA's one value (`thickness`, 1.5 µm; set by `legacy_options`), 2 each wall's own (default).
+- **The new input `wall_thickness`** (by "Anatomy", µm) is GRANAP's: the sum of its two cells' wall layers, from the `AnatomyWriter`'s per-tissue table (cortex 1, endodermis 1.5, epidermis 2… µm), plus an outer layer on border walls. On the two roots it ranges from 1 to 4 µm, mean 2.1–2.2.
+  - A junction's thickness, for its soil term, is the mean of the walls it joins.
+  - Each wall edge and membrane takes its wall's.
+- **GRANAP fix (0f6a91f):** its component declared `wall_thickness` and `edge_wall_thickness` in mm. Their values are the exporter's µm; the declarations now say µm.
+- **Reviewed difference** (kr, cm hPa⁻¹ d⁻¹; Q-L1 and Q-L3 on):
+
+| root | barrier 1: GRANAP's / one value | barrier 3: GRANAP's / one value |
+|---|---|---|
+| monocot | 1.1000e-4 / 1.0619e-4 (+3.6 %) | 4.0703e-5 / 4.0295e-5 (+1.0 %) |
+| dicot | 1.3175e-4 / 1.2120e-4 (+8.7 %) | 5.5916e-5 / 5.4089e-5 (+3.4 %) |
+
+- **Test:** each wall edge's and soil term's conductance against MECHA's formula with its own thickness, a junction's with its walls' mean.
+- **Together, Q-L1, Q-L3 and Q-L4** move the standard kr at 200 µm from the legacy's 1.0252e-4 to 1.1000e-4 on the monocot root at barrier 1 (+7.3 %), and from 3.9753e-5 to 4.0703e-5 at barrier 3 (+2.4 %).

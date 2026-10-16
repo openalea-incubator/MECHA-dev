@@ -15,10 +15,11 @@ def test_a1_protosieve_cell_counted_once():
     n = 3
     net = SimpleNamespace(cgroup=np.full(n, 23), x=np.zeros(n), border_wall=np.zeros(n, bool),
                           border_junction=np.zeros(n, bool), wall_length=np.zeros(n), cell_area=np.ones(n),
+                          wall_thickness=np.full(n, np.nan),
                           xylem=np.zeros(n, np.int64), protosieve=np.array([0, 1, 2]))
     P = {name: np.full(n, value) for name, value in
          (("kw", 2.4e-4), ("thickness", 1.5), ("x_contact", 0.), ("k_xyl", 1e-6), ("k_sieve", 3e-6),
-          ("standard_axial_source", 2.))}
+          ("standard_axial_source", 2.), ("thickness_source", 1.))}
     _, axial, rhs = boundary_terms(net, P, barrier=np.zeros(n), height=np.full(n, 200.))
     assert axial.tolist() == [0., 3e-6, 3e-6] and rhs.tolist() == axial.tolist()
 
@@ -168,3 +169,29 @@ def test_q_l1_every_branch(dicot, barrier, outer):
     expected, ppp = _expected_plasmodesmata(net, e, P, barrier, 0.)
     np.testing.assert_allclose(got, expected, rtol=1e-13, atol=0)
     assert len(ppp) > 0
+
+
+def test_q_l4_each_wall_its_own_thickness():
+    """§18e: with thickness_source 2 (default), a wall edge's conductance uses its wall's own thickness (GRANAP's),
+    and a border junction's soil term the mean of its walls'; against thickness_source 1 (MECHA's one value)."""
+    from openalea.mecha.geometry import WALL
+    g, ds, anatomy = anatomy_data_structure(root(1))
+    ds.register("barrier", np.full(ds.n_nodes(), 1.), location="node")
+    mecha = MechaHydraulics(data_structure=ds)
+    mecha()
+    K2, soil2 = ds.get("conductance").copy(), ds.get("soil_conductance").copy()
+    mecha.thickness_source = 1.
+    mecha()
+    K1, soil1 = ds.get("conductance").copy(), ds.get("soil_conductance").copy()
+    net = mecha.network()
+    own = np.asarray(ds.get("wall_thickness"), dtype=float)
+    e = np.flatnonzero(net.in_section & net.junction_edge & (K1 > 1e-20))
+    wall = np.where(net.kind[net.a[e]] == WALL, net.a[e], net.b[e])
+    t, t1, h = own[wall], mecha.thickness, np.asarray(ds.get("length"))[wall] * 1e6
+    lateral = net.edge_lateral_distance[e]
+    np.testing.assert_allclose(K2[e] / K1[e], ((lateral + h) * t - t ** 2) / ((lateral + h) * t1 - t1 ** 2), rtol=1e-12)
+    walls = np.flatnonzero((soil1 > 0) & (net.kind == WALL))
+    np.testing.assert_allclose(soil2[walls] / soil1[walls], t1 / own[walls], rtol=1e-12)
+    junctions = np.flatnonzero((soil1 > 0) & (net.kind != WALL))
+    np.testing.assert_allclose(soil2[junctions] / soil1[junctions], t1 / net.wall_thickness[junctions], rtol=1e-12)
+    assert np.isfinite(net.wall_thickness[junctions]).all() and junctions.size > 0

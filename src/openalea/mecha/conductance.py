@@ -97,6 +97,7 @@ class Network:
     distance_center_grav: np.ndarray
     x: np.ndarray
     cell_area: np.ndarray         # µm² per node (0 on the apoplast)
+    wall_thickness: np.ndarray    # µm per node: a wall's own, a junction's the mean of its walls' (NaN elsewhere)
     wall_length: np.ndarray
     border_wall: np.ndarray
     border_junction: np.ndarray
@@ -125,7 +126,7 @@ def assemble(n_nodes: int, n_edges: int, geometries: list, phi_thick=None) -> Ne
         kind=nodes_full(-1, np.int64),
         rank=nodes_full(-1, np.int64), intercellular=nodes_full(False, bool), passage=nodes_full(False, bool),
         phi_thick=nodes_full(False, bool), wall_cells=nodes_full(-1, np.int64, (2,)),
-        distance_center_grav=nodes_full(np.nan), x=nodes_full(np.nan), cell_area=nodes_full(0.), wall_length=nodes_full(0.),
+        distance_center_grav=nodes_full(np.nan), x=nodes_full(np.nan), cell_area=nodes_full(0.), wall_thickness=nodes_full(np.nan), wall_length=nodes_full(0.),
         border_wall=nodes_full(False, bool), border_junction=nodes_full(False, bool), xylem=nodes_full(0, np.int64),
         protosieve=nodes_full(0, np.int64), outercortex_connec_rank=np.zeros(len(geometries), dtype=np.int64),
         concentrated=np.zeros((len(geometries), 3)))
@@ -162,6 +163,27 @@ def assemble(n_nodes: int, n_edges: int, geometries: list, phi_thick=None) -> Ne
 
 def set_edge_ends(net: Network, tail, head, path) -> None:
     net.a, net.b, net.path = np.asarray(tail), np.asarray(head), np.asarray(path, dtype=np.int64)
+
+
+def set_wall_thickness(net: Network, wall_thickness) -> None:
+    """Each wall's thickness (µm, GRANAP's), and each junction's: the mean of the walls it joins in its section."""
+    out = np.where(net.kind == WALL, wall_thickness, np.nan)
+    e = np.flatnonzero(net.junction_edge)
+    wall = np.where(net.kind[net.a[e]] == WALL, net.a[e], net.b[e])
+    junction = np.where(net.kind[net.a[e]] == WALL, net.b[e], net.a[e])
+    total, count = np.zeros(out.size), np.zeros(out.size)
+    np.add.at(total, junction, wall_thickness[wall])
+    np.add.at(count, junction, 1.)
+    joined = count > 0
+    out[joined] = total[joined] / count[joined]
+    net.wall_thickness = out
+
+
+def _thickness(net: Network, P: dict, nodes) -> np.ndarray:
+    """The thickness (µm) at the wall (or junction) *nodes*, per entity of P: thickness_source 1 MECHA's one value,
+    2 the node's own."""
+    own = np.asarray(P["thickness_source"]) == 2
+    return np.where(own, net.wall_thickness[nodes], np.asarray(P["thickness"], dtype=float))
 
 
 def _pow2(values) -> np.ndarray:
@@ -216,7 +238,6 @@ def edge_conductances(net: Network, P: dict, barrier, height):
     K = np.zeros(n)
     barrier = np.asarray(barrier).astype(np.int64)
     height = np.asarray(height, dtype=float)
-    thickness = np.asarray(P["thickness"], dtype=float)
     kw = np.asarray(P["kw"], dtype=float)
     kw_config = wall_configuration(barrier, P)
 
@@ -239,6 +260,8 @@ def edge_conductances(net: Network, P: dict, barrier, height):
 
     cg0, cg1 = net.cgroup[c0s], net.cgroup[c1s]
     interface = np.where(n_cells == 2, _interface_codes(cg0, cg1), -1)
+
+    thickness = _thickness(net, P, wall_end)          # per edge: its wall's (walls and membranes)
 
     # ── walls (HydraulicMatrixBuilder._fill_wall) ──
     e = np.flatnonzero(wall_edge)
@@ -311,7 +334,7 @@ def boundary_terms(net: Network, P: dict, barrier, height):
     """
     n = net.cgroup.size
     kw = np.asarray(P["kw"], dtype=float)
-    thickness = np.asarray(P["thickness"], dtype=float)
+    thickness = _thickness(net, P, np.arange(n))
     height = np.asarray(height, dtype=float)
     contact = net.x >= np.asarray(P["x_contact"], dtype=float)
     soil = np.zeros(n)

@@ -18,8 +18,9 @@ from openalea.mecha.legacy import InData, Mecha, NetworkBuilder
 
 
 # The port's options that reproduce the legacy where it departs from the original MECHA (devplan_metafspm.md §18):
-# its plasmodesmata rules and its aperture factors' defaults, its prescribed xylem boundary
-LEGACY_OPTIONS = dict(plasmodesmata_rules=2., kpl_PCC_factor=0., kpl_PST_factor=0., standard_axial_source=2.)
+# its plasmodesmata rules and its aperture factors' defaults, its prescribed xylem boundary, its one wall thickness
+LEGACY_OPTIONS = dict(plasmodesmata_rules=2., kpl_PCC_factor=0., kpl_PST_factor=0., standard_axial_source=2.,
+                      thickness_source=1.)
 
 
 def legacy_options(mecha):

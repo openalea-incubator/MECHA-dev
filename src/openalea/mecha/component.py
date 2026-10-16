@@ -20,7 +20,7 @@ from openalea.metafspm.solve.decorator import (boundary_set, graph_jacobian, gra
                                                 node_balance, rate, totalstate)
 
 from openalea.mecha.conductance import (Network, assemble, boundary_terms, cortex_parameters, edge_conductances,
-                                       set_edge_ends)
+                                       set_edge_ends, set_wall_thickness)
 from openalea.mecha.geometry import (AXIAL_JUNCTION, XYLEM_CGROUPS, phi_thick_cells, section_geometry,
                                      section_of, section_parts)
 from openalea.mecha.postprocess import (VISCOSITY_PHLOEM, VISCOSITY_XYLEM, axial_conductances, poiseuille,
@@ -72,6 +72,8 @@ class MechaHydraulics(FunctionalComponent):
     section_y: float = input_variable(**_node("mm", "position in the section"))
     wall_length: float = input_variable(**_node("mm", "the wall's length in the section (0: not a wall)"))
     cell_area: float = input_variable(**_node("mm2", "the protoplast's area in the section (0: apoplast)"))
+    wall_thickness: float = input_variable(**_node("µm", "the wall's thickness, its two cells' layers (NaN: not a wall; "
+                                                         "thickness_source 2)"))
     network_path: float = input_variable(**_edge("", "edge type: membrane 0, wall_air 1, wall 2, plasmodesmata 3, "
                                                      "air_link 4, axial junction 5"))
     edge_length: float = input_variable(**_edge("mm", "the edge's length"))
@@ -96,7 +98,9 @@ class MechaHydraulics(FunctionalComponent):
     kw_suberin_in: float = _p("cm2 hPa-1 d-1", "conductivity of suberized walls, inner face", 1.00E-16)
     kw_suberin_out: float = _p("cm2 hPa-1 d-1", "conductivity of suberized walls, outer face", 1.00E-16)
     kw_lignin: float = _p("cm2 hPa-1 d-1", "conductivity of lignified walls (lignin cap, phi thickenings)", 1.00E-16)
-    thickness: float = _p("µm", "cell wall thickness (one value for every wall, as MECHA's)", 1.5)
+    thickness_source: float = _p("", "the walls' thickness: 1 one value for every wall (thickness, MECHA's), 2 each "
+                                     "wall's own (wall_thickness, GRANAP's; a junction's: the mean of its walls')", 2.)
+    thickness: float = _p("µm", "cell wall thickness, every wall's (thickness_source 1, MECHA's)", 1.5)
     xylem_pieces: float = _p("", "1: the walls between two xylem cells are septa of near-zero conductance", 0.)
     kmb: float = _p("cm hPa-1 d-1", "membrane hydraulic conductivity, without aquaporins", 3.0E-5)
     kaqp: float = _p("cm hPa-1 d-1", "aquaporin contribution to the membrane conductivity", 0.000430)
@@ -388,6 +392,7 @@ class MechaHydraulics(FunctionalComponent):
         net = assemble(ds.n_nodes(), ds.n_edges(), items, phi)
         view = ds.to_graph_view()
         set_edge_ends(net, view.tail, view.head, np.asarray(ds.get("network_path")))
+        set_wall_thickness(net, np.asarray(ds.get("wall_thickness"), dtype=float))
         return net
 
     def cortex_gradient(self, geometries: dict, height_by_node, P_node) -> tuple:
