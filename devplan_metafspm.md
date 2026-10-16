@@ -620,3 +620,13 @@ MECHA uses one thickness (1.5 µm) for every wall. GRANAP gives each wall its ow
 **Order:**
 1. A1, A2 now.
 2. Then, with your answers: Q-L1 (plasmodesmata), Q-L2 (height), Q-L3 (xylem boundary), Q-L4 (thickness). Each is its own commit and reviewed difference, in this order, since each changes the reference of the next.
+
+### 18g. A1 and A2 done (2026-10-16)
+
+- **A1:** `boundary_terms` gives each protosieve cell `k_sieve` once. The geometry keeps the legacy's list, with its duplicates, for the geometry comparison. GRANAP's presets have no protophloem, so the fix is tested on a stand-in network (`test/component/test_legacy_fixes.py`).
+- **A2:** the flow condition's shares and the recovered xylem potential use the network's vessels (by cgroup), each with its own area fraction.
+  - **Reviewed difference** (tutorial 02's flow case, monocot root, barrier 3): the uptake is unchanged (the given flow, 1.2e-12 from the legacy's); kr is 4.028609e-5 against the legacy's 4.029255e-5 (1.6e-4); ψ differs by up to 177 hPa (3.5 %), in the stele, where the misplaced shares were.
+  - The vessels' potentials now spread over 56.5 hPa in the flow case, against 5.9 hPa when their potential is imposed: a flow split by area is not what the section takes at a uniform potential. That is a property of the condition, not of the fix.
+  - On the dicot root the two xylem orders agree, and the comparison stays exact. `test_boundary_conditions` keeps the exact checks there, and skips ψ on the monocot (documented).
+- **Tests:** 80 passed, 1 skipped (`--ignore=test/legacy`, the frozen legacy's own tests, as in CI).
+- **Next:** Q-L1 to Q-L4 wait for your answers.

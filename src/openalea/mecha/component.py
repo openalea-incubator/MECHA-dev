@@ -21,7 +21,7 @@ from openalea.metafspm.solve.decorator import (boundary_set, graph_jacobian, gra
 
 from openalea.mecha.conductance import (FPLXHEIGHT, Network, assemble, boundary_terms, cortex_parameters,
                                        edge_conductances, fplxheight_name, set_edge_ends)
-from openalea.mecha.geometry import (AXIAL_JUNCTION, XYLEM_CGROUPS, XYLEM_TYPES, phi_thick_cells, section_geometry,
+from openalea.mecha.geometry import (AXIAL_JUNCTION, XYLEM_CGROUPS, phi_thick_cells, section_geometry,
                                      section_of, section_parts)
 from openalea.mecha.postprocess import (VISCOSITY_PHLOEM, VISCOSITY_XYLEM, axial_conductances, poiseuille,
                                         radial_conductivity, soil_uptake)
@@ -430,22 +430,21 @@ class MechaHydraulics(FunctionalComponent):
 
     def _standard_axial_inflow(self, geometries, P_node, flow_condition) -> np.ndarray:
         """
-        The standard problem's flow condition (2): the flow into the xylem split among the vessels as the legacy does
-        (``_distribute_xylem_flow``): the area ratios of its cell manager's xylem (by tissue: protoxylem, metaxylem,
-        xylem, each in cell order), given by rank to its network's xylem cells (by cgroup, in cell order).
+        The standard problem's flow condition (2): the flow into the xylem split among the vessels (the network's,
+        by cgroup) as their areas. The legacy (``_distribute_xylem_flow``) computes the ratios on its cell manager's
+        xylem (by tissue) and gives them by rank to the network's, so that a vessel may get another's (§2 o, fixed).
         """
         out = np.zeros(self.data_structure.n_nodes())
         for nodes, _, geo in geometries.values():
             v = nodes[0]
             if not flow_condition[v]:
                 continue
-            typed = [c for t in XYLEM_TYPES for c in geo.cells[geo.tissue[geo.cells] == t]]
+            vessels = geo.xylem_cells
             total = 0.
-            for c in typed:
+            for c in vessels:
                 total += float(geo.cell_area[c])
-            ratios = [float(geo.cell_area[c]) / total for c in typed]
-            for c, ratio in zip(geo.xylem_cells, ratios):
-                out[nodes[c]] = -float(P_node["standard_axial_flow"][v]) * ratio
+            for c in vessels:
+                out[nodes[c]] = -float(P_node["standard_axial_flow"][v]) * (float(geo.cell_area[c]) / total)
         return out
 
     def _evaporation_conductance(self, geometries, height_node, P_node) -> np.ndarray:
@@ -627,8 +626,8 @@ class MechaHydraulics(FunctionalComponent):
             if P["standard_solve"][v] > 0:
                 psi_soil = float(P["standard_psi_soil"][v])
                 psi_axial = float(P["standard_psi_xylem"][v] if b > 0 else P["standard_psi_sieve"][v])
-                if b > 0 and P["standard_axial_condition"][v] == 2:      # the xylem's potential, recovered (legacy)
-                    vessels = [c for t in XYLEM_TYPES for c in geo.cells[geo.tissue[geo.cells] == t]]
+                if b > 0 and P["standard_axial_condition"][v] == 2:      # the xylem's potential: its vessels' mean
+                    vessels = geo.xylem_cells
                     psi_axial = 0.0
                     for c in vessels:
                         psi_axial += standard[nodes[c]] / len(vessels)

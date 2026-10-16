@@ -3,6 +3,9 @@ Tutorial 02 against the legacy MECHA: the standard problem with the xylem's pote
 flow into the xylem (the legacy's own procedure: pressure removed, flow distributed, solved, the xylem's potential
 recovered), on the same GRANAP section (barrier 3).
 
+The flow case's kr differs from the legacy's (1.6e-4 on the monocot root) since fix A2 (devplan_metafspm.md §18): the
+port gives each vessel the share of its own area, the legacy gives them mis-ordered (its problem o).
+
     python tutorial_02_bc.py          (from MECHA-dev/example/comparison)
 """
 import os
