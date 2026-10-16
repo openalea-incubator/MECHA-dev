@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from openalea.mecha.geometry import MEMBRANE, PLASMODESMATA, WALL, WALL_PATH, XYLEM_CGROUPS
+from openalea.mecha.geometry import AIR_LINK, MEMBRANE, PLASMODESMATA, WALL, WALL_AIR, WALL_PATH, XYLEM_CGROUPS
 from openalea.mecha.postprocess import VISCOSITY_PHLOEM, VISCOSITY_XYLEM, poiseuille
 
 # ── The legacy's tables ──
@@ -36,7 +36,8 @@ _KW_CONFIGS = {   # barrier: sources of _KW_KEYS (kw_septa is always kw_septa, k
 # a wall's interface (its two cells' cgroups, sorted) -> its kw key (HydraulicData.interface_kw_key_map)
 _KW_INTERFACES = {(3, 3): "kw_endo_endo", (3, 4): "kw_endo_cortex", (3, 5): "kw_endo_peri", (3, 11): "kw_endo_peri",
                   (3, 12): "kw_endo_peri", (3, 13): "kw_endo_peri", (3, 16): "kw_endo_peri", (1, 1): "kw_exo_exo",
-                  (1, 2): "kw_exo_epi", (1, 4): "kw_exo_cortex", (4, 4): "kw_cortex_cortex"}
+                  (1, 2): "kw_exo_epi", (1, 4): "kw_exo_cortex", (4, 4): "kw_cortex_cortex",
+                  (2, 4): "kw_meso_hypo"}       # the reactions' needle (kw unless kw_meso_hypo is given; §25, r9)
 # ── Plasmodesmata ──
 # The original MECHA's rules (src_old/6_MECHAv4_SRS2025.py, its radial plasmodesmata; devplan_metafspm.md §18b,
 # plasmodesmata_rules 1): per interface, a frequency (per unit wall length and height) and an aperture factor, then
@@ -72,6 +73,9 @@ def fplxheight_name(interface) -> str:
 ADDED_TISSUES = (17, 18, 23)
 FPLXHEIGHT_ADDED = {k: v for k, v in FPLXHEIGHT.items() if set(k) & set(ADDED_TISSUES)}
 FPLXHEIGHT_PARAMETERS = {**FPLXHEIGHT_ORIGINAL, **{fplxheight_name(k): v for k, v in FPLXHEIGHT_ADDED.items()}}
+
+
+GAS_CONSTANT_HPA = 8.314E4          # hPa cm3 mol-1 K-1 (the reactions' R_gas)
 
 
 @dataclass
@@ -210,6 +214,8 @@ def wall_configuration(barrier, P) -> dict:
     config = {key: _per_code(codes, _KW_CONFIGS, P, i) for i, key in enumerate(_KW_KEYS)}
     config["kw_septa"] = np.asarray(P["kw_septa"], dtype=float)
     config["kw_phi_thick"] = np.asarray(P["kw_lignin"], dtype=float)
+    meso_hypo = np.asarray(P["kw_meso_hypo"], dtype=float)
+    config["kw_meso_hypo"] = np.where(np.isfinite(meso_hypo), meso_hypo, np.asarray(P["kw"], dtype=float))
     return config
 
 
@@ -244,7 +250,12 @@ def edge_conductances(net: Network, P: dict, barrier, height):
     wall_edge = net.in_section & net.junction_edge
     membrane = net.in_section & (net.path == MEMBRANE)
     plasmodesmata = net.in_section & (net.path == PLASMODESMATA)
-    in_matrix = wall_edge | membrane | plasmodesmata
+    air_link = net.in_section & (net.path == AIR_LINK)
+    in_matrix = wall_edge | membrane | plasmodesmata | air_link
+
+    # ── air links (the reactions' _fill_air_link): vapour diffusion between air spaces ──
+    e = np.flatnonzero(air_link)
+    K[e] = np.asarray(P["k_air_link"], dtype=float)[e] * (height[e] * net.edge_length[e] * 1.0E-08)
 
     # the wall end of wall and membrane edges, and its cells
     a_is_wall = net.kind[net.a] == WALL
@@ -311,7 +322,10 @@ def edge_conductances(net: Network, P: dict, barrier, height):
         K_mb = 1 / (1 / (kw_val / (t / 2 * 1.0E-04)) + 1 / (kmb + kaqp_curr)) * 1.0E-08 * (height[e]
                                                                                           + net.edge_dist[e]) * net.edge_length[e]
     K_mb = np.where(kw_val == 0.0, 0.0, K_mb)
-    K_mb = np.where(~barrier_interface & (kaqp_curr == 0.0), 1.00E-16, K_mb)
+    # no aquaporin activity outside the barriers (an air-filled intercellular space, the original's): 1e-16; the
+    # reactions branch's rule (membrane_floor_rules 2, for its comparison): only if kmb is 0 too
+    floor = (np.asarray(P["membrane_floor_rules"], dtype=float)[e] != 2) | (kmb == 0.0)
+    K_mb = np.where(~barrier_interface & (kaqp_curr == 0.0) & floor, 1.00E-16, K_mb)
     K[e] = K_mb
 
     # ── plasmodesmata ──
@@ -427,8 +441,9 @@ def _plasmodesmata_legacy(net: Network, e, P, b):
                          [net.concentrated[section, 0], net.concentrated[section, 1], net.concentrated[section, 2]], 1.0)
     modifier = np.where(b > 0, modifier, 1.0)
     interc = net.intercellular[net.a[e]] | net.intercellular[net.b[e]]
-    return np.select([interc & (b > 0), code == 13013, (b > 0) & ((gi == 13) | (gj == 13))],
-                     [0.0, 10000.0 * base_area, 0.0], aperture * base_area * modifier)
+    meso_hypo = np.isfinite(np.asarray(P["kw_meso_hypo"], dtype=float)[e]) & (code == 2004)
+    return np.select([interc & (b > 0), meso_hypo, code == 13013, (b > 0) & ((gi == 13) | (gj == 13))],
+                     [0.0, 0.0, 10000.0 * base_area, 0.0], aperture * base_area * modifier)
 
 
 def _phloem_pole_pericycle(net: Network, e):
@@ -480,6 +495,7 @@ def _plasmodesmata_original(net: Network, e, P, b):
         added_value = np.where(match, param(fplxheight_name(interface)), added_value)
     rules = [
         (interc & (b > 0), 0.0),
+        (np.isfinite(param("kw_meso_hypo")) & pair(2, 4), 0.0),      # the needle's lignified (2, 4) walls (§25)
         ((param("xylem_pieces") > 0) & (gi == 13) & (gj == 13), 10000 * param("fplxheight_default") * length),
         ((b > 0) & ((gi == 13) | (gj == 13)), 0.0),
         (pair(2, 1), param("fplxheight_epi_exo") * length),
@@ -507,3 +523,46 @@ def _plasmodesmata_original(net: Network, e, P, b):
     has_xylem[xylem_sections] = True
     stelar_side = (inner(gi) & inner(gj)) | ~has_xylem[section]       # no xylem: the original's r_rel is NaN
     return quantity * np.where(stelar_side, param("kpl_endo_in_factor"), param("kpl_endo_out_factor"))
+
+
+def wall_air_terms(net: Network, P: dict, K, height):
+    """
+    The wall ↔ air-space edges' linearised Kelvin exchange (the reactions' ``_fill_wall_air``), per edge: the flow
+    from the wall to the air space is K_wall ψ_wall − K_air x_air + offset (x the air's vapour pressure, in p_sat
+    units), in series with the membrane of the wall's first cell (its exchange area (height + dist) × length).
+    Returns (K_wall, K_air, offset, wall end, air end) per edge (0 and -1 off the wall_air edges). P per edge.
+    """
+    n = net.path.size
+    K_wall, K_air, offset = np.zeros(n), np.zeros(n), np.zeros(n)
+    wall_end, air_end = np.full(n, -1, dtype=np.int64), np.full(n, -1, dtype=np.int64)
+    e = np.flatnonzero(net.in_section & (net.path == WALL_AIR))
+    if e.size == 0:
+        return K_wall, K_air, offset, wall_end, air_end
+    a_is_wall = net.kind[net.a[e]] == WALL
+    w, air = np.where(a_is_wall, net.a[e], net.b[e]), np.where(a_is_wall, net.b[e], net.a[e])
+    wall_end[e], air_end[e] = w, air
+    membranes = np.flatnonzero(net.in_section & (net.path == MEMBRANE))
+    by_pair = {}
+    for m in membranes:
+        u, v = int(net.a[m]), int(net.b[m])
+        wall, cell = (u, v) if net.kind[u] == WALL else (v, u)
+        by_pair[(wall, cell)] = m
+    import math
+    for k, wn, edge in zip(range(e.size), w, e):
+        first = int(net.wall_cells[wn, 0])
+        m = by_pair.get((int(wn), first)) if first >= 0 else None
+        length = float(net.edge_length[m] if m is not None else net.edge_length[edge])
+        dist = float(net.edge_dist[m] if m is not None else net.edge_dist[edge])
+        area = (float(height[edge]) + dist) * length * 1.0E-08
+        kwa, p_sat = float(P["kwa"][edge]), float(P["p_sat"][edge])
+        psi_ref, M_w, T = float(P["psi_ref_wall_air"][edge]), float(P["water_molar_mass"][edge]), \
+            float(P["wall_air_temperature"][edge])
+        alpha = M_w / (GAS_CONSTANT_HPA * T)
+        e_ref = math.exp(alpha * psi_ref)
+        K_vap = kwa * p_sat * e_ref * alpha * area
+        K_memb = float(K[m]) if m is not None else float("inf")
+        f = 1.0 / (1.0 + K_vap / K_memb) if K_memb > 0.0 else 0.0
+        K_wall[edge] = f * K_vap
+        K_air[edge] = f * kwa * area
+        offset[edge] = f * kwa * p_sat * area * e_ref * (1.0 - alpha * psi_ref)
+    return K_wall, K_air, offset, wall_end, air_end

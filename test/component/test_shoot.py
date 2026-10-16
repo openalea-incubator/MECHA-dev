@@ -82,18 +82,39 @@ def test_only_the_root_meets_the_soil_and_only_the_leaf_the_air(plant):
     g, ds, mecha, kinds = plant
     L = g.labels.SubOrgan
     root, leaf = _organ_nodes(g, ds, kinds, L.RootSegment), _organ_nodes(g, ds, kinds, L.LeafElement)
-    soil, air = ds.get("soil_conductance"), ds.get("evaporation_conductance")
+    soil = ds.get("soil_conductance")
     assert (soil[root] > 0).any() and (soil[~root] == 0).all()
-    pores = air > 0
-    assert pores.any() and leaf[pores].all() and (ds.get("tissue")[pores] == "pore").all()
+    # transpiration_model 2 (default, §25): the walls of the leaf's air spaces, pinned; no pore evaporates
+    pinned = ds.get("air_wall_conductance") > 0
+    assert pinned.any() and leaf[pinned].all() and (ds.get("kind")[pinned] == 1).all()
+    assert (ds.get("evaporation_conductance") == 0).all()
+
+
+def test_stomatal_pores_as_an_option(plant):
+    """transpiration_model 1: the leaf's stomatal pores meet the air (E3), no wall is pinned."""
+    g, ds, mecha, kinds = plant
+    leaf = _organ_nodes(g, ds, kinds, g.labels.SubOrgan.LeafElement)
+    mecha.transpiration_model = 1.
+    try:
+        mecha()
+        pores = ds.get("evaporation_conductance") > 0
+        assert pores.any() and leaf[pores].all() and (ds.get("tissue")[pores] == "pore").all()
+        assert (ds.get("air_wall_conductance") == 0).all()
+        assert ds.get("evaporation").sum() == pytest.approx(ds.get("root_uptake").sum(), rel=1e-8)
+    finally:
+        mecha.transpiration_model = 2.
+        mecha()
 
 
 def test_root_uptake_is_transpired(plant):
+    """To 1e-6: the pinned walls' penalty (1e3 × the largest diagonal term, the reactions' device) puts their terms'
+    round-off at ~1e-9 cm3 d-1 each."""
     g, ds, mecha, kinds = plant
     uptake, evaporation = ds.get("root_uptake").sum(), ds.get("evaporation").sum()
-    assert uptake > 0 and evaporation == pytest.approx(uptake, rel=1e-8)
+    assert uptake > 0 and evaporation == pytest.approx(uptake, rel=1e-6)
     psi = ds.get("psi")
-    assert np.isfinite(psi).all() and psi.max() <= SOIL + 1e-6
+    liquid = ds.get("tissue") != "air space"               # on the air spaces, ψ holds their vapour pressure (§25)
+    assert np.isfinite(psi).all() and psi[liquid].max() <= SOIL + 1e-6
 
 
 def test_root_quantities_on_roots_only(plant):

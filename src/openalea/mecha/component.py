@@ -20,8 +20,8 @@ from openalea.metafspm.solve.decorator import (boundary_set, graph_jacobian, gra
                                                 node_balance, rate, totalstate)
 
 from openalea.mecha.conductance import (Network, assemble, boundary_terms, cortex_parameters, edge_conductances,
-                                       set_edge_ends, set_wall_thickness)
-from openalea.mecha.geometry import (AXIAL_JUNCTION, XYLEM_CGROUPS, phi_thick_cells, section_geometry,
+                                       set_edge_ends, set_wall_thickness, wall_air_terms)
+from openalea.mecha.geometry import (AXIAL_JUNCTION, MEMBRANE, WALL, WALL_AIR, XYLEM_CGROUPS, phi_thick_cells, section_geometry,
                                      section_of, section_parts)
 from openalea.mecha.postprocess import (VISCOSITY_PHLOEM, VISCOSITY_XYLEM, axial_conductances, poiseuille,
                                         radial_conductivity, soil_uptake)
@@ -54,6 +54,19 @@ def _p(unit, description, default):
 def _edge(unit, description):
     return dict(**_doc(unit, description), by="Anatomy", scale=SCALES.Connection, location="edge",
                 state_variable_type="descriptor")
+
+
+def _wall_air_flow(B, psi, tail_conductance, head_conductance, offset):
+    """The wall_air edges' flows from tail to head: a ψ_tail − b ψ_head + c (0 on the other edges)."""
+    psi = np.asarray(psi, dtype=float)
+    tail = np.asarray(B.maximum(0).T @ psi).reshape(-1)
+    head = np.asarray((-B).maximum(0).T @ psi).reshape(-1)
+    return tail_conductance * tail - head_conductance * head + offset
+
+
+def _wall_air_jacobian(B, tail_conductance, head_conductance):
+    """The wall_air flows' derivative in the balances: B diag(a) B_tail^T − B diag(b) B_head^T."""
+    return B @ diags(tail_conductance) @ B.maximum(0).T - B @ diags(head_conductance) @ (-B).maximum(0).T
 
 
 @dataclass
@@ -114,18 +127,28 @@ class MechaSections(FunctionalComponent):
 
     def section_roles(self) -> tuple:
         """
-        (first, roots): the SubOrgan vids without a parent (a root system's first section) and those labelled
-        RootSegment; read from the MPG once per topology (reading it flushes the DataStructure's variables).
+        (first, roots, leaves): the SubOrgan vids without a parent (a root system's first section), those labelled
+        RootSegment and those labelled LeafElement; read from the MPG once per topology (reading it flushes the
+        DataStructure's variables).
         """
         ds = self.data_structure
         cached = self.__dict__.get("_section_roles")
         if cached is None or cached[0] != ds.topology_version:
             g = ds.mtg
-            labels, root = g.property("label"), g.labels.SubOrgan.RootSegment
+            labels, L = g.property("label"), g.labels.SubOrgan
             segments = [int(v) for v in ds.entity_ids("SubOrgan")]
             cached = self.__dict__["_section_roles"] = (ds.topology_version, (
-                {v for v in segments if g.parent(v) is None}, {v for v in segments if labels.get(v) == root}))
+                {v for v in segments if g.parent(v) is None}, {v for v in segments if labels.get(v) == L.RootSegment},
+                {v for v in segments if labels.get(v) == L.LeafElement}))
         return cached[1]
+
+    def _leaf_nodes(self, geometries) -> np.ndarray:
+        """bool per node: in a leaf section."""
+        leaves = self.section_roles()[2]
+        out = np.zeros(self.data_structure.n_nodes(), dtype=bool)
+        for segment, (nodes, _, _) in geometries.items():
+            out[nodes] = segment in leaves
+        return out
 
     def _root_nodes(self, geometries) -> np.ndarray:
         """bool per node: in a root section."""
@@ -202,6 +225,28 @@ class MechaHydraulics(MechaSections):
     stomatal_conductance: float = _p("mol m-2 s-1", "stomatal conductance to water vapour (leaves' pores)", 0.2)
     vapour_factor: float = _p("mm3 s-1 MPa-1 per (mol m-2 s-1 m2)", "e_sat V_w² / (R T P): from a vapour conductance "
                               "to a liquid one (20 °C)", VAPOUR_FACTOR)
+    transpiration_model: float = _p("", "the leaves' transpiration: 2 the walls of their air spaces pinned to "
+                                        "air_space_psi (the reactions branch's, §25), 1 their stomatal pores (E3)", 2.)
+    air_space_psi: float = _p("hPa", "the potential the air spaces' walls are pinned to (near-saturated air; not the "
+                                     "outside air's, until the air transfers out of the leaf)", -1.0E4)
+    evaporating_walls: float = _p("", "the pinned walls: 1 every wall of a leaf section's air spaces, at the water "
+                                      "potential (ψ + π = air_space_psi); 2 the reactions branch's, the wall ends of "
+                                      "its wall_air edges, at the pressure potential (its comparison)", 1.)
+    kw_meso_hypo: float = _p("cm2 hPa-1 d-1", "the conductivity of the (2, 4) walls, whose plasmodesmata it also cuts "
+                                              "(the reactions' needle; NaN: none)", float("nan"))
+    kwa: float = _p("cm hPa-1 d-1", "the walls' evaporation conductivity into their air spaces (wall_air edges)",
+                    1.0E-04)
+    p_sat: float = _p("", "the saturation vapour pressure factor of the wall_air exchange", 1.0)
+    psi_ref_wall_air: float = _p("hPa", "the potential the wall_air exchange (Kelvin) is linearised at", 0.0)
+    wall_air_temperature: float = _p("K", "the temperature of the wall_air exchange", 298.15)
+    water_molar_mass: float = _p("g mol-1", "the water's molar mass (Kelvin's equation)", 18.015)
+    k_air_link: float = _p("cm hPa-1 d-1", "the vapour diffusion conductivity between air spaces (air_link edges)",
+                           1.0E-04)
+    membrane_floor_rules: float = _p("", "a membrane without aquaporin activity outside the barriers: 1 the "
+                                         "original's 1e-16 (an air-filled space), 2 the reactions branch's (only if "
+                                         "kmb is 0; its comparison)", 1.)
+    standard_solve_shoot: float = _p("", "1: the standard problem on shoot sections too (their xylem and pinned "
+                                         "walls; e.g. the reactions' needle), 0: roots only", 0.)
     standard_axial_condition: float = _p("", "the standard problem's xylem condition: 1 its potential "
                                          "(standard_psi_xylem, see standard_axial_source), 2 its flow (standard_axial_flow)", 1.)
     standard_axial_flow: float = _p("cm3 d-1", "the flow into the xylem in the standard problem (condition 2), "
@@ -311,6 +356,31 @@ class MechaHydraulics(MechaSections):
                                                                    "osmotic_potential (with standard_osmotic)"),
                                                      initialize=0., scale=SCALES.Compartment, location="node",
                                                      state_variable_type="NonInertialIntensive")
+
+    # ── State variables: transpiration by the air spaces' walls (§25) ──
+    air_tail_conductance: float = state_variable(**_doc("cm3 hPa-1 d-1", "wall_air edges: the flow from tail to head "
+                                                        "is air_tail_conductance ψ_tail − air_head_conductance ψ_head "
+                                                        "+ air_offset (the linearised Kelvin exchange)"),
+                                                 initialize=0., scale=SCALES.Connection, location="edge",
+                                                 state_variable_type="NonInertialIntensive")
+    air_head_conductance: float = state_variable(**_doc("cm3 hPa-1 d-1", "wall_air edges: see air_tail_conductance"),
+                                                 initialize=0., scale=SCALES.Connection, location="edge",
+                                                 state_variable_type="NonInertialIntensive")
+    air_offset: float = state_variable(**_doc("cm3 d-1", "wall_air edges: see air_tail_conductance"),
+                                       initialize=0., scale=SCALES.Connection, location="edge",
+                                       state_variable_type="NonInertialIntensive")
+    air_wall_conductance: float = state_variable(**_doc("cm3 hPa-1 d-1", "a pinned (evaporating) wall's penalty: "
+                                                        "1e3 × its section's largest diagonal term (0 elsewhere)"),
+                                                 initialize=0., scale=SCALES.Compartment, location="node",
+                                                 state_variable_type="NonInertialIntensive")
+    air_wall_psi: float = state_variable(**_doc("hPa", "the pressure potential a pinned wall is held at, plant "
+                                                       "problem"),
+                                         initialize=0., scale=SCALES.Compartment, location="node",
+                                         state_variable_type="NonInertialIntensive")
+    standard_air_wall_psi: float = state_variable(**_doc("hPa", "the pressure potential a pinned wall is held at, "
+                                                                "standard problem"),
+                                                  initialize=0., scale=SCALES.Compartment, location="node",
+                                                  state_variable_type="NonInertialIntensive")
 
     # ── State variables: the axial junctions between sections ──
     axial_conduit: float = state_variable(**_doc("", "on the axial junctions: 1 between xylem vessels, 2 between "
@@ -443,7 +513,8 @@ class MechaHydraulics(MechaSections):
     @rate(include_inactive=True)
     def _conductance(self, network_path, barrier, length, anatomy_template) \
             -> tuple[np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,
-                     str, np.ndarray, str, np.ndarray]:
+                     str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str,
+                     np.ndarray]:
         """
         Every edge's conductance, and the boundary conductances of the nodes (soil, axial), from MECHA's geometry,
         the segments' barriers and heights (their lengths), and the plants' parameters; the standard problem's
@@ -467,11 +538,58 @@ class MechaHydraulics(MechaSections):
         root = self._root_nodes(geometries)
         soil = np.where(root, soil, 0.)                               # stems and leaves: no soil (E1)
         evaporation = self._evaporation_conductance(geometries, height_node, P_node)
-        return (np.where(in_matrix, K, 0.), "soil_conductance", soil, "axial_boundary_conductance", axial,
+        evaporation = np.where(P_node["transpiration_model"] == 1, evaporation, 0.)
+        K = np.where(in_matrix, K, 0.)
+        K_wall, K_air, offset, wall_end, air_end = wall_air_terms(net, P_edge, K, height_node[tail])
+        a_is_wall = (wall_end >= 0) & (wall_end == net.a)
+        air_tail = np.where(a_is_wall, K_wall, K_air)
+        air_head = np.where(a_is_wall, K_air, K_wall)
+        air_offset = np.where(a_is_wall, offset, -offset)
+        penalty = self._air_wall_penalty(geometries, net, P_node, K, soil, axial, K_wall, K_air, wall_end, air_end,
+                                         root)
+        shoot_standard = (P_node["standard_solve_shoot"] > 0) & ~root
+        standard = (P_node["standard_solve"] > 0) & (root | shoot_standard)
+        return (K, "soil_conductance", soil, "axial_boundary_conductance", axial,
                 "standard_soil_psi", P_node["standard_psi_soil"].astype(float),
                 "standard_axial_psi", np.where(np.isnan(axial_psi), 0., axial_psi),
-                "in_standard_problem", ((P_node["standard_solve"] > 0) & root).astype(float),
-                "evaporation_conductance", evaporation, "standard_axial_inflow", inflow)
+                "in_standard_problem", standard.astype(float),
+                "evaporation_conductance", evaporation, "standard_axial_inflow", inflow,
+                "air_tail_conductance", np.where(wall_end >= 0, air_tail, 0.),
+                "air_head_conductance", np.where(wall_end >= 0, air_head, 0.),
+                "air_offset", np.where(wall_end >= 0, air_offset, 0.), "air_wall_conductance", penalty)
+
+    def _air_wall_penalty(self, geometries, net, P_node, K, soil, axial, K_wall, K_air, wall_end, air_end, root):
+        """
+        The pinned (evaporating) walls' penalty (the reactions' ``_apply_air_wall_bc``): per section, max(1e3 × the
+        largest absolute diagonal term of its matrix, 1), on its pinned walls (transpiration_model 2): every wall
+        of a leaf section's air spaces (evaporating_walls 1), or the wall ends of its wall_air edges (2).
+        """
+        n = net.cgroup.size
+        diag = soil + axial
+        np.add.at(diag, net.a, K)
+        np.add.at(diag, net.b, K)
+        has = wall_end >= 0
+        np.add.at(diag, wall_end[has], K_wall[has])
+        np.add.at(diag, air_end[has], K_air[has])
+        tissue = np.asarray(self.data_structure.get("tissue"))
+        air_space = (net.kind == 0) & np.array([t == "air space" for t in tissue])
+        adjacent = np.zeros(n, dtype=bool)
+        for path in (MEMBRANE, WALL_AIR):
+            e = np.flatnonzero(net.in_section & (net.path == path))
+            a, b = net.a[e], net.b[e]
+            adjacent[a[air_space[b]]] = True
+            adjacent[b[air_space[a]]] = True
+        all_walls = adjacent & (net.kind == WALL) & self._leaf_nodes(geometries)
+        wall_air_walls = np.zeros(n, dtype=bool)
+        wall_air_walls[wall_end[has]] = True
+        pinned = np.where(P_node["evaporating_walls"] == 2, wall_air_walls, all_walls) & \
+            (P_node["transpiration_model"] == 2)
+        out = np.zeros(n)
+        for nodes, _, _ in geometries.values():
+            if not pinned[nodes].any():
+                continue
+            out[nodes[pinned[nodes]]] = max(1e3 * float(np.abs(diag[nodes]).max()), 1.0)
+        return out
 
     def _standard_axial_inflow(self, geometries, P_node, flow_condition) -> np.ndarray:
         """
@@ -510,7 +628,7 @@ class MechaHydraulics(MechaSections):
 
     @rate(include_inactive=True)
     def _osmotic_drive(self, osmotic_potential, reflection_coefficient, air_psi) \
-            -> tuple[np.ndarray, str, np.ndarray, str, np.ndarray]:
+            -> tuple[np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray]:
         """
         Each edge's osmotic drive σ (π_tail − π_head) (the membranes': the legacy's ``rhs_o``, as a flow K σ Δπ added
         to K Δψ), the standard problem's (its plants with standard_osmotic), and the pores' evaporation reference.
@@ -520,8 +638,14 @@ class MechaHydraulics(MechaSections):
         pi = np.asarray(osmotic_potential, dtype=float)
         drive = np.asarray(reflection_coefficient, dtype=float) * (pi[view.tail] - pi[view.head])
         standard = np.asarray(self.parameter_values("standard_osmotic", "edge")) > 0
+        P = {name: np.asarray(self.parameter_values(name, "node")) for name in
+             ("air_space_psi", "evaporating_walls", "standard_osmotic")}
+        by_water = P["evaporating_walls"] == 1             # pinned at the water potential (the reactions': pressure)
+        pinned = P["air_space_psi"] - np.where(by_water, pi, 0.)
+        standard_pinned = P["air_space_psi"] - np.where(by_water & (P["standard_osmotic"] > 0), pi, 0.)
         return (drive, "standard_osmotic_drive", np.where(standard, drive, 0.),
-                "evaporation_psi", np.asarray(air_psi, dtype=float) - pi)
+                "evaporation_psi", np.asarray(air_psi, dtype=float) - pi,
+                "air_wall_psi", pinned, "standard_air_wall_psi", standard_pinned)
 
     @rate(include_inactive=True)
     def _axial_conduit(self, network_path, cgroup) -> np.ndarray:
@@ -590,7 +714,9 @@ class MechaHydraulics(MechaSections):
         return kinds, "collar_value", values
 
     # ── The standard problem: each section alone, MECHA's definition of kr (Q-M5) ──
-    @graph_system(node_unknowns=["standard_psi"], solver="newton", max_iter=3, schedule_as="state",
+    # tol (cm3 d-1): the pinned walls' penalty (§25) puts their residuals' round-off at ~1e-9; the systems are linear,
+    # solved by the first Newton step
+    @graph_system(node_unknowns=["standard_psi"], solver="newton", max_iter=3, tol=1e-8, schedule_as="state",
                   filters={"in_standard_problem": ">0"})
     class _standard_problem:
         """
@@ -599,10 +725,12 @@ class MechaHydraulics(MechaSections):
         """
 
         @node_balance(field="standard_psi")
-        def _balance(self, standard_psi, conductance, standard_osmotic_drive):
+        def _balance(self, standard_psi, conductance, standard_osmotic_drive, air_tail_conductance,
+                     air_head_conductance, air_offset):
             B = self._graph_view.incidence
             drop = np.asarray(B.T @ standard_psi).reshape(-1) + standard_osmotic_drive
-            return np.asarray(B @ (conductance * drop)).reshape(-1)
+            q = _wall_air_flow(B, standard_psi, air_tail_conductance, air_head_conductance, air_offset)
+            return np.asarray(B @ (conductance * drop + q)).reshape(-1)
 
         soil = boundary_set(filters={"soil_conductance": ">0"}, kind="robin", value="standard_soil_psi",
                             weight="soil_conductance", field="standard_psi")
@@ -610,19 +738,24 @@ class MechaHydraulics(MechaSections):
                              weight="axial_boundary_conductance", field="standard_psi")
         axial_flow = boundary_set(filters={"standard_axial_inflow": "<0"}, kind="neumann", value="standard_axial_inflow",
                                   field="standard_psi")
+        air_walls = boundary_set(filters={"air_wall_conductance": ">0"}, kind="robin", value="standard_air_wall_psi",
+                                 weight="air_wall_conductance", field="standard_psi")
 
         @graph_jacobian
-        def _jacobian(self, conductance):
+        def _jacobian(self, conductance, air_tail_conductance, air_head_conductance):
             B = self._graph_view.incidence
-            return (B @ diags(conductance) @ B.T).tocsr()
+            return (B @ diags(conductance) @ B.T
+                    + _wall_air_jacobian(B, air_tail_conductance, air_head_conductance)).tocsr()
 
         @graph_output("standard_flow", location="edge")
-        def _standard_flow(self, standard_psi, conductance, standard_osmotic_drive):
-            return conductance * (np.asarray(self._graph_view.incidence.T @ standard_psi).reshape(-1)
-                                  + standard_osmotic_drive)
+        def _standard_flow(self, standard_psi, conductance, standard_osmotic_drive, air_tail_conductance,
+                           air_head_conductance, air_offset):
+            B = self._graph_view.incidence
+            return conductance * (np.asarray(B.T @ standard_psi).reshape(-1) + standard_osmotic_drive) + \
+                _wall_air_flow(B, standard_psi, air_tail_conductance, air_head_conductance, air_offset)
 
     # ── The plant problem: the sections joined by their xylem junctions ──
-    @graph_system(node_unknowns=["psi"], solver="newton", max_iter=3, schedule_as="state")
+    @graph_system(node_unknowns=["psi"], solver="newton", max_iter=3, tol=1e-8, schedule_as="state")
     class _plant_problem:
         """
         The whole plant: every section's edges and the xylem junctions between sections; the soil around the root
@@ -631,10 +764,12 @@ class MechaHydraulics(MechaSections):
         """
 
         @node_balance(field="psi")
-        def _balance(self, psi, conductance, xylem_axial_conductance, osmotic_drive):
+        def _balance(self, psi, conductance, xylem_axial_conductance, osmotic_drive, air_tail_conductance,
+                     air_head_conductance, air_offset):
             B = self._graph_view.incidence
             K = conductance + xylem_axial_conductance
-            return np.asarray(B @ (K * (np.asarray(B.T @ psi).reshape(-1) + osmotic_drive))).reshape(-1)
+            q = _wall_air_flow(B, psi, air_tail_conductance, air_head_conductance, air_offset)
+            return np.asarray(B @ (K * (np.asarray(B.T @ psi).reshape(-1) + osmotic_drive) + q)).reshape(-1)
 
         soil = boundary_set(filters={"soil_conductance": ">0"}, kind="robin", value="soil_psi",
                             weight="soil_conductance", field="psi")
@@ -642,24 +777,29 @@ class MechaHydraulics(MechaSections):
                               field="psi")
         air = boundary_set(filters={"evaporation_conductance": ">0"}, kind="robin", value="evaporation_psi",
                            weight="evaporation_conductance", field="psi")
+        air_walls = boundary_set(filters={"air_wall_conductance": ">0"}, kind="robin", value="air_wall_psi",
+                                 weight="air_wall_conductance", field="psi")
 
         @graph_jacobian
-        def _jacobian(self, conductance, xylem_axial_conductance):
+        def _jacobian(self, conductance, xylem_axial_conductance, air_tail_conductance, air_head_conductance):
             B = self._graph_view.incidence
-            return (B @ diags(conductance + xylem_axial_conductance) @ B.T).tocsr()
+            return (B @ diags(conductance + xylem_axial_conductance) @ B.T
+                    + _wall_air_jacobian(B, air_tail_conductance, air_head_conductance)).tocsr()
 
         @graph_output("flow", location="edge")
-        def _flow(self, psi, conductance, xylem_axial_conductance, osmotic_drive):
-            return (conductance + xylem_axial_conductance) * (np.asarray(self._graph_view.incidence.T @ psi).reshape(-1)
-                                                              + osmotic_drive)
+        def _flow(self, psi, conductance, xylem_axial_conductance, osmotic_drive, air_tail_conductance,
+                  air_head_conductance, air_offset):
+            B = self._graph_view.incidence
+            return (conductance + xylem_axial_conductance) * (np.asarray(B.T @ psi).reshape(-1) + osmotic_drive) + \
+                _wall_air_flow(B, psi, air_tail_conductance, air_head_conductance, air_offset)
 
         @graph_output("root_uptake", location="node")
         def _root_uptake(self, psi, soil_conductance, soil_psi):
             return soil_conductance * (soil_psi - psi)
 
         @graph_output("evaporation", location="node")
-        def _evaporation(self, psi, evaporation_conductance, evaporation_psi):
-            return evaporation_conductance * (psi - evaporation_psi)
+        def _evaporation(self, psi, evaporation_conductance, evaporation_psi, air_wall_conductance, air_wall_psi):
+            return evaporation_conductance * (psi - evaporation_psi) + air_wall_conductance * (psi - air_wall_psi)
 
         @graph_output("water_potential", location="node")
         def _water_potential(self, psi, osmotic_potential):

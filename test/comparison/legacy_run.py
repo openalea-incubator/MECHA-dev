@@ -140,3 +140,53 @@ def legacy_osmotic(organ, barrier, height=200.0, **overrides):
     edge_Q = {(int(u), int(v)): float(attrs["Q"]) for u, v, attrs in network.graph.edges(data=True) if "Q" in attrs}
     return dict(solution=np.asarray(result["solution"]).reshape(-1), psi_os=psi_os, sigma=sigma, edge_Q=edge_Q,
                 total_flow=float(np.asarray(mecha.total_flow[0][1]).reshape(-1)[0]))
+
+
+def legacy_reactions_needle(organ, psi_air=-1.0E4, psi_xyl=-200.0, sigma=0.7):
+    """
+    The reactions branch's needle water problem (``simulations/needle.py``, ``NeedleSimulation._build_network`` and
+    ``_resolve_air_bc``): ``InData.needle_defaults()``, its scenario 0 (all zero: the xylem and the soil at 0) and a
+    scenario 1 (the default root scenario with s_factor = σ, the xylem at *psi_xyl*), the evaporating walls pinned at
+    *psi_air*; ``water_flux``. Returns per scenario dict(solution, edge_K, edge_Q, psi_os {node: π}, sigma
+    {(wall, cell): σ}), and the pinned walls, the penalty k_air and the wall_air coefficients.
+    """
+    import copy
+    from openalea.mecha.legacy_reactions import InData as RInData, Mecha as RMecha, NetworkBuilder as RNetwork
+    from openalea.mecha.legacy_reactions.utils.data_loader import BoundaryData
+    organ.export_to_adjencymatrix()
+    network = RNetwork(organ)
+    network.populate_from_network()
+    data = RInData.needle_defaults()
+    s1 = copy.deepcopy(BoundaryData().scenarios[0])
+    s1["s_factor"] = sigma
+    data.boundary.add_scenario(s1)
+    mecha = RMecha(data, network=network)
+    mecha.psi_xyl[1, 0, 1] = psi_xyl
+    mecha.psi_sieve[1, 0, 1] = np.nan
+    walls = mecha.set_air_wall_bc(psi_air)
+    graph, cm = network.graph, network.cell_manager
+    out = {}
+    standard = None
+
+    def record():
+        edge_K = {(int(u), int(v)): float(a["K"]) for u, v, a in graph.edges(data=True) if "K" in a}
+        edge_Q = {(int(u), int(v)): float(a["Q"]) for u, v, a in graph.edges(data=True) if "Q" in a}
+        psi_os, sig = {}, {}
+        for u, v, a in graph.edges(data=True):
+            if a.get("path") != "membrane":
+                continue
+            wall, cell = (int(u), int(v)) if int(u) < network.n_walls else (int(v), int(u))
+            w, c, mb = cm.get_wall_by_node_id(wall), cm.get_by_node_id(cell), cm.get_membrane_by_edge(wall, cell)
+            psi_os[wall], psi_os[cell], sig[(wall, cell)] = w.psi_os, c.psi_os, mb.sigma
+        return dict(edge_K=edge_K, edge_Q=edge_Q, psi_os=psi_os, sigma=sig)
+
+    solution, _, _, _, _ = mecha.solve_W(h=0, i_maturity=0)
+    standard = dict(solution=np.asarray(solution).reshape(-1), **record())
+    wall_air = {(int(u), int(v)): (float(a["K_wall"]), float(a["K_air"]), float(a["offset"]))
+                for u, v, a in graph.edges(data=True) if a.get("path") == "wall_air"}
+    k_air = mecha._air_wall_bc["k_air"]
+    mecha.water_flux(verbose=False)
+    result = [r for r in mecha.results if r.get("scenario") == 1][-1]
+    out[0] = standard
+    out[1] = dict(solution=np.asarray(result["solution"]).reshape(-1), **record())
+    return dict(scenarios=out, walls=list(walls), k_air=k_air, wall_air=wall_air, network=network, mecha=mecha)

@@ -226,11 +226,14 @@ def tissue_values(P):
     return vals, s_vals
 
 
-def section_presets(geo, P, barrier, membranes):
+def section_presets(geo, P, barrier, membranes, per_membrane=False):
     """
     The legacy's osmotic potentials (per local node, hPa) and reflection coefficients (per membrane, in the order of
     *membranes*, rows (wall, cell) of local nodes) of one root section, with its plant's parameters *P* (scalars).
     A cell's potential is the one its last membrane sets, in the legacy's order (walls by id); junctions have none.
+    With *per_membrane*, also each membrane's wall potential: the legacy sets it per membrane, so that a wall between
+    a cortical-rule cell and a stelar-rule cell enters its equations with two (problem r10; the port keeps one, the
+    last).
     """
     rank_to_row, distance, row_outer_cortex = legacy_rows(geo.n_layer, geo.layer_dist)
     r_rel, x_rel = relative_positions(geo, rank_to_row, distance)
@@ -241,6 +244,7 @@ def section_presets(geo, P, barrier, membranes):
     os_sieve = P["osmotic_sieve"]
     psi_os = np.zeros(geo.kind.size)
     sigma = np.zeros(len(membranes))
+    wall_side = np.zeros(len(membranes))
     position = np.empty(geo.legacy_order.size, dtype=np.int64)
     position[geo.legacy_order] = np.arange(geo.legacy_order.size)
     order = np.argsort(position[np.asarray([w for w, _ in membranes], dtype=np.int64)], kind="stable")
@@ -310,8 +314,8 @@ def section_presets(geo, P, barrier, membranes):
                 cell_os, sig = vals["stele"], s_vals["stele"]
             else:
                 cell_os, sig, wall_os = os_xyl, 0.0, os_xyl
-        psi_os[i], psi_os[j], sigma[k] = wall_os, cell_os, sig
-    return psi_os, sigma
+        psi_os[i], psi_os[j], sigma[k], wall_side[k] = wall_os, cell_os, sig, wall_os
+    return (psi_os, sigma, wall_side) if per_membrane else (psi_os, sigma)
 
 
 @dataclass
@@ -321,6 +325,8 @@ class MechaOsmoticPresets(MechaSections):
     reflection coefficients, from the legacy's scenario rules (os_hetero, s_hetero, the soil's and the xylem's
     profiles). Their outputs are MechaHydraulics' "Solutes" inputs.
     """
+    presets_sections: float = _p("", "the sections the presets apply to: 1 the roots (MECHA's rules are root rules), "
+                                     "2 every section (the reactions' needle, its comparison)", 1.)
     presets_rules: float = _p("", "1: the original MECHA's presets (its cortex layers c1-c8 from the outer cortex "
                                   "inward; the endodermis cells' own osmotic_endo_cell), 2: the legacy's (all cortex "
                                   "cells in c1, problem p; the endodermis cells at osmotic_endo, problem q), for the "
@@ -373,8 +379,9 @@ class MechaOsmoticPresets(MechaSections):
         names = [f.name for f in self.__dataclass_fields__.values() if f.metadata.get("variable_type") == "parameter"]
         table = {name: np.asarray(self.parameter_values(name, "node")) for name in names}
         roots = self.section_roles()[1]
+        every = np.asarray(table["presets_sections"]) == 2
         for segment, (nodes, edges, geo) in self.section_geometries().items():
-            if segment not in roots:
+            if segment not in roots and not every[nodes[0]]:
                 continue
             local = np.full(ds.n_nodes(), -1, dtype=np.int64)
             local[nodes] = np.arange(nodes.size)
