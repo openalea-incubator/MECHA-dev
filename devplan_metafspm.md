@@ -514,3 +514,109 @@ Your answer: E1–E6 and the recommendations of Q-E1 (the pores) and Q-E2 (the w
   - **Fixed in GRANAP (your request):** three causes. (1) GRANAR's `<cellgroups>` give several names per id (4: cortex, then `inter_cellular_space`, `aerenchyma`; 3: endodermis, then `passage_cell`; 11: phloem, then `cambium`), and the reader kept the last one; it now keeps the first. (2) A `<granardata>` file is in mm: the scale now defaults from the root element (1, or 0.001 for `<cellsetdata>`). (3) `regenerate=("stele",)` rebuilt each of the 168 resolved stele cells with a donor stele (the thousands of pericycle cells); it now defaults to `()` for a `<granardata>` file, whose stele is resolved.
   - **`tutorial_01_input.py granar`** (port and comparison) now runs the legacy tutorial's own section through GRANAP: kr 9.115400e-5 and 3.550639e-5, Kx 1.028664, legacy on the GRANAP organ and port equal.
   - The legacy reading the file with its own XML builder (the original tutorial's path) gives kr 9.111275e-5 and 3.549032e-5, Kx 1.026006: the same topology (3162 walls, 2108 junctions, 1055 cells) and wall lengths, but its cell areas are polygons through the wall midpoints and junctions (0.77 % less area than the true outlines GRANAP uses: Kx, by Poiseuille), and its wall positions move the mean epidermis distance by 0.05 % (the perimeter, in kr). A difference between the legacy's two readers, not the port's.
+
+## 18. Design note: the legacy fixes (Q-M1, second half), and what comes after
+
+**Your direction (2026-10-16):**
+- Start with the legacy fixes, with this note first.
+- Steps 4 and 5 of the later phases (osmotic terms, solutes) will come from a more recent version, your colleague's `reaction` branch. It will be made available and integrated in the port directly, instead of porting the legacy's `SoluteTransport`.
+
+**How a fix is checked.** The legacy stays frozen, so after a fix the port and the legacy no longer agree everywhere. Each fix's comparison test asserts two things:
+- outside the fix's scope (the edges, nodes or sections it concerns), everything stays bit-exact;
+- inside it, the new value is the one the fix's rule gives.
+
+The difference is then reviewed on the tutorials' sections (kr, Kx, ψ maps), and recorded here.
+
+**The reference for "fixed":** the original MECHA (`src_old/6_MECHAv4_SRS2025.py`, with its GRANAR project inputs `src_old/Projects/GRANAR/in/`), wherever the refactored legacy departs from it.
+
+### 18a. Fixes with no decision to make (in this order)
+
+- **A1 — (f), the protophloem counted twice** in the phloem boundary term (`boundary_terms`). Counted once. It only matters at barrier 0 with a phloem potential given (`standard_psi_sieve`, NaN by default: no effect by default).
+- **A2 — (o) and (l), one set of xylem vessels:** the network's (by cgroup, in cell order), wherever the port still uses the cell manager's (by tissue): the flow condition's shares (`_standard_axial_inflow`), and the xylem potential recovered after a flow condition (`_kr`). It only changes the flow-condition case (tutorial 02): each vessel gets its own share.
+- **Nothing to fix in the port:**
+  - (c) the flow condition read from the input files: the port has its own (`standard_axial_condition`), and the XML inputs are not ported;
+  - (e) the barrier-0 Kx: fixed at step 4 (D3);
+  - (g), (h), (j), (m): the legacy's code only (lists used as scalars, scenario loop, the shipped XML, debug prints);
+  - (k): the port calls `phi_thick_cells` with its arguments in order;
+  - (n): the dead ghost-wall bookkeeping was not ported;
+  - the two xylem sets of the legacy's boundary-term removal (§10): only in the matrix the legacy returns; the comparison keeps emulating it, the port never removes anything.
+
+### 18b. The plasmodesmata: (a) and (b) are more than key names
+
+Compared with the original's radial plasmodesmata rules (`src_old`, lines 2967–3062), the legacy's tables (`interface_kpl_factor_map`, `fplxheight_map`) differ in:
+
+- **The factors, beyond the mismatched keys:**
+  - the original applies `cortex_factor` to outer layer–cortex (harmonic with 1), cortex–cortex (as is) and cortex–endodermis (harmonic). The legacy: never (key not found);
+  - `PPP_factor` to the phloem-pole pericycle cells only (pericycle cells joined to a sieve tube by plasmodesmata, `PPP`), at their interfaces with the endodermis, stele, companion cells (harmonic with `PCC_factor`) and sieve tubes. The legacy: never;
+  - `PCC_factor` to stele/xylem–companion, companion–companion and companion–sieve. The legacy: only the last two;
+  - `PST_factor` to no radial interface in the original. The legacy: to sieve–pericycle, sieve–xylem and stele–sieve;
+  - `endo_in_factor` / `endo_out_factor` multiply every plasmodesma by the side of the endodermis its wall is on (`r_rel`). The legacy: never.
+- **The factors' defaults:** 1.0 in the original's projects (GRANAR, maize_granar), 0.0 in the legacy without an XML file. The port follows the latter, so its companion–companion, companion–sieve and sieve interfaces have no plasmodesmata at all.
+- **The frequencies:**
+  - pericycle–pericycle: 7.0e5 in the original's projects, the default 8.0e5 in the legacy;
+  - outer layer–cortex: the original takes the actual outer layer (`outercortex_connec_rank`: the epidermis where there is no exodermis), the legacy only exodermis–cortex;
+  - stele–sieve and xylem–sieve: 9.0e5 in the original (at barrier 0, where the xylem is not yet a vessel), 0 in the legacy.
+- **Xylem–xylem:** the original gives its high conductance only to the walls splitting one vessel (`Xylem_pieces`). The legacy gives it to every xylem–xylem interface.
+- **Interfaces the legacy added** (transfusion tissue 17 and 18, protophloem 23, for needles): not in the original, which gives them the default frequency.
+
+**Q-L1 — the plasmodesmata rules.**
+- *Recommendation:* the original's rules and factors, as new per-plant parameters:
+  - `kpl_cortex_factor`, `kpl_endo_in_factor`, `kpl_endo_out_factor`, `kpl_PPP_factor`;
+  - `kpl_PCC_factor` and `kpl_PST_factor`, the latter kept for the 3D (axial) plasmodesmata.
+- Their defaults: the original projects' 1.0, which reopens the phloem's plasmodesmata.
+- The legacy's added interfaces (17, 18, 23) kept, since GRANAP generates those tissues.
+- *Alternative:* fix only the keys and keep the legacy's interface lists and its 0.0 defaults.
+
+### 18c. The section's height: one cell, or a segment of cells (D4 revisited)
+
+**What the probe shows** (monocot root, standard problem, kr in cm hPa⁻¹ d⁻¹; the height is the segment's length, D4):
+
+| height | barrier 1, k_xyl 1e-6 | barrier 1, k_xyl ∞ | barrier 3, k_xyl 1e-6 | barrier 3, k_xyl ∞ |
+|---|---|---|---|---|
+| 200 µm | 1.025e-4 | 1.062e-4 | 3.98e-5 | 4.03e-5 |
+| 1 mm | 6.98e-5 | 7.91e-5 | 9.41e-6 | 9.56e-6 |
+| 5 mm | 4.53e-5 | 7.31e-5 | 1.97e-6 | 2.00e-6 |
+
+So `k_xyl` (§11) is the smaller part. Most of the dependence comes from the plasmodesmata: their conductance is `fplxheight × wall length`, with no height in it, while the walls, membranes and soil terms grow with the height. At barrier 3 the endodermis can only be crossed through them, so kr falls as 1/height.
+
+**This is MECHA's intent for one cell.** The original's own comment: `Fplxheight` is "the plasmodesmatal frequency (per cm²) × the cell's axial length when the frequency was counted… these values conserve the quantity of plasmodesmata when cells elongate". In MECHA the height is one cell's length (`Defheight` = 200 µm in its projects), and an elongating cell keeps its plasmodesmata. In the port the height is a segment's length (D4), with many cells stacked along it: their plasmodesmata are missing.
+
+Scaling `kpl` and `k_xyl` by height / 200 µm brings kr back near the 200 µm values (barrier 1: 1.03e-4, 9.73e-5 and 9.63e-5 at 200 µm, 1 mm and 5 mm; barrier 3: 3.98e-5, 3.92e-5, 3.91e-5). The rest comes from the end-wall terms (`lateral distance + height`, `height + dist`), which belong to one cell too.
+
+**Q-L2 — the height.**
+- *Recommendation:* a cell length ℓ, separate from the segment's length L. It starts as a per-plant parameter `cell_length` (200 µm, MECHA's `Defheight`), and can later be an input by "Development", for cells elongating near the tip. Each section's rules are then MECHA's for one cell of height ℓ (the legacy's values, exactly, when ℓ = 200 µm). Its radial conductances (walls, membranes, plasmodesmata, soil, the standard problem's axial boundary) are multiplied by n = L / ℓ, the cells stacked along the segment. Then:
+  - ψ in the standard problem is that of one cell, its flows × n, and kr is independent of L;
+  - the axial junctions keep their Poiseuille over L (§14), and Kx is per unit length already;
+  - in the plant problem, radial and axial conductances both follow the segment.
+- *Alternative:* keep D4 and scale only the plasmodesmata and `k_xyl` with L / 200 µm.
+
+### 18d. The standard problem's xylem boundary
+
+The original has two sources for the vessels' boundary conductance (`Kax_source`):
+- 1, its projects' value: Poiseuille through each vessel over the section's height (area² / 8πηh);
+- 2: prescribed `K_xyl` values.
+
+The legacy always uses `k_xyl` = 1e-6, whatever the source. At 200 µm the Poiseuille values are over 10 times larger, which raises kr by up to 3.5 % (the k_xyl ∞ column above).
+
+**Q-L3 — the xylem boundary.**
+- *Recommendation:* a parameter `standard_axial_source` with the original's two choices, Poiseuille over ℓ (1) and `k_xyl` (2), and the original's default 1. kr's ψ_xylem is then the vessels' potential, up to the small resistance of one cell's length of vessel.
+- *Alternatives:*
+  - keep `k_xyl` as the default (the legacy's numbers);
+  - impose ψ_xylem on the vessels (a Dirichlet set), the limit of both.
+
+### 18e. The walls' thickness, (d)
+
+MECHA uses one thickness (1.5 µm) for every wall. GRANAP gives each wall its own: 1 to 4 µm on the monocot root, median 2. Every wall and membrane conductance, and the soil terms, depend on it. Q-M2 already decided to switch to GRANAP's values as a reviewed change.
+
+**Q-L4 — the default thickness.**
+- *Recommendation:* a parameter `thickness_source`: 1 for MECHA's one value (`thickness`), 2 for GRANAP's per-wall `wall_thickness`. The default is 2, after the change in kr is measured and reviewed on the tutorials' sections, here.
+- *Alternative:* keep 1 as the default, GRANAP's thickness as an option.
+
+### 18f. Deferred
+
+- **(i) `wall_air` and `air_link` edges** (the leaves' and needles' air spaces). They need rules MECHA does not have (vapour in the air spaces), so they belong to the shoot's specialisation (Q-G3), with the cuticular evaporation (Q-E1). *Recommendation:* defer them there.
+- **Q-M2's other half** (the steps that do not influence the results removed, GRANAP's lateral distances used): after these fixes, since they change what is influential.
+
+**Order:**
+1. A1, A2 now.
+2. Then, with your answers: Q-L1 (plasmodesmata), Q-L2 (height), Q-L3 (xylem boundary), Q-L4 (thickness). Each is its own commit and reviewed difference, in this order, since each changes the reference of the next.

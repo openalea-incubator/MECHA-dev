@@ -86,7 +86,7 @@ class Network:
     border_wall: np.ndarray
     border_junction: np.ndarray
     xylem: np.ndarray             # int per node: occurrences in the network's xylem list (cgroup)
-    protosieve: np.ndarray        # int per node: occurrences in the protosieve list (duplicates, §2 f)
+    protosieve: np.ndarray        # int per node: occurrences in the legacy's protosieve list (duplicates, §2 f)
     outercortex_connec_rank: np.ndarray   # per section
     concentrated: np.ndarray              # (sections, 3): outer–cortex, cortex–cortex, cortex–endodermis
 
@@ -322,12 +322,8 @@ def boundary_terms(net: Network, P: dict, barrier, height):
     k_xyl, k_sieve = np.asarray(P["k_xyl"], dtype=float), np.asarray(P["k_sieve"], dtype=float)
     xylem = (barrier > 0) & (net.xylem > 0)
     protosieve = (barrier == 0) & (net.protosieve > 0)
-    axial_rhs = np.where(xylem, k_xyl, np.where(protosieve, k_sieve, 0.))
-    axial = axial_rhs.copy()
-    twice = protosieve & (net.protosieve > 1)              # the duplicated protosieve cells (§2 f): k_sieve added twice
-    for _ in range(int(net.protosieve.max(initial=0)) - 1):
-        axial = np.where(twice, axial + k_sieve, axial)
-    return soil, axial, axial_rhs
+    axial = np.where(xylem, k_xyl, np.where(protosieve, k_sieve, 0.))
+    return soil, axial, axial.copy()          # each protosieve cell once (the legacy adds k_sieve per duplicate, §2 f)
 
 
 def cortex_parameters(geo, kaqp_cortex: float, ratio_cortex: float, height: float) -> tuple:
