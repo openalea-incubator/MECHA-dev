@@ -971,6 +971,7 @@ Both are new water behaviour relative to the frozen legacy. Their place in the p
 ### 23c. Questions
 
 - **Q-S1 — the needle's water side.** Every simulation needs it: `wall_air` (Kelvin), `air_link`, the evaporating-wall penalty, `kw_meso_hypo`, `needle_defaults`. The port has none of it: the `wall_air` and `air_link` edges are ignored (problem i), and the leaves evaporate at their stomatal pores (E3). Port it now, as the shoot's transpiration model beside the pores (leaves by pores, needles by their air spaces), before the solutes? *Recommendation:* yes, first. It is the water state the solutes are compared on.
+answer: ideally, I want to generalize what is done on needles to all leaves so we work on the same basis, but before answering: do we have also air to air nodes and edges that can describe how water leaves the stomatal chamber?
 - **Q-S2 — the reactions' other water changes:**
   - the 1e-16 membrane floor only when kmb = 0 (§23);
   - `k_xyl` and `k_sieve` 1.0 (the port's Q-L3 Poiseuille boundary already holds the vessels);
@@ -978,6 +979,37 @@ Both are new water behaviour relative to the frozen legacy. Their place in the p
   - `hypodermis` mapped to cgroup 2.
 
   *Recommendation:* the membrane floor as a reviewed fix (an option, the legacy's kept for its comparison); check the tissue names against GRANAP's current ones; `k_xyl` nothing to do.
+  answer: yes to recommendation, if the modeler of the reaction branch made unrealistic fixes to make solute work I don't want it to pollute the port but if it just expands a scenario of MECHA's use, I am ok.
 - **Q-S3 — GRANAP's needle in metafspm.** The port reads anatomies from the DataStructure, so the needle must come through GRANAP's anatomy component (a needle class or preset in its library). The simulations build it with `NeedleAnatomy(seed=42)` directly. Checked: GRANAP's metafspm component (`granap/metafspm/`) has no needle yet. *Recommendation:* add the needle to GRANAP's library first (a GRANAP step: `NeedleAnatomy` as the organ class of a needle segment).
+answer: wrong, look at at the examples again, we generated needles so GRANAP port must already do it no?
 - **Q-S4 — the transport as a graph system.** Implicit Euler inside metafspm's graph system (one solve per time step, the step being the simulation's), rather than porting the θ-method as is. θ = 1 is the only value the scenarios use. *Recommendation:* yes, θ = 1 only.
+answer: yes
 - **Q-S5 — the photosynthetic source:** ported as the simulations do it (a concentration increment before the step) for exactness, then fixed (r5) as a rate source (mol d⁻¹), which a photosynthesis model would give? *Recommendation:* yes.
+answer: yes, the intent is rather a photosynthetic source flow.
+
+## 24. Your answers to Q-S1–Q-S5 (2026-10-16), and what I found for them
+
+- **Q-S4:** yes, θ = 1 only (implicit Euler in the graph system).
+- **Q-S5:** yes. The photosynthetic input is ported exactly first, then as a source flow (mol d⁻¹), as a photosynthesis model would give it.
+- **Q-S3: you were right.**
+  - GRANAP's port generates needles: its main `NeedleAnatomy` builds into the MPG (`example/needle/`, `test/test_root_needle_network.py`).
+  - The anatomy component's library takes any organ class, as the seedling does for leaves (`AnatomyLibrary(parameters=preset_parameters("for_needle"), organ_class=NeedleAnatomy)`).
+  - Checked: `NeedleAnatomy(OrganInputData.for_needle(), seed=42)` gives the simulations' network exactly: 16 195 nodes, 39 189 edges, the same positions.
+  - No GRANAP step is needed. My "no needle" came from searching only `granap/metafspm/`.
+- **Q-S2, yes to the recommendation, with your condition** (no unrealistic fixes made only to make the solutes work; expansions of MECHA's scenarios are fine):
+  - **The membrane floor: not adopted.**
+    - The original MECHA sets K = 1e-16 when a cell's aquaporin activity is 0, "kaqp==0 in case of air-filled intercellular space" (`src_old/6_MECHAv4_SRS2025.py:2816`, `:2838`): an air-filled space has no water-conducting membrane.
+    - The reactions' rule (floor only when kmb = 0 too) makes those spaces conduct through kmb: 5e6 times more on the root's intercellular spaces, and 26 membranes of the needle's air spaces.
+    - It is a workaround against MECHA's intent; the port keeps the original rule.
+  - **`k_xyl` and `k_sieve` 1.0:** nothing to port. The port's Poiseuille boundary (Q-L3) already holds the vessels, and is MECHA's original source.
+  - **The tissue names** (`hypodermis` → 2, `vascular parenchyma`): inert with GRANAP. Its cells carry their cgroup (its own table maps hypodermis to 1), and it uses neither vascular-parenchyma name. The type fallback they change only applies to cells without a cgroup.
+- **Q-S1, your question first: do air-to-air nodes and edges describe how water leaves the stomatal chamber? No.** In GRANAP's anatomies (`NeedleAnatomy(seed=42)`, the monocot leaf preset):
+  - **The needle:** 556 air spaces (cells, type `air space`), joined to the walls by 1104 `wall_air` edges and to each other by 872 `air_link` edges (7 components, the largest 525 air spaces). No air space is linked to a stomatal pore or to the outside air. The 12 pore and guard cells are protoplasts: membranes to their walls, plasmodesmata to guard, epidermal, hypodermal and mesophyll cells.
+  - **The monocot leaf:** 33 air spaces with 29 `wall_air` edges and no `air_link` at all. Its 20 pores are protoplasts as well.
+  - **In the `reactions` model,** water leaves through every wall facing an air space, each pinned to the air's potential by a penalty (`set_air_wall_bc`). The air spaces' nodes (vapour pressures) have no outlet: the vapour network carries no net flow out (problem r6), and the pores play no part.
+  - **In the port,** the leaves evaporate at their pores (E3: g_s × the leaf surface they serve, from the pore protoplast's potential), without the air spaces.
+  - **Neither describes the path** walls → sub-stomatal air spaces → pore → atmosphere. That path would need:
+    - in GRANAP: the pore as an air node (not a protoplast), `air_link` edges from the sub-stomatal air spaces to it, and air links in every leaf preset;
+    - in MECHA: vapour conductances along the air links, and the stomatal conductance between the pore and the atmosphere as the only boundary to the air. The evaporating sites are then every wall facing an air space (Kelvin), the same basis for needles and leaves.
+
+  That is the generalisation you describe. Its design, and whether the comparison with the reactions' needle runs (with its pinned walls) comes first, is question Q-S1b.
