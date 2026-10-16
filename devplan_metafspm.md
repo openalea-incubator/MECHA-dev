@@ -1073,3 +1073,67 @@ answer: yes, the intent is rather a photosynthetic source flow.
 - **One plant alone transpires about as much as with the pores:** at a soil of −0.1 MPa, 0.38 cm³ d⁻¹ against 0.24.
 - **The cause:** the pinned walls are a fixed potential with no limiting conductance (the pores had their stomatal one). The scene's plant–soil iteration, without relaxation, amplifies: a drier soil gives a smaller uptake; below −4.12 MPa, the pinned walls feed the soil.
 - **For now:** the seedling example keeps its stomatal pores (`transpiration_model` 1, with a note), and gives back its earlier numbers. The question is Q-T1 (recap of 2026-10-16).
+
+## 26. Design note: a transpiration model defined through metafspm (your direction, 2026-10-16)
+
+**Your direction:** the colleague adapts if his approach is unstable. Transpiration is defined through metafspm:
+1. MECHA expects a transpiration flow as an input at the Organ scale (constant for now; no stand-in component);
+2. the anatomical graph is extended with Connections between the stomatal chambers and the leaf's surface;
+3. the cross-scale coupling gives the Neumann boundary condition.
+
+Your questions: how to split the flow between the stomata, whether the Neumann condition belongs outside the leaf (heterogeneous stomatal conductances), and whether two successive edges (stomata → leaf surface → air layer) are the physically right way.
+
+### 26a. The physics, and where the flow is imposed
+
+**The path:**
+1. **Evaporating walls → air spaces:** the Kelvin exchange, the `wall_air` edges.
+2. **Through the intercellular air to the sub-stomatal chamber:** vapour diffusion, the `air_link` edges.
+3. **Through each pore:** its stomatal conductance g_s,i.
+4. **Across the boundary layer to the bulk air:** g_b.
+
+Steps 3 and 4 are in series. The usual leaf-scale form is E = g_tot Δe / P, with 1/g_tot = 1/g_s + 1/g_b.
+
+**Imposing the flow at a node outside the stomata is the right place.** One "leaf surface" node, joined to every pore by an edge of that pore's conductance, carries the Neumann condition (the organ's transpiration leaves through it). Its potential is then an unknown that adjusts so that Σ_i K_i (x_pore,i − x_surface) = E. The split among the stomata comes out of their conductances and of the leaf's internal state (which air spaces are wetter, which mesophyll supplies more), not from a rule we would have to choose. Imposing Neumann values on the stomata themselves would need such a rule (by area? by conductance?) and would hide the heterogeneity.
+
+**A second edge (surface → an outer air layer) adds nothing while the flow is prescribed.**
+- If the boundary layer is one shared node per organ, every molecule crosses the same edge: it shifts the surface potential but not the split. It is redundant, and its potential is a free value.
+- A per-stoma boundary-layer edge would matter only if g_b varied from stoma to stoma. g_b is a property of the leaf surface's regions (edges against the centre of the blade, upper against lower side), not of individual stomata.
+- The boundary layer becomes necessary when the atmosphere's state (its humidity, a Dirichlet or robin condition) replaces the prescribed flow: g_b then limits the total. *Recommendation:* the pore → surface edges now; the surface → bulk air edge when the atmosphere's humidity is the boundary.
+
+**The pinned walls go,** in this model: the walls evaporate into the air spaces by the Kelvin exchange, driven by the vapour deficit the prescribed flow creates. The `reactions`' pinned walls stay an option (`transpiration_model` 2) for its comparisons and the colleague's work.
+
+### 26b. Through metafspm
+
+- **The input:** `leaf_transpiration` (cm³ d⁻¹, extensive, Organ scale, by "Transpiration"), initialised constant. A transpiration or atmosphere model will give it later.
+- **Down to the anatomy:** metafspm maps a coarse variable to nodes only by broadcasting (`data_api._map`); it has no extensive split. With one surface node per organ, the broadcast value with a `boundary_set(kind="neumann", filters={"leaf_surface": ">0"})` reaches that node alone, and the organ's flow is applied once. No change to metafspm.
+- **One surface node per organ, not per section:** a leaf organ has several sections (leaf elements). Per-section surface nodes would need the organ's flow split among the sections, by a rule again. One node per organ joined to every pore of all its sections lets the network split it along the leaf too. The surface node is a Compartment of the organ's first (basal) element.
+- **The graph (a GRANAP step):**
+  - **The pores become air nodes.** In GRANAP's needle and leaf they are protoplasts today: membranes to their walls, plasmodesmata to the guard cells, no air link. A pore should be joined by `air_link` edges to the sub-stomatal air spaces, its walls to the guard cells, with no membrane of its own.
+  - **Air links in every leaf preset:** the monocot leaf has none today (33 air spaces, `wall_air` only).
+  - **The surface node, and one stomatal Connection per pore** (a new `network_path`, 6), created with the axial junctions by GRANAP's wiring rules.
+- **In MECHA:**
+  - the stomatal edges' conductance, from a per-pore `stomatal_conductance` (a node variable: an input by a stomatal model later, the parameter's value by default);
+  - the Neumann set on the surface nodes;
+  - the outputs: the pores' flows, the surface node's vapour pressure (the leaf surface's humidity), the evaporation per wall.
+
+### 26c. Units of the vapour side (a reactions problem, r11)
+
+The air nodes' unknown is the vapour pressure relative to saturation (dimensionless, `p_sat` = 1). The reactions' `kwa` and `k_air` are labelled "cm hPa⁻¹ d⁻¹" and multiply that dimensionless difference, so their values (1e-4) are placeholders without a physical basis. With prescribed flows, the vapour side's conductances set the leaf's internal potentials, so they need physical values:
+- **air links:** vapour diffusivity in air (D_v ≈ 2.4e-5 m² s⁻¹), × area / distance × e_sat V_w / (R T);
+- **stomata:** g_s (mol m⁻² s⁻¹) × the pore's share of the leaf area × e_sat V_w / P;
+- **the walls' evaporation:** the Kelvin coefficient with the same factor.
+
+These give cm³ d⁻¹ per unit of relative vapour pressure.
+
+### 26d. Questions
+
+- **Q-T1:** one surface node per leaf organ (recommended), or per section?
+- **Q-T2:** the stomata → surface edges now, and the boundary layer (surface → bulk air) when the atmosphere's humidity becomes the boundary (recommended), or both now?
+- **Q-T3:** the GRANAP step first:
+  - pores as air nodes linked to the sub-stomatal air spaces;
+  - air links in all leaf presets;
+  - the surface Compartment and the stomatal Connections by the wiring rules.
+
+  Agreed?
+- **Q-T4:** the vapour side's conductances in physical units (§26c) now, as part of this model, with the reactions' placeholders kept for its comparison (`transpiration_model` 2)?
+- **Q-T5:** the default model for leaves: this one (`transpiration_model` 3, flow at the leaf surface)? With the pores (1) and the pinned walls (2) as options. The seedling would then transpire its prescribed flow, which also removes the scene's instability: the uptake is fixed by the flow, not by a fixed potential.
