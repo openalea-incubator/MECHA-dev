@@ -913,3 +913,71 @@ Only the imports are rewritten (`openalea.mecha` → `openalea.mecha.legacy_reac
 - Kx and every other edge are unchanged.
 
 Both are new water behaviour relative to the frozen legacy. Their place in the port is a question of the design note (§23 next), with the solute transport's.
+
+### 23a. What the `reactions` work is (from reading the snapshot and its simulations)
+
+**The package:**
+- **`SoluteTransport`:** one mobile solute's concentration per node (mol cm⁻³), the transport `C dc/dt = (D + A − R) c + s`.
+  - D: diffusion along the walls (`D_wall`, scaled by the walls' kw ratios, as the barriers do for water) and through the plasmodesmata (`D_pd` × their cross-section and count), and passive diffusion across the membranes (`D_mem`).
+  - A: advection by the water flows, the membranes' carried fraction 1 − σ; upwind, or Scharfetter–Gummel (`'sg'`, used by the simulations).
+  - R: first-order degradation.
+  - θ-method in time; Dirichlet nodes by row override.
+- **`MultiSoluteTransport`:** several species coupled by a linear reaction matrix K (d⁻¹), such as sucrose ⇄ starch with an immobile starch, solved as one block system.
+- **The coupling with water:** each cell's osmotic potential becomes `baseline − R T c` (van't Hoff, `set_osmotic_from_concentration`), and `water_flux(use_stored_psi_os=True)` re-solves the water. The steady coupled solver (Picard or JFNK) predates the reactions work (byte-identical in the legacy).
+- **The water side of the needle,** new (it is the leaf transpiration work):
+  - `wall_air` edges, a linearised Kelvin exchange between a wall and an air space, in series with the membrane;
+  - `air_link` edges between air spaces;
+  - an evaporating-wall Dirichlet penalty (`set_air_wall_bc`);
+  - `kw_meso_hypo` (the needle's mesophyll–hypodermis interface, cut);
+  - `InData.needle_defaults()`.
+
+**The simulations** (`example/legacy_reactions/simulations/`):
+- **The anatomy:** GRANAP's `NeedleAnatomy(seed=42)`: 16 195 nodes, 39 189 edges. GRANAP's main and legacy needle classes give identical networks.
+- **The dynamic run** (`needle.py`, its `flux_cdiff` and `flux_pdens` sweeps): a sucrose pulse in the mesophyll drains to sinks (phloem-loading cells and xylem, c = 0), with the osmotic feedback, one water re-solve per step (lagged), SG transport and θ = 1.
+- **The diurnal runs:**
+  - transpiration (Ψ_air × f(t)) and photosynthesis (a concentration increment c_photo g(t) per step in the mesophyll) forced each hour;
+  - starch as an immobile species with synthesis and degradation (`diurnal_starch`);
+  - day/night switching rates over 30 days (`diurnal_starch_diel`, 720 steps).
+- **Not used by any scenario:** the steady coupled solver (Picard, JFNK, continuation), the calibration package (except `rh_to_water_potential`, for an RH mode no script sets), the `'apo'` and `'sym'` modes, the upwind solve, θ ≠ 1, single-species degradation.
+- **Cost:** about 2.8 s per step in the legacy (the water solve: scenarios 0 and 1 each step). A 2–5 step dynamic run (10–17 s plus the anatomy) is a usable comparison test.
+
+**Problems found in it** (to record and fix one by one, as for the legacy):
+- **r1 — the osmotic volume flux counted twice in the advection:** the flows Q of `compute_edge_flows` already include K σ Δπ (`mecha_class.py:1474`), and the transport operator adds `K σ (π_wall − π_cell)` again (`solute_transport.py:578–588`, `_build_osmotic_advection`). Verified. Also present in the legacy.
+- **r2 — σ looked up on the wrong end of a membrane** in the SG operator (`cell_node = v …` after the ends were reordered, `solute_transport.py:572`): the wall's end whenever the edge is stored cell → wall. Verified.
+- **r3 — two independent σ:** the water's (scenario presets, by rank) and the solutes' (by cgroup, 0.7 for cgroups 1–19). Needle cells without a rank in the water's rules get σ = 0 there and 0.7 for the solute.
+- **r4 — the reaction runs in the walls too** (`full` mode: sucrose → starch in the apoplast), and uses the raw volumes while the storage uses C × V.
+- **r5 — the photosynthetic source is a per-step increment**, so its rate scales with 1/dt.
+- **r6 — `needle.py`'s transpiration** sums the `wall_air` flows, probably ~0 by conservation (the evaporating walls are pinned by the penalty, so the outflow is the penalty's residual, as the calibration reads it).
+- **r7 — the osmotic baseline** is the root presets' (os_cortex −4800 hPa): the comment says the magnitudes are zeroed; the code only sets `s_factor`.
+- **r8 — the protophloem list** mixes cell ids and node ids (a line the legacy removed in PR #55), so the sieve penalties at barrier 0 go on wrong rows.
+- **Others:**
+  - `k_sieve[0]` on a scalar default (TypeError if a phloem potential is set);
+  - `HydraulicCell.RH` uninitialised;
+  - the name `k_air` used for two things;
+  - `psi_total` defined two ways;
+  - JFNK + time stepping inconsistent (unused).
+
+### 23b. Proposed design
+
+- **Scope of the first solute step** (what the scenarios use): the dynamic sucrose transport with its osmotic feedback (`DynamicParams`), then starch (two species, reaction matrix K), then the diurnal forcings as the drivers of examples. Not ported (no scenario): the steady coupled solver, the calibration, the `apo`/`sym` modes, the upwind solve.
+- **A component `MechaSolutes`** (on `MechaSections`):
+  - a node state variable per species (`sucrose`, `starch`; mol cm⁻³ on the Compartments);
+  - its transport as a metafspm `@graph_system`: node unknowns the concentrations, storage C V / dt (implicit Euler, θ = 1, as the simulations), the edge fluxes in `@node_balance` (SG on the water flows of `MechaHydraulics`, diffusion per pathway), Dirichlet sinks as `boundary_set`s, the reaction as node terms, an analytic sparse Jacobian (the system is linear in c);
+  - outputs: the solutes' fluxes, and `osmotic_potential` = baseline − R T c on the cells, i.e. it is the "Solutes" model of `MechaHydraulics` (in place of `MechaOsmoticPresets`, which gives the baseline and σ).
+- **The coupling as the simulations do it:** one water solve, then one transport step, per time step. In metafspm's schedule: the hydraulics' state, then the solutes' state.
+- **Exactness first:** problems r1–r8 included, as for the legacy (Q-M1), each fixed afterwards with its reviewed difference.
+- **Comparison tests** on `NeedleAnatomy(seed=42)`, a few steps of the dynamic run, then of the diurnal run with starch (phases shifted so that photosynthesis acts from the first step): concentrations, interior mass, mass to the sinks, water flux.
+
+### 23c. Questions
+
+- **Q-S1 — the needle's water side.** Every simulation needs it: `wall_air` (Kelvin), `air_link`, the evaporating-wall penalty, `kw_meso_hypo`, `needle_defaults`. The port has none of it: the `wall_air` and `air_link` edges are ignored (problem i), and the leaves evaporate at their stomatal pores (E3). Port it now, as the shoot's transpiration model beside the pores (leaves by pores, needles by their air spaces), before the solutes? *Recommendation:* yes, first. It is the water state the solutes are compared on.
+- **Q-S2 — the reactions' other water changes:**
+  - the 1e-16 membrane floor only when kmb = 0 (§23);
+  - `k_xyl` and `k_sieve` 1.0 (the port's Q-L3 Poiseuille boundary already holds the vessels);
+  - the tissue name `vascular parenchyma` (was `vascular_parenchyma`);
+  - `hypodermis` mapped to cgroup 2.
+
+  *Recommendation:* the membrane floor as a reviewed fix (an option, the legacy's kept for its comparison); check the tissue names against GRANAP's current ones; `k_xyl` nothing to do.
+- **Q-S3 — GRANAP's needle in metafspm.** The port reads anatomies from the DataStructure, so the needle must come through GRANAP's anatomy component (a needle class or preset in its library). The simulations build it with `NeedleAnatomy(seed=42)` directly. *Recommendation:* check, and if missing, add the needle to GRANAP's library first (a GRANAP step).
+- **Q-S4 — the transport as a graph system.** Implicit Euler inside metafspm's graph system (one solve per time step, the step being the simulation's), rather than porting the θ-method as is. θ = 1 is the only value the scenarios use. *Recommendation:* yes, θ = 1 only.
+- **Q-S5 — the photosynthetic source:** ported as the simulations do it (a concentration increment before the step) for exactness, then fixed (r5) as a rate source (mol d⁻¹), which a photosynthesis model would give? *Recommendation:* yes.
