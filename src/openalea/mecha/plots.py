@@ -134,13 +134,16 @@ def conductance_by_path(axes, frame, norm=None):
 
 
 def radial_profile(ax, frame, label=None, bins=40, **style):
-    """The mean potential of the cells and of the apoplast against the distance to the centre (hPa vs µm)."""
+    """The mean potential of the cells and of the apoplast against the distance to the centre (hPa vs µm); NaN
+    values (nodes left out) are skipped."""
     r = np.hypot(frame.xy[:, 0] - frame.centre[0], frame.xy[:, 1] - frame.centre[1])
     edges = np.linspace(0, r.max(), bins + 1)
     middle = (edges[1:] + edges[:-1]) / 2
     for chosen, part, marker in ((frame.kind == 0, "cells", "o"), (frame.kind > 0, "apoplast", "")):
         which = np.digitize(r[chosen], edges) - 1
-        mean = np.array([frame.psi[chosen][which == k].mean() if (which == k).any() else np.nan for k in range(bins)])
+        values = frame.psi[chosen]
+        mean = np.array([np.nanmean(values[which == k]) if np.isfinite(values[which == k]).any() else np.nan
+                         for k in range(bins)])
         ax.plot(middle, mean, marker=marker, ms=3, label=f"{label + ', ' if label else ''}{part}", **style)
     ax.set(xlabel="distance to the centre (µm)", ylabel="ψ (hPa)", title="radial profile of the potential")
 
