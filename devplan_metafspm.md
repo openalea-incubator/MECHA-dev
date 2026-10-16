@@ -893,3 +893,23 @@ With solutes, the cortex cells are turgid (+4000 to +7000 hPa) and the walls sta
 **Later, with your answers:**
 - per-tissue cell heights (Q-L2);
 - the shoot's specialisation: `wall_air` and `air_link` edges (problem i), cuticular evaporation (Q-E1), shoot presets for the sap's π (§21).
+
+## 23. The `reactions` branch: snapshot and first findings (2026-10-16)
+
+**Your direction:**
+- port the solute transport from your colleague's `reactions` branch, with its simulations in scope (for the comparison tests and the examples);
+- use its last commit;
+- your colleague works on the port from now on.
+
+**Snapshot (91c49e7):** `origin/reactions` at 4c9c8c2 (2026-10-15), frozen as the second reference beside the legacy:
+- `src/openalea/mecha/legacy_reactions/`: its MECHA package, calibration included;
+- `example/legacy_reactions/simulations/`: its seven simulation scripts.
+
+Only the imports are rewritten (`openalea.mecha` → `openalea.mecha.legacy_reactions`), and `needle.py`'s insertion of sibling checkouts (`../../MECHA-dev/src`, `../../GRANAP-dev/src`) into `sys.path` is removed. The branch forked at f24c889, before the legacy's freeze point (2b995b2 = f24c889 + PR #55, "retro-compatibility"). Its tests and tutorials are unchanged since the fork, so the solute work is exercised by its simulations only.
+
+**Its water side differs from the legacy's** (same GRANAP sections, standard problem). Two changes found so far:
+- **`k_xyl` defaults to 1.0** (1e-6 in the legacy): the vessels are held at the xylem's potential. kr +3.6 % (monocot, barrier 1: 1.0618e-4 against 1.0252e-4; the port's Poiseuille boundary of Q-L3 gives 1.0619e-4), +1.4 % at barrier 3; dicot +3.0 % and +1.3 %.
+- **The 1e-16 membrane floor** (a membrane of a cell without aquaporin activity outside the barriers) now applies only when `kmb` is 0 too. Otherwise such a membrane conducts through `kmb`. On the monocot root, the intercellular spaces' membranes at barrier > 0 (cortex, k_interc 0) are 5e6 times more conductive.
+- Kx and every other edge are unchanged.
+
+Both are new water behaviour relative to the frozen legacy. Their place in the port is a question of the design note (§23 next), with the solute transport's.
