@@ -1171,3 +1171,33 @@ answer: Keep only this third model, I don't want several options for now, to kee
 1. The GRANAP step (Q-T3): pores as air nodes, air links in every leaf preset, the leaf-surface Compartment and the stomatal Connections. A design note in GRANAP's plan first, from the code map.
 2. MECHA: the single transpiration model. The organ's flow; the surface nodes' Neumann set; the walls' Kelvin evaporation, the air links' and the stomata's conductances in physical units. The pores (E3) and the pinned walls removed.
 3. The solutes, compared on the legacy's water flows.
+
+## 27. The single transpiration model in MECHA: the implementation (2026-10-16)
+
+**GRANAP's graph** (its plan §60–61, 739ccda):
+- pores as air nodes (wall_air walls, no plasmodesmata, an air link to their chamber);
+- every air space's membrane wall_air;
+- one leaf-surface node (kind 3) per leaf organ, joined to every pore by a stomatal Connection (path 6);
+- the pores' `pore_width` and `pore_depth`.
+
+No intercellular spaces were added to the monocot leaf (your answer): its air network is its stomata and their chambers (and its 6 lacunae).
+
+**The model:**
+- **Unknowns:** the liquid nodes' pressure potential (hPa); the air nodes' (air spaces, pores, the leaf surface) vapour pressure relative to saturation, x.
+- **The organ's transpiration** `leaf_transpiration` (cm³ d⁻¹, an input at the Organ scale, by "Transpiration", 0 by default) leaves at its surface node: a Neumann set.
+- **The vapour conductances, physical** (Q-T4). They are cm³ d⁻¹ of liquid water per unit of x, from vapour diffusion: G = D_v A / d × e_sat V_w / (R T), with D_v the vapour's diffusivity in air, e_sat at the leaf's temperature, V_w the water's molar volume.
+  - **Wall → air space** (`wall_air`): the wall's evaporating face, A = the wall's length × the section's height, over d = its distance to the air space's centre. The wall side by Kelvin, x_wall = exp(α ψ_wall), α = V_w / (R T), linearised at ψ_ref (as the reactions'):
+    - flow = G e_ref α ψ_wall − G x_air + G e_ref (1 − α ψ_ref);
+    - **no membrane in series:** the cell's membrane to its wall is already an edge of the graph, so the reactions' series membrane counted it twice.
+  - **Air space ↔ air space, and pore ↔ chamber** (`air_link`): A = the section's height × the narrower of the two (the pore's aperture width for a pore link; for two air spaces, the smaller one's equivalent diameter), over d = the distance between their centres.
+  - **Pore → leaf surface** (path 6): each pore stands for the stomata of its file over the segment's length, n = length / `stomatal_spacing`. Each is a diffusion tube with its end correction (Brown & Escombe; the anatomical g_max): G = D_v a / (l + (π/2) √(a/π)), a = `pore_width` × `pore_length`, l = `pore_depth`. Times the aperture fraction `stomatal_aperture` (a node input by "Stomata", 1 by default: a stomatal model later).
+- **Outputs:**
+  - `evaporation` (cm³ d⁻¹): each pore's flow to the surface;
+  - `water_potential`: the air nodes' by Kelvin, ψ = ln x / α;
+  - the leaf surface's relative humidity: its x.
+- **Removed (Q-T5):**
+  - the stomatal pores' evaporation (E3: `stomatal_conductance`, `vapour_factor`, `evaporation_conductance`, `evaporation_psi`, `air_psi`);
+  - the pinned walls (`transpiration_model`, `air_space_psi`, `evaporating_walls`, `air_wall_conductance`, `air_wall_psi`, their robin sets, the penalty);
+  - the reactions' placeholders (`kwa`, `p_sat`, `k_air_link`, the series membrane);
+  - `standard_solve_shoot` and the needle's pinned-wall comparison (its test). `kw_meso_hypo` stays (the needle's parametrisation).
+- **New parameters** (per plant): `vapour_diffusivity` (2.4e-5 m² s⁻¹), `leaf_temperature` (20 °C), `pore_length` (20 µm), `stomatal_spacing` (100 µm).
