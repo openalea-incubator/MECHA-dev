@@ -1128,12 +1128,25 @@ These give cm³ d⁻¹ per unit of relative vapour pressure.
 ### 26d. Questions
 
 - **Q-T1:** one surface node per leaf organ (recommended), or per section?
+answer per leaf organ yes, then the solve will attribute heterogeneity between individual stomata
 - **Q-T2:** the stomata → surface edges now, and the boundary layer (surface → bulk air) when the atmosphere's humidity becomes the boundary (recommended), or both now?
+answer: I don't understand the question
 - **Q-T3:** the GRANAP step first:
   - pores as air nodes linked to the sub-stomatal air spaces;
   - air links in all leaf presets;
   - the surface Compartment and the stomatal Connections by the wiring rules.
 
   Agreed?
+answer: agreed
 - **Q-T4:** the vapour side's conductances in physical units (§26c) now, as part of this model, with the reactions' placeholders kept for its comparison (`transpiration_model` 2)?
+I don't understand the question.
 - **Q-T5:** the default model for leaves: this one (`transpiration_model` 3, flow at the leaf surface)? With the pores (1) and the pinned walls (2) as options. The seedling would then transpire its prescribed flow, which also removes the scene's instability: the uptake is fixed by the flow, not by a fixed potential.
+answer: Keep only this third model, I don't want several options for now, to keep the component syntax as simple as possible.
+
+### 26e. Your answers (2026-10-16)
+
+- **Q-T1:** one surface node per leaf organ; the solve attributes the heterogeneity among the stomata.
+- **Q-T3:** agreed, the GRANAP step first.
+- **Q-T5:** only this model (flow at the leaf surface). No options: the stomatal pores' evaporation (E3) and the pinned walls are removed from the component, to keep its syntax simple.
+  - Consequence: the needle's water state can no longer be compared exactly with the reactions' (its pinned walls). The solute comparison then feeds both transports the same water flows (the legacy's), which compares the transport itself.
+- **Q-T2 and Q-T4:** not understood, so reformulated in the recap of 2026-10-16 (plain-language versions to answer here).
