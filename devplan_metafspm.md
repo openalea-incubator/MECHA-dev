@@ -855,3 +855,41 @@ The legacy reads `psi_soil_left`/`psi_soil_right` (and `osmotic_left`/`osmotic_r
 - net versus gross uptake;
 - x_rel from the cells' centroids rather than GRANAP's seeds;
 - the anatomy's own x axis.
+
+## 22. Osmotic visual example, and the next steps (2026-10-16)
+
+**Visual example:** `example/hydraulics/osmotic_root.py`. One 200 µm root section at barriers 1 and 3, in three cases: no solutes, MECHA's presets with os_hetero 0, and with os_hetero 1. Its figures:
+- the maps of π, the pressure ψ and the water potential ψ + π;
+- their radial profiles, the cells drawn without the air spaces (which take the soil solution's π with σ 0);
+- the pathways' shares of the radial flow.
+
+The printed uptake and kr per case:
+
+| barrier | case | uptake (cm³ d⁻¹) | kr (cm hPa⁻¹ d⁻¹) |
+|---|---|---|---|
+| 1 | no solutes | 2.7689e-3 | 1.1000e-4 |
+| 1 | os_hetero 0 | 3.4858e-3 | 1.3848e-4 |
+| 1 | os_hetero 1 | 4.0107e-3 | 1.5933e-4 |
+| 3 | no solutes | 1.0246e-3 | 4.0703e-5 |
+| 3 | os_hetero 0 | 1.2869e-3 | 5.1125e-5 |
+| 3 | os_hetero 1 | 1.9793e-3 | 7.8630e-5 |
+
+With solutes, the cortex cells are turgid (+4000 to +7000 hPa) and the walls stay near the soil's pressure. `plots.radial_profile` now skips NaN nodes.
+
+**Rule for what is ported next (your decision of §21b):** only what a scenario of the branch being ported uses (its default scenario, tutorials, tests, inputs).
+
+**Next steps, in the order I propose:**
+1. **The elongation sink** (barrier 0, `Mecha.elongation_BC`). The legacy's default scenario has an elongation rate (2.8 cm d⁻¹, no side difference), and `water_flux` adds it at every barrier-0 stage, so the branch uses it. It is a node source term in the same balance as the osmotic terms. A design note first: its geometry (the cells' volumes and x_rel) and how a growth model would give it later.
+2. **The layer-wise outputs** (`standard_transmembrane_fractions`, `create_layer_discretization`): the uptake and transmembrane fractions per cell layer, as SubOrgan or layer variables. `water_flux` computes them in every scenario. They are the optional downstream of Q-M5, deferred since step 4.
+3. **The exports:** the paraview files (tutorial 01's last cell, `test/legacy/test_visu_types.py`). Q-M6: as outputs of the DataStructure, through GRANAP's polygons.
+4. **Q-M2's second half:** GRANAP's own lateral distances instead of MECHA's recomputed ones, and the derived steps that do not influence the results removed. Each is a reviewed difference, as for Q-L4.
+5. **The `reaction` branch** (solutes, leaf transpiration), when you make it available. Its π, and perhaps σ, plug into MechaHydraulics' "Solutes" inputs, in place of the presets.
+
+**Not ported (no scenario of the branch uses them):**
+- the soil's left–right potentials (§21b);
+- a phloem boundary at barrier > 0 (`pressure_sieve` is NaN in the default scenario; `extdata/BCs.xml`, which sets it, is loaded by no test or example);
+- the profiles' convection velocity.
+
+**Later, with your answers:**
+- per-tissue cell heights (Q-L2);
+- the shoot's specialisation: `wall_air` and `air_link` edges (problem i), cuticular evaporation (Q-E1), shoot presets for the sap's π (§21).
