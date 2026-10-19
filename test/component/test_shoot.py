@@ -1,7 +1,8 @@
 """
 The shoot in MECHA's plant problem (devplan_metafspm.md, §15, E1–E3): a stem element bearing a leaf element and a
 root segment, GRANAP's anatomies (monocot stem and leaf presets, the root preset). Only the root exchanges with the
-soil, only the leaf's stomatal pores with the air; what the roots take up, the leaf transpires.
+soil. The leaf transpires its organ's flow (an Organ-scale input, §27), from its surface node; it reaches it from the
+evaporating walls through the air spaces and the stomata (GRANAP §60): what the leaf transpires, the root takes up.
 """
 import numpy as np
 import pandas as pd
@@ -20,6 +21,7 @@ from openalea.granap.metafspm.library import AnatomyLibrary, preset_parameters
 from openalea.mecha.component import MechaHydraulics
 
 SOIL = -1000.                                            # hPa
+TRANSPIRATION = 0.05                                     # cm3 d-1, the leaf organ's
 
 
 class Seedling(StructuralComponent):
@@ -65,7 +67,10 @@ def plant():
     Anatomy(data_structure=ds)()
     ds.register("barrier", np.ones(ds.n_nodes()), location="node")
     ds.register("soil_psi", np.full(ds.n_nodes(), SOIL), location="node")
-    mecha = MechaHydraulics(data_structure=ds)
+    for organ in ds.entity_ids("Organ"):                      # the leaf organ's transpiration, an MTG property
+        leaf = g.property("label").get(int(organ)) == g.labels.Organ.Leaf
+        g.property("leaf_transpiration")[int(organ)] = TRANSPIRATION if leaf else 0.
+    mecha = MechaHydraulics(data_structure=ds)                # (read when its inputs are registered)
     mecha.collar_condition = 0.
     mecha()
     labels = g.property("label")
@@ -78,43 +83,42 @@ def _organ_nodes(g, ds, kinds, label):
     return np.isin(owners, [v for v, k in kinds.items() if k == label])
 
 
-def test_only_the_root_meets_the_soil_and_only_the_leaf_the_air(plant):
+def test_only_the_root_meets_the_soil_and_the_leaf_has_its_vapour_path(plant):
     g, ds, mecha, kinds = plant
     L = g.labels.SubOrgan
     root, leaf = _organ_nodes(g, ds, kinds, L.RootSegment), _organ_nodes(g, ds, kinds, L.LeafElement)
     soil = ds.get("soil_conductance")
     assert (soil[root] > 0).any() and (soil[~root] == 0).all()
-    # transpiration_model 2 (default, §25): the walls of the leaf's air spaces, pinned; no pore evaporates
-    pinned = ds.get("air_wall_conductance") > 0
-    assert pinned.any() and leaf[pinned].all() and (ds.get("kind")[pinned] == 1).all()
-    assert (ds.get("evaporation_conductance") == 0).all()
-
-
-def test_stomatal_pores_as_an_option(plant):
-    """transpiration_model 1: the leaf's stomatal pores meet the air (E3), no wall is pinned."""
-    g, ds, mecha, kinds = plant
-    leaf = _organ_nodes(g, ds, kinds, g.labels.SubOrgan.LeafElement)
-    mecha.transpiration_model = 1.
-    try:
-        mecha()
-        pores = ds.get("evaporation_conductance") > 0
-        assert pores.any() and leaf[pores].all() and (ds.get("tissue")[pores] == "pore").all()
-        assert (ds.get("air_wall_conductance") == 0).all()
-        assert ds.get("evaporation").sum() == pytest.approx(ds.get("root_uptake").sum(), rel=1e-8)
-    finally:
-        mecha.transpiration_model = 2.
-        mecha()
+    kind, path, K = ds.get("kind"), ds.get("network_path"), ds.get("conductance")
+    surface = np.flatnonzero(kind == 3)
+    assert surface.size == 1 and ds.get("surface_inflow")[surface[0]] == pytest.approx(-TRANSPIRATION)
+    stomatal = path == 6
+    assert stomatal.sum() == (ds.get("tissue") == "pore").sum() > 0 and (K[stomatal] > 0).all()
+    assert (K[path == 4] > 0).all() and (ds.get("air_tail_conductance")[path == 1] > 0).all()
+    vapour = ds.get("vapour_node") > 0
+    assert vapour[surface].all() and leaf[vapour & (kind != 3)].all()
 
 
 def test_root_uptake_is_transpired(plant):
-    """To 1e-6: the pinned walls' penalty (1e3 × the largest diagonal term, the reactions' device) puts their terms'
-    round-off at ~1e-9 cm3 d-1 each."""
+    """The organ's transpiration leaves through its stomata, from what the root takes up."""
     g, ds, mecha, kinds = plant
     uptake, evaporation = ds.get("root_uptake").sum(), ds.get("evaporation").sum()
-    assert uptake > 0 and evaporation == pytest.approx(uptake, rel=1e-6)
-    psi = ds.get("psi")
-    liquid = ds.get("tissue") != "air space"               # on the air spaces, ψ holds their vapour pressure (§25)
-    assert np.isfinite(psi).all() and psi[liquid].max() <= SOIL + 1e-6
+    assert uptake == pytest.approx(TRANSPIRATION, rel=1e-8) and evaporation == pytest.approx(TRANSPIRATION, rel=1e-8)
+    pores = ds.get("tissue") == "pore"
+    assert (ds.get("evaporation")[pores] > 0).all() and (ds.get("evaporation")[~pores] == 0).all()
+
+
+def test_potentials_along_the_path(plant):
+    """Liquid potentials below the soil's, the air spaces' (Kelvin) below the walls', the leaf surface the driest."""
+    g, ds, mecha, kinds = plant
+    psi, water = ds.get("psi"), ds.get("water_potential")
+    vapour = ds.get("vapour_node") > 0
+    assert np.isfinite(water).all() and psi[~vapour].max() <= SOIL + 1e-6
+    x = psi[vapour]
+    assert ((x > 0) & (x <= 1)).all()                                   # relative vapour pressures
+    surface = ds.get("kind") == 3
+    assert water[surface][0] <= water[vapour].min() + 1e-6
+    assert water[surface][0] < psi[~vapour].min()
 
 
 def test_root_quantities_on_roots_only(plant):

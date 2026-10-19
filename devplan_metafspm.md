@@ -1201,3 +1201,32 @@ No intercellular spaces were added to the monocot leaf (your answer): its air ne
   - the reactions' placeholders (`kwa`, `p_sat`, `k_air_link`, the series membrane);
   - `standard_solve_shoot` and the needle's pinned-wall comparison (its test). `kw_meso_hypo` stays (the needle's parametrisation).
 - **New parameters** (per plant): `vapour_diffusivity` (2.4e-5 m² s⁻¹), `leaf_temperature` (20 °C), `pore_length` (20 µm), `stomatal_spacing` (100 µm).
+
+### 27a. Done (2026-10-19)
+
+- **MECHA** (`component.py`, `conductance.py`, `geometry.py`):
+  - the single transpiration model of §27;
+  - `leaf_transpiration` an Organ-scale input (stored per Organ; the DataStructure reads the MTG property when the component registers its inputs);
+  - `stomatal_aperture` (role "Stomata"), and the pores' `pore_width` and `pore_depth` (GRANAP's);
+  - the leaf surfaces' Neumann set, `surface_inflow`;
+  - the vapour conductances in physical units (`vapour_conductances`; no membrane in series);
+  - `evaporation` the pores' flows to their surface;
+  - the air nodes' water potential by Kelvin.
+- **Removed:** the stomatal pores' evaporation (E3) and the pinned walls with their parameters, the reactions' placeholders, `membrane_floor_rules`, `standard_solve_shoot`, `air_psi`; `test/comparison/test_needle_water.py`.
+- **GRANAP** (3ae7401): the surface node and the stomatal Connections get every declared variable's initial value; the pore columns are initialised on every instance.
+- **Tests:** 175 passed, 1 skipped. `test/component/test_shoot.py`:
+  - the vapour path's edges;
+  - the organ's flow transpired by its stomata and taken up by its root;
+  - liquid potentials below the soil's, relative vapour pressures in (0, 1], the leaf surface the driest.
+- **The seedling SPAC example:**
+  - **Setup:** each leaf organ transpires its share of `TRANSPIRATION` (0.015 mm³ s⁻¹ for the plant: your value), an MTG property set before MECHA's component.
+  - **It converges** (5 steps): the scene's instability of §25a is gone, since the uptake is fixed by the flow. Transpiration = uptake = 0.0150 mm³ s⁻¹.
+  - **ψ along the path (MPa):**
+
+| soil | root surface | root xylem | stem xylem | leaf xylem | leaf cells | sub-stomatal air | pores | leaf surface |
+|---|---|---|---|---|---|---|---|---|
+| −0.75 | −0.77 | −0.93 | −0.76 | −0.76 | −0.77 | −0.78 | −0.87 | −11.31 (RH 0.92) |
+
+  - **The root xylem below the stem's** is the osmotic presets' collar step (§21: the roots' sap π −0.18 MPa, the shoot's 0).
+  - **The stomata's capacity:** each leaf's stomata carry at most 5.85 cm³ d⁻¹ (all at x 1 → 0, at the anatomical g_max: 60 pores, 50 stomata each over the 5 mm segment), against 0.43 cm³ d⁻¹ prescribed.
+  - **The upscaling and the plots** use the liquid nodes' water potentials (a weighted mean, weight 0 on the air nodes); the leaf surfaces have no section position.

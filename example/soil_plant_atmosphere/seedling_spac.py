@@ -210,8 +210,10 @@ def development(ds, is_root, tip_segment=1e-9, strip=0.1):
     return np.where(is_root, code, 1.)
 
 
-# the potential of the leaves' air spaces (hPa): RH 97 % at 20 °C (Kelvin's equation, R T / V_w ln RH)
-AIR_SPACE_PSI = 8.314 * 293.15 / 1.8e-5 * np.log(0.97) * 1e-2
+# the plant's transpiration (mm3 s-1), split equally between its leaf organs: a constant for now (a transpiration
+# model will give each leaf's, plan §26–27)
+TRANSPIRATION = 0.015
+MM3_PER_S_TO_CM3_PER_DAY = 1e-3 * 86400.
 
 
 class SeedlingHydraulics(CompositeModel):
@@ -233,13 +235,14 @@ class SeedlingHydraulics(CompositeModel):
             data_structure.register("barrier", np.ones(data_structure.n_nodes()), location="node")
         # MECHA's osmotic presets as the "Solutes" model (§20, Q-O3), until a metabolism model is coupled
         self.osmotic = MechaOsmoticPresets(data_structure=data_structure, time_step=time_step)
+        g = data_structure.mtg                                         # each leaf organ's transpiration (cm3 d-1)
+        organs = [int(v) for v in data_structure.entity_ids("Organ")]
+        leaves = [v for v in organs if g.property("label").get(v) == g.labels.Organ.Leaf]
+        for v in organs:
+            g.property("leaf_transpiration")[v] = (TRANSPIRATION * MM3_PER_S_TO_CM3_PER_DAY / len(leaves)
+                                                   if v in leaves else 0.)
         self.hydraulics = MechaHydraulics(data_structure=data_structure, time_step=time_step)
         self.hydraulics.collar_condition = 0.                          # the shoot above the roots
-        # the leaves transpire through their stomatal pores (transpiration_model 1) for now: with their air spaces'
-        # walls pinned (2, §25), nothing limits the leaves' outflow, and the scene's plant-soil iteration diverges
-        # (§25a); AIR_SPACE_PSI is their pinned potential when they are used
-        self.hydraulics.transpiration_model = 1.
-        self.hydraulics.air_space_psi = AIR_SPACE_PSI
         self.declare_data_and_couple_components(translator_path=Translator(),
                                                 components=(self.architecture, self.anatomy, self.osmotic,
                                                             self.hydraulics))

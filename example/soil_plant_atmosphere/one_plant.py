@@ -40,7 +40,8 @@ def summary(built, stop):
     print(f"{plant.n_nodes()} Compartments, {plant.n_edges()} Connections")
     print(f"transpiration {transpiration:.4f} mm3 s-1, root uptake {uptake:.4f} mm3 s-1, soil uptake "
           f"{soil.get('plant_uptake').sum():.4f} mm3 s-1, soil evaporation {soil.get('evaporation').sum():.4f} "
-          f"mm3 s-1; leaf ψ down to {plant.get('water_potential').min() / 1e4:.2f} MPa")
+          f"mm3 s-1; liquid ψ down to {plant.get('water_potential')[plant.get('vapour_node') == 0].min() / 1e4:.2f} "
+          f"MPa; leaf surfaces' relative humidity {', '.join(f'{x:.2f}' for x in plant.get('psi')[plant.get('kind') == 3])}")
 
 
 if __name__ == "__main__":

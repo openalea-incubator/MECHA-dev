@@ -13,7 +13,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from openalea.mecha.geometry import AIR_LINK, MEMBRANE, PLASMODESMATA, WALL, WALL_AIR, WALL_PATH, XYLEM_CGROUPS
+from openalea.mecha.geometry import (AIR_LINK, MEMBRANE, PLASMODESMATA, STOMATAL, WALL, WALL_AIR, WALL_PATH,
+                                     XYLEM_CGROUPS)
 from openalea.mecha.postprocess import VISCOSITY_PHLOEM, VISCOSITY_XYLEM, poiseuille
 
 # ── The legacy's tables ──
@@ -75,7 +76,8 @@ FPLXHEIGHT_ADDED = {k: v for k, v in FPLXHEIGHT.items() if set(k) & set(ADDED_TI
 FPLXHEIGHT_PARAMETERS = {**FPLXHEIGHT_ORIGINAL, **{fplxheight_name(k): v for k, v in FPLXHEIGHT_ADDED.items()}}
 
 
-GAS_CONSTANT_HPA = 8.314E4          # hPa cm3 mol-1 K-1 (the reactions' R_gas)
+GAS_CONSTANT = 8.314                # J mol-1 K-1
+WATER_MOLAR_VOLUME = 1.8E-5         # m3 mol-1
 
 
 @dataclass
@@ -250,12 +252,7 @@ def edge_conductances(net: Network, P: dict, barrier, height):
     wall_edge = net.in_section & net.junction_edge
     membrane = net.in_section & (net.path == MEMBRANE)
     plasmodesmata = net.in_section & (net.path == PLASMODESMATA)
-    air_link = net.in_section & (net.path == AIR_LINK)
-    in_matrix = wall_edge | membrane | plasmodesmata | air_link
-
-    # ── air links (the reactions' _fill_air_link): vapour diffusion between air spaces ──
-    e = np.flatnonzero(air_link)
-    K[e] = np.asarray(P["k_air_link"], dtype=float)[e] * (height[e] * net.edge_length[e] * 1.0E-08)
+    in_matrix = wall_edge | membrane | plasmodesmata
 
     # the wall end of wall and membrane edges, and its cells
     a_is_wall = net.kind[net.a] == WALL
@@ -322,10 +319,8 @@ def edge_conductances(net: Network, P: dict, barrier, height):
         K_mb = 1 / (1 / (kw_val / (t / 2 * 1.0E-04)) + 1 / (kmb + kaqp_curr)) * 1.0E-08 * (height[e]
                                                                                           + net.edge_dist[e]) * net.edge_length[e]
     K_mb = np.where(kw_val == 0.0, 0.0, K_mb)
-    # no aquaporin activity outside the barriers (an air-filled intercellular space, the original's): 1e-16; the
-    # reactions branch's rule (membrane_floor_rules 2, for its comparison): only if kmb is 0 too
-    floor = (np.asarray(P["membrane_floor_rules"], dtype=float)[e] != 2) | (kmb == 0.0)
-    K_mb = np.where(~barrier_interface & (kaqp_curr == 0.0) & floor, 1.00E-16, K_mb)
+    # no aquaporin activity outside the barriers: 1e-16 (an air-filled intercellular space, the original's)
+    K_mb = np.where(~barrier_interface & (kaqp_curr == 0.0), 1.00E-16, K_mb)
     K[e] = K_mb
 
     # ── plasmodesmata ──
@@ -525,44 +520,75 @@ def _plasmodesmata_original(net: Network, e, P, b):
     return quantity * np.where(stelar_side, param("kpl_endo_in_factor"), param("kpl_endo_out_factor"))
 
 
-def wall_air_terms(net: Network, P: dict, K, height):
+def vapour_factor(temperature):
+    """e_sat V_w / (R T) at *temperature* (°C): from a vapour conductance (m³ s⁻¹, on a relative vapour pressure) to a
+    liquid water flow (m³ s⁻¹), e_sat by Tetens (Pa)."""
+    T = np.asarray(temperature, dtype=float)
+    e_sat = 610.78 * np.exp(17.27 * T / (T + 237.3))
+    return e_sat * WATER_MOLAR_VOLUME / (GAS_CONSTANT * (T + 273.15))
+
+
+def kelvin_alpha(temperature):
+    """α = V_w / (R T) (hPa⁻¹): a liquid at ψ is in equilibrium with a vapour at x = exp(α ψ) (Kelvin)."""
+    return WATER_MOLAR_VOLUME / (GAS_CONSTANT * (np.asarray(temperature, dtype=float) + 273.15)) * 100.
+
+
+def vapour_conductances(net: Network, P: dict, height, pore_width, pore_depth, cell_area, aperture, length):
     """
-    The wall ↔ air-space edges' linearised Kelvin exchange (the reactions' ``_fill_wall_air``), per edge: the flow
-    from the wall to the air space is K_wall ψ_wall − K_air x_air + offset (x the air's vapour pressure, in p_sat
-    units), in series with the membrane of the wall's first cell (its exchange area (height + dist) × length).
-    Returns (K_wall, K_air, offset, wall end, air end) per edge (0 and -1 off the wall_air edges). P per edge.
+    The leaves' vapour path (plan §27), in cm³ d⁻¹ of liquid water per unit of relative vapour pressure x, from
+    vapour diffusion, G = D_v A / d × e_sat V_w / (R T):
+
+      wall → air space (wall_air): A the wall's face (its length × the height), d its distance to the air space's
+                     centre; the wall's side by Kelvin, x = exp(α ψ), linearised at psi_ref_wall_air: the flow from the
+                     wall is K_wall ψ_wall − K_air x_air + offset, K_air = G, K_wall = G e_ref α, offset = G e_ref
+                     (1 − α ψ_ref)
+      air ↔ air (air_link): A the height × the narrower one (a pore's aperture width; an air space's equivalent
+                     diameter √area), d the distance between their centres
+      pore → leaf surface (path 6): the pore's file of stomata over the segment, length / stomatal_spacing of them,
+                     each a diffusion tube with its end correction (Brown & Escombe, the anatomical g_max),
+                     D_v a / (l + (π/2) √(a/π)), a = pore_width × pore_length, l = pore_depth; × its aperture fraction
+
+    *P* per edge; *height*, *length* (µm) per edge; *pore_width*, *pore_depth* (mm), *cell_area* (mm²), *aperture*
+    per node. Returns (K per edge for the air links and the stomata, K_wall, K_air, offset, wall end, air end).
     """
     n = net.path.size
+    K = np.zeros(n)
     K_wall, K_air, offset = np.zeros(n), np.zeros(n), np.zeros(n)
     wall_end, air_end = np.full(n, -1, dtype=np.int64), np.full(n, -1, dtype=np.int64)
+    D = np.asarray(P["vapour_diffusivity"], dtype=float)                       # m² s⁻¹
+    F = vapour_factor(P["leaf_temperature"]) * 1.0E6 * 86400.                   # m³ s⁻¹ -> cm³ d⁻¹
+    alpha = kelvin_alpha(P["leaf_temperature"])
+    psi_ref = np.asarray(P["psi_ref_wall_air"], dtype=float)
+    height = np.asarray(height, dtype=float) * 1.0E-6                          # µm -> m
+
     e = np.flatnonzero(net.in_section & (net.path == WALL_AIR))
-    if e.size == 0:
-        return K_wall, K_air, offset, wall_end, air_end
-    a_is_wall = net.kind[net.a[e]] == WALL
-    w, air = np.where(a_is_wall, net.a[e], net.b[e]), np.where(a_is_wall, net.b[e], net.a[e])
-    wall_end[e], air_end[e] = w, air
-    membranes = np.flatnonzero(net.in_section & (net.path == MEMBRANE))
-    by_pair = {}
-    for m in membranes:
-        u, v = int(net.a[m]), int(net.b[m])
-        wall, cell = (u, v) if net.kind[u] == WALL else (v, u)
-        by_pair[(wall, cell)] = m
-    import math
-    for k, wn, edge in zip(range(e.size), w, e):
-        first = int(net.wall_cells[wn, 0])
-        m = by_pair.get((int(wn), first)) if first >= 0 else None
-        length = float(net.edge_length[m] if m is not None else net.edge_length[edge])
-        dist = float(net.edge_dist[m] if m is not None else net.edge_dist[edge])
-        area = (float(height[edge]) + dist) * length * 1.0E-08
-        kwa, p_sat = float(P["kwa"][edge]), float(P["p_sat"][edge])
-        psi_ref, M_w, T = float(P["psi_ref_wall_air"][edge]), float(P["water_molar_mass"][edge]), \
-            float(P["wall_air_temperature"][edge])
-        alpha = M_w / (GAS_CONSTANT_HPA * T)
-        e_ref = math.exp(alpha * psi_ref)
-        K_vap = kwa * p_sat * e_ref * alpha * area
-        K_memb = float(K[m]) if m is not None else float("inf")
-        f = 1.0 / (1.0 + K_vap / K_memb) if K_memb > 0.0 else 0.0
-        K_wall[edge] = f * K_vap
-        K_air[edge] = f * kwa * area
-        offset[edge] = f * kwa * p_sat * area * e_ref * (1.0 - alpha * psi_ref)
-    return K_wall, K_air, offset, wall_end, air_end
+    if e.size:
+        a_is_wall = net.kind[net.a[e]] == WALL
+        wall_end[e] = np.where(a_is_wall, net.a[e], net.b[e])
+        air_end[e] = np.where(a_is_wall, net.b[e], net.a[e])
+        G = D[e] * (net.edge_length[e] * 1.0E-6 * height[e]) / (net.edge_dist[e] * 1.0E-6) * F[e]
+        e_ref = np.exp(alpha[e] * psi_ref[e])
+        K_air[e] = G
+        K_wall[e] = G * e_ref * alpha[e]
+        offset[e] = G * e_ref * (1.0 - alpha[e] * psi_ref[e])
+
+    e = np.flatnonzero(net.in_section & (net.path == AIR_LINK))
+    if e.size:
+        width = np.fmin(_air_width(net.a[e], pore_width, cell_area), _air_width(net.b[e], pore_width, cell_area))
+        K[e] = D[e] * (height[e] * width) / (net.edge_dist[e] * 1.0E-6) * F[e]
+
+    e = np.flatnonzero(net.path == STOMATAL)
+    if e.size:
+        pore = np.where(np.isfinite(np.asarray(pore_width)[net.a[e]]), net.a[e], net.b[e])
+        area = np.asarray(pore_width)[pore] * 1.0E-3 * np.asarray(P["pore_length"], dtype=float)[e] * 1.0E-6
+        depth = np.asarray(pore_depth)[pore] * 1.0E-3
+        tube = D[e] * area / (depth + np.pi / 2 * np.sqrt(area / np.pi))
+        count = np.asarray(length, dtype=float)[e] / np.asarray(P["stomatal_spacing"], dtype=float)[e]
+        K[e] = count * np.asarray(aperture, dtype=float)[pore] * tube * F[e]
+    return K, K_wall, K_air, offset, wall_end, air_end
+
+
+def _air_width(nodes, pore_width, cell_area):
+    """An air node's width (m) across a link: a pore's aperture, an air space's equivalent diameter √area."""
+    width = np.asarray(pore_width, dtype=float)[nodes]
+    return np.where(np.isfinite(width), width, np.sqrt(np.asarray(cell_area, dtype=float)[nodes])) * 1.0E-3
