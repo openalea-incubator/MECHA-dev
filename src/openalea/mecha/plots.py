@@ -36,8 +36,8 @@ class SectionFrame:
 
 
 def port_frame(mecha, segment, psi="standard_psi", flow="standard_flow", libraries=()) -> SectionFrame:
-    """The section of *segment* from MECHA's component (its DataStructure), with GRANAP's cell polygons when the
-    anatomy *libraries* are given."""
+    """The section of *segment* from MECHA's component (its DataStructure), with GRANAP's cell polygons (from its
+    templates; *libraries*: unused, kept for the earlier calls)."""
     ds = mecha.data_structure
     nodes, edges, geo = mecha.section_geometries()[segment]
     local = np.full(ds.n_nodes(), -1, dtype=np.int64)
@@ -48,14 +48,14 @@ def port_frame(mecha, segment, psi="standard_psi", flow="standard_flow", librari
     kept = np.isin(path_code, list(_PATH_OF_CODE)) & ((path_code != 2) | geo.junction_edge[np.arange(edges.size)])
     e = edges[kept]
     polygons = []
-    if libraries:
+    g = ds.mtg
+    template, row = g.property("template"), g.property("template_row")
+    vids = ds.entity_ids("node")[nodes[geo.cells]]
+    if vids.size and int(vids[0]) in template:                            # GRANAP's anatomies: their templates
+        from shapely import affinity
         from openalea.granap.metafspm.library import find_template
-        g = ds.mtg
-        template, row = g.property("template"), g.property("template_row")
-        vids = ds.entity_ids("node")[nodes[geo.cells]]
         polygons_of = find_template(libraries, int(template[int(vids[0])])).polygons
         scale = 1000.                                                     # mm -> µm
-        from shapely import affinity
         polygons = [None if polygons_of[int(row[int(v)])] is None else
                     affinity.scale(polygons_of[int(row[int(v)])], scale, scale, origin=(0, 0)) for v in vids]
     return SectionFrame(xy=np.c_[geo.x, geo.y], kind=geo.kind, rank=geo.cell_rank, tissue=geo.tissue,
