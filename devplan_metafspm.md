@@ -1293,3 +1293,26 @@ No intercellular spaces were added to the monocot leaf (your answer): its air ne
 - **Q-U3 — one reflection coefficient per membrane,** the water's (`reflection_coefficient`: the presets' now, a solute model's later), used by the solute's advection too (r3: the legacy has two). *Recommendation:* yes (one solute, sucrose: the same σ).
 - **Q-U4 — the starch reaction in the cells only** (r4: the legacy's walls too). *Recommendation:* yes.
 - **Q-U5 — the osmotic composition:** the presets as the baseline, the solutes' −R T c added by the presets. *Alternative:* the solutes write `osmotic_potential` themselves from a baseline input. *Recommendation:* the first: one component writes MechaHydraulics' input.
+
+### 28e. Done (2026-10-20)
+
+- **MECHA:**
+  - `solutes.py` (new): `MechaSolutes`, sucrose and starch on the liquid nodes, as §28c with Q-U1–Q-U5. The Scharfetter–Gummel weights per edge are a rate step (`tail_weight`, `head_weight`), the transport a graph system (implicit Euler, analytic Jacobian), the sucrose's −R T c a `totalstate` step after the transport, so the next water solve sees this step's concentrations.
+  - `conductance.py`, `component.py`: the edges' diffusion factors (`apoplastic_`, `symplastic_`, `membrane_diffusion_factor`) beside the conductances, the parameter `pd_section`, the nodes' `node_volume`.
+  - `osmotic.py`: the presets add the input `sucrose_osmotic_potential` (role "Solutes", 0 by default) to their baseline.
+- **The comparison** (`test/comparison/test_solutes.py`, `legacy_run.legacy_reactions_step`), on `NeedleAnatomy(seed=42)` and the reactions' needle water state:
+  - the diffusion conductances of every edge against its D (rtol 1e-15, the same pairs), the volumes exactly, the sinks the same nodes;
+  - one step from the mesophyll pulse, with σ_s 0 and the air edges' flows 0: max |Δc| 4e-16 of the range, the mass to 1e-12;
+  - with the photosynthetic increment (the port's source V Δc / dt), with starch (its MultiSoluteTransport with the reaction's volumes the cells' only), with σ_s 0.7 on every membrane and r1's K σ Δπ removed from its flows: to 1e-11 of the ranges.
+- **The reviewed differences**, on this step (max |Δc| / max c):
+
+| problem | difference | |
+|---|---|---|
+| r1, σ_s 0.7 | 4.7 | the osmotic flow counted twice dominates the advection |
+| r2 | 0 (latent) | its graph yields every membrane wall → cell (walls inserted first), so σ is never read on the wall's end here |
+| r4, starch in the walls | 0.61 of the starch mass | |
+| r12, air edges' flows kept | 2e-12 | negligible on this water state |
+
+- **Component tests** (`test/component/test_solutes_component.py`, a 3-section root with the presets): the SG weights' limits, no weight on the air edges and (1 − σ) Q on the membranes, the sinks (phloem and xylem: no Strasburger cells), every free node's balance and the mass to the sinks, starch in the cells only, the presets' π = baseline − R T c.
+- **Not done:** the three-step comparison (each step is the one tested, from the previous concentrations); an example with diurnal forcing.
+- **Tests:** 188 passed, 1 skipped.

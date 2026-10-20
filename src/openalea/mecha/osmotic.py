@@ -16,7 +16,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from openalea.metafspm.coupling.component import state_variable
+from openalea.metafspm.coupling.component import input_variable, state_variable
 from openalea.metafspm.solve.decorator import rate
 
 from openalea.mecha.component import SCALES, MechaSections, _doc, _p
@@ -359,6 +359,10 @@ class MechaOsmoticPresets(MechaSections):
     osmotic_diffusivity_xyl: float = _p("cm2 d-1", "the xylem solutes' diffusivity (symmetry 2; not 0: flat, at "
                                                    "osmotic_xyl)", 0.5)
 
+    sucrose_osmotic_potential: float = input_variable(**_doc("hPa", "the solutes' osmotic potential on the cells "
+                                                                    "(−R T c; MechaSolutes, 0 without)"),
+                                                      by="Solutes", initialize=0., scale=SCALES.Compartment,
+                                                      location="node", state_variable_type="NonInertialIntensive")
     osmotic_potential: float = state_variable(**_doc("hPa", "osmotic potential of the protoplast or the wall's "
                                                             "solution (0: junctions, shoot sections)"),
                                               initialize=0., scale=SCALES.Compartment, location="node",
@@ -369,8 +373,10 @@ class MechaOsmoticPresets(MechaSections):
                                                    state_variable_type="NonInertialIntensive")
 
     @rate(include_inactive=True)
-    def _osmotic_potential(self, kind, barrier, anatomy_template) -> tuple[np.ndarray, str, np.ndarray]:
-        """The presets of every root section, each with its plant's parameters and its barrier."""
+    def _osmotic_potential(self, kind, barrier, anatomy_template, sucrose_osmotic_potential) \
+            -> tuple[np.ndarray, str, np.ndarray]:
+        """The presets of every root section, each with its plant's parameters and its barrier, as the baseline; plus
+        the solutes' −R T c on the cells (MechaSolutes, §28: the reactions' baseline − R T c)."""
         ds = self.data_structure
         psi_os, sigma = np.zeros(ds.n_nodes()), np.zeros(ds.n_edges())
         view = ds.to_graph_view()
@@ -394,4 +400,4 @@ class MechaOsmoticPresets(MechaSections):
             os_local, sigma_local = section_presets(geo, P, int(barrier[v]), membranes)
             psi_os[nodes] = os_local
             sigma[e] = sigma_local
-        return psi_os, "reflection_coefficient", sigma
+        return psi_os + np.asarray(sucrose_osmotic_potential, dtype=float), "reflection_coefficient", sigma

@@ -236,11 +236,17 @@ def _select(code, table: dict, values: dict, default) -> np.ndarray:
     return out
 
 
-def edge_conductances(net: Network, P: dict, barrier, height):
+def edge_conductances(net: Network, P: dict, barrier, height, factors: dict = None):
     """
     (K, in_matrix): the conductance of every edge (cm³ hPa⁻¹ d⁻¹), and whether the legacy's matrix has it (its wall,
     membrane and plasmodesmata edges; not the wall_air and air_link edges, §2 i, nor the wall edges its junction
     rebuild drops). P: {parameter: value per edge}; barrier: code per edge; height: µm per edge.
+
+    With *factors* (a dict), the solutes' diffusion factors per edge are written in it (cm, the reactions' c_flag
+    terms of HydraulicMatrixBuilder and SoluteTransport, plan §28): "apoplastic" (walls: temp × their kw ratio, the
+    xylem-pieces septa 1e-16; the membranes of mature vessels: 1e-4 × wall length × height / thickness), "symplastic"
+    (plasmodesmata: pd_section × their quantity / thickness × 1e-4), "membrane" (every membrane: length × height
+    × 1e-4 / dist), each to be multiplied by its diffusivity (cm² d⁻¹).
     """
     n = net.path.size
     K = np.zeros(n)
@@ -289,6 +295,11 @@ def edge_conductances(net: Network, P: dict, barrier, height):
     K_wall = kw_val * temp
     K_wall = np.where(ghost & (n_interc < 2), 1.0E-16, K_wall)        # xylem pieces' septa
     K[e] = K_wall
+    if factors is not None:
+        for name in ("apoplastic", "symplastic", "membrane"):
+            factors[name] = np.zeros(n)
+        temp_factor = np.where(ghost & (n_interc < 2), 1.0E-16, kw_val / kw[e])
+        factors["apoplastic"][e] = temp * temp_factor
 
     # ── membranes (HydraulicMatrixBuilder._fill_membrane) ──
     e = np.flatnonzero(membrane)
@@ -322,6 +333,10 @@ def edge_conductances(net: Network, P: dict, barrier, height):
     # no aquaporin activity outside the barriers: 1e-16 (an air-filled intercellular space, the original's)
     K_mb = np.where(~barrier_interface & (kaqp_curr == 0.0), 1.00E-16, K_mb)
     K[e] = K_mb
+    if factors is not None:
+        vessel = xylem & (b > 0)
+        factors["apoplastic"][e] = np.where(vessel, 1.0E-04 * (net.wall_length[wall] * height[e]) / t, 0.)
+        factors["membrane"][e] = net.edge_length[e] * height[e] * 1e-4 / net.edge_dist[e]
 
     # ── plasmodesmata ──
     e = np.flatnonzero(plasmodesmata)
@@ -330,6 +345,9 @@ def edge_conductances(net: Network, P: dict, barrier, height):
     original = np.asarray(P["plasmodesmata_rules"], dtype=float)[e] == 1
     temp_factor = np.where(original, _plasmodesmata_original(net, e, P, b), _plasmodesmata_legacy(net, e, P, b))
     K[e] = kpl * temp_factor
+    if factors is not None:
+        factors["symplastic"][e] = np.asarray(P["pd_section"], dtype=float)[e] * temp_factor / \
+            np.asarray(P["thickness"], dtype=float)[e] * 1.0E-04
     return K, in_matrix
 
 

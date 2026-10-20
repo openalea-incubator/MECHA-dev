@@ -50,6 +50,12 @@ def _edge(unit, description):
                 state_variable_type="descriptor")
 
 
+def _node_thickness(net, P_node):
+    """Per node, the thickness its volume takes (µm): thickness_source 1 the plant's one value, 2 the node's own."""
+    own = np.asarray(P_node["thickness_source"]) == 2
+    return np.where(own & np.isfinite(net.wall_thickness), net.wall_thickness, np.asarray(P_node["thickness"], float))
+
+
 def _wall_air_flow(B, psi, tail_conductance, head_conductance, offset):
     """The wall_air edges' flows from tail to head: a ψ_tail − b ψ_head + c (0 on the other edges)."""
     psi = np.asarray(psi, dtype=float)
@@ -218,6 +224,7 @@ class MechaHydraulics(MechaSections):
                                      "flow collar_flow, 0 none (e.g. a shoot above)", 1.)
     collar_psi: float = _p("hPa", "the collar's xylem potential (collar_condition 1)", -5.0E3)
     collar_flow: float = _p("cm3 d-1", "the flow leaving the root at the collar (collar_condition 2)", 0.)
+    pd_section: float = _p("µm2", "a plasmodesma's open cross-section (the solutes' symplastic diffusion)", 1.92E-3)
     kw_meso_hypo: float = _p("cm2 hPa-1 d-1", "the conductivity of the (2, 4) walls, whose plasmodesmata it also cuts "
                                               "(the reactions' needle; NaN: none)", float("nan"))
     vapour_diffusivity: float = _p("m2 s-1", "water vapour's diffusivity in air (the leaves' vapour path)", 2.4E-5)
@@ -330,6 +337,25 @@ class MechaHydraulics(MechaSections):
                                                                    "osmotic_potential (with standard_osmotic)"),
                                                      initialize=0., scale=SCALES.Compartment, location="node",
                                                      state_variable_type="NonInertialIntensive")
+
+    # ── State variables: the solutes' diffusion factors and the nodes' volumes (MechaSolutes, §28) ──
+    apoplastic_diffusion_factor: float = state_variable(**_doc("cm", "× the apoplastic diffusivity: the edge's "
+                                                               "solute conductance (walls: their geometry × kw ratio; "
+                                                               "mature vessels' membranes)"),
+                                                        initialize=0., scale=SCALES.Connection, location="edge",
+                                                        state_variable_type="NonInertialIntensive")
+    symplastic_diffusion_factor: float = state_variable(**_doc("cm", "× the plasmodesmata's diffusivity (their open "
+                                                               "cross-section × quantity / the wall's thickness)"),
+                                                        initialize=0., scale=SCALES.Connection, location="edge",
+                                                        state_variable_type="NonInertialIntensive")
+    membrane_diffusion_factor: float = state_variable(**_doc("cm", "× the membranes' passive diffusivity (length × "
+                                                             "height / distance)"),
+                                                      initialize=0., scale=SCALES.Connection, location="edge",
+                                                      state_variable_type="NonInertialIntensive")
+    node_volume: float = state_variable(**_doc("cm3", "the node's volume: a wall's length × height × thickness, a "
+                                                      "junction's half, a protoplast's area × height"),
+                                        initialize=0., scale=SCALES.Compartment, location="node",
+                                        state_variable_type="NonInertialExtensive")
 
     # ── State variables: the leaves' vapour path, from their evaporating walls to their surface (§27) ──
     surface_inflow: float = state_variable(**_doc("cm3 d-1", "on a leaf organ's surface node: minus its "
@@ -486,7 +512,7 @@ class MechaHydraulics(MechaSections):
                      pore_width, pore_depth) \
             -> tuple[np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,
                      str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str,
-                     np.ndarray]:
+                     np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray]:
         """
         Every edge's conductance, and the boundary conductances of the nodes (soil, axial), from MECHA's geometry,
         the segments' barriers and heights (their lengths), and the plants' parameters; the standard problem's
@@ -500,7 +526,8 @@ class MechaHydraulics(MechaSections):
         tail = np.maximum(net.a, 0)
         P_edge["a_cortex"], P_edge["b_cortex"] = a_cortex[tail], b_cortex[tail]
         barrier_node = np.asarray(barrier)
-        K, in_matrix = edge_conductances(net, P_edge, barrier_node[tail], height_node[tail])
+        factors = {}
+        K, in_matrix = edge_conductances(net, P_edge, barrier_node[tail], height_node[tail], factors=factors)
         soil, axial, _ = boundary_terms(net, P_node, barrier_node, height_node)
         axial_psi = np.where(barrier_node > 0, P_node["standard_psi_xylem"], P_node["standard_psi_sieve"])
         axial = np.where(np.isnan(axial_psi), 0., axial)
@@ -536,7 +563,20 @@ class MechaHydraulics(MechaSections):
                 "air_tail_conductance", np.where(wall_end >= 0, air_tail, 0.),
                 "air_head_conductance", np.where(wall_end >= 0, air_head, 0.),
                 "air_offset", np.where(wall_end >= 0, air_offset, 0.),
-                "vapour_node", vapour.astype(float), "surface_inflow", surface_inflow)
+                "vapour_node", vapour.astype(float), "surface_inflow", surface_inflow,
+                "apoplastic_diffusion_factor", np.where(in_matrix, factors["apoplastic"], 0.),
+                "symplastic_diffusion_factor", np.where(in_matrix, factors["symplastic"], 0.),
+                "membrane_diffusion_factor", np.where(in_matrix, factors["membrane"], 0.),
+                "node_volume", self._node_volumes(net, P_node, height_node, kind))
+
+    def _node_volumes(self, net, P_node, height, kind):
+        """Each node's volume (cm³; the reactions' SoluteGeometry.node_volumes): a wall's length × height ×
+        thickness, a junction's half (its length), a protoplast's area × height; 1e-30 at the least."""
+        thickness = _node_thickness(net, P_node)
+        volume = np.where(kind == 1, net.wall_length * height * thickness * 1e-12,
+                          np.where(kind == 2, height * thickness * net.wall_length / 2.0 * 1e-12,
+                                   net.cell_area * height * 1e-12))
+        return np.where(net.section_of_node >= 0, np.maximum(volume, 1e-30), 0.)
 
     def _liquid_equivalent(self, value, vapour_node, location="node"):
         """The water potential (hPa) of the vapour nodes: Kelvin's liquid equivalent of their relative vapour
