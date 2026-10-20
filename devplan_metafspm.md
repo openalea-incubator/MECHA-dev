@@ -1230,3 +1230,66 @@ No intercellular spaces were added to the monocot leaf (your answer): its air ne
   - **The root xylem below the stem's** is the osmotic presets' collar step (§21: the roots' sap π −0.18 MPa, the shoot's 0).
   - **The stomata's capacity:** each leaf's stomata carry at most 5.85 cm³ d⁻¹ (all at x 1 → 0, at the anatomical g_max: 60 pores, 50 stomata each over the 5 mm segment), against 0.43 cm³ d⁻¹ prescribed.
   - **The upscaling and the plots** use the liquid nodes' water potentials (a weighted mean, weight 0 on the air nodes); the leaf surfaces have no section position.
+
+## 28. Design note: the solute port (2026-10-20)
+
+**Your direction:** go for the solute port (the multiscale-passing fixes delayed). Agreed so far (§23b, §24):
+- a `MechaSolutes` component on MECHA's sections;
+- its transport a metafspm graph system, implicit Euler (θ = 1);
+- one water solve then one transport step per time step;
+- the photosynthetic input as a source flow;
+- the comparison feeding both transports the same water flows (the needle's water state differs since §27).
+
+### 28a. What the reactions' transport is, precisely (`legacy_reactions/utils/solute_transport.py`, `hydraulic_solver.py` in its `c_flag` mode)
+
+- **Unknowns:** a concentration per node and species (mol cm⁻³), all nodes ('full' mode, the simulations').
+- **Diffusion D** (cm³ d⁻¹ per edge), from MECHA's own conductances:
+  - walls: `temp × temp_factor × D_wall`, with temp the wall's geometric factor and temp_factor its kw ratio to kw, so the barriers block solutes as they block water; ghost and septa walls their own;
+  - plasmodesmata: `pd_section × (the edge's plasmodesmata quantity) / thickness × 1e-4 × D_pd`;
+  - the membranes of mature vessels: `1e-4 × wall length × height / thickness × D_wall` (apoplastic-like);
+  - every membrane: passive `D_mem × length × height × 1e-4 / dist`.
+- **Advection:** each edge's water flow Q (`edge_flux_list`), on membranes times (1 − σ_s), σ_s the solute's reflection coefficient by cgroup.
+- **The Scharfetter–Gummel operator:** per edge, P = F / D_e, the flux into i is D_e (B(P) c_j − B(−P) c_i), B(x) = x / (eˣ − 1); upwind where D_e = 0.
+- **Storage:** C V / dt (V: walls length × height × thickness, junctions half that, cells area × height).
+- **Reactions:** a matrix K (d⁻¹) between species, × V.
+- **Sinks:** Dirichlet c_sink at the phloem-loading cells (Strasburger, else phloem) and the xylem, plus every node with no diffusion and one anchor per connected component without a sink (552 nodes on the needle, essentially its air spaces).
+- **The osmotic coupling:** each cell's π = its scenario baseline − R T c (van't Hoff, sucrose only), then the water re-solved.
+
+### 28b. The reactions' problems a faithful port would carry
+
+- **r1 (verified):** the osmotic flow K σ Δπ counted twice in the advection. The flows Q already contain it, and the operator adds it again.
+- **r2 (verified):** σ_s looked up on the wrong end of a membrane when the edge is stored cell → wall.
+- **r3:** two independent σ: the water's (the presets, by rank) and the solute's (0.7 by cgroup).
+- **r4:** the sucrose ⇄ starch reaction runs in the walls and junctions too (starch in the apoplast).
+- **r12 (new):** the vapour edges (`wall_air`, `air_link`) carry solute with their flows. The air nodes, with no diffusion, are Dirichlet c = 0 (the anchors), so they act as sugar sinks.
+
+### 28c. Proposed design
+
+- **`MechaSolutes`** (on `MechaSections`):
+  - node state variables `sucrose` and `starch` (mol cm⁻³), on the liquid nodes (protoplasts, walls, junctions; not the air nodes);
+  - parameters per plant: the diffusivities `d_apoplast`, `d_plasmodesmata`, `d_membrane` (cm² d⁻¹); `pd_section` (µm²); the rates `k_starch_synthesis`, `k_starch_degradation` (d⁻¹); `c_sink`; the temperature of van't Hoff;
+  - inputs: the water flows (`flow`, MechaHydraulics' plant problem), the conductances (`conductance`, from which the diffusion's factors come: the kw ratios, the plasmodesmata quantities), the membranes' `reflection_coefficient`, a source `sucrose_source` (mol d⁻¹ per node, role "Photosynthesis", 0 by default);
+  - a graph system with unknowns `sucrose` and `starch`. Its balance is C V (c − c_prev) / dt − T c − K V c − s = 0, with the Scharfetter–Gummel edge fluxes on the liquid edges, the sinks as Dirichlet sets and an analytic sparse Jacobian (the system is linear).
+- **The osmotic coupling** (the "Solutes" role): `MechaSolutes` writes `sucrose_osmotic_potential` = −R T c on the cells. `MechaOsmoticPresets` adds it to its presets, the baseline (an input of the presets, 0 by default), and so writes MechaHydraulics' `osmotic_potential` as before. Baseline − R T c is the legacy's.
+- **In metafspm's schedule:** the hydraulics' state, then the solutes' state, each time step: the reactions' one lagged water solve per step.
+
+**The comparison** (on `NeedleAnatomy(seed=42)`, `legacy_options`, the needle's parameters):
+- **the diffusion matrix** against `build_diffusion_matrix`: exact;
+- **the volumes and storage:** exact;
+- **the Scharfetter–Gummel kernel** fed the legacy's own per-edge inputs (D_e, its F with r1's term, its carried fraction): exact against its operator;
+- **one time step** (and three, with starch) of the legacy's dynamic run, its flows given to the port:
+  - the air edges' flows set to 0 in the legacy's flow list;
+  - the solute's σ 0, so r1 and r2 vanish;
+  - its photosynthetic increment given to the port as the equivalent source (C V Δc / dt);
+  - the same sinks.
+
+  The concentrations to 1e-12.
+- **Then the reviewed differences:** σ_s ≠ 0 (r1, r2), the air edges (r12), the reaction in the walls (r4).
+
+### 28d. Questions
+
+- **Q-U1 — the air edges carry no solute** (r12 not ported): the vapour path (`wall_air`, `air_link`, stomatal) has no concentration; solutes stay in the liquid network. *Recommendation:* yes.
+- **Q-U2 — the advection by the water flow Q** (which already contains σ Δπ), × (1 − σ) on the membranes, without r1's extra term and with σ read on the membrane's cell (r2 fixed). Verified as above (the kernel exactly on the legacy's inputs; the operator where r1 and r2 vanish). *Recommendation:* yes.
+- **Q-U3 — one reflection coefficient per membrane,** the water's (`reflection_coefficient`: the presets' now, a solute model's later), used by the solute's advection too (r3: the legacy has two). *Recommendation:* yes (one solute, sucrose: the same σ).
+- **Q-U4 — the starch reaction in the cells only** (r4: the legacy's walls too). *Recommendation:* yes.
+- **Q-U5 — the osmotic composition:** the presets as the baseline, the solutes' −R T c added by the presets. *Alternative:* the solutes write `osmotic_potential` themselves from a baseline input. *Recommendation:* the first: one component writes MechaHydraulics' input.
