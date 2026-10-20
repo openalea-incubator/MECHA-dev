@@ -193,8 +193,8 @@ def legacy_reactions_needle(organ, psi_air=-1.0E4, psi_xyl=-200.0, sigma=0.7):
 
 
 def legacy_reactions_step(organ, d_apo=0.1, d_pd=0.5, d_mem=1e-6, dt=0.1, c_pulse=50e-6, starch=None, cells_only=False,
-                          source=None, solute_sigma=None, osmotic_term=True, air_flows=False,
-                          psi_air=-1.0E4, psi_xyl=-200.0, sigma=0.7):
+                          source=None, solute_sigma=None, osmotic_term=True, air_flows=False, reference=None,
+                          c_start=None, starch_start=None, psi_air=-1.0E4, psi_xyl=-200.0, sigma=0.7):
     """
     One transport step of the reactions branch's needle (``simulations/needle.py``, NeedleDynamicSimulation), on the
     water state of legacy_reactions_needle: its SoluteTransport ('full', SG, θ = 1), the solute's σ 0 and the air
@@ -203,12 +203,15 @@ def legacy_reactions_step(organ, d_apo=0.1, d_pd=0.5, d_mem=1e-6, dt=0.1, c_puls
     *cells_only*, the reaction in the liquid cells only: the port's Q-U4); with *solute_sigma* {cgroup: σ}, its
     solute's σ (r1, r2), without its term K σ Δπ added to the flows if not *osmotic_term* (r1 removed); with
     *air_flows*, the air edges' flows kept (r12); with
-    *source* {cell id: increment}, its photosynthetic increment before the step. Returns dict(D, volumes, flows
+    *source* {cell id: increment}, its photosynthetic increment before the step; from *c_start* (and *starch_start*)
+    instead of the pulse, on the water state *reference* (a previous step's, its air flows already as *air_flows*)
+    to chain steps. Returns dict(D, volumes, flows
     {(u, v): Q}, bc, c0, c1[, starch1]).
     """
     from scipy.sparse import csgraph
     from openalea.mecha.legacy_reactions.utils.solute_transport import SoluteGeometry, SoluteTransport
-    reference = legacy_reactions_needle(organ, psi_air=psi_air, psi_xyl=psi_xyl, sigma=sigma)
+    if reference is None:
+        reference = legacy_reactions_needle(organ, psi_air=psi_air, psi_xyl=psi_xyl, sigma=sigma)
     mecha, network = reference["mecha"], reference["network"]
     graph, nwj = network.graph, network.n_wall_junction
     geometry = SoluteGeometry(mecha)
@@ -253,6 +256,8 @@ def legacy_reactions_step(organ, d_apo=0.1, d_pd=0.5, d_mem=1e-6, dt=0.1, c_puls
     bc = {int(n): 0.0 for n in isolated + extra + list(loading) + kinds.get("xylem", [])}
     c0 = np.zeros(graph.number_of_nodes())
     c0[kinds.get("meso", [])] = c_pulse
+    if c_start is not None:
+        c0 = np.array(c_start, dtype=float)
     for n, value in bc.items():
         c0[n] = value
     c_prev = c0.copy()
@@ -268,18 +273,19 @@ def legacy_reactions_step(organ, d_apo=0.1, d_pd=0.5, d_mem=1e-6, dt=0.1, c_puls
     for o in held:
         o.psi_os = 0.0
     try:
-        _legacy_solve(out, st, mecha, geometry, cap, bc, c_prev, c0, starch, cells_only, kinds, nwj)
+        s0 = np.zeros(c0.size) if starch_start is None else np.asarray(starch_start, dtype=float)
+        _legacy_solve(out, st, mecha, geometry, cap, bc, c_prev, s0, starch, cells_only, kinds, nwj)
     finally:
         for o, value in zip(held, saved):
             o.psi_os = value
     return out
 
 
-def _legacy_solve(out, st, mecha, geometry, cap, bc, c_prev, c0, starch, cells_only, kinds, nwj):
+def _legacy_solve(out, st, mecha, geometry, cap, bc, c_prev, s_prev, starch, cells_only, kinds, nwj):
     """legacy_reactions_step's step: its SoluteTransport, or its MultiSoluteTransport with starch."""
     from openalea.mecha.legacy_reactions.utils.solute_transport import MultiSoluteTransport, SoluteTransport
     if starch is None:
-        out["c1"] = st.solve(h=0, i_maturity=0, i_scenario=1, rhs=np.zeros(c0.size), boundary_conditions=bc,
+        out["c1"] = st.solve(h=0, i_maturity=0, i_scenario=1, rhs=np.zeros(c_prev.size), boundary_conditions=bc,
                              c_prev=c_prev, theta=1.0, scheme="sg")
     else:
         immobile = SoluteTransport(mecha, {"apo_wall": 0.0, "plasmodesmata": 0.0, "membrane": 0.0}, cap,
@@ -292,5 +298,5 @@ def _legacy_solve(out, st, mecha, geometry, cap, bc, c_prev, c0, starch, cells_o
             volumes[kinds.get("air", [])] = 0.
             multi._mode_volumes = lambda i_maturity: volumes
         out["c1"], out["starch1"] = multi.solve_coupled(h=0, i_maturity=0, i_scenario=1,
-                                                       c_prev=[c_prev, np.zeros(c0.size)],
+                                                       c_prev=[c_prev, s_prev],
                                                        boundary_conditions=[bc, None], theta=1.0, scheme="sg")

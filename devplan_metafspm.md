@@ -1302,7 +1302,7 @@ No intercellular spaces were added to the monocot leaf (your answer): its air ne
   - `osmotic.py`: the presets add the input `sucrose_osmotic_potential` (role "Solutes", 0 by default) to their baseline.
 - **The comparison** (`test/comparison/test_solutes.py`, `legacy_run.legacy_reactions_step`), on `NeedleAnatomy(seed=42)` and the reactions' needle water state:
   - the diffusion conductances of every edge against its D (rtol 1e-15, the same pairs), the volumes exactly, the sinks the same nodes;
-  - one step from the mesophyll pulse, with σ_s 0 and the air edges' flows 0: max |Δc| 4e-16 of the range, the mass to 1e-12;
+  - one step from the mesophyll pulse, with σ_s 0 and the air edges' flows 0: max |Δc| 4e-16 mol cm⁻³, 1.9e-12 of the range (2.1e-4), the mass to 1e-12;
   - with the photosynthetic increment (the port's source V Δc / dt), with starch (its MultiSoluteTransport with the reaction's volumes the cells' only), with σ_s 0.7 on every membrane and r1's K σ Δπ removed from its flows: to 1e-11 of the ranges.
 - **The reviewed differences**, on this step (max |Δc| / max c):
 
@@ -1314,5 +1314,21 @@ No intercellular spaces were added to the monocot leaf (your answer): its air ne
 | r12, air edges' flows kept | 2e-12 | negligible on this water state |
 
 - **Component tests** (`test/component/test_solutes_component.py`, a 3-section root with the presets): the SG weights' limits, no weight on the air edges and (1 − σ) Q on the membranes, the sinks (phloem and xylem: no Strasburger cells), every free node's balance and the mass to the sinks, starch in the cells only, the presets' π = baseline − R T c.
-- **Not done:** the three-step comparison (each step is the one tested, from the previous concentrations); an example with diurnal forcing.
+- **Not done:** an example of the port alone with diurnal forcing and the osmotic feedback on the water.
 - **Tests:** 188 passed, 1 skipped.
+
+### 28f. The comparison examples (2026-10-20)
+
+- **`example/comparison/compare_solutes.py`:** one step's maps on the needle (reactions branch | port | difference), the walls and junctions as points and the cells over them, on the liquid nodes:
+
+| case | max \|Δ\| / max |
+|---|---|
+| the mesophyll pulse | 1.9e-12 |
+| photosynthesis with starch: sucrose | 8.3e-13 |
+| photosynthesis with starch: starch | 2.2e-13 |
+| r1 (σ_s 0.7) | 0.98: the reactions' section nearly emptied in the hour |
+| r4 (starch in the walls) | 1.0: its walls hold the most starch (up to 17 µmol cm⁻³) |
+
+- **`example/comparison/compare_solutes_day.py`:** 24 hourly steps from no sugar, each model chained on its own concentrations, the reactions' flows constant: photosynthesis by day (its half sine from 6 h to 18 h, c_photo 5e-6 mol cm⁻³ per hour), starch (2, 1 d⁻¹) in the cells. The masses along the day (sucrose in the cells and in the walls, starch, taken by the sinks) differ by at most 2.4e-11 of their maxima (the sinks'; the others 1e-12 to 3e-12), the end-of-day maps by 6e-12. At the end of the day: 1.69 nmol in the cells, 1.84 in the walls, 1.58 as starch, 0.53 taken by the sinks, of 5.65 produced.
+- **Both models show** the water's flows carrying the sucrose out of the cells into the walls, toward the evaporating sites, where it concentrates (the pulse's 50 µmol cm⁻³ reaches 200 in the walls within the hour).
+- **The shared case:** `test/comparison/solute_case.py` (the needle for both, their nodes matched, the port's step on the reactions' flows), used by `test_solutes.py` and the examples. `legacy_reactions_step` takes a previous water state (`reference`) and starting concentrations (`c_start`, `starch_start`) to chain steps.

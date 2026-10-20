@@ -10,63 +10,18 @@ cells only (Q-U4: the reactions' runs it in the walls too, r4).
 import numpy as np
 import pytest
 
-from openalea.mecha.component import MechaHydraulics
-from openalea.mecha.geometry import MEMBRANE, section_parts
-from openalea.mecha.solutes import MechaSolutes
+from openalea.mecha.geometry import MEMBRANE
 
-from legacy_run import legacy_options, legacy_reactions_step
-from plants import anatomy_data_structure, needle, needle_anatomy_component, template_organ
+from legacy_run import legacy_reactions_step
+from solute_case import D_APO, D_MEM, D_PD, DT, mesophyll_source, needle_case as _needle_case, port_step as _run
 
-D_APO, D_PD, D_MEM, DT = 0.1, 0.5, 1e-6, 1. / 24.             # cm2 d-1, d (the simulation's 3600 s)
-NEEDLE = dict(kw=2.5634e-3, kw_meso_hypo=1e-16, kmb=3.6314e-4, x_contact=1e10, k_xyl=1.0, collar_condition=0.)
 STARCH = (2.0, 1.0)                                           # d-1: synthesis, degradation (the diurnal runs')
 PHOTOSYNTHESIS = 5e-6                                         # mol cm-3: the diurnal runs' c_photo, at g = 1
 
 
 @pytest.fixture(scope="module")
 def needle_case():
-    g, ds, anatomy = anatomy_data_structure(needle(), needle_anatomy_component())
-    segment = int(ds.entity_ids("SubOrgan")[0])
-    organ = template_organ(anatomy, g, segment)
-    ds.register("barrier", np.ones(ds.n_nodes()), location="node")
-    mecha = legacy_options(MechaHydraulics(data_structure=ds))
-    for name, value in NEEDLE.items():
-        setattr(mecha, name, value)
-    mecha()
-    nodes, edges = section_parts(ds)[segment]
-    geo = mecha.section_geometries()[segment][2]
-    reference = legacy_reactions_step(organ, d_apo=D_APO, d_pd=D_PD, d_mem=D_MEM, dt=DT)
-    net = reference["network"]
-    mecha_index = g.property("mecha_index")
-    index = np.array([int(mecha_index[int(v)]) for v in ds.entity_ids("node")[nodes]])
-    index[geo.junction_order] = net.n_walls + np.arange(net.n_junctions)
-    local = np.full(ds.n_nodes(), -1, dtype=np.int64)
-    local[nodes] = np.arange(nodes.size)
-    view = ds.to_graph_view()
-    ends = np.c_[index[local[view.tail[edges]]], index[local[view.head[edges]]]]
-    solutes = MechaSolutes(data_structure=ds, time_step=DT * 86400.)
-    for name, value in dict(d_apoplast=D_APO, d_plasmodesmata=D_PD, d_membrane=D_MEM).items():
-        setattr(solutes, name, value)
-    return dict(g=g, ds=ds, organ=organ, mecha=mecha, solutes=solutes, nodes=nodes, edges=edges, index=index,
-                ends=ends, reference=reference, liquid=np.asarray(ds.get("vapour_node"))[nodes] == 0)
-
-
-def _run(case, reference, starch=(0., 0.), source=None, sigma=None):
-    """The port's step on the reactions' flows and initial concentrations (σ 0, or *sigma* per edge)."""
-    ds, nodes, edges = case["ds"], case["nodes"], case["edges"]
-    flows, Q = reference["flows"], np.zeros(ds.n_edges())
-    for e, (a, b) in zip(edges, case["ends"]):
-        Q[e] = flows.get((a, b), -flows.get((b, a), 0.))
-    ds.set("flow", Q)
-    ds.set("reflection_coefficient", np.zeros(ds.n_edges()) if sigma is None else sigma)
-    c0 = np.zeros(ds.n_nodes())
-    c0[nodes] = reference["c0"][case["index"]]
-    ds.set("sucrose", c0)
-    ds.set("starch", np.zeros(ds.n_nodes()))
-    ds.set("sucrose_source", np.zeros(ds.n_nodes()) if source is None else source)
-    case["solutes"].k_starch_synthesis, case["solutes"].k_starch_degradation = starch
-    case["solutes"]()
-    return np.asarray(ds.get("sucrose"))[nodes].copy(), np.asarray(ds.get("starch"))[nodes].copy()
+    return _needle_case()
 
 
 def test_diffusion_and_volumes(needle_case):
@@ -111,11 +66,7 @@ def test_one_step_with_photosynthesis(needle_case):
     meso = c["reference"]["kinds"]["meso"]
     reference = legacy_reactions_step(c["organ"], d_apo=D_APO, d_pd=D_PD, d_mem=D_MEM, dt=DT,
                                       source={i: PHOTOSYNTHESIS for i in meso})
-    by_legacy = dict(zip(c["index"].tolist(), c["nodes"].tolist()))
-    source = np.zeros(c["ds"].n_nodes())
-    volume = np.asarray(c["ds"].get("node_volume"))
-    for i in meso:
-        source[by_legacy[i]] = volume[by_legacy[i]] * PHOTOSYNTHESIS / DT
+    source = mesophyll_source(c, reference, PHOTOSYNTHESIS)
     sucrose, _ = _run(c, reference, source=source)
     expected = reference["c1"][c["index"]]
     liquid = c["liquid"]
