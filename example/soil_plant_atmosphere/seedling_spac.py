@@ -6,15 +6,15 @@ GRANAP and its hydraulics by MECHA (devplan_metafspm.md, §15):
                            three elements; three root axes from the collar, a pivot with two laterals and two oblique
                            roots with one lateral each), with each segment's radius, distance from its tip and 3D
                            extent (x1..z2, for the mapping onto the soil); its anatomies are left to GRANAP
-    SeedlingAnatomy        GRANAP's anatomy component: roots by the root preset (classes by diameter and distance from
-                           the tip), stems by the monocot stem preset, leaves by the monocot leaf preset
     development            a stand-in for a root development model: each root segment's apoplastic barriers from its
                            distance to the tip (none on the tip segment, a Casparian strip up to 10 cm, suberin
                            beyond); the shoot's mature xylem (1)
-    SeedlingHydraulics     the plant population model: GRANAP's and MECHA's components on the seedlings' anatomies,
-                           MECHA's osmotic presets standing for a solute model (the roots' cells and walls' osmotic
-                           potentials, the membranes' reflection coefficients; ψ is then the pressure potential and
-                           water_potential = ψ + π)
+    SeedlingHydraulics     the plant population model: GRANAP's anatomies (roots by the root preset, classes by
+                           diameter; stems and leaves by the monocot presets, turned on by the plant's scenario:
+                           SEEDLING_SCENARIO), MECHA's osmotic presets standing for a solute model (the roots' cells
+                           and walls' osmotic potentials, the membranes' reflection coefficients; ψ is then the pressure
+                           potential and water_potential = ψ + π), and MECHA's hydraulics
+    SEEDLING_SCENARIO      the seedling's scenario: its components' parameters, and its transpiration
     SCENE_TRANSLATOR       the plant–soil exchange with metafspm's soil model, in each model's units: the soil's
                            potential (MPa) to MECHA's soil_psi (hPa), MECHA's root uptake (cm³ d⁻¹) to the soil's sink
                            (mm³ s⁻¹)
@@ -33,10 +33,7 @@ from openalea.metafspm.coupling.cross import CrossMapping
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.configs import PropsConfig, ScalesConfig
 
-from openalea.granap.leaf_class import LeafAnatomy
-from openalea.granap.stem_class import StemAnatomy
-from openalea.granap.metafspm.component import GranapAnatomy, OrganAnatomy, junction_rules
-from openalea.granap.metafspm.library import AnatomyLibrary, preset_parameters
+from openalea.granap.metafspm.component import GranapAnatomy, junction_rules
 from openalea.mecha.component import MechaHydraulics
 from openalea.mecha.osmotic import MechaOsmoticPresets
 
@@ -190,14 +187,6 @@ class SeedlingArchitecture(StructuralComponent):
         build_architecture(g, plant, parameters)
 
 
-class SeedlingAnatomy(GranapAnatomy):
-    """GRANAP's anatomies: roots (default library: the root preset), stems and leaves (monocot presets)."""
-    shoot = {"StemElement": OrganAnatomy(AnatomyLibrary(parameters=preset_parameters("for_monocot_stem"),
-                                                        organ_class=StemAnatomy)),
-             "LeafElement": OrganAnatomy(AnatomyLibrary(parameters=preset_parameters("for_monocot_leaf"),
-                                                        organ_class=LeafAnatomy), size=None)}
-
-
 def development(ds, is_root, tip_segment=1e-9, strip=0.1):
     """
     The barrier code of every Compartment (MECHA's maturity): root segments by their distance from the tip (0 on the
@@ -210,54 +199,48 @@ def development(ds, is_root, tip_segment=1e-9, strip=0.1):
     return np.where(is_root, code, 1.)
 
 
-# the plant's transpiration (mm3 s-1), split equally between its leaf organs: a constant for now (a transpiration
-# model will give each leaf's, plan §26–27)
-TRANSPIRATION = 0.015
+# The plant's transpiration (mm3 s-1), split equally between its leaf organs: a constant for now (a transpiration
+# model will give each leaf's, plan §26–27). 0.04 mm3 s-1 is 2 mmol m-2 s-1, a well-watered cereal seedling's daytime
+# rate, over its 10.8 cm2 of leaf blade (9 leaf elements of 3 cm, GRANAP's monocot leaf 4.0 mm wide).
+TRANSPIRATION = 0.04
 MM3_PER_S_TO_CM3_PER_DAY = 1e-3 * 86400.
+SEEDLING_SCENARIO = {"parameters": {"stem_anatomy": {}, "leaf_anatomy": {},   # the shoot's anatomies, its presets
+                                    "collar_condition": 0.},                   # the shoot above the roots: no collar
+                     "transpiration": TRANSPIRATION}
 
 
 class SeedlingHydraulics(CompositeModel):
     """
-    The plant population model: the seedlings' architecture (initiators), their GRANAP anatomies (anatomy mode: the
-    Compartments are the graph's nodes, the vessels joined between sections by GRANAP's junction rules), and MECHA's
-    hydraulics on them, from the soil around the roots to the air at the leaves' stomata.
+    The plant population model: the seedlings' architecture and GRANAP's anatomies (the initiators; the Compartments
+    are the graph's nodes, the vessels joined between sections by GRANAP's junction rules), MECHA's osmotic presets
+    and hydraulics on them, from the soil around the roots to the air at the leaves' stomata. *transpiration*: the
+    plant's (mm3 s-1), shared by its leaf organs.
     """
-    initiators = (SeedlingArchitecture, SeedlingAnatomy)
-    from_scale = "SubOrgan"
-    nodes = "Compartment"
-    wiring = junction_rules
+    initiators = (SeedlingArchitecture, GranapAnatomy)
+    from_scale, nodes, wiring = "SubOrgan", "Compartment", junction_rules
 
-    def __init__(self, data_structure, time_step):
-        self.architecture = SeedlingArchitecture(data_structure=data_structure, time_step=time_step)
-        self.anatomy = SeedlingAnatomy(data_structure=data_structure, time_step=time_step)
-        self.anatomy()                                                 # the 3D quantities
-        if not data_structure.has("barrier"):
-            data_structure.register("barrier", np.ones(data_structure.n_nodes()), location="node")
+    def __init__(self, data_structure, time_step, transpiration=TRANSPIRATION):
+        ds = data_structure
+        self.architecture = SeedlingArchitecture(data_structure=ds, time_step=time_step)
+        self.anatomy = GranapAnatomy(data_structure=ds, time_step=time_step)
         # MECHA's osmotic presets as the "Solutes" model (§20, Q-O3), until a metabolism model is coupled
-        self.osmotic = MechaOsmoticPresets(data_structure=data_structure, time_step=time_step)
-        g = data_structure.mtg                                         # each leaf organ's transpiration (cm3 d-1)
-        organs = [int(v) for v in data_structure.entity_ids("Organ")]
-        leaves = [v for v in organs if g.property("label").get(v) == g.labels.Organ.Leaf]
+        self.osmotic = MechaOsmoticPresets(data_structure=ds, time_step=time_step)
+        g, organs = ds.mtg, [int(v) for v in ds.entity_ids("Organ")]      # each leaf organ's transpiration (cm3 d-1),
+        leaves = [v for v in organs if g.property("label")[v] == g.labels.Organ.Leaf]   # read when MECHA is built
         for v in organs:
-            g.property("leaf_transpiration")[v] = (TRANSPIRATION * MM3_PER_S_TO_CM3_PER_DAY / len(leaves)
+            g.property("leaf_transpiration")[v] = (transpiration * MM3_PER_S_TO_CM3_PER_DAY / len(leaves)
                                                    if v in leaves else 0.)
-        self.hydraulics = MechaHydraulics(data_structure=data_structure, time_step=time_step)
-        self.hydraulics.collar_condition = 0.                          # the shoot above the roots
-        self.declare_data_and_couple_components(translator_path=Translator(),
-                                                components=(self.architecture, self.anatomy, self.osmotic,
-                                                            self.hydraulics))
-        # the root surface, as a mask: the soil mapping maps it only
-        data_structure.define_mask("root_surface", {"soil_conductance": ">0"})
-        self._is_root = None
+        self.hydraulics = MechaHydraulics(data_structure=ds, time_step=time_step)
+        self.declare_data_and_couple_components(
+            translator_path=Translator(), components=(self.architecture, self.anatomy, self.osmotic, self.hydraulics))
+        ds.define_mask("root_surface", {"soil_conductance": ">0"})       # the soil mapping maps it only
 
     def run(self):
-        self.anatomy()
         ds = self.hydraulics.data_structure
-        if self._is_root is None or self._is_root.size != ds.n_nodes():
-            roots = self.hydraulics.section_roles()[1]
-            owner_vids = ds.entity_ids("SubOrgan")[ds.owner("SubOrgan")]
-            self._is_root = np.isin(owner_vids, list(roots))
-        ds.set("barrier", development(ds, self._is_root))
+        self.anatomy()
+        roots = list(self.hydraulics.section_roles()[1])
+        is_root = np.isin(ds.entity_ids("SubOrgan")[ds.owner("SubOrgan")], roots)
+        ds.set("barrier", development(ds, is_root))                       # a root development model's role
         self.osmotic()
         self.hydraulics()
 

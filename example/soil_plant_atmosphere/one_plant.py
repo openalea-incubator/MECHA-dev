@@ -15,14 +15,14 @@ import pandas as pd
 
 from openalea.metafspm.scene.scene import Scene
 
-from seedling_spac import (CM3_PER_DAY_TO_MM3_PER_S, SCENE_TRANSLATOR, SeedlingHydraulics, Soil, largest_change,
-                           root_surface_mappings)
+from seedling_spac import (CM3_PER_DAY_TO_MM3_PER_S, SCENE_TRANSLATOR, SEEDLING_SCENARIO, SeedlingHydraulics, Soil,
+                           largest_change, root_surface_mappings)
 import plots
 
 
 def scene(output_dirpath=None, tolerance=1e-4):
     table = pd.DataFrame([dict(plant="seedling", model=SeedlingHydraulics, x=0.1, y=0.1, z=0., rotation=0.,
-                               scenario={"parameters": {}})])
+                               scenario=SEEDLING_SCENARIO)])
     table.attrs.update(xrange=0.2, yrange=0.2)                       # a 0.2 m x 0.2 m column of soil
     stop = largest_change(tolerance)
     built = Scene(table, environment=[Soil], environment_scenarios=[{}], translator=SCENE_TRANSLATOR, time_step=3600,
