@@ -553,8 +553,8 @@ class MechaHydraulics(MechaSections):
         vapour[air_end[wall_end >= 0]] = True
         vapour |= np.isfinite(pore_width) | (kind == LEAF_SURFACE)
         surface = kind == LEAF_SURFACE
-        per_organ = np.asarray(leaf_transpiration, dtype=float)               # its organ's, on each surface node
-        surface_inflow = np.where(surface, -per_organ[ds.owner("Organ")], 0.)
+        # each organ's transpiration onto its surface node, conserved (an organ transpiring without one raises)
+        surface_inflow = -ds.map_to(leaf_transpiration, "Organ", "node", "split", weights=surface)
         standard = (P_node["standard_solve"] > 0) & root
         return (K, "soil_conductance", soil, "axial_boundary_conductance", axial,
                 "standard_soil_psi", P_node["standard_psi_soil"].astype(float),
