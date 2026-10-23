@@ -10,3 +10,4 @@
 src_old/*
 src_old
 example/**/outputs/
+/dev*.md
