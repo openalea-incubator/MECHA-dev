@@ -7,41 +7,51 @@ A Python package for simulating hydraulic scenarios in plant root systems.
 
 ## Installation
 
-### Public installation
+MECHA, GRANAP and metafspm are not installable from the `openalea3` channel yet in the versions used here: clone the
+three repositories on their working branches, next to each other, and install them from source (`pip install -e`)
+in one environment.
 
 ```bash
-conda install -c openalea3 openalea.mecha
+mkdir fspm && cd fspm                       # any folder: the three repositories side by side
+git clone -b data_structure_api https://github.com/openalea/metafspm.git metafspm
+git clone -b to_metafspm https://github.com/openalea-incubator/GRANAP-dev.git GRANAP
+git clone -b to_metafspm https://github.com/openalea-incubator/MECHA-dev.git MECHA-dev
+
+mamba env create -f MECHA-dev/conda/environment.yaml     # the dependencies of the three, and MECHA itself
+mamba activate mecha
+pip install -e metafspm
+pip install -e GRANAP
+pip install -e MECHA-dev
 ```
 
-### Developer installation
+Keep the folder names above: GRANAP's own environment file (`GRANAP/conda/environment.yaml`) expects `metafspm` next
+to it. To update, `git pull` in each repository; the editable installs follow.
 
-Git clone `Granap` and `Mecha` in the same parent directory
+## Tutorials
 
-```bash
-git clone https://github.com/openalea-incubator/GRANAP-dev.git 
-git clone https://github.com/openalea-incubator/MECHA-dev.git
-cd MECHA-dev
-```
+Executed notebooks in [`example/tutorials/`](example/tutorials/), on MECHA's metafspm components (start with GRANAP's
+[cross-section tutorial](https://github.com/openalea-incubator/GRANAP-dev/blob/to_metafspm/example/tutorials/tutorial_metafspm_01_cross_sections.ipynb) for the anatomies):
 
-In MECHA-dev root directory, install the environment with
-```bash
-mamba create -f ./conda/environment.yaml -y
-mamba activate mecha 
-```
+| tutorial | what it shows |
+|---|---|
+| [01 — GRANAP and MECHA](example/tutorials/tutorial_metafspm_01_granap_mecha.ipynb) | coupling GRANAP's anatomies and MECHA's hydraulics in a plant model; MECHA's inputs by role; its parameters in the plants' scenarios; the barriers |
+| [02 — a soil gradient](example/tutorials/tutorial_metafspm_02_soil_gradient.ipynb) | the plant problem with a soil drier on one side of a root section: where the water enters and leaves, hydraulic redistribution, the barriers' role |
+| [03 — a pine needle's water and sugars](example/tutorials/tutorial_metafspm_03_needle_solutes.ipynb) | an organ of three sections joined axially; its transpiration as an Organ-scale input; MechaSolutes over a day (photosynthesis, starch, the sugars' osmotic feedback) |
+| [04 — a whole plant in its soil](example/tutorials/tutorial_metafspm_04_full_plant.ipynb) | the soil–plant–atmosphere seedling: the plant model, the soil model and their links, run to the fixed point |
 
-For source to be recognized in the environment, run the following at the root of the MECHA-env directory
-```bash
-pip install -e .
-cd ../GRANAP-dev
-pip install -e .
-```
+Run them locally with `jupyter lab example/tutorials/` (the `mecha` environment above). Examples:
+[`example/hydraulics/`](example/hydraulics/) (sections, a root axis, the osmotic presets),
+[`example/soil_plant_atmosphere/`](example/soil_plant_atmosphere/) (the full plant), and
+[`example/comparison/`](example/comparison/) (the port against the original MECHA).
 
-## Usage
+## The original MECHA (`openalea.mecha.legacy`)
+
+The original code is kept, frozen, as `openalea.mecha.legacy`: the reference the port is compared with
+(`test/comparison/`, `example/comparison/`).
 
 ```python
 
-from openalea.mecha.utils import InData, visualize
-from openalea.mecha import MECHA
+from openalea.mecha.legacy import InData, Mecha, visualize
 
 # --- Loading data ---
 AllIn = InData(cellset_file="extdata/current_root.xml")
@@ -53,7 +63,7 @@ visualize(AllIn.cellset_data, "polygon")
 # 3: fully suberized endodermis
 AllIn.geometry.set_maturity_stages([1, 3])
 # --- Instantiate the MECHA class
-section = mecha(AllIn)
+section = Mecha(AllIn)
 # --- Estimation of radial hydraulic conductivity ---
 section.compute_conductivities()
 
@@ -67,12 +77,12 @@ visualize(section, "flow", maturity_idx=0)
 
 ```
 
-### Coupling with GRANAP
+### Coupling with GRANAP (original API)
 
 ```python
 
-from openalea.granap import RootAnatomy
-from openalea.mecha.utils import NetworkBuilder, InData
+from openalea.granap.legacy.root_class import RootAnatomy
+from openalea.mecha.legacy import InData, Mecha, NetworkBuilder
 
 root = RootAnatomy()
 _ = root.export_to_adjencymatrix()
@@ -105,32 +115,26 @@ for i in range(len(granap_mecha.root_hydraulic_properties)):
 
 ```bash
 MECHA-dev/
-├── conda/                 # Conda environment file (environment.yaml)
-├── docs/                   # Documentation
-├── extdata/               # External datasets (e.g., .xml files)
+├── conda/                     # Conda environment file (environment.yaml)
+├── docs/                      # Documentation
+├── extdata/                   # External datasets (e.g., .xml files)
 ├── src/
 │   └── openalea/
 │       └── mecha/
-│           ├── mecha_class.py         # Main MECHA class
-│           ├── __init__.py            # Package initialization
-│           ├── GUI/                   # GUI
-│           │   └── app.py               # MECHA GUI (In progress)
-│           └── utils/
-│               ├── network_builder.py   # Network construction
-│               ├── scenario_builder.py  # Scenario setup
-│               ├── solute_transport.py  # Solute transport algorithms
-│               ├── hydraulic_solver.py  # Hydraulic solving utilities
-│               ├── data_loader.py       # Data loading (InData)
-│               ├── visu.py              # Visualization functions
-│               └── network_export.py    # Network export tools
-│
-├── tutorials/             # Examples of how to use the package
-├── test/                  # Unit tests and integration tests
-│   ├── test_advdiff.py
-│   ├── test_osmotic.py
-│   ├── test_transport.py
-│   └── test_visu_types.py
-├── .gitignore
+│           ├── component.py           # MechaHydraulics: the metafspm component (conductances, standard and plant problems)
+│           ├── conductance.py         # the conductances of walls, membranes, plasmodesmata, the vapour path
+│           ├── geometry.py            # MECHA's geometry of a section, from its DataStructure variables
+│           ├── osmotic.py             # MechaOsmoticPresets: the osmotic potentials and reflection coefficients
+│           ├── solutes.py             # MechaSolutes: sucrose and starch transport
+│           ├── plots.py               # section figures
+│           ├── legacy/                # the original MECHA, frozen
+│           └── legacy_reactions/      # the reactions branch, frozen (the solutes' reference)
+├── example/
+│   ├── tutorials/             # the metafspm tutorials (notebooks), and the original's tutorials ported
+│   ├── hydraulics/            # sections and a root axis
+│   ├── soil_plant_atmosphere/ # the full plant in its soil
+│   └── comparison/            # the port against the original
+├── test/                      # component/ (the port), comparison/ (against the original), legacy/
 ├── LICENSE
 ├── pyproject.toml
 └── README.md
