@@ -1,6 +1,7 @@
 from openalea.mecha.utils import hydraulic_cell
 import numpy as np
 import math
+import networkx as nx
 from scipy.sparse import coo_matrix
 
 class HydraulicMatrixBuilder:
@@ -19,6 +20,7 @@ class HydraulicMatrixBuilder:
         self.geo_props = geo_props
         self.position = position
         self.indice = indice
+        self._pd_spatial_coef = {}
 
     def build(self, h, i_maturity, hydraulic_conductivities, boundary,
               psi_xyl, psi_sieve, distributed_flow_xyl, distributed_flow_sieve):
@@ -27,7 +29,7 @@ class HydraulicMatrixBuilder:
         maturity_stages = self.geometry.maturity_stages
         barrier = int(maturity_stages[i_maturity].get("barrier"))
         height = float(maturity_stages[i_maturity].get("height"))
-        x_contact = float(self.hydraulic.xcontactrange[h])
+        x_contact = float(self.hydraulic.get_xcontact(h))
         
         hyd_props = hydraulic_conductivities[h, i_maturity, barrier]
         kw_config = hyd_props['kw']
@@ -39,6 +41,7 @@ class HydraulicMatrixBuilder:
         kw = self.hydraulic.get_kw_value(h)
         kpl = kpl_config['kpl']
         self.hydraulic.set_pd_interface(self.network)
+        self._pd_spatial_coef = self._pd_spatial_coefficients(h)
 
         n_nodes = self.network.graph.number_of_nodes()
         thickness = self.geometry.thickness
@@ -258,6 +261,15 @@ class HydraulicMatrixBuilder:
             if kw > 0:
                 temp_factor = kw_val / kw 
 
+        # ── Guard 3: Lignified sclerenchyma wall ──────────────────────────────
+        # Any wall of a sclerenchyma cell (scl–scl, scl–exo, scl–cortex, and
+        # junctions touching one) → kw_scler, for barrier stages defining it.
+        elif 'kw_scler' in kw_config and any(c.cell_type == 'sclerenchyma' for c in cells_i):
+            kw_val = kw_config['kw_scler']
+            K = kw_val * temp
+            if kw > 0:
+                temp_factor = kw_val / kw
+
         # ── Interface-based lookup (mirrors _fill_plasmodesmata) ──────────────
         # Two known living cells → build canonical interface tuple, look up map.
         elif len(cells_i) == 2:
@@ -353,7 +365,12 @@ class HydraulicMatrixBuilder:
             kaqp_curr = kaqp_config['kaqp_epi']
         elif cgroup == 3:
             kaqp_curr = kaqp_config['kaqp_endo']
-        elif cgroup in [13, 19, 20]:
+        elif cgroup in [13, 19, 20] or (
+            cgroup == 18 and getattr(self.hydraulic, 'tracheid_as_xylem', False)
+        ):
+            # Transfusion tracheids join the xylem branch only on request: a
+            # water-filled intercellular space modelled as an apoplastic conduit.
+            # They are not in xylem_cells, so they get no xylem boundary condition.
             if barrier > 0:
                 kaqp_curr = kaqp_config['kaqp_stele'] * 10000
                 if self.boundary.c_flag and self.general.c_flag:
@@ -515,6 +532,12 @@ class HydraulicMatrixBuilder:
         # mean of temp and 1.0, modelling the series resistance of both sides.
         same_tissue = cgroupi == cgroupj
         aperture_coef = temp if same_tissue else 2.0 * temp / (temp + 1.0)
+
+        # Spatially-variable plasmodesmatal aperture (disabled by default; see
+        # _pd_spatial_coefficients). Keyed on raw graph node ids, same as
+        # cm._pd_by_edge, since self.indice is the identity map on node ids.
+        spatial_coef = self._pd_spatial_coef.get((min(i, j), max(i, j)), 1.0)
+        aperture_coef *= spatial_coef
         pd.aperture_coef = aperture_coef
 
         # --- Air-space / cortex barrier modifier (dict lookup) -------------
@@ -570,8 +593,16 @@ class HydraulicMatrixBuilder:
                 self._add_C(j, j, -DF)
                 self._add_C(j, i,  DF)
 
-    def _apply_soil_boundary(self, x_contact, height, thickness, kw, barrier, boundary, rhs_s, rhs_C):
-        wall_to_cell = self.geo_props['wall_to_cell']
+    def _contact_nodes(self, x_contact):
+        """Return the set of node ids in water contact with the soil.
+
+        A border wall is a contact node when its position lies at/beyond
+        ``x_contact`` or it belongs to a cell listed in ``self.hormones.contact``.
+        A border junction is a contact node under the same positional rule, or
+        when all of its real neighbour cells are contact cells. This mirrors
+        (and is shared with) the boundary-stamping logic in
+        :meth:`_apply_soil_boundary`, so the two can never diverge.
+        """
         junction_wall_cell = self.geo_props['junction_wall_cell']
         contact_id_cell = self.hormones.contact
         cm = self.network.cell_manager
@@ -579,12 +610,36 @@ class HydraulicMatrixBuilder:
         contact_walls = [walls for cell in contact_cells for walls in cell.walls]
         contact_wall_id = [wall.node_id for wall in contact_walls if wall.is_border]
 
+        contact_nodes = set()
+
+        for wall_id in self.network.border_walls:
+            wall_has_contact = (self.position[wall_id][0] >= x_contact) or (wall_id in contact_wall_id)
+            if wall_has_contact:
+                contact_nodes.add(wall_id)
+
+        for j_id in self.network.border_junction:
+            cells = junction_wall_cell[j_id - self.network.n_walls]
+            real_neighbors = [c for c in cells[:3] if not np.isnan(c)]
+            has_contact = bool(real_neighbors) and all(
+                (c - self.network.n_wall_junction) in contact_id_cell for c in real_neighbors
+            )
+
+            junction_has_contact = (self.position[j_id][0] >= x_contact) or has_contact
+            if junction_has_contact:
+                contact_nodes.add(j_id)
+
+        return contact_nodes
+
+    def _apply_soil_boundary(self, x_contact, height, thickness, kw, barrier, boundary, rhs_s, rhs_C):
+        wall_to_cell = self.geo_props['wall_to_cell']
+        contact_nodes = self._contact_nodes(x_contact)
+
         graph = self.network.graph
         for node_id in graph.nodes:
             graph.nodes[node_id]['has_contact'] = False
 
         for wall_id in self.network.border_walls:
-            wall_has_contact = (self.position[wall_id][0] >= x_contact) or (wall_id in contact_wall_id)
+            wall_has_contact = wall_id in contact_nodes
             graph.nodes[wall_id]['has_contact'] = wall_has_contact
             if wall_has_contact:
                 temp = 1.0E-04 * (self.network.wall_lengths[wall_id] / 2 * height) / (thickness / 2)
@@ -596,13 +651,7 @@ class HydraulicMatrixBuilder:
                 #    rhs_C[wall_id][0] -= temp * Diff1 * Os_soil[0][0]
 
         for j_id in self.network.border_junction:
-            cells = junction_wall_cell[j_id - self.network.n_walls]
-            real_neighbors = [c for c in cells[:3] if not np.isnan(c)]
-            has_contact = bool(real_neighbors) and all(
-                (c - self.network.n_wall_junction) in contact_id_cell for c in real_neighbors
-            )
-
-            junction_has_contact = (self.position[j_id][0] >= x_contact) or has_contact
+            junction_has_contact = j_id in contact_nodes
             graph.nodes[j_id]['has_contact'] = junction_has_contact
             if junction_has_contact:
                 temp = 1.0E-04 * (self.network.wall_lengths[j_id] * height) / (thickness / 2)
@@ -610,6 +659,97 @@ class HydraulicMatrixBuilder:
                 self._add_W(j_id, j_id, -K)
                 rhs_s[j_id][0] = -K
 
+    def _pd_spatial_coefficients(self, h):
+        """Compute a per-plasmodesmata-edge aperture coefficient from graph
+        distance to the water-contact nodes.
+
+        Disabled (returns ``{}``) unless ``self.hydraulic.pd_spatial_config``
+        is set. When enabled, walks the network graph from the same
+        water-contact nodes used by :meth:`_apply_soil_boundary` (via
+        :meth:`_contact_nodes`) to get a Euclidean-distance field, then maps
+        each ``path == 'plasmodesmata'`` edge's mean endpoint distance to a
+        coefficient via a 'linear' or 'exp' profile between ``c_wet`` (d=0)
+        and ``c_dry`` (d=d_max). Also stamps ``eattr['contact_distance']``,
+        ``eattr['pd_spatial_coef']``, ``self.network.contact_distance`` and
+        the ``'contact_distance'`` node attribute for downstream plotting.
+
+        Returns
+        -------
+        dict
+            ``{(min(u, v), max(u, v)): coef}`` for every plasmodesmata edge.
+        """
+        config = self.hydraulic.pd_spatial_config
+        if config is None:
+            return {}
+
+        c_wet = config.get('c_wet', 1.0)
+        c_dry = config.get('c_dry', 0.6)
+        profile = config.get('profile', 'linear')
+        length_scale = config.get('length_scale', None)
+
+        x_contact = float(self.hydraulic.get_xcontact(h))
+        contact_nodes = self._contact_nodes(x_contact)
+        graph = self.network.graph
+
+        if not contact_nodes:
+            print("Warning: no water-contact nodes found; plasmodesmatal spatial coefficients disabled.")
+            return {}
+
+        def _edge_weight(u, v, _eattr):
+            pos_u = self.position.get(u)
+            pos_v = self.position.get(v)
+            if pos_u is None or pos_v is None:
+                return 0.0
+            return float(math.hypot(pos_u[0] - pos_v[0], pos_u[1] - pos_v[1]))
+
+        dist = nx.multi_source_dijkstra_path_length(graph, sources=contact_nodes, weight=_edge_weight)
+
+        # Store the full node distance field for downstream plotting.
+        self.network.contact_distance = dist
+        for n in graph.nodes:
+            graph.nodes[n]['contact_distance'] = dist.get(n, float('nan'))
+
+        # First pass: mean endpoint distance of every plasmodesmata edge.
+        pd_edges = []
+        for u, v, eattr in graph.edges(data=True):
+            if eattr.get('path') != 'plasmodesmata':
+                continue
+            if u in dist and v in dist:
+                pd_edges.append((u, v, eattr, 0.5 * (dist[u] + dist[v])))
+            else:
+                pd_edges.append((u, v, eattr, float('nan')))
+
+        # Normalise on the plasmodesmata themselves, over their distance *range*
+        # rather than absolute distance. The coefficient only ever applies to PD
+        # edges, and the closest cell-to-cell plasmodesma still sits a cell
+        # radius away from the wetted wall nodes, so anchoring on d_min is what
+        # makes c_wet and c_dry the exact values at the wettest and driest
+        # plasmodesma.
+        reachable = [d for _, _, _, d in pd_edges if not math.isnan(d)]
+        d_min = min(reachable) if reachable else 0.0
+        d_max = max(reachable) if reachable else 0.0
+        d_span = d_max - d_min
+        if length_scale is None:
+            length_scale = d_span / 3.0
+
+        def _coef(d):
+            if d_span <= 0:
+                return c_wet
+            u = min(max((d - d_min) / d_span, 0.0), 1.0)
+            if profile == 'exp':
+                if length_scale <= 0:
+                    return c_dry
+                return c_dry + (c_wet - c_dry) * math.exp(-(d - d_min) / length_scale)
+            return c_wet - (c_wet - c_dry) * u
+
+        coefficients = {}
+        for u, v, eattr, d_e in pd_edges:
+            coef = c_dry if math.isnan(d_e) else _coef(d_e)
+            eattr['contact_distance'] = float(d_e)
+            eattr['pd_spatial_coef'] = float(coef)
+            coefficients[(min(u, v), max(u, v))] = coef
+
+        return coefficients
 
     def _apply_xylo_phloem_boundary(self, i_maturity, barrier, psi_xyl, psi_sieve, distributed_flow_xyl, distributed_flow_sieve, boundary, rhs_s, rhs_x, rhs_p, rhs):
         if barrier > 0:
