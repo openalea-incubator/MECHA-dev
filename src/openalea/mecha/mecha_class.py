@@ -4,16 +4,16 @@
 #       mecha.mecha_class
 #
 #       File author(s):
-#           Dilhan Ozturk, Adrien Heymans
+#           Dilhan Ozturk, Adrien Heymans, Jonas Sonnenschein
 #
 #       File contributor(s):
-#           Tristan Gérault, Jonas Sonnenschein
+#           Tristan Gérault
 #
 #       File maintainer(s):
 #           Valentin Couvreur
 #
 #       Copyright © by UCLouvain
-#       Distributed under the LGPL License..
+#       Distributed under the LGPL License.
 #       See accompanying file LICENSE.txt or copy at
 #           https://www.gnu.org/licenses/lgpl-3.0.en.html
 #
@@ -370,11 +370,79 @@ class Mecha:
             # Contribution of aquaporins to membrane hydraulic conductivity
             kaqp_config = hydraulic.get_aquaporin_contributions(h)
 
+            # Wall ↔ air-space (mesophyll) vapour coupling parameters
+            kwa_config = self._get_wall_air_config(hydraulic, h)
+
+            # Air-space ↔ air-space (mesophyll) vapour diffusion parameters
+            k_air_config = self._get_air_link_config(hydraulic, h)
+
             # Calculate parameter a for cortex
             a_cortex, b_cortex = self._calculate_cortex_parameters(height = height, kaqp_cortex = kaqp_config['kaqp_cortex'], hydraulic = hydraulic)
 
             # Store values in a dictionary
-            self._set_hydraulic_conductivities_dict(h, i_maturity, barrier, height, kw_config, kpl_config, kaqp_config, a_cortex, b_cortex)
+            self._set_hydraulic_conductivities_dict(h, i_maturity, barrier, height, kw_config, kpl_config, kaqp_config, kwa_config, k_air_config, a_cortex, b_cortex)
+
+    @staticmethod
+    def _get_wall_air_config(hydraulic: HydraulicData, h: int) -> Dict[str, float]:
+        """Assemble the wall ↔ air-space (Kelvin) coupling parameters.
+
+        Values are read from :class:`HydraulicData` when available and fall
+        back to physically sensible defaults otherwise, so the linearized
+        vapour coupling in :meth:`HydraulicMatrixBuilder._fill_wall_air`
+        always receives a complete parameter set.
+
+        Parameters
+        ----------
+        hydraulic : HydraulicData
+            Hydraulic configuration container.
+        h : int
+            Hydraulic-scenario index.
+
+        Returns
+        -------
+        dict
+            Keys: ``kwa`` (cm hPa⁻¹ d⁻¹), ``p_sat`` (saturation vapour
+            pressure factor), ``psi_ref`` (linearization reference potential,
+            hPa), ``M_w`` (water molar mass, g mol⁻¹), ``R`` (gas constant,
+            hPa cm³ mol⁻¹ K⁻¹) and ``T`` (temperature, K).
+        """
+        getter = getattr(hydraulic, 'get_wall_air_conductances', None)
+        if callable(getter):
+            return getter(h)
+        return {
+            'kwa': float(getattr(hydraulic, 'kwa', 1.0E-04)),
+            'p_sat': float(getattr(hydraulic, 'p_sat', 1.0)),
+            'psi_ref': float(getattr(hydraulic, 'psi_ref_wall_air', 0.0)),
+            'M_w': float(getattr(hydraulic, 'M_w', 18.015)),
+            'R': float(getattr(hydraulic, 'R_gas', 8.314E4)),
+            'T': float(getattr(hydraulic, 'T', 298.15)),
+        }
+
+    @staticmethod
+    def _get_air_link_config(hydraulic: HydraulicData, h: int) -> Dict[str, float]:
+        """Assemble the air-space ↔ air-space vapour diffusion parameters.
+
+        Values are read from :class:`HydraulicData` when available and fall
+        back to a physically sensible default otherwise.
+
+        Parameters
+        ----------
+        hydraulic : HydraulicData
+            Hydraulic configuration container.
+        h : int
+            Hydraulic-scenario index.
+
+        Returns
+        -------
+        dict
+            Key ``k_air`` (vapour diffusion conductivity, cm hPa⁻¹ d⁻¹).
+        """
+        getter = getattr(hydraulic, 'get_air_link_conductances', None)
+        if callable(getter):
+            return getter(h)
+        return {
+            'k_air': float(getattr(hydraulic, 'k_air', 1.0E-04)),
+        }
 
 
     def _calculate_cortex_parameters(self, height: float, kaqp_cortex: float, hydraulic: HydraulicData) -> tuple:
@@ -443,12 +511,14 @@ class Mecha:
 
         return a_cortex, b_cortex
 
-    def _set_hydraulic_conductivities_dict(self, h: int, i_maturity: int, barrier: int, height: float, kw_config: np.ndarray, kpl_config: np.ndarray, kaqp_config: np.ndarray, a_cortex: float, b_cortex: float) -> None:
+    def _set_hydraulic_conductivities_dict(self, h: int, i_maturity: int, barrier: int, height: float, kw_config: np.ndarray, kpl_config: np.ndarray, kaqp_config: np.ndarray, kwa_config: Dict[str, float], k_air_config: Dict[str, float], a_cortex: float, b_cortex: float) -> None:
         """Set hydraulic conductivities in a dictionary."""
         self.hydraulic_conductivities[h, i_maturity, barrier] = {
             "kw": kw_config,
             "kpl": kpl_config,
             "kaqp": kaqp_config,
+            "kwa": kwa_config,
+            "k_air": k_air_config,
             "a_cortex": a_cortex,
             "b_cortex": b_cortex,
             "height": height,
@@ -595,6 +665,76 @@ class Mecha:
             distributed_flow_xyl=self.distributed_flow_xyl,
             distributed_flow_sieve=self.distributed_flow_sieve
         )
+
+
+    # ── Evaporating-wall (air-space) Dirichlet BC ─────────────────────────────
+    def _collect_evaporating_wall_nodes(self) -> list:
+        """Wall node ids on the wall ↔ air-space (``wall_air``) interfaces.
+
+        Empty for anatomies without ``wall_air`` edges (e.g. roots), which keeps
+        the air BC inert for the pre-existing root pathway.
+        """
+        g = self.network.graph
+        cm = self.network.cell_manager
+        nwj = self.network.n_wall_junction
+        walls, seen = [], set()
+        for u, v, eattr in g.edges(data=True):
+            if eattr.get('path') != 'wall_air':
+                continue
+            wall = cm.get_wall_by_node_id(u) or cm.get_wall_by_node_id(v)
+            wall_node = wall.node_id if wall is not None else (
+                u if u < nwj else (v if v < nwj else None))
+            if wall_node is not None and wall_node not in seen:
+                seen.add(wall_node)
+                walls.append(wall_node)
+        return walls
+
+    def set_air_wall_bc(self, psi_air: float, nodes: list = None) -> list:
+        """Register a Dirichlet air/transpiration BC on the evaporating walls.
+
+        Parameters
+        ----------
+        psi_air : float
+            Liquid-equivalent water potential [hPa] imposed on the evaporating
+            wall nodes (e.g. from a chosen potential or an RH via the Kelvin
+            equation).
+        nodes : list, optional
+            Explicit wall node ids to pin.  Defaults to every wall on a
+            ``wall_air`` edge (:meth:`_collect_evaporating_wall_nodes`).
+
+        Returns
+        -------
+        list
+            The wall node ids that will be pinned (empty ⇒ BC inert).
+        """
+        if nodes is None:
+            nodes = self._collect_evaporating_wall_nodes()
+        self._air_wall_bc = {'nodes': list(nodes), 'psi_air': float(psi_air)}
+        return list(nodes)
+
+    def _apply_air_wall_bc(self, matrix_W, rhs):
+        """Penalty-impose the registered air/transpiration BC before a solve.
+
+        Pins each evaporating wall node to ``psi_air`` with a large-conductance
+        penalty ``k_air`` (1e3× the largest physical diagonal).  Mutates
+        ``matrix_W`` (LIL/CSR with item assignment) and ``rhs`` in place; a no-op
+        when no BC is registered or no evaporating walls exist (root pathway).
+        Stores ``k_air`` on the BC dict for the transpiration-flux read-back.
+        """
+        bc = getattr(self, '_air_wall_bc', None)
+        if not bc or not bc['nodes']:
+            return
+        psi_air = bc['psi_air']
+        diag = np.abs(matrix_W.diagonal())
+        max_phys_diag = float(diag.max()) if diag.size else 1.0
+        k_air = max(1e3 * max_phys_diag, 1.0)
+        rhs_flat = np.asarray(rhs).ravel()
+        for node in bc['nodes']:
+            idx = self.indice[node]
+            matrix_W[idx, idx] -= k_air
+            rhs_flat[idx] -= k_air * psi_air
+        rhs[:] = rhs_flat.reshape(rhs.shape)
+        bc['k_air'] = k_air
 
 
     @staticmethod
@@ -993,8 +1133,6 @@ class Mecha:
             - soil BC
             - pholem BC
             - xylem BC
-    
-    
         """
 
         for i_maturity in range(self.geometry.n_maturity):
@@ -1022,6 +1160,25 @@ class Mecha:
                 if verbose: print(f"Adding rhs_o for scenario {i_scenario}!")
             
                 rhs += rhs_o
+
+                # Persistent linearized wall-air (Kelvin) source term.  Added
+                # to every scenario rhs since ``initialize_scenarios`` rebuilds
+                # ``rhs`` from scratch; it must not be overwritten by BCs.
+                rhs_wa = getattr(self, '_rhs_wall_air', None)
+                if rhs_wa is not None:
+                    rhs += rhs_wa
+
+                # Evaporating-wall (air-space) Dirichlet BC — rhs contribution.
+                # The matrix penalty is already included in ``matrix_W`` by
+                # ``solve_W``; here add the matching ``-k_air·psi_air`` source
+                # to each scenario's freshly-rebuilt rhs (needle only; inert when
+                # no ``wall_air`` edges / no BC registered).
+                air_bc = getattr(self, '_air_wall_bc', None)
+                if air_bc and air_bc.get('nodes') and 'k_air' in air_bc:
+                    k_air = air_bc['k_air']
+                    psi_air = air_bc['psi_air']
+                    for node in air_bc['nodes']:
+                        rhs[self.indice[node]] -= k_air * psi_air
 
                 # Critical check for NaNs in rhs before soil BC
                 if np.any(np.isnan(rhs)):
@@ -1127,6 +1284,7 @@ class Mecha:
         c_prev: np.ndarray = None,
         theta: float = 0.5,
         operators: str = 'T',
+        scheme: str = 'upwind'
     ) -> np.ndarray:
         """Solve convection-diffusion for solute concentrations.
 
@@ -1155,7 +1313,12 @@ class Mecha:
             CN weighting: 0 = explicit Euler, 0.5 = Crank-Nicolson, 1.0 = implicit Euler.
         operators : str
             'T' (default) D+A full transport, 'D' diffusion only, 'A' advection only.
-
+        scheme : str
+            'upwind' (default) or 'sg' Scharfetter–Gummel exponentially-fitted flux.
+                        SG couples D and A per edge and CANNOT be written as D + A_sg, so it
+                        is only meaningful for operators='T': the whole operator is built in
+                        one per-edge pass by build_transport_operator.  Requesting scheme='sg'
+                        with operators='D' or 'A' raises ValueError.
         Returns
         -------
         np.ndarray
@@ -1165,9 +1328,7 @@ class Mecha:
         if rhs is None:
             rhs = np.zeros(solver._matrix_size)
         return solver.solve(h, i_maturity, i_scenario, rhs,
-                            boundary_conditions, c_prev, theta, operators)
-
-
+                            boundary_conditions, c_prev, theta, operators, scheme)
 
 
     def solve_W(self, h: int=0, i_maturity: int=0, use_stored_psi_os: bool = False) -> tuple:
@@ -1191,9 +1352,22 @@ class Mecha:
         if use_stored_psi_os:
             for cell in self.network.cell_manager:
                 cell.psi_os = saved_psi_os.get(cell.cell_id)
-        matrix_W, matrix_C, rhs_C, rhs_p, rhs_x, rhs_s, rhs, Kmb =\
+        matrix_W, matrix_C, rhs_C, rhs_p, rhs_x, rhs_s, rhs, rhs_wa, Kmb =\
             self.build_matrices(h = h, i_maturity = i_maturity)
         matrix_W = matrix_W.tocsr()
+        # Add the persistent linearized wall-air (Kelvin) source term. It is
+        # kept separate from the boundary-condition vectors and added here so
+        # it is not overwritten by ``_apply_xylo_phloem_boundary``.
+        rhs = rhs + rhs_wa
+        # Cache for the per-scenario solves in ``water_flux`` where ``rhs`` is
+        # re-initialised from scratch by ``initialize_scenarios``.
+        self._rhs_wall_air = rhs_wa
+        # Evaporating-wall (air-space) Dirichlet BC — inert unless registered via
+        # ``set_air_wall_bc`` and the anatomy has ``wall_air`` edges (needle only).
+        if getattr(self, '_air_wall_bc', None) and self._air_wall_bc['nodes']:
+            matrix_W = matrix_W.tolil()
+            self._apply_air_wall_bc(matrix_W, rhs)
+            matrix_W = matrix_W.tocsr()
         # Solve system
         solution, verification_1 = self.solve(matrix = matrix_W, rhs = rhs, sparse_matrix = self.general.sparse_matrix)
 
@@ -1278,8 +1452,26 @@ class Mecha:
                     sigma = pd.sigma
             else:
                 sigma = 0.0 # for walls/junctions, no reflection
-                
-            Q = K * ((p_u - p_v) + sigma * (os_u - os_v))
+
+            if path == 'wall_air':
+                # Linearized Kelvin coupling is asymmetric with a constant
+                # offset: j = K_wall*psi_wall - K_air*x_air + offset, directed
+                # from the wall node to the air-space node.  Resolve which of
+                # (u, v) is the wall so the signed flux matches the u→v
+                # convention used by the generic accumulator below.
+                K_wall = float(eattr.get('K_wall', K))
+                K_air = float(eattr.get('K_air', K))
+                offset = float(eattr.get('offset', 0.0))
+                wall_is_u = cm.get_wall_by_node_id(u) is not None
+                if wall_is_u:
+                    psi_wall, x_air = p_u, p_v
+                    Q = K_wall * psi_wall - K_air * x_air + offset
+                else:
+                    psi_wall, x_air = p_v, p_u
+                    # j flows wall→air (= v→u); negate for the u→v convention.
+                    Q = -(K_wall * psi_wall - K_air * x_air + offset)
+            else:
+                Q = K * ((p_u - p_v) + sigma * (os_u - os_v))
             eattr['Q'] = Q
             eattr['sigma'] = sigma
 
@@ -1313,6 +1505,16 @@ class Mecha:
                     A = 0.0
                 else:
                     A = float(pd.n_pd) * float(pd_section*pd.aperture_coef) * 1.0E-08 # µm² → cm²
+
+            elif path == 'wall_air':
+                # Exchange area already computed by _fill_wall_air (cm²);
+                # reuse it directly for the velocity estimate.
+                A = float(eattr.get('A', 0.0))
+
+            elif path == 'air_link':
+                # Exchange area already computed by _fill_air_link (cm²);
+                # reuse it directly for the velocity estimate.
+                A = float(eattr.get('A', 0.0))
 
             eattr['A'] = A
             vel = Q / A if A > 0.0 else 0.0
@@ -1358,6 +1560,25 @@ class Mecha:
                     tf = eattr.get('temp_factor')
                     if tf is not None:
                         pd.temp_factor = tf
+
+            elif path == 'wall_air':
+                wa = cm.get_wall_air_by_edge(u, v)
+                if wa is not None:
+                    # K_computed / K_wall / K_air / offset are set once by
+                    # build_matrices; only the per-scenario flow varies here.
+                    wa.Q = Q
+                    wa.A = A
+                    wa.velocity = vel
+
+            elif path == 'air_link':
+                al = cm.get_air_link_by_edge(u, v)
+                if al is not None:
+                    # K_computed / k_air are set once by build_matrices;
+                    # only the per-scenario flow varies here.
+                    al.K_computed = K
+                    al.Q = Q
+                    al.A = A
+                    al.velocity = vel
 
         # --------------------------------------------------------------------
         # Store per-node quantities on graph nodes and in cell_manager
