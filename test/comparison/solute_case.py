@@ -1,5 +1,5 @@
 """
-The solutes' comparison case (devplan_metafspm.md, §28): GRANAP's ``NeedleAnatomy(seed=42)`` for the port
+The solutes' comparison case: GRANAP's ``NeedleAnatomy(seed=42)`` for the port
 (MechaHydraulics with the legacy's options and the needle's parameters, MechaSolutes) and for the reactions branch
 (legacy_run.legacy_reactions_step), their nodes and edges matched; the port's step on the reactions' flows.
 """

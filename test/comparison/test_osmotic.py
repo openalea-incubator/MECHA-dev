@@ -1,5 +1,5 @@
 """
-The osmotic potentials (devplan_metafspm.md, §20): MECHA's presets (MechaOsmoticPresets) and the standard problem
+The osmotic potentials: MECHA's presets (MechaOsmoticPresets) and the standard problem
 with the membranes' osmotic terms (standard_osmotic) against the legacy's osmotic scenario (``water_flux``): the
 cells' and walls' π, the membranes' σ, the solution and the edge flows, for its os_hetero and s_hetero patterns.
 """

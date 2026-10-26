@@ -188,24 +188,24 @@ class MechaHydraulics(MechaSections):
     xylem_pieces: float = _p("", "1: the walls between two xylem cells are septa of near-zero conductance", 0.)
     kmb: float = _p("cm hPa-1 d-1", "membrane hydraulic conductivity, without aquaporins", 3.0E-5)
     kaqp: float = _p("cm hPa-1 d-1", "aquaporin contribution to the membrane conductivity", 0.000430)
-    kaqp_stele_factor: float = _p("", "factor of kaqp in the stele", 1.0)
-    kaqp_endo_factor: float = _p("", "factor of kaqp in the endodermis", 1.0)
-    kaqp_exo_factor: float = _p("", "factor of kaqp in the exodermis", 1.0)
-    kaqp_epi_factor: float = _p("", "factor of kaqp in the epidermis", 1.0)
-    kaqp_cortex_factor: float = _p("", "factor of kaqp in the cortex", 1.0)
-    ratio_cortex: float = _p("", "the cortex's aquaporin activity at its innermost walls over its outermost "
+    kaqp_stele_factor: float = _p("adim", "factor of kaqp in the stele", 1.0)
+    kaqp_endo_factor: float = _p("adim", "factor of kaqp in the endodermis", 1.0)
+    kaqp_exo_factor: float = _p("adim", "factor of kaqp in the exodermis", 1.0)
+    kaqp_epi_factor: float = _p("adim", "factor of kaqp in the epidermis", 1.0)
+    kaqp_cortex_factor: float = _p("adim", "factor of kaqp in the cortex", 1.0)
+    ratio_cortex: float = _p("adim", "the cortex's aquaporin activity at its innermost walls over its outermost "
                                  "(1: uniform)", 1.0)
     k_interc: float = _p("cm hPa-1 d-1", "membrane conductivity of intercellular spaces (with barriers)", 0.0)
     kpl: float = _p("cm3 hPa-1 d-1", "conductance of one plasmodesma", 5.3E-12)
     plasmodesmata_rules: float = _p("", "the plasmodesmata's rules: 1 the original MECHA's, 2 the refactored legacy's "
                                         "(for the comparison with it, doc/legacy.rst)", 1.)
-    kpl_cortex_factor: float = _p("", "plasmodesmata aperture factor of the cortex (outer layer-cortex, cortex-cortex, "
-                                      "cortex-endodermis)", 1.0)
-    kpl_endo_in_factor: float = _p("", "plasmodesmata factor on the stelar side of the endodermis", 1.0)
-    kpl_endo_out_factor: float = _p("", "plasmodesmata factor on the cortical side of the endodermis", 1.0)
-    kpl_PPP_factor: float = _p("", "plasmodesmata aperture factor of the phloem-pole pericycle", 1.0)
-    kpl_PCC_factor: float = _p("", "plasmodesmata aperture factor of the companion cells", 1.0)
-    kpl_PST_factor: float = _p("", "plasmodesmata aperture factor of the sieve tubes (the legacy's rules only; the "
+    kpl_cortex_factor: float = _p("adim", "plasmodesmata aperture factor of the cortex (outer layer-cortex, "
+                                          "cortex-cortex, cortex-endodermis)", 1.0)
+    kpl_endo_in_factor: float = _p("adim", "plasmodesmata factor on the stelar side of the endodermis", 1.0)
+    kpl_endo_out_factor: float = _p("adim", "plasmodesmata factor on the cortical side of the endodermis", 1.0)
+    kpl_PPP_factor: float = _p("adim", "plasmodesmata aperture factor of the phloem-pole pericycle", 1.0)
+    kpl_PCC_factor: float = _p("adim", "plasmodesmata aperture factor of the companion cells", 1.0)
+    kpl_PST_factor: float = _p("adim", "plasmodesmata aperture factor of the sieve tubes (the legacy's rules only; the "
                                    "original uses it for the axial plasmodesmata of 3D sections)", 1.0)
     x_contact: float = _p("µm", "the border walls at x >= x_contact are in contact with the soil", -15E9)
     standard_axial_source: float = _p("", "the standard problem's conductance between a conduit and the axial "

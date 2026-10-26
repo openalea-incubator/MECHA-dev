@@ -1,5 +1,5 @@
 """
-Step 2 (devplan_metafspm.md, §8): MECHA's geometry from the DataStructure is the legacy's, exactly (bit for bit),
+MECHA's geometry from the DataStructure is the legacy's, exactly (bit for bit),
 quantity by quantity, on the same GRANAP section.
 """
 import numpy as np

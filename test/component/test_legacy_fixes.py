@@ -1,4 +1,4 @@
-"""The legacy's problems fixed in the port (devplan_metafspm.md, §18): each fix's rule, where the legacy differs."""
+"""The legacy's problems fixed in the port: each fix's rule, where the legacy differs."""
 from types import SimpleNamespace
 
 import numpy as np

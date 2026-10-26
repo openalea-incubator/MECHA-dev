@@ -1,5 +1,5 @@
 """
-The shoot in MECHA's plant problem (devplan_metafspm.md, §15, E1–E3): a stem element bearing a leaf element and a
+The shoot in MECHA's plant problem: a stem element bearing a leaf element and a
 root segment, GRANAP's anatomies (monocot stem and leaf presets, the root preset). Only the root exchanges with the
 soil. The leaf transpires its organ's flow (an Organ-scale input, §27), from its surface node; it reaches it from the
 evaporating walls through the air spaces and the stomata (GRANAP §60): what the leaf transpires, the root takes up.

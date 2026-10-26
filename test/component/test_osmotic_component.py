@@ -1,5 +1,5 @@
 """
-The osmotic potentials (devplan_metafspm.md, §20): MECHA's presets as the "Solutes" inputs, the membranes' osmotic
+The osmotic potentials: MECHA's presets as the "Solutes" inputs, the membranes' osmotic
 terms in the plant problem and in the standard one, the water potential, and their balance.
 """
 import numpy as np

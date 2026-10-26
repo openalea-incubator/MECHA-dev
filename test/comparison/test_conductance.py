@@ -1,5 +1,5 @@
 """
-Step 3 (devplan_metafspm.md, §8): the port's conductances are the legacy's, edge by edge and bit for bit, as are the
+The port's conductances are the legacy's, edge by edge and bit for bit, as are the
 soil terms; its matrix agrees to 4 ulp and its solution to 1e-12 (decision D1: summation and node orders differ).
 """
 import numpy as np

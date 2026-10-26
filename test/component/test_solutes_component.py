@@ -1,5 +1,5 @@
 """
-The solutes (devplan_metafspm.md, §28): MechaSolutes on a root of three sections, on MechaHydraulics' flows with
+The solutes: MechaSolutes on a root of three sections, on MechaHydraulics' flows with
 MECHA's osmotic presets: the Scharfetter–Gummel weights, the sinks, every node's balance and the mass, starch in the
 cells only, the sucrose's osmotic potential on the presets' baseline.
 """

@@ -148,11 +148,12 @@ def radial_profile(ax, frame, label=None, bins=40, **style):
     ax.set(xlabel="distance to the centre (µm)", ylabel="ψ (hPa)", title="radial profile of the potential")
 
 
-def pathway_breakdown(ax, frame, title="pathways of the radial flow"):
+def pathway_flows(frame):
     """
-    The share of each pathway in the radial flow, against the distance to the centre (the legacy's
+    (R, ranks, flows): the radial flow carried by each pathway at each layer radius (the legacy's
     ``plot_flow_pathway_breakdown``): each edge's radial component of |Q| assigned to the nearest of the mean radii
-    of the cell layers (by rank: the cells' centres and their inner and outer walls).
+    *R* (µm) of the cell layers (by rank: the cells' centres and their inner and outer walls); *ranks* the cell rank
+    of each radius; *flows* {pathway: cm³ d⁻¹ per radius}.
     """
     centre = np.asarray(frame.centre)
     xy = frame.xy - centre
@@ -178,7 +179,8 @@ def pathway_breakdown(ax, frame, title="pathways of the radial flow"):
                 radii.setdefault((frame.rank[c], "out"), []).append(np.hypot(*xy[w]))
             elif cos < -0.4:
                 radii.setdefault((frame.rank[c], "in"), []).append(np.hypot(*xy[w]))
-    R = np.unique([np.mean(v) for v in radii.values()])
+    rank_of = {np.mean(v): key[0] for key, v in radii.items()}
+    R = np.unique(list(rank_of))
     mid = (xy[frame.a] + xy[frame.b]) / 2
     vec = xy[frame.b] - xy[frame.a]
     n_mid, n_vec = np.hypot(*mid.T), np.hypot(*vec.T)
@@ -186,7 +188,13 @@ def pathway_breakdown(ax, frame, title="pathways of the radial flow"):
                       abs((vec * mid).sum(axis=1)) / np.maximum(n_mid * n_vec, 1e-300))
     q = abs(frame.Q) * radial
     nearest = R[np.argmin(abs(R[None, :] - n_mid[:, None]), axis=1)]
-    shares = {path: np.array([q[(frame.path == path) & (nearest == r)].sum() for r in R]) for path in PATHS}
+    flows = {path: np.array([q[(frame.path == path) & (nearest == r)].sum() for r in R]) for path in PATHS}
+    return R, np.array([rank_of[r] for r in R]), flows
+
+
+def pathway_breakdown(ax, frame, title="pathways of the radial flow"):
+    """The share of each pathway in the radial flow, against the distance to the centre (pathway_flows)."""
+    R, _, shares = pathway_flows(frame)
     total = sum(shares.values())
     total[total == 0] = 1.
     ax.stackplot(R, *[100 * shares[p] / total for p in PATHS], labels=list(PATHS.values()),

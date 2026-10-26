@@ -1,5 +1,5 @@
 """
-Step 4 (devplan_metafspm.md, §8): the port's section-scale results against the legacy's. On the legacy's own solution,
+The port's section-scale results against the legacy's. On the legacy's own solution,
 the uptake, kr and the edge flows are bit-exact; Kx is bit-exact; from the port's own solve, kr and the flows agree to
 1e-12 (decision D1).
 """

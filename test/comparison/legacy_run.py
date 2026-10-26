@@ -1,5 +1,5 @@
 """
-The legacy MECHA on a GRANAP section: the reference the port is compared with (devplan_metafspm.md, §4 step 1).
+The legacy MECHA on a GRANAP section: the reference the port is compared with.
 
     run = legacy_section(organ, barriers=(1, 3), height=200.)
     run.network            the legacy NetworkBuilder (its derived geometry: cell_ranks, distance_center_grav, ...)
@@ -17,7 +17,7 @@ import numpy as np
 from openalea.mecha.legacy import InData, Mecha, NetworkBuilder
 
 
-# The port's options that reproduce the legacy where it departs from the original MECHA (devplan_metafspm.md §18):
+# The port's options that reproduce the legacy where it departs from the original MECHA:
 # its plasmodesmata rules and its aperture factors' defaults, its prescribed xylem boundary, its one wall thickness
 LEGACY_OPTIONS = dict(plasmodesmata_rules=2., kpl_PCC_factor=0., kpl_PST_factor=0., standard_axial_source=2.,
                       thickness_source=1.)

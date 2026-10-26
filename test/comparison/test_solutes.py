@@ -1,5 +1,5 @@
 """
-The solutes (devplan_metafspm.md, §28): MechaSolutes against the reactions branch's transport (its needle,
+The solutes: MechaSolutes against the reactions branch's transport (its needle,
 ``simulations/needle.py``) on GRANAP's ``NeedleAnatomy(seed=42)``, both fed the reactions' water flows (its needle's
 water state, scenario 1). The solute's σ is 0 and the air edges' flows 0 in the reactions' run, so that its problems
 r1, r2 and r12 vanish (Q-U1, Q-U2): the diffusion (every edge's), the volumes, the sinks, one implicit Euler step from

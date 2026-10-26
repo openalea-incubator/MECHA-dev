@@ -37,6 +37,7 @@ dependencies:
   - pyyaml
   - pytest
   # MECHA's documentation tools
+  - pandoc                # the docs' notebooks (nbsphinx)
   - pyan3
   - graphviz
   - python-graphviz

@@ -1,5 +1,5 @@
 """
-Step 5 (devplan_metafspm.md, §12–13): the axial junctions' conductances, and the plant problem, the sections joined by
+The axial junctions' conductances, and the plant problem, the sections joined by
 their xylem junctions, the soil around them and the collar condition on the first section's vessels.
 """
 import numpy as np
