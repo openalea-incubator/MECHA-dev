@@ -634,9 +634,19 @@ class HydraulicMatrixBuilder:
         # --- Special-case temp_factor overrides (priority list + next()) ---
         # Evaluated in order; first matching condition wins.
         # Replaces the previous if/elif block over xylem / intercellular cases.
+        # Needle-only: the hypodermis/epidermis–mesophyll (2, 4) wall is
+        # lignified (kw_meso_hypo set); cut its symplastic (PD) path too so the
+        # outer ring is isolated apoplastically *and* symplastically. Gated on
+        # kw_meso_hypo being set, which only needle_defaults() does — roots keep
+        # their epidermis–cortex PD intact.
+        needle_meso_hypo = (
+            self.hydraulic.kw_meso_hypo is not None and interface == (2, 4)
+        )
         _special_cases = [
             # Intercellular spaces have no PD
             (is_intercellular and barrier > 0,           0.0),
+            # Needle hypodermis/epidermis–mesophyll: no PD across lignified wall
+            (needle_meso_hypo,                           0.0),
             # Xylem-xylem connection acts as a high-conductance apoplastic path
             (interface == (13, 13),                      10000.0 * base_area),
             # Any xylem edge blocked by hydrophobic barriers
