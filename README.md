@@ -7,6 +7,14 @@ A Python package for simulating hydraulic scenarios in plant root systems.
 
 ## Installation
 
+### Public installation
+
+```bash
+conda install -c openalea3 openalea.mecha
+```
+
+### Developer installation
+
 Git clone `Granap` and `Mecha` in the same parent directory
 
 ```bash

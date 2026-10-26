@@ -4,13 +4,13 @@
 #       mecha.utils.loader
 #
 #       File author(s):
-#           Dilhan Ozturk, Adrien Heymans
+#           Dilhan Ozturk, Adrien Heymans, Jonas Sonnenschein
 #
 #       File maintainer(s):
 #           Valentin Couvreur
 #
 #       Copyright © by UCLouvain
-#       Distributed under the LGPL License..
+#       Distributed under the LGPL License.
 #       See accompanying file LICENSE.txt or copy at
 #           https://www.gnu.org/licenses/lgpl-3.0.en.html
 #
@@ -21,6 +21,7 @@ Network builder for MECHA
 Constructs the hydraulic network graph from cell data
 """
 
+from openalea.mecha.utils.data_loader import HormonesData
 import networkx as nx
 import numpy as np
 from typing import Dict, Any, List, Optional, Tuple
@@ -53,6 +54,8 @@ class NetworkBuilder(AbstractNetwork):
         self.n_membrane: int = 0
         self.n_membrane_from_epi: int = 0
         self.n_nodes: int = 0
+        self.n_wall_air: int = 0
+        self.n_air_link: int = 0
         
         # Cell and wall properties
         self.cell_areas: Optional[np.ndarray] = None 
@@ -76,7 +79,7 @@ class NetworkBuilder(AbstractNetwork):
         self.xylem_cells: List[int] = []
         self.sieve_cells: List[int] = []
         self.xylem_walls: List[int] = []
-        self.proto_sieve_cells: List[int] = []
+        self.protosieve_cells: List[int] = []
         self.intercellular_cells: List[int] = []
         self.passage_cells: List[int] = []
         self.xylem_80_percentile_distance: float = 0.0
@@ -129,7 +132,6 @@ class NetworkBuilder(AbstractNetwork):
         
         # Lists for special cells
         self.xylem_distance: List[int] = []
-        self.protosieve_list: List[int] = []
 
         # Distance computation
         self.distance_max_cortex: float = 0.0
@@ -150,8 +152,8 @@ class NetworkBuilder(AbstractNetwork):
         self.apo_wall_target: List[int] = []
         self.apo_wall_immune: List[int] = []
 
-        self.apo_j_zombies0: List[int] = []
-        self.apo_j_cc: List[int] = []
+        self.apo_zombie0: List[int] = []
+        self.apo_cc: List[int] = []
 
         # Cell manager — populated after build_network / populate_from_network
         self.cell_manager: Optional[HydraulicCellManager] = None
@@ -170,7 +172,8 @@ class NetworkBuilder(AbstractNetwork):
         # If we are populating from another network, this might not be needed.
         pass
 
-    def build_network(self, general: GeneralData, geometry: GeometryData, cellset_data, verbose: bool = False, centroid_method: str = "shapely"):
+    def build_network(self, general: GeneralData, geometry: GeometryData, hormones: HormonesData, 
+                      cellset_data, verbose: bool = False, centroid_method: str = "shapely"):
         """Main method to build network from XML data"""
         if cellset_data is None:
             raise ValueError("Cellset data is None")
@@ -187,13 +190,15 @@ class NetworkBuilder(AbstractNetwork):
             print('  Creating wall, junction and cell nodes...')
         self.create_wall_junction_nodes(geometry.im_scale)
         self.identify_border_walls_junctions()
-        self.create_cell_nodes(geometry, general.apo_contagion, centroid_method=centroid_method)
+        self.create_cell_nodes(geometry, hormones, general.apo_contagion, centroid_method=centroid_method)
         
         if verbose:
             print('  Creating membrane connections...')
         self.build_membrane_connections()
         self.compute_cell_properties()
         self.build_plasmodesmata_connections()
+        self.build_wall_air_connections()
+        self.build_air_link_connections()
         self.build_wall_connections()
         self.compute_gravity_center()
 
@@ -204,10 +209,13 @@ class NetworkBuilder(AbstractNetwork):
         self.create_layer_discretization()
         self.compute_distance_from_center()
         self.n_nodes = self.graph.number_of_nodes()
-        self._calculate_xylem_area()
-        self._calculate_phloem_area()
+        
         self._cells_gdf = self.prep_geo()
         self._build_cell_manager()
+        self._calculate_xylem_area()
+        self._calculate_phloem_area()
+
+        self.scale_xml_geometry(geometry.im_scale)
         
     
     def populate_from_network(self, type_mapper: Dict[str, int] = None) -> None:
@@ -281,6 +289,7 @@ class NetworkBuilder(AbstractNetwork):
             type_mapper = {
                 'exodermis': 1,
                 'epidermis': 2,
+                'hypodermis': 2,
                 'endodermis': 3,
                 'passage': 3,
                 'cortex': 4,
@@ -289,8 +298,11 @@ class NetworkBuilder(AbstractNetwork):
                 'stele': 5,
                 'pith': 5,
                 'parenchyma': 5,
-                'vascular_parenchyma': 5,
+                'vascular parenchyma': 5,
                 'phloem': 11,
+                'protosieve': 23,
+                'protophloem': 23,
+                'sieve': 11,
                 'companion': 12,               
                 'cambium':12,
                 'guard cell': 12,
@@ -471,15 +483,21 @@ class NetworkBuilder(AbstractNetwork):
             if data.get('path') == 'membrane':
                 self.n_membrane += 1
 
+        # Count wall_air connections
+        self.n_wall_air = 0
+        for u, v, data in self.graph.edges(data=True):
+            if data.get('path') == 'wall_air':
+                self.n_wall_air += 1
+
+        # Count air_link connections
+        self.n_air_link = 0
+        for u, v, data in self.graph.edges(data=True):
+            if data.get('path') == 'air_link':
+                self.n_air_link += 1
+
         # Step 9: Compute gravity center from endodermis cells
         self._compute_gravity_center_from_graph(position)
 
-        # Step 10: Track xylem/phloem/passage/intercellular cells
-        self.xylem_cells = []
-        self.sieve_cells = []
-        self.xylem_walls = []
-        self.passage_cells = []
-        self.intercellular_cells = []
 
         for i in range(self.n_cells):
             node_id = self.n_wall_junction + i
@@ -493,8 +511,10 @@ class NetworkBuilder(AbstractNetwork):
                     edge_data = self.graph.edges[node_id, neighbor]
                     if edge_data.get('path') == 'membrane' and neighbor < self.n_walls:
                         self.xylem_walls.append(neighbor)
-            elif cgroup in [11, 23]:
+            elif cgroup == 11 or cell_type_str in ["phloem", "sieve"]:
                 self.sieve_cells.append(node_id)
+            elif cgroup == 23 or cell_type_str in ["protophloem", "protosieve"]:
+                self.protosieve_cells.append(node_id)
             elif cell_type_str == 'passage':
                 self.passage_cells.append(i)
             elif cell_type_str == 'intercellular':
@@ -513,17 +533,14 @@ class NetworkBuilder(AbstractNetwork):
         self.create_layer_discretization()
 
         # Step 13: Compute distance_center_grav / distance_from_center
-        self._compute_distance_from_center_graph(position)
-
-        # Step 14: Calculate xylem/phloem areas
-        self._calculate_xylem_area()
-        self._calculate_phloem_area()
+        self._compute_distance_from_center_graph(position)        
 
         # Build cell connections for symplastic paths
         self._build_cell_connections_from_graph()
         self._cells_gdf = self.prep_geo()
         self._build_cell_manager()
-        
+        self._calculate_xylem_area()
+        self._calculate_phloem_area()
         
         # Build new wall connections to junctions
         self.build_wall_connections()
@@ -538,7 +555,7 @@ class NetworkBuilder(AbstractNetwork):
         """Construct ``self.cell_manager`` from the current graph state.
 
         Called automatically at the end of :meth:`build_network` and
-        :meth:`populate_from_network`.  Safe to call multiple times — the
+        :meth:`populate_from_network`. Safe to call multiple times — the
         manager is rebuilt from scratch each time.
         """
         manager = HydraulicCellManager()
@@ -550,7 +567,7 @@ class NetworkBuilder(AbstractNetwork):
 
         For the XML path this delegates to :func:`mecha.utils.visu.prep_section`.
         For the GRANAP path it adapts polygons from the source network cells
-        (scaling from mm to µm).  Returns ``None`` when no geometry is available.
+        (scaling from mm to µm). Returns ``None`` when no geometry is available.
 
         Returns
         -------
@@ -649,8 +666,6 @@ class NetworkBuilder(AbstractNetwork):
                 cgroup = 13
             elif cgroup == 21:
                 cgroup = 16
-            elif cgroup == 23:
-                cgroup = 11
             elif cgroup == 26:
                 cgroup = 12
 
@@ -697,15 +712,18 @@ class NetworkBuilder(AbstractNetwork):
                     self.layer_dist[49] += dist
                     self.n_layer[49] += 1
 
-            elif celltype in [5, 11, 12, 13]:
+            elif celltype in [5, 11, 12, 13, 23]:
                 if self.stele_connec_rank in connected_ranks:
                     self.cell_ranks[cell_id] = 50
                     dist = np.hypot(pos[0] - self.x_grav, pos[1] - self.y_grav)
                     self.layer_dist[50] += dist
                     self.n_layer[50] += 1
                     cgroup = self.graph.nodes[node_id].get('cgroup', 0)
-                    if cgroup in [11, 23]:
-                        self.protosieve_list.append(node_id)
+
+                    # Track protosieve cells
+                    if cgroup == 23:
+                        self.protosieve_cells.append(node_id)
+
 
         # Iterative pass: refine layer rankings
         for iteration in range(12):
@@ -727,7 +745,7 @@ class NetworkBuilder(AbstractNetwork):
                         self.layer_dist[48 - iteration] += dist
                         self.n_layer[48 - iteration] += 1
 
-                elif celltype in [5, 11, 12, 13]:
+                elif celltype in [5, 11, 12, 13, 23]:
                     if iteration < 10:
                         if (50 + iteration) in connected_ranks:
                             self.cell_ranks[cell_id] = 51 + iteration
@@ -745,8 +763,11 @@ class NetworkBuilder(AbstractNetwork):
             if self.n_layer[i] > 0:
                 self.layer_dist[i] /= self.n_layer[i]
 
+        # the following lines should be relocated if needed
+        # TODO
         self.n_sieve = len(self.sieve_cells)
-        self.n_protosieve = len(self.protosieve_list)
+        self.n_protosieve = len(self.protosieve_cells)
+
 
     def _compute_distance_from_center_graph(self, position: dict) -> None:
         """Compute wall→gravity-center distances from graph positions."""
@@ -817,6 +838,7 @@ class NetworkBuilder(AbstractNetwork):
                 y_raw = im_scale * float(point.get("y"))
                 coords_raw.append((x_raw, y_raw))
                 coords.append((round(x_raw, n_dec_position), round(y_raw, n_dec_position)))
+
 
             # Store junction positions for this wall
             self.junction_positions[wall_id] = [
@@ -923,13 +945,17 @@ class NetworkBuilder(AbstractNetwork):
                 self.border_link[junction_id + self.n_walls] = 0
             junction_id+=1
     
-    def create_cell_nodes(self, geometry:GeometryData, contagion: Any = 0, centroid_method: str = "shapely"):
+    def create_cell_nodes(self, geometry:GeometryData, hormones: HormonesData, contagion: Any = 0, centroid_method: str = "shapely"):
         """Create nodes for cells"""
         cell_to_wall = self.cellset['cell_to_wall']
         position = nx.get_node_attributes(self.graph,'position') #Nodes XY positions (micrometers)
         # Initialize tracking arrays
         self.intercellular_cells = list(geometry.intercellular_ids)
+        self.apo_zombie0 = list(hormones.apo_zombie0) # Zombie cells in apoplast
         self.passage_cells = list(geometry.passage_cell_ids)
+        self.apo_cc = list(hormones.apo_cc)
+        self.apo_target = list(hormones.apo_target)
+        self.apo_immune = list(hormones.apo_immune)
         
         poly_dict = {}
         if centroid_method == "shapely":
@@ -974,8 +1000,10 @@ class NetworkBuilder(AbstractNetwork):
             )
             
             # Track special cell types
-            if cell_type in [11, 23]:  # Phloem sieve
+            if cell_type == 11:  # Phloem sieve
                 self.sieve_cells.append(node_id)
+            elif cell_type == 23:  # Protosieve
+                self.protosieve_cells.append(node_id)
             elif cell_type in [13, 19, 20]:  # Xylem
                 self.xylem_cells.append(node_id)
                 for cell in cell_group:
@@ -985,16 +1013,27 @@ class NetworkBuilder(AbstractNetwork):
             if contagion:
                 for cell in cell_group:
                     wall_id = int(cell.get("id"))
-                    cc_id = self.apo_cc[self.apo_zombie0.index(cell_id)]
                     if cell_id in self.apo_zombie0:
                         cc_id = self.apo_cc[self.apo_zombie0.index(cell_id)]
-                    if wall_id not in self.apo_wall_zombies0:
-                        self.apo_wall_zombies0.append(wall_id)
-                        self.apo_wall_cc.append(cc_id)
+                        if wall_id not in self.apo_wall_zombies0:
+                            self.apo_wall_zombies0.append(wall_id)
+                            self.apo_wall_cc.append(cc_id)
                     if cell_id in self.apo_target and wall_id not in self.apo_wall_target:
                         self.apo_wall_target.append(wall_id)
                     if cell_id in self.apo_immune and wall_id not in self.apo_wall_immune:
                         self.apo_wall_immune.append(wall_id)
+
+
+    def is_wall_air_cell(self, cell_node_id: int) -> bool:
+        """Check if a cell node is an air space in the mesophyll with protect_topology=True"""
+        node = self.graph.nodes[cell_node_id]
+        cell_type = str(node.get("cell_type", "")).strip().lower()
+
+        return (
+            cell_type == "air space"
+            and bool(node.get("protect_topology", False))
+        )
+
                 
     def build_membrane_connections(self):
         """Build membrane connections between cells and walls"""
@@ -1005,6 +1044,10 @@ class NetworkBuilder(AbstractNetwork):
         for cell_group in cell_to_wall:
             cell_id = int(cell_group.getparent().get("id"))
             cell_node_id = self.n_walls + self.n_junctions + cell_id
+
+            # Skip air space cells if protect_topology is enabled
+            if self.is_wall_air_cell(cell_node_id):
+                continue
             
             for wall_ref in cell_group:
                 wall_id = int(wall_ref.get("id"))
@@ -1032,7 +1075,96 @@ class NetworkBuilder(AbstractNetwork):
                     dist=dist,
                     d_vec=d_vec
                 )
-                self.n_membrane += 1 
+                self.n_membrane += 1
+
+    def build_wall_air_connections(self):
+        """Build wall_air connections between air spaces and walls"""
+        cell_to_wall = self.cellset['cell_to_wall']
+        # NOTE: do not reset ``distance_wall_cell`` here — ``build_membrane_connections``
+        # already accumulated wall→cell distances that later feed the wall
+        # cross-section geometry.  Air-space walls are simply added on top.
+        if self.distance_wall_cell is None:
+            self.distance_wall_cell = np.zeros((self.n_walls, 1))
+        position = nx.get_node_attributes(self.graph,'position') #Nodes XY positions (micrometers)
+        
+        for cell_group in cell_to_wall:
+            cell_id = int(cell_group.getparent().get("id"))
+            cell_node_id = self.n_walls + self.n_junctions + cell_id
+
+             # Only consider air space cells if protect_topology is enabled
+            if not self.is_wall_air_cell(cell_node_id):
+                continue
+            
+            for wall_ref in cell_group:
+                wall_id = int(wall_ref.get("id"))
+                
+                if wall_id >= self.n_walls:
+                    continue
+                
+                # Calculate distance and direction
+                position_cell = position[cell_node_id]
+                position_wall = position[wall_id]
+                
+                d_vec = np.array([position_wall[0] - position_cell[0], position_wall[1] - position_cell[1]])
+                dist = np.linalg.norm(d_vec)
+                
+                if dist > 0:
+                    d_vec = d_vec / dist
+                
+                self.distance_wall_cell[wall_id] += dist
+
+                self.graph.add_edge(
+                    cell_node_id,
+                    wall_id,
+                    path='wall_air',
+                    length=self.wall_lengths[wall_id],
+                    dist=dist,
+                    d_vec=d_vec
+                )
+                self.n_wall_air += 1 
+
+    def build_air_link_connections(self):
+        """Build air_link connections between neighbouring mesophyll air spaces."""
+        walls_list = self.cellset['walls']
+        position = nx.get_node_attributes(self.graph, 'position')  # micrometers
+
+        # Build wall-to-cells mapping (same convention as plasmodesmata)
+        wall_to_cells: Dict[int, list] = {}
+        for wall_elem in walls_list:
+            wall_id = int(wall_elem.get("id"))
+            cell_id = int(wall_elem.getparent().getparent().get("id"))
+            wall_to_cells.setdefault(wall_id, []).append(cell_id)
+
+        # Connect air-space cells that share a wall
+        for wall_id, cell_ids in wall_to_cells.items():
+            if len(cell_ids) != 2:
+                continue
+
+            cell1_node = self.n_walls + self.n_junctions + cell_ids[0]
+            cell2_node = self.n_walls + self.n_junctions + cell_ids[1]
+
+            # Only link two mesophyll air-space cells to each other
+            if not (self.is_wall_air_cell(cell1_node) and self.is_wall_air_cell(cell2_node)):
+                continue
+
+            pos1 = position[cell1_node]
+            pos2 = position[cell2_node]
+
+            d_vec = np.array([pos2[0] - pos1[0], pos2[1] - pos1[1]])
+            dist = np.linalg.norm(d_vec)
+
+            if dist > 0:
+                d_vec = d_vec / dist
+
+            self.graph.add_edge(
+                cell1_node,
+                cell2_node,
+                path='air_link',
+                length=self.wall_lengths[wall_id] if wall_id in self.wall_lengths else 0,
+                dist=float(dist),
+                d_vec=d_vec,
+            )
+            self.n_air_link += 1
 
     def build_wall_connections(self):
         """Build connections between walls and junctions"""
@@ -1285,8 +1417,6 @@ class NetworkBuilder(AbstractNetwork):
                 cgroup = 13
             elif cgroup == 21:  # Xylem pole pericycle
                 cgroup = 16
-            elif cgroup == 23:  # Phloem
-                cgroup = 11
             elif cgroup == 26:  # Companion cell
                 cgroup = 12
             
@@ -1346,17 +1476,18 @@ class NetworkBuilder(AbstractNetwork):
                     if self.cell_perimeters[cell_id] < geometry.interc_perims[4]:
                         geometry.intercellular_ids.append(cell_id)
             
-            elif celltype in [5, 11, 12, 13]:  # Stele tissues
+            elif celltype in [5, 11, 12, 13, 23]:  # Stele tissues
                 if self.stele_connec_rank in connected_ranks:  # Connected to pericycle
                     self.cell_ranks[cell_id] = 50
                     dist = np.hypot(pos[0] - self.x_grav, pos[1] - self.y_grav)
                     self.layer_dist[50] += dist
                     self.n_layer[50] += 1
                     
-                    # Track protophloem
+                    # Track protosieve cells
                     cgroup = self.graph.nodes[node_id].get('cgroup', 0)
-                    if cgroup in [11, 23]:
-                        self.protosieve_list.append(node_id)
+                    if cgroup == 23:  # Protosieve
+                        self.protosieve_cells.append(cell_id)
+
         
         # Iterative pass: Refine layer rankings
         for iteration in range(12):
@@ -1419,7 +1550,7 @@ class NetworkBuilder(AbstractNetwork):
         
         # Store counts
         self.n_sieve = len(self.sieve_cells)
-        self.n_protosieve = len(self.protosieve_list)
+        self.n_protosieve = len(self.protosieve_cells)
 
     def create_layer_discretization(self):
         """
@@ -1735,8 +1866,9 @@ class NetworkBuilder(AbstractNetwork):
 
     def _calculate_xylem_area(self):
         # Calculate total area
-        for cid in self.xylem_cells:
-            area = self.cell_areas[cid - self.n_wall_junction]
+        cm = self.cell_manager
+        for xyl in cm.xylem:
+            area = xyl.area
             self.total_xylem_area += area
             self.xylem_area.append(area)
         # each element of the list is divided by the total area
@@ -1745,9 +1877,9 @@ class NetworkBuilder(AbstractNetwork):
 
     def _calculate_phloem_area(self):
         # Calculate total area
-        
-        for cid in self.protosieve_list:
-            area = self.cell_areas[cid - self.n_wall_junction]
+        cm = self.cell_manager
+        for proto in cm.protosieve:
+            area = proto.area
             self.total_phloem_area += area
             self.phloem_area.append(area)
         # each element of the list is divided by the total area
@@ -1826,6 +1958,10 @@ class NetworkBuilder(AbstractNetwork):
             if wall_id in position:
                 self.x_rel[wall_id] = (position[wall_id][0] - self.x_min) / (self.x_max - self.x_min) if (self.x_max - self.x_min) > 0 else 0.0
 
+        for node_id in range(self.n_wall_junction + self.n_cells):
+            if node_id in position:
+                self.x_rel[node_id] = (position[node_id][0] - self.x_min) / (self.x_max - self.x_min) if (self.x_max - self.x_min) > 0 else 0.0
+
     def get_relative_positions(self) -> Tuple[np.ndarray, np.ndarray]:
         """
         Compute and return r_rel (radial position to endodermis) and 
@@ -1840,3 +1976,19 @@ class NetworkBuilder(AbstractNetwork):
         if getattr(self, 'r_rel', None) is None or getattr(self, 'x_rel', None) is None:
             self.compute_relative_positions()
         return self.r_rel, self.x_rel
+
+    def scale_xml_geometry(self, scale: float) -> None:
+        """
+        Scale the coordinate of the cell by a given scale factor.
+        
+        Parameters
+        ----------
+        scale : float
+            The scale factor to multiply the wall positions by.
+        """
+        for pt_group in self.cellset['points']:
+            for pt in pt_group:
+                pt.set('x', str(float(pt.get('x')) * scale))
+                pt.set('y', str(float(pt.get('y')) * scale))
+
+        

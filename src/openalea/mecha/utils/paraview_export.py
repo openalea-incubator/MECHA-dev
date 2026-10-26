@@ -74,7 +74,9 @@ from __future__ import annotations
 
 import math
 import os
+import re
 from typing import Any, Dict, List, Optional, Tuple, Union
+from shapely.geometry import Polygon
 
 import numpy as np
 
@@ -169,23 +171,43 @@ def _write_point_data_header(f, n: int) -> None:
     f.write(f"\nPOINT_DATA {n}\n")
 
 
+_SUPERSCRIPTS = {"²": "2", "³": "3", "°": "deg"}
+
+
+def _sanitize_vtk_name(name: str) -> str:
+    """Make *name* a single whitespace-free ASCII token.
+
+    The VTK legacy format requires ``SCALARS <name> <type> <numComp>`` /
+    ``VECTORS <name> <type>`` names to be one token — spaces, brackets, and
+    non-ASCII characters (e.g. ``³``) break some legacy ASCII readers.
+    """
+    for k, v in _SUPERSCRIPTS.items():
+        name = name.replace(k, v)
+    name = name.encode("ascii", "ignore").decode("ascii")
+    name = re.sub(r"[^0-9A-Za-z_.]+", "_", name).strip("_")
+    return name or "field"
+
+
 def _write_scalar(f, name: str, values: List[float], dtype: str = "float") -> None:
-    f.write(f"SCALARS {name} {dtype} 1\n")
+    f.write(f"SCALARS {_sanitize_vtk_name(name)} {dtype} 1\n")
     f.write("LOOKUP_TABLE default\n")
     for v in values:
         f.write(f"{v:.6g}\n")
 
 
 def _write_vector(f, name: str, vectors: List[Tuple[float, float, float]]) -> None:
-    f.write(f"VECTORS {name} float\n")
+    f.write(f"VECTORS {_sanitize_vtk_name(name)} float\n")
     for vx, vy, vz in vectors:
         f.write(f"{vx:.6g} {vy:.6g} {vz:.6g}\n")
 
 
 def _safe(v, default=0.0) -> float:
-    if v is None or (isinstance(v, float) and math.isnan(v)):
+    if v is None:
         return default
-    return float(v)
+    v = float(v)
+    if math.isnan(v) or math.isinf(v):
+        return default
+    return v
 
 
 # ---------------------------------------------------------------------------
@@ -240,12 +262,25 @@ def _export_cells(
     sol: Optional[np.ndarray],
     indice: Dict[int, int],
     extrude_z: float,
+    extra_cell_scalars: Optional[Dict[str, Dict[int, float]]] = None,
 ) -> None:
-    """Export cell polygons as extruded prisms to *filepath*."""
+    """Export cell polygons as extruded prisms to *filepath*.
+
+    ``extra_cell_scalars`` optionally maps a scalar field name (e.g. ``"cc"``
+    for solute concentration) to a ``{cell_id: value}`` dict; missing cell ids
+    default to 0.0. Used to inject time-varying fields (e.g. from
+    ``SoluteTransport``) onto the same cell geometry for timeseries export.
+    """
 
     cm = obj.network.cell_manager
     if not cm:
         return
+
+    extra_cell_scalars = extra_cell_scalars or {}
+    extra_vals: Dict[str, List[float]] = {name: [] for name in extra_cell_scalars}
+
+    # Get im_scale for coordinate scaling (convert from image units to microns)
+    im_scale = getattr(obj.geometry, 'im_scale', 1000.0)
 
     points: List[Tuple[float, float, float]] = []
     polygons: List[List[int]] = []
@@ -269,6 +304,7 @@ def _export_cells(
         if c_type is None:
             c_type = "default"
         wt = get_thickness(c_type)
+
         if poly is not None and not poly.is_empty:
             poly = poly.buffer(-wt/2)
             if poly is None or poly.is_empty:
@@ -279,6 +315,25 @@ def _export_cells(
             coords = _reconstruct_polygon_from_walls(cell)
             if coords is None:
                 continue  # no geometry available
+
+        # Apply order_polygon to reorder coordinates around centroid
+        if coords and len(coords) >= 3 and obj.cellset_data is not None:
+            # --- Helper: order points around centroid (fallback) ---
+            def order_polygon(points: List[Tuple[float, float]]) -> Polygon:
+                """
+                Given a list of (x, y) coordinates, order them around the centroid.
+                """
+                arr = np.array(points)
+                # convex hull
+                hull = Polygon(arr)
+                # centroid of hull
+                cx, cy = hull.centroid.x, hull.centroid.y
+                angles = np.arctan2(arr[:, 1] - cy, arr[:, 0] - cx)
+                ordered = arr[np.argsort(angles)]
+                return Polygon(ordered)
+            ordered_poly = order_polygon(coords)
+            coords = list(ordered_poly.exterior.coords)[:-1]
+            coords = [(x * im_scale, y * im_scale) for x, y in coords]
 
         n = len(coords)
         if n < 3:
@@ -326,6 +381,8 @@ def _export_cells(
             Q_in_vals.append(Q_in)
             Q_out_vals.append(Q_out)
             Q_total_vals.append(Q_total)
+            for name, cell_vals in extra_cell_scalars.items():
+                extra_vals[name].append(_safe(cell_vals.get(cell.cell_id, 0.0)))
 
     _ensure_dir(filepath)
     with open(filepath, "w") as f:
@@ -333,14 +390,16 @@ def _export_cells(
         _write_points(f, points)
         _write_polygons(f, polygons)
         _write_cell_data_header(f, len(polygons))
-        _write_scalar(f, "Psi_total", psi_total_vals)
-        _write_scalar(f, "Psi_p", psi_p_vals)
-        _write_scalar(f, "Psi_os", psi_os_vals)
-        _write_scalar(f, "Cell_group", cgroups)
-        _write_scalar(f, "Cell_rank", ranks)
-        _write_scalar(f, "Q_in", Q_in_vals)
-        _write_scalar(f, "Q_out", Q_out_vals)
-        _write_scalar(f, "Q", Q_total_vals)
+        _write_scalar(f, "Psi total [hPa]", psi_total_vals)
+        _write_scalar(f, "Psi pressure [hPa]", psi_p_vals)
+        _write_scalar(f, "Psi osmotic [hPa]", psi_os_vals)
+        _write_scalar(f, "Cell group", cgroups)
+        _write_scalar(f, "Cell rank", ranks)
+        _write_scalar(f, "Q in [cm³/d]", Q_in_vals)
+        _write_scalar(f, "Q out [cm³/d]", Q_out_vals)
+        _write_scalar(f, "Q total [cm³/d]", Q_total_vals)
+        for name, vals in extra_vals.items():
+            _write_scalar(f, name, vals)
 
     print(f"[paraview_export] Cells → {filepath}  ({len(polygons)} polygons)")
 
@@ -468,10 +527,10 @@ def _export_walls(
         _write_points(f, points)
         _write_polygons(f, polygons)
         _write_cell_data_header(f, len(polygons))
-        _write_scalar(f, "K_wall", K_vals)
-        _write_scalar(f, "Q_wall", Q_vals)
-        _write_scalar(f, "is_border", is_border_vals)
-        _write_scalar(f, "is_aerenchyma", is_aero_vals)
+        _write_scalar(f, "K wall [cm³/hPa.d]", K_vals)
+        _write_scalar(f, "Q wall [cm³/d]", Q_vals)
+        _write_scalar(f, "is border wall", is_border_vals)
+        _write_scalar(f, "is aerenchyma wall", is_aero_vals)
 
     print(f"[paraview_export] Walls → {filepath}  ({len(polygons)} polygons)")
 
@@ -573,10 +632,10 @@ def _export_membranes(
         _write_points(f, points)
         _write_polygons(f, polygons)
         _write_cell_data_header(f, len(polygons))
-        _write_scalar(f, "K_membrane", K_vals)
-        _write_scalar(f, "Q_membrane", Q_vals)
-        _write_scalar(f, "km", km_vals)
-        _write_scalar(f, "kaqp", kaqp_vals)
+        _write_scalar(f, "K membrane [cm³/hPa.d]", K_vals)
+        _write_scalar(f, "Q membrane [cm³/d]", Q_vals)
+        _write_scalar(f, "km [cm/hPa.d]", km_vals)
+        _write_scalar(f, "kaqp [cm/hPa.d]", kaqp_vals)
 
     print(f"[paraview_export] Membranes → {filepath}  ({len(polygons)} quads on wall surface)")
 
@@ -668,6 +727,7 @@ def _export_plasmodesmata(
     K_vals: List[float] = []
     Q_vals: List[float] = []
     kpl_vals: List[float] = []
+    vel_vals: List[float] = []
 
     # node_id → point index (so cell centroids are shared across PDs)
     node_to_pt: Dict[int, int] = {}
@@ -700,8 +760,9 @@ def _export_plasmodesmata(
             graph.edges.get((cj.node_id, ci.node_id), {}),
         )
         K_vals.append(_safe(edge_data.get("K")))
-        Q_vals.append(_safe(edge_data.get("Q")))
+        Q_vals.append(abs(_safe(edge_data.get("Q"))))
         kpl_vals.append(_safe(pd.kpl))
+        vel_vals.append(abs(_safe(edge_data.get("velocity"))))
 
     if not polylines:
         print("[paraview_export] No plasmodesmata — skipping.")
@@ -718,9 +779,10 @@ def _export_plasmodesmata(
         _write_points(f, points)
         _write_polylines(f, polylines)
         _write_cell_data_header(f, len(polylines))
-        _write_scalar(f, "K_pd", K_vals)
-        _write_scalar(f, "Q_pd", Q_vals)
-        _write_scalar(f, "kpl", kpl_vals)
+        _write_scalar(f, "K pd [cm³/hPa.d]", K_vals)
+        _write_scalar(f, "Q pd [cm³/d]", Q_vals)
+        _write_scalar(f, "Kpl [cm³/hPa.d.pd]", kpl_vals)
+        _write_scalar(f, "velocity pd [cm/d]", vel_vals)
 
     print(
         f"[paraview_export] Plasmodesmata → {filepath}  "
@@ -838,10 +900,10 @@ def _export_flow_vectors(
             for i in range(len(points)):
                 f.write(f"1 {i}\n")
             _write_point_data_header(f, len(points))
-            _write_vector(f, "flow_Q", data["vectors"])
-            _write_scalar(f, "K", data["K_vals"])
-            _write_scalar(f, "Q_magnitude", [abs(q) for q in data["Q_vals"]])
-            _write_scalar(f, 'velocity', [abs(v) for v in data['velocity_vals']])
+            _write_vector(f, "flow_Q [cm³/d]", data["vectors"])
+            _write_scalar(f, "K [cm³/hPa.d]", data["K_vals"])
+            _write_scalar(f, "Q magnitude [cm³/d]", [abs(q) for q in data["Q_vals"]])
+            _write_scalar(f, 'velocity [cm/d]', [abs(v) for v in data['velocity_vals']])
             _write_scalar(f, "path_id", data["path_ids"])
 
         print(f"[paraview_export] Flow vectors ({cat}) → {cat_filepath}  ({len(points)} points)")
@@ -920,10 +982,11 @@ def export_to_vtk(
     indice: Dict[int, int] = getattr(obj, "indice", {})
 
     for m_val, s_val in to_export:
+        maturity_name = obj.geometry.maturity_stages[m_val]['apo_barrier_type']
         # Determine prefix for this iteration
         if len(to_export) > 1:
             s_suffix = str(s_val).replace(" ", "_")
-            current_prefix = f"{prefix}_mat{m_val}_scen{s_suffix}"
+            current_prefix = f"{prefix}_mat_{maturity_name}_scen_{s_suffix}"
         else:
             current_prefix = prefix
 
@@ -993,3 +1056,71 @@ def export_to_vtk(
 
     print(f"\n[paraview_export] Done — {len(to_export)} scenario(s) exported.")
     return last_written
+
+
+# ---------------------------------------------------------------------------
+# Solute concentration timeseries  →  <prefix>_XXXX.vtk + <prefix>.pvd
+# ---------------------------------------------------------------------------
+
+def export_cell_concentration_timeseries(
+    obj: Any,
+    cc_by_step: List[Dict[int, float]],
+    times: List[float],
+    prefix: str,
+    extrude_z: float = 50.0,
+    scalar_name: str = "cc",
+) -> str:
+    """Export a per-cell concentration timeseries as one `.vtk` per step plus
+    a ParaView `.pvd` collection so the whole series loads as an animation.
+
+    Parameters
+    ----------
+    obj : Mecha
+        A Mecha instance with a built network (``water_flux`` need not have
+        been called; cell geometry is enough).
+    cc_by_step : list of {cell_id: concentration}
+        One dict per timestep, e.g. as produced by ``SoluteTransport.solve``.
+    times : list of float
+        Time value (any unit, e.g. hours) associated with each step; must be
+        the same length as ``cc_by_step``.
+    prefix : str
+        Path prefix for output files (directory is created if needed).
+    extrude_z : float
+        Extrusion depth (µm), same convention as ``export_to_vtk``.
+    scalar_name : str
+        Name of the cell-data scalar field written to each `.vtk` file.
+
+    Returns
+    -------
+    str
+        Path to the written `.pvd` collection file.
+    """
+    if len(cc_by_step) != len(times):
+        raise ValueError("cc_by_step and times must have the same length")
+
+    indice: Dict[int, int] = getattr(obj, "indice", {})
+    vtk_files: List[str] = []
+
+    for step, (cc, t) in enumerate(zip(cc_by_step, times)):
+        fp = f"{prefix}_{scalar_name}_{step:04d}.vtk"
+        _export_cells(obj, fp, sol=None, indice=indice, extrude_z=extrude_z,
+                       extra_cell_scalars={scalar_name: cc})
+        vtk_files.append(fp)
+
+    pvd_path = f"{prefix}_{scalar_name}.pvd"
+    _ensure_dir(pvd_path)
+    with open(pvd_path, "w") as f:
+        f.write('<?xml version="1.0"?>\n')
+        f.write('<VTKFile type="Collection" version="0.1">\n')
+        f.write('  <Collection>\n')
+        for step, (fp, t) in enumerate(zip(vtk_files, times)):
+            f.write(
+                f'    <DataSet timestep="{t:.6g}" group="" part="0" '
+                f'file="{os.path.basename(fp)}"/>\n'
+            )
+        f.write('  </Collection>\n')
+        f.write('</VTKFile>\n')
+
+    print(f"[paraview_export] Concentration timeseries → {pvd_path}  "
+          f"({len(vtk_files)} steps)")
+    return pvd_path
