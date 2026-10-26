@@ -851,7 +851,8 @@ class HydraulicData:
         (3, 4): 8.8E5,           # cortex-endo/mesophyll-endo
         (3, 3): 6.4E5,           # endo-endo
         (3, 16): 9.6E5,          # endo-peri
-        (3, 5): 9.6E5,           # endo-stele 
+        (3, 5): 9.6E5,           # endo-stele
+        (3, 22): 1.08E6,         # endo-cambium
 
         (3, 17): 1.08E6,         # endo-transfusion parenchyma
         (3, 18): 0.0,            # endo-transfusion tracheid
@@ -862,6 +863,7 @@ class HydraulicData:
         (5, 12): 9.8E5,          # stele-comp
         (5, 13): 6.4E5,          # stele-xylem
         (5, 5): 6.4E5,           # stele-stele
+        (5, 22): 1.08E6,         # stele-cambium
 
         (5, 17): 6.4E5,         # stele-transfusion parenchyma
         (5, 18): 0.0,            # stele-transfusion tracheid
@@ -873,10 +875,12 @@ class HydraulicData:
         (11, 23): 0.0,           # sieve-protophloem
         (11, 17): 6.4E5,         # sieve-transfusion parenchyma
         (11, 18): 0.0,           # sieve-transfusion tracheid
+        (11, 22): 1.2E6,         # sieve-cambium
 
         (12, 13): 9.8E5,         # comp-xylem
         (12, 16): 7.0E5,         # comp-peri
         (12, 12): 6.8E5,         # comp-comp
+        (12, 22): 1.2E6,         # comp-cambium
         (12, 23): 6.8E5,         # comp-protophloem
 
         (12, 17): 1.08E6,        # Strasburger cell-transfusion parenchyma
@@ -884,6 +888,7 @@ class HydraulicData:
 
         (13, 16): 1.08E6,        # xylem-peri   
         (13, 13): 6.4E5,         # xylem-xylem
+        (13, 22): 6.4E5,         # xylem-cambium
         (13, 23): 0.0,           # xylem-protophloem
 
         (13, 17): 1.08E6,        # xylem-transfusion parenchyma
@@ -892,6 +897,8 @@ class HydraulicData:
         (17, 17): 8.0e5,         # transfusion parenchyma-transfusion parenchyma
         (17, 18): 0.0,           # transfusion parenchyma-transfusion tracheid
         (18, 18): 0.0,           # transfusion tracheid - transfusion tracheid
+
+        (22, 22): 1.0e6,         # cambium-cambium
 
         (23, 23): 0.0,
         # Add other mappings as needed
@@ -930,6 +937,7 @@ class HydraulicData:
 
             # Companion–pericycle: harmonic mean of the two pole factors
             (12, 16): 'pericycle_phloem_pole_factor',  # companion–peri
+            (5, 22): 'cambium_stele_factor' # Todo
         }
     )
 
@@ -948,6 +956,7 @@ class HydraulicData:
             (3, 12): 'kw_endo_peri',      # endo–companion   (inner face)
             (3, 13): 'kw_endo_peri',      # endo–xylem       (inner face)
             (3, 16): 'kw_endo_peri',      # endo–pericycle   (inner face)
+            (3, 22): 'kw_endo_peri',      # endo-cambium (inner face)
 
             # ── Exodermis radial walls ──────────────────────────────────────
             (1, 1):  'kw_exo_exo',        # exo–exo  (Casparian strip)

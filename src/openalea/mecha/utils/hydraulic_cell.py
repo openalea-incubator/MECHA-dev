@@ -74,16 +74,19 @@ CGROUP_TO_TYPE = {
     3: "endodermis",
     4: "cortex",
     5: "stele",
-    16: "pericycle",
     11: "phloem",
     12: "companion",
     13: "xylem",
-    19: "xylem",
-    20: "xylem",
+    16: "pericycle",
     17: "transfusion parenchyma",
     18: "transfusion tracheid",
+    19: "xylem",
+    20: "xylem",
     21: "pericycle",
-    23: "protosieve"
+    22: "cambium",
+    23: "phloem",
+    24: "companion",
+    26: "companion"
 }
 
 # ---------------------------------------------------------------------------
