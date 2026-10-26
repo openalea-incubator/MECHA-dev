@@ -92,7 +92,10 @@ intercellular space has no water-conducting membrane.
 the sums over the cortex cells' walls :math:`k` (:math:`S_k = (h + \delta_k)\,\ell_k\,10^{-8}`, :math:`\delta_k` the
 wall's distance to its cell's centre), :math:`D_\text{min}`, :math:`D_\text{max}` the cortex walls' extreme distances
 to :math:`G`. The surface-weighted mean is :math:`k_{aqp,\text{cortex}}`, and
-:math:`k_{aqp}(D_\text{min}) / k_{aqp}(D_\text{max}) = r`. With :math:`r = 1`, :math:`k_{aqp} = k_{aqp,\text{cortex}}`.
+:math:`k_{aqp}(D_\text{min}) / k_{aqp}(D_\text{max}) = r`: ``ratio_cortex`` is the activity at the innermost cortex
+walls over the outermost (the original's ``Mecha._calculate_cortex_parameters`` and the port alike; the original's
+input describes it only as a "ratio related to cortex hydraulic properties"). With :math:`r = 1`,
+:math:`k_{aqp} = k_{aqp,\text{cortex}}`.
 
 **Plasmodesmata** (cell–cell edges): :math:`K_p = k_{pl}\,N_p`, ``kpl`` the conductance of one plasmodesma, and their
 quantity
@@ -301,8 +304,8 @@ with ``factors``):
 :math:`f_\text{apo}` a wall's :math:`10^{-4}((L_w + h)t - t^2)/\ell_e \times k_w/\text{kw}` (the barriers block
 solutes as they block water; a vessel's septa :math:`10^{-16}`), or a mature vessel's membrane
 :math:`10^{-4}\,\ell_w h / t`; :math:`f_\text{sym} = a_\text{pd}\,N_p / t \cdot 10^{-4}` (``pd_section``, the
-plasmodesmata's quantity and aperture as above, :math:`t` the parameter ``thickness``); :math:`f_\text{mem} = \ell_e h
-\, 10^{-4} / d_e` on every membrane; :math:`D_\text{apo}`, :math:`D_\text{pd}`, :math:`D_\text{mem}` the diffusivities
+plasmodesmata's quantity and aperture as above, :math:`t` the thickness of the wall they cross: its own with
+``thickness_source`` 2, ``thickness`` with 1); :math:`f_\text{mem} = \ell_e h \, 10^{-4} / d_e` on every membrane; :math:`D_\text{apo}`, :math:`D_\text{pd}`, :math:`D_\text{mem}` the diffusivities
 (cm² d⁻¹).
 
 **Advection** by the water's flow :math:`F = Q` (the plant problem's), :math:`F = (1 - \sigma)\,Q` on the membranes,

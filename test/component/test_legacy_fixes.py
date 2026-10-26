@@ -197,6 +197,28 @@ def test_q_l4_each_wall_its_own_thickness():
     assert np.isfinite(net.wall_thickness[junctions]).all() and junctions.size > 0
 
 
+def test_plasmodesmata_diffusion_through_the_crossed_wall():
+    """With thickness_source 2 (default), the plasmodesmata's solute diffusion factor divides by the thickness of the
+    wall they cross (its own, GRANAP's); with 1, by MECHA's one value (the legacy's, for the comparisons)."""
+    from openalea.mecha.geometry import PLASMODESMATA, WALL
+    g, ds, anatomy = anatomy_data_structure(root(1))
+    ds.register("barrier", np.full(ds.n_nodes(), 1.), location="node")
+    mecha = MechaHydraulics(data_structure=ds)
+    mecha()
+    own_factor = ds.get("symplastic_diffusion_factor").copy()
+    mecha.thickness_source = 1.
+    mecha()
+    one_factor = ds.get("symplastic_diffusion_factor").copy()
+    net = mecha.network()
+    e = np.flatnonzero(net.in_section & (net.path == PLASMODESMATA) & (one_factor > 0))
+    walls = np.flatnonzero(net.kind == WALL)
+    crossed = {tuple(sorted(cells)): wall for wall, cells in zip(walls, net.wall_cells[walls].tolist())}
+    wall = np.array([crossed[tuple(sorted((a, b)))] for a, b in zip(net.a[e].tolist(), net.b[e].tolist())])
+    own = np.asarray(ds.get("wall_thickness"), dtype=float)[wall]
+    assert e.size > 0 and not np.allclose(own, mecha.thickness)
+    np.testing.assert_allclose(own_factor[e] / one_factor[e], mecha.thickness / own, rtol=1e-12)
+
+
 def _presets_section(**parameters):
     from openalea.mecha.osmotic import MechaOsmoticPresets, legacy_rows
     g, ds, anatomy = anatomy_data_structure(root(1))

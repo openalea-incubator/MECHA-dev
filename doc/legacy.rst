@@ -345,7 +345,9 @@ Parameters silently not applied
    * - d
      - GRANAP's per-wall thickness ignored: one thickness (1.5 µm) everywhere
      - corrected: ``thickness_source`` 2 (each wall's own, a junction the mean of its walls'); 1 reproduces. kr +3.6 %
-       (monocot root) and +8.7 % (dicot root) at barrier 1, +1.0 % and +3.4 % at barrier 3
+       (monocot root) and +8.7 % (dicot root) at barrier 1, +1.0 % and +3.4 % at barrier 3. The solutes'
+       plasmodesmata diffusion also divides by the crossed wall's own thickness (the reactions branch: the one
+       value; ``thickness_source`` 1 reproduces it)
 
 Crashes and wrong values
 ------------------------

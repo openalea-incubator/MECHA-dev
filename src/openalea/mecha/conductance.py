@@ -192,6 +192,23 @@ def _thickness(net: Network, P: dict, nodes) -> np.ndarray:
     return np.where(own, net.wall_thickness[nodes], np.asarray(P["thickness"], dtype=float))
 
 
+def _shared_wall_thickness(net: Network, cell_a, cell_b) -> np.ndarray:
+    """The thickness (µm) of the walls cells *cell_a* and *cell_b* share (their lengths' weighted mean; NaN where
+    they share none, or where their thickness is unknown): the wall a plasmodesmata edge crosses."""
+    walls = np.flatnonzero((net.kind == WALL) & (net.wall_cells >= 0).all(axis=1) & np.isfinite(net.wall_thickness))
+    n = net.kind.size
+    low, high = np.sort(net.wall_cells[walls], axis=1).T
+    keys, inverse = np.unique(low * n + high, return_inverse=True)
+    if keys.size == 0:
+        return np.full(np.size(cell_a), np.nan)
+    length = np.bincount(inverse, weights=net.wall_length[walls], minlength=keys.size)
+    weighted = np.bincount(inverse, weights=net.wall_length[walls] * net.wall_thickness[walls], minlength=keys.size)
+    mean = np.divide(weighted, length, out=np.full(keys.size, np.nan), where=length > 0)
+    wanted = np.minimum(cell_a, cell_b) * n + np.maximum(cell_a, cell_b)
+    index = np.minimum(np.searchsorted(keys, wanted), keys.size - 1)
+    return np.where(keys[index] == wanted, mean[index], np.nan)
+
+
 def _pow2(values) -> np.ndarray:
     """v ** 2 as the legacy's Python scalars compute it (libm's pow), per distinct value."""
     values = np.asarray(values, dtype=float)
@@ -245,7 +262,7 @@ def edge_conductances(net: Network, P: dict, barrier, height, factors: dict = No
     With *factors* (a dict), the solutes' diffusion factors per edge are written in it (cm, the reactions' c_flag
     terms of HydraulicMatrixBuilder and SoluteTransport): "apoplastic" (walls: temp × their kw ratio, the
     xylem-pieces septa 1e-16; the membranes of mature vessels: 1e-4 × wall length × height / thickness), "symplastic"
-    (plasmodesmata: pd_section × their quantity / thickness × 1e-4), "membrane" (every membrane: length × height
+    (plasmodesmata: pd_section × their quantity / the crossed wall's thickness × 1e-4), "membrane" (every membrane: length × height
     × 1e-4 / dist), each to be multiplied by its diffusivity (cm² d⁻¹).
     """
     n = net.path.size
@@ -346,8 +363,13 @@ def edge_conductances(net: Network, P: dict, barrier, height, factors: dict = No
     temp_factor = np.where(original, _plasmodesmata_original(net, e, P, b), _plasmodesmata_legacy(net, e, P, b))
     K[e] = kpl * temp_factor
     if factors is not None:
-        factors["symplastic"][e] = np.asarray(P["pd_section"], dtype=float)[e] * temp_factor / \
-            np.asarray(P["thickness"], dtype=float)[e] * 1.0E-04
+        # the crossed wall's thickness with thickness_source 2 (its own), MECHA's one value with 1 or without it
+        thickness = np.asarray(P["thickness"], dtype=float)[e]
+        own = np.asarray(P["thickness_source"])[e] == 2
+        if own.any():
+            shared = _shared_wall_thickness(net, net.a[e], net.b[e])
+            thickness = np.where(own & np.isfinite(shared), shared, thickness)
+        factors["symplastic"][e] = np.asarray(P["pd_section"], dtype=float)[e] * temp_factor / thickness * 1.0E-04
     return K, in_matrix
 
 

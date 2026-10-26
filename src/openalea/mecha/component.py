@@ -347,7 +347,8 @@ class MechaHydraulics(MechaSections):
                                                         initialize=0., scale=SCALES.Connection, location="edge",
                                                         state_variable_type="NonInertialIntensive")
     symplastic_diffusion_factor: float = state_variable(**_doc("cm", "× the plasmodesmata's diffusivity (their open "
-                                                               "cross-section × quantity / the wall's thickness)"),
+                                                               "cross-section × quantity / the crossed wall's "
+                                                               "thickness)"),
                                                         initialize=0., scale=SCALES.Connection, location="edge",
                                                         state_variable_type="NonInertialIntensive")
     membrane_diffusion_factor: float = state_variable(**_doc("cm", "× the membranes' passive diffusivity (length × "
