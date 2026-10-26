@@ -93,6 +93,15 @@ class SoluteTransport:
         self.sigma  = diffusion_params.get('sigma', {})
         self.k_deg  = float(reaction_params.get('k_deg', 0.0)) if reaction_params else 0.0
 
+        # Advective solute exchange with the domain boundary (soil contact,
+        # xylem/phloem axial BCs, elongation growth withdrawal). See
+        # _build_boundary_advection. Set False to reproduce the older,
+        # non-conservative behaviour.
+        self.conserve_boundary = bool(diffusion_params.get('conserve_boundary', True))
+        # Concentration of the water the boundary ADDS to the domain. Scalar,
+        # or {node_id: value}; defaults to clean water.
+        self.c_boundary = diffusion_params.get('c_boundary', 0.0)
+
         self.n_total         = mecha.network.graph.number_of_nodes()
         self.n_wall_junction = mecha.network.n_wall_junction
         self.n_cells         = mecha.network.n_cells
@@ -163,7 +172,7 @@ class SoluteTransport:
                 position=mecha.position,
                 indice=mecha.indice,
             )
-            _, matrix_C, _, _, _, _, _, _ = builder.build(
+            _, matrix_C, _, _, _, _, _, _, _ = builder.build(
                 h=h,
                 i_maturity=i_maturity,
                 hydraulic_conductivities=mecha.hydraulic_conductivities,
@@ -314,6 +323,8 @@ class SoluteTransport:
 
         A = coo_matrix((data, (rows, cols)), shape=(n, n)).tocsr()
         A = A + self._build_osmotic_advection(i_maturity)
+        if self.conserve_boundary:
+            A = A + self._build_boundary_advection(i_maturity, i_scenario)
 
         if self.mode == 'apo':
             A = A[:nwj, :nwj].tocsr()
@@ -327,6 +338,68 @@ class SoluteTransport:
             del self._A_cache[k]
         self._A_cache[cache_key] = A
         return A
+
+    def _boundary_flux(self, i_maturity: int, i_scenario: int) -> np.ndarray:
+        """Net water flux each node exchanges with the domain boundary [cm³/d].
+
+        The edge list only describes water moving *between* nodes.  Water also
+        crosses the domain boundary — soil uptake at the wetted walls, the
+        xylem and phloem axial boundary conditions, and the elongation growth
+        term that withdraws water from every living cell.  None of that appears
+        as a graph edge, so it shows up as a residual: at steady state the
+        signed edge fluxes at a node must be balanced by its boundary exchange.
+
+        Returns ``S`` with ``S[n] > 0`` where the boundary ADDS water to node
+        ``n`` and ``S[n] < 0`` where it REMOVES water.
+        """
+        S = np.zeros(self.n_total)
+        for edge in self.mecha.edge_flux_list[i_maturity][i_scenario]:
+            F = edge['flux']
+            if F == 0.0:
+                continue
+            # F > 0 flows source -> target.
+            S[edge['source']] += F
+            S[edge['target']] -= F
+        return S
+
+    def _build_boundary_advection(self, i_maturity: int,
+                                  i_scenario: int) -> sp.csr_matrix:
+        """Advective solute exchange with the domain boundary.
+
+        Without this term the operator conserves solute only along edges: at a
+        node the boundary drains, solute keeps arriving by advection and is
+        never carried out with the water, so the concentration climbs above the
+        source value (measured up to 1.8× a c=1 Dirichlet source on the
+        partially-wetted Arabidopsis section, where cell elongation withdraws
+        water from every epidermis and cortex cell).
+
+        Water LEAVING carries the local concentration out — a negative
+        diagonal.  Water ENTERING carries ``self.c_boundary``; that is a
+        constant, so it belongs in the right-hand side rather than the
+        operator, and is only represented here when it is zero (the default:
+        soil and phloem water carrying none of the tracer).
+        """
+        S = self._boundary_flux(i_maturity, i_scenario)
+        outflow = np.minimum(S, 0.0)          # ≤ 0, keeps the sign convention
+        idx = np.nonzero(outflow)[0]
+        return coo_matrix(
+            (outflow[idx], (idx, idx)), shape=(self.n_total, self.n_total)
+        ).tocsr()
+
+    def boundary_flux_rhs(self, i_maturity: int, i_scenario: int) -> np.ndarray:
+        """Right-hand side contribution of boundary water that carries solute.
+
+        Zero unless ``c_boundary`` is non-zero.  Pair it with ``solve(rhs=...)``
+        when the incoming soil or phloem water is not clean.
+        """
+        S = self._boundary_flux(i_maturity, i_scenario)
+        inflow = np.maximum(S, 0.0)
+        if isinstance(self.c_boundary, dict):
+            c_bc = np.array([float(self.c_boundary.get(n, 0.0))
+                             for n in range(self.n_total)])
+        else:
+            c_bc = float(self.c_boundary)
+        return inflow * c_bc
 
     @staticmethod
     def _bernoulli(x: float) -> float:
@@ -641,8 +714,36 @@ class SoluteTransport:
         return coo_matrix((data, (rows, cols)), shape=(n, n)).tocsr()
 
     # ------------------------------------------------------------------
-    # Capacitance  C  (diagonal)
+    # Capacitance C and reaction R — both are diagonal, volume-weighted,
+    # mode-sliced matrices; only their per-node coefficient and gating
+    # condition differ, so that scaffolding lives in one helper.
     # ------------------------------------------------------------------
+
+    def _build_node_diagonal(self, i_maturity: int, coeff_wall: float,
+                              coeff_cell: float, gate: bool) -> sp.csr_matrix:
+        """
+        Diagonal matrix  diag_i = coeff_wall × V_i  (wall/junction nodes)
+                          diag_i = coeff_cell × V_i  (cell nodes)
+        sliced to the active mode ('full'/'apo'/'sym').  Returns an all-zero
+        matrix when `gate` is False, without touching node volumes.
+        """
+        n = self._matrix_size
+        if not gate:
+            return sp.diags(np.zeros(n), format='csr')
+
+        nwj  = self.n_wall_junction
+        vols = self._compute_node_volumes(i_maturity)
+        diag = np.zeros(n)
+
+        if self.mode == 'full':
+            diag[:nwj] = coeff_wall * vols[:nwj]
+            diag[nwj:] = coeff_cell * vols[nwj:]
+        elif self.mode == 'apo':
+            diag[:] = coeff_wall * vols[:nwj]
+        else:
+            diag[:] = coeff_cell * vols[nwj:]
+
+        return sp.diags(diag, format='csr')
 
     def _compute_node_volumes(self, i_maturity: int) -> np.ndarray:
         """Node volumes (cm³) for all n_total nodes."""
@@ -677,33 +778,16 @@ class SoluteTransport:
             (C/dt)_i = storage_fraction_i × V_i / dt   [cm³/d]
         so that [C/dt − θ T] has consistent units with T [cm³/d × mol/cm³ = mol/d].
         """
-        n   = self._matrix_size
-        nwj = self.n_wall_junction
-
-        if (self.capacitance_params is None
-                or self.capacitance_params.get('dt') is None):
-            return sp.diags(np.zeros(n), format='csr')
+        gate = (self.capacitance_params is not None
+                and self.capacitance_params.get('dt') is not None)
+        if not gate:
+            return self._build_node_diagonal(i_maturity, 0.0, 0.0, gate=False)
 
         dt  = float(self.capacitance_params['dt'])
         C_w = float(self.capacitance_params.get('C_wall', 1.0))
         C_c = float(self.capacitance_params.get('C_cell', 1.0))
 
-        vols     = self._compute_node_volumes(i_maturity)
-        cap_diag = np.zeros(n)
-
-        if self.mode == 'full':
-            cap_diag[:nwj] = C_w * vols[:nwj] / dt
-            cap_diag[nwj:] = C_c * vols[nwj:] / dt
-        elif self.mode == 'apo':
-            cap_diag[:] = C_w * vols[:nwj] / dt
-        else:
-            cap_diag[:] = C_c * vols[nwj:] / dt
-
-        return sp.diags(cap_diag, format='csr')
-
-    # ------------------------------------------------------------------
-    # Reaction (first-order degradation) matrix R
-    # ------------------------------------------------------------------
+        return self._build_node_diagonal(i_maturity, C_w / dt, C_c / dt, gate=True)
 
     def build_reaction_matrix(self, i_maturity: int) -> sp.csr_matrix:
         """
@@ -713,24 +797,11 @@ class SoluteTransport:
             R_i = k_deg × V_i   [cm³/d]
         so that subtracting R from T adds a −k_deg·c_i sink term to
         C dc/dt = (T c) + s, consistent with the units of D and A.
+        Degradation rate is uniform across wall and cell nodes (unlike
+        capacitance, which distinguishes C_wall/C_cell storage fractions).
         """
-        n   = self._matrix_size
-        nwj = self.n_wall_junction
-
-        if self.k_deg <= 0.0:
-            return sp.diags(np.zeros(n), format='csr')
-
-        vols = self._compute_node_volumes(i_maturity)
-        react_diag = np.zeros(n)
-
-        if self.mode == 'full':
-            react_diag[:] = self.k_deg * vols
-        elif self.mode == 'apo':
-            react_diag[:] = self.k_deg * vols[:nwj]
-        else:
-            react_diag[:] = self.k_deg * vols[nwj:]
-
-        return sp.diags(react_diag, format='csr')
+        return self._build_node_diagonal(i_maturity, self.k_deg, self.k_deg,
+                                          gate=self.k_deg > 0.0)
 
     # ------------------------------------------------------------------
     # Peclet number diagnostic

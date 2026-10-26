@@ -4,8 +4,11 @@ The legacy: algorithms and quirks
 
 Two versions of MECHA are kept, frozen, beside the port, as its references:
 
-- ``openalea.mecha.legacy``: the refactored MECHA (the ``to_metafspm`` branch at 2b995b2, before the port), with its
-  tests in ``test/legacy/`` and its three tutorials in ``example/legacy/`` (inputs, boundary conditions, diffusion);
+- ``openalea.mecha.legacy``: the refactored MECHA, the ``develop`` branch at 945b2be (2026-10-26; the port started
+  from the ``to_metafspm`` branch at 2b995b2), with its tests in ``test/legacy/`` and its tutorials in
+  ``example/legacy/`` (inputs, boundary conditions, diffusion, capacitance and reaction, a tomato root). One repair:
+  the header of ``HydraulicMatrixBuilder._contact_nodes``, which ``develop``'s merge had turned into a second
+  ``_apply_soil_boundary`` (every solve raised AttributeError);
 - ``openalea.mecha.legacy_reactions``: the ``reactions`` branch at 4c9c8c2 (solute transport, needle transpiration,
   calibration), with its seven simulation scripts in ``example/legacy_reactions/simulations/``.
 

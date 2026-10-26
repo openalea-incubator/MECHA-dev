@@ -837,6 +837,69 @@ def plot_K_network(obj, **kwargs):
         plt.show()
 
 
+# ---------------------------------------------------------------------------
+# Wet → dry transect helpers (soil-contact side vs. opposite/dry side)
+# ---------------------------------------------------------------------------
+
+def _wetdry_axis(obj: Any) -> Optional[Tuple[Tuple[float, float], Tuple[float, float]]]:
+    """Unit vector pointing from the wet (soil-contact) side toward the dry side.
+
+    Returns ``(origin_xy, unit_vec)`` where ``origin_xy`` is the section
+    centre.  Returns ``None`` when no contact nodes are marked on the graph
+    (``has_contact`` is stamped by ``hydraulic_solver._apply_soil_boundary``
+    during the solve, so this also returns ``None`` before any solve has run).
+    """
+    graph = obj.network.graph
+
+    x_grav = getattr(obj.network, 'x_grav', None)
+    y_grav = getattr(obj.network, 'y_grav', None)
+    if x_grav is not None and y_grav is not None and np.isfinite(x_grav) and np.isfinite(y_grav):
+        origin = (float(x_grav), float(y_grav))
+    else:
+        all_xy = np.array([d['position'] for _, d in graph.nodes(data=True) if d.get('position') is not None])
+        if all_xy.size == 0:
+            return None
+        origin = (float(all_xy[:, 0].mean()), float(all_xy[:, 1].mean()))
+
+    wet_xy = np.array([
+        d['position'] for _, d in graph.nodes(data=True)
+        if d.get('has_contact') and d.get('position') is not None
+    ])
+    if wet_xy.size == 0:
+        return None
+
+    wet_centroid = wet_xy.mean(axis=0)
+
+    # unit_vec points from the wet centroid toward the section centre (and on
+    # toward the dry side beyond it) — see _signed_transect_coord for why this
+    # makes the wet side negative and the dry side positive.
+    dx = origin[0] - wet_centroid[0]
+    dy = origin[1] - wet_centroid[1]
+    norm = np.hypot(dx, dy)
+    if norm < 1e-9:
+        return None
+
+    unit_vec = (dx / norm, dy / norm)
+    return origin, unit_vec
+
+
+def _signed_transect_coord(
+    x: float, y: float,
+    origin_xy: Tuple[float, float],
+    unit_vec: Tuple[float, float],
+) -> float:
+    """Signed position along the wet->dry axis: negative on the wet side.
+
+    ``s`` is the projection of ``(x, y) - origin`` onto ``unit_vec``.  Since
+    ``unit_vec`` points from the wet centroid toward the centre (and on
+    toward the dry side), the wet centroid itself sits at ``origin -
+    norm * unit_vec`` — i.e. in the ``-unit_vec`` direction from the origin —
+    so its projection ``s`` is negative, while points on the dry side (in the
+    ``+unit_vec`` direction) get positive ``s``.
+    """
+    return (x - origin_xy[0]) * unit_vec[0] + (y - origin_xy[1]) * unit_vec[1]
+
+
 def plot_radial_profile(obj: Any, **kwargs: Any) -> None:
     """Plot radial water potential profile including osmotic components and xylem/phloem.
 
@@ -862,6 +925,16 @@ def plot_radial_profile(obj: Any, **kwargs: Any) -> None:
         scenario's saved state via ``restore_scenario_state`` so that the
         graph reflects the correct potentials.  Defaults to ``'current'``
         (whatever is currently on the graph).
+    x_axis : str, optional
+        ``'radial'`` (default) bins/plots against ``r = hypot(x, y)`` exactly
+        as before.  ``'signed'`` instead plots against the signed wet→dry
+        transect coordinate (see ``_wetdry_axis``), keeping the wet and dry
+        halves as separate points either side of 0 so the asymmetry between
+        the wetted (soil-contact) side and the dry side is visible.  Falls
+        back to ``'radial'`` with a warning when no ``has_contact`` nodes are
+        found on the graph.
+    save_path : str, optional
+        When given, save the figure to this path instead of showing it.
     **kwargs : Any
         Additional keyword arguments passed through.
     """
@@ -876,6 +949,18 @@ def plot_radial_profile(obj: Any, **kwargs: Any) -> None:
     scenario_idx = kwargs.get('scenario_idx', 'current')
     show_plot: bool = kwargs.get('show_plot', True)
     ax: Optional[Axes] = kwargs.get('ax', None)
+    save_path: Optional[str] = kwargs.get('save_path', None)
+
+    x_axis: str = kwargs.get('x_axis', 'radial')
+    wetdry = None
+    if x_axis == 'signed':
+        wetdry = _wetdry_axis(obj)
+        if wetdry is None:
+            print(
+                "[plot_radial_profile] WARNING: no water-contact nodes found "
+                "(has_contact) — falling back to x_axis='radial'."
+            )
+            x_axis = 'radial'
 
     # --- 1. Restore scenario state when a specific scenario is requested ----
     if scenario_idx != 'current' and hasattr(obj, 'restore_scenario_state'):
@@ -961,6 +1046,8 @@ def plot_radial_profile(obj: Any, **kwargs: Any) -> None:
             'psi_os': _psi_os(cell.node_id),
             'psi_total': _psi_tot(cell.node_id),
         }
+        if wetdry is not None:
+            row['s'] = _signed_transect_coord(cell.x, cell.y, *wetdry)
 
         if cell.node_id in xylem_ids:
             xylem_data.append(row)
@@ -986,12 +1073,15 @@ def plot_radial_profile(obj: Any, **kwargs: Any) -> None:
                 elif cos_theta < -0.4:
                     side = 'in'
                 if side is not None:
-                    data.append({
+                    wall_row = {
                         'rank': cell.rank, 'side': side, 'r': rw,
                         'psi_p': _psi_p(w.node_id),
                         'psi_os': _psi_os(w.node_id),
                         'psi_total': _psi_tot(w.node_id),
-                    })
+                    }
+                    if wetdry is not None:
+                        wall_row['s'] = _signed_transect_coord(w.x, w.y, *wetdry)
+                    data.append(wall_row)
 
     if not data:
         print("No data collected for radial profile.")
@@ -999,81 +1089,138 @@ def plot_radial_profile(obj: Any, **kwargs: Any) -> None:
 
     # --- 5. Aggregate -------------------------------------------------------
     df = pd.DataFrame(data).dropna(subset=['psi_p'])
-    agg_cols = {'r': 'mean', 'psi_p': ['mean', 'std'],
-                'psi_os': ['mean', 'std'], 'psi_total': ['mean', 'std']}
-    profile = df.groupby(['rank', 'side']).agg(agg_cols).reset_index()
-    profile.columns = [
-        'rank', 'side', 'r',
-        'psi_p_mean', 'psi_p_std',
-        'psi_os_mean', 'psi_os_std',
-        'psi_total_mean', 'psi_total_std',
-    ]
 
-    sym_df = profile[profile['side'] == 'mid'].sort_values('r')
-    apo_df = profile[profile['side'].isin(['out', 'in'])].sort_values('r')
+    if x_axis == 'signed':
+        # Keep the wet (s < 0) and dry (s >= 0) halves as separate curves
+        # instead of averaging them together per rank/side.
+        df['half'] = np.where(df['s'] < 0, 'wet', 'dry')
+        agg_cols = {'r': 'mean', 's': 'mean', 'psi_p': ['mean', 'std'],
+                    'psi_os': ['mean', 'std'], 'psi_total': ['mean', 'std']}
+        profile = df.groupby(['rank', 'side', 'half']).agg(agg_cols).reset_index()
+        profile.columns = [
+            'rank', 'side', 'half', 'r', 's',
+            'psi_p_mean', 'psi_p_std',
+            'psi_os_mean', 'psi_os_std',
+            'psi_total_mean', 'psi_total_std',
+        ]
+        # Plot each half-ring at its own radius, mirrored about the centre, so
+        # the x-axis spans the true diameter. Averaging the raw s instead would
+        # pull every ring toward 0, because a half-ring also contains the cells
+        # lying perpendicular to the wet->dry axis (s close to 0).
+        profile['s'] = np.where(profile['half'] == 'wet', -1.0, 1.0) * profile['r']
+        x_col = 's'
+    else:
+        agg_cols = {'r': 'mean', 'psi_p': ['mean', 'std'],
+                    'psi_os': ['mean', 'std'], 'psi_total': ['mean', 'std']}
+        profile = df.groupby(['rank', 'side']).agg(agg_cols).reset_index()
+        profile.columns = [
+            'rank', 'side', 'r',
+            'psi_p_mean', 'psi_p_std',
+            'psi_os_mean', 'psi_os_std',
+            'psi_total_mean', 'psi_total_std',
+        ]
+        x_col = 'r'
+
+    sym_df = profile[profile['side'] == 'mid'].sort_values(x_col)
+    apo_df = profile[profile['side'].isin(['out', 'in'])].sort_values(x_col)
 
     # --- 6. Plot ------------------------------------------------------------
-    if show_plot:
+    if ax is None:
         fig, ax = plt.subplots(figsize=(12, 7))
-    
+    else:
+        fig = ax.get_figure()
+
     if has_osmotic:
         # Symplastic — solid lines / circle markers
-        ax.errorbar(sym_df['r'], sym_df['psi_p_mean'], yerr=sym_df['psi_p_std'],
+        ax.errorbar(sym_df[x_col], sym_df['psi_p_mean'], yerr=sym_df['psi_p_std'],
                     fmt='-o', capsize=3, color='#4a90d9', label='Symplastic Ψ_p')
-        ax.errorbar(sym_df['r'], sym_df['psi_os_mean'], yerr=sym_df['psi_os_std'],
+        ax.errorbar(sym_df[x_col], sym_df['psi_os_mean'], yerr=sym_df['psi_os_std'],
                     fmt='-o', capsize=3, color='#e04a4a', label='Symplastic Ψ_os')
-        ax.errorbar(sym_df['r'], sym_df['psi_total_mean'], yerr=sym_df['psi_total_std'],
+        ax.errorbar(sym_df[x_col], sym_df['psi_total_mean'], yerr=sym_df['psi_total_std'],
                     fmt='-o', capsize=3, color='#222222', label='Symplastic Ψ_total')
         # Apoplastic — dashed lines / square markers
-        ax.errorbar(apo_df['r'], apo_df['psi_p_mean'], yerr=apo_df['psi_p_std'],
+        ax.errorbar(apo_df[x_col], apo_df['psi_p_mean'], yerr=apo_df['psi_p_std'],
                     fmt='--s', capsize=3, color='#4a90d9', alpha=0.6,
                     label='Apoplastic Ψ_p')
-        ax.errorbar(apo_df['r'], apo_df['psi_os_mean'], yerr=apo_df['psi_os_std'],
+        ax.errorbar(apo_df[x_col], apo_df['psi_os_mean'], yerr=apo_df['psi_os_std'],
                     fmt='--s', capsize=3, color='#e04a4a', alpha=0.6,
                     label='Apoplastic Ψ_os')
-        ax.errorbar(apo_df['r'], apo_df['psi_total_mean'], yerr=apo_df['psi_total_std'],
+        ax.errorbar(apo_df[x_col], apo_df['psi_total_mean'], yerr=apo_df['psi_total_std'],
                     fmt='--s', capsize=3, color='#222222', alpha=0.6,
                     label='Apoplastic Ψ_total')
         y_label = 'Water Potential (hPa)'
     else:
         # Hydrostatic only
-        ax.errorbar(sym_df['r'], sym_df['psi_p_mean'], yerr=sym_df['psi_p_std'],
+        ax.errorbar(sym_df[x_col], sym_df['psi_p_mean'], yerr=sym_df['psi_p_std'],
                     fmt='-o', capsize=3, color='#7be04a', ecolor='#7be04a',
                     alpha=0.8, label='Symplastic Ψ')
-        ax.errorbar(apo_df['r'], apo_df['psi_p_mean'], yerr=apo_df['psi_p_std'],
+        ax.errorbar(apo_df[x_col], apo_df['psi_p_mean'], yerr=apo_df['psi_p_std'],
                     fmt='-s', capsize=3, color='#e07b4a', ecolor='#e07b4a',
                     alpha=0.8, label='Apoplastic Ψ')
         y_label = 'Hydrostatic Potential (hPa)'
 
+    def _overlay_frame(rows):
+        """Frame for a scatter overlay, mirrored the same way as the rings."""
+        odf = pd.DataFrame(rows)
+        if x_axis == 'signed':
+            odf['s'] = np.sign(odf['s']).replace(0, 1.0) * odf['r']
+        return odf.sort_values(x_col)
+
     # Xylem overlay — cyan diamonds
     if xylem_data:
-        xdf = pd.DataFrame(xylem_data).sort_values('r')
+        xdf = _overlay_frame(xylem_data)
         col = 'psi_p' if has_osmotic else 'psi_total'
-        ax.scatter(xdf['r'], xdf[col], marker='D', color='#00c8ff',
+        ax.scatter(xdf[x_col], xdf[col], marker='D', color='#00c8ff',
                    zorder=5, s=60, label='Xylem Ψ_p')
 
     # Phloem / sieve overlay — magenta triangles
     if sieve_data:
-        sdf = pd.DataFrame(sieve_data).sort_values('r')
+        sdf = _overlay_frame(sieve_data)
         col = 'psi_p' if has_osmotic else 'psi_total'
-        ax.scatter(sdf['r'], sdf[col], marker='^', color='#d048c8',
+        ax.scatter(sdf[x_col], sdf[col], marker='^', color='#d048c8',
                    zorder=5, s=60, label='Phloem Ψ_p')
 
-    ax.set_xlabel('Radial Distance (µm)')
+    if x_axis == 'signed':
+        ax.set_xlabel('Wet ← transect (µm) → Dry')
+        ax.axvline(0, color='0.7', lw=0.8, zorder=0)
+    else:
+        ax.set_xlabel('Radial Distance (µm)')
     ax.set_ylabel(y_label)
-    ax.set_title(
-        f"Radial Profile — Mat {maturity_idx}, Scen {scenario_idx}"
-    )
+    title = f"Radial Profile — Mat {maturity_idx}, Scen {scenario_idx}"
+    if x_axis == 'signed':
+        title += ' — wet→dry transect'
+    ax.set_title(title)
     ax.legend(loc='best', fontsize=8)
 
     if show_plot:
-        plt.grid(True, linestyle='--', alpha=0.5)
+        ax.grid(True, linestyle='--', alpha=0.5)
+
+    if save_path is not None:
+        fig.tight_layout()
+        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"Saved → {save_path}")
+    elif show_plot:
         plt.tight_layout()
         plt.show()
 
 
 def plot_flow_pathway_breakdown(obj, **kwargs):
-    """Stacked area plot of flow through pathways vs radial distance."""
+    """Stacked area plot of flow through pathways vs radial distance.
+
+    x_axis : str, optional
+        ``'radial'`` (default) bins against ``r = hypot(x, y)`` exactly as
+        before.  ``'signed'`` bins against the signed wet→dry transect
+        coordinate instead (see ``_wetdry_axis`` / ``plot_radial_profile``),
+        with the flow component taken along the fixed wet→dry axis rather
+        than the local radial direction.  Falls back to ``'radial'`` with a
+        warning when no ``has_contact`` nodes are found on the graph.
+    save_path : str, optional
+        When given, write the figure there instead of relying on an
+        interactive window.
+    show_plot : bool, optional
+        Default ``True``.  Set ``False`` alongside ``save_path`` for
+        headless/batch use.
+    """
     sol, res = _get_result_data(obj, **kwargs)
     if sol is None:
         print("No solution found for specified maturity/scenario.")
@@ -1083,13 +1230,28 @@ def plot_flow_pathway_breakdown(obj, **kwargs):
     indices = getattr(obj, 'indice', nx.get_node_attributes(graph, 'indice'))
     pos = nx.get_node_attributes(graph, 'position')
     cm = obj.network.cell_manager
-    
-    # 1) Get the discrete set of 3 mean radial distances per rank
+
+    x_axis: str = kwargs.get('x_axis', 'radial')
+    wetdry = None
+    if x_axis == 'signed':
+        wetdry = _wetdry_axis(obj)
+        if wetdry is None:
+            print(
+                "[plot_flow_pathway_breakdown] WARNING: no water-contact "
+                "nodes found (has_contact) — falling back to x_axis='radial'."
+            )
+            x_axis = 'radial'
+    x_col = 's' if x_axis == 'signed' else 'r'
+
+    # 1) Get the discrete set of 3 mean radial (or signed transect) distances per rank
     data = []
     for cell in cm:
         rc = np.hypot(cell.x, cell.y)
         if rc < 1e-6: continue
-        data.append({'rank': cell.rank, 'side': 'mid', 'r': rc})
+        row = {'rank': cell.rank, 'side': 'mid', 'r': rc}
+        if wetdry is not None:
+            row['s'] = _signed_transect_coord(cell.x, cell.y, *wetdry)
+        data.append(row)
         vc_x, vc_y = cell.x, cell.y
         norm_vc = rc
         for w in cell.walls:
@@ -1098,64 +1260,80 @@ def plot_flow_pathway_breakdown(obj, **kwargs):
             norm_vw = np.hypot(vw_x, vw_y)
             if norm_vw < 1e-6: continue
             cos_theta = (vc_x * vw_x + vc_y * vw_y) / (norm_vc * norm_vw)
+            wall_row = None
             if cos_theta > 0.4:
-                data.append({'rank': cell.rank, 'side': 'out', 'r': rw})
+                wall_row = {'rank': cell.rank, 'side': 'out', 'r': rw}
             elif cos_theta < -0.4:
-                data.append({'rank': cell.rank, 'side': 'in', 'r': rw})
-                
+                wall_row = {'rank': cell.rank, 'side': 'in', 'r': rw}
+            if wall_row is not None:
+                if wetdry is not None:
+                    wall_row['s'] = _signed_transect_coord(w.x, w.y, *wetdry)
+                data.append(wall_row)
+
     df_r = pd.DataFrame(data).groupby(['rank', 'side']).mean().reset_index()
-    R_list = np.sort(df_r['r'].unique())
-    if len(R_list) == 0:
+    X_list = np.sort(df_r[x_col].unique())
+    if len(X_list) == 0:
         print("No radial distances calculated.")
         return
-    
+
     flow_data = []
     for u, v, eattr in graph.edges(data=True):
         K = eattr.get('K')
         path = eattr.get('path', 'wall')
         if K is None or path not in _PATH_COLORS:
             continue
-            
+
         psi_u = sol[indices[u]]
         psi_v = sol[indices[v]]
         Q = K * (psi_u - psi_v)
-        
+
         pu = pos.get(u, (0,0))
         pv = pos.get(v, (0,0))
-        
+
         v_edge_x, v_edge_y = pv[0] - pu[0], pv[1] - pu[1]
         mid_x, mid_y = (pu[0] + pv[0]) / 2, (pu[1] + pv[1]) / 2
-        norm_mid = np.hypot(mid_x, mid_y)
         norm_edge = np.hypot(v_edge_x, v_edge_y)
-        
-        # Calculate radial component of flow Q
-        if norm_mid < 1e-6 or norm_edge < 1e-6:
-            Q_rad = abs(Q)
+
+        if x_axis == 'signed':
+            # Component of flow along the fixed wet→dry axis instead of the
+            # local radial direction.
+            x_val = _signed_transect_coord(mid_x, mid_y, *wetdry)
+            if norm_edge < 1e-6:
+                Q_rad = abs(Q)
+            else:
+                dr = v_edge_x * wetdry[1][0] + v_edge_y * wetdry[1][1]
+                Q_rad = abs(Q) * abs(dr) / norm_edge
         else:
-            rad_x, rad_y = mid_x / norm_mid, mid_y / norm_mid
-            dr = v_edge_x * rad_x + v_edge_y * rad_y
-            Q_rad = abs(Q) * abs(dr) / norm_edge
-            
-        # Assign to nearest discrete radial distance
-        closest_R = R_list[np.argmin(np.abs(R_list - norm_mid))]
-        flow_data.append({'r': closest_R, 'path': path, 'Q_rad': Q_rad})
+            norm_mid = np.hypot(mid_x, mid_y)
+            x_val = norm_mid
+            # Calculate radial component of flow Q
+            if norm_mid < 1e-6 or norm_edge < 1e-6:
+                Q_rad = abs(Q)
+            else:
+                rad_x, rad_y = mid_x / norm_mid, mid_y / norm_mid
+                dr = v_edge_x * rad_x + v_edge_y * rad_y
+                Q_rad = abs(Q) * abs(dr) / norm_edge
+
+        # Assign to nearest discrete radial (or signed) distance
+        closest_X = X_list[np.argmin(np.abs(X_list - x_val))]
+        flow_data.append({'r': closest_X, 'path': path, 'Q_rad': Q_rad})
 
     df = pd.DataFrame(flow_data)
     if df.empty:
         print("No flow data available.")
         return
-        
-    # Pivot: discrete r as index, paths as columns, sum of Q_rad as values
+
+    # Pivot: discrete r (or s) as index, paths as columns, sum of Q_rad as values
     pivot_df = df.pivot_table(index='r', columns='path', values='Q_rad', aggfunc='sum').fillna(0)
-    
+
     # Ensure all paths exist in columns
     for p in _PATH_COLORS:
         if p not in pivot_df.columns:
             pivot_df[p] = 0.0
-            
+
     # Sort columns to match _PATH_COLORS order for consistent coloring
     pivot_df = pivot_df[['plasmodesmata', 'membrane', 'wall']]
-    
+
     # Convert to percentages
     row_sums = pivot_df.sum(axis=1)
     row_sums[row_sums == 0] = 1.0 # Avoid division by zero
@@ -1167,14 +1345,29 @@ def plot_flow_pathway_breakdown(obj, **kwargs):
 
     fig, ax = plt.subplots(figsize=(10, 6))
     pivot_pct.plot.area(ax=ax, color=colors, alpha=0.7)
-    
-    ax.set_xlabel('Radial Distance (µm)')
+
+    if x_axis == 'signed':
+        ax.set_xlabel('Wet ← transect (µm) → Dry')
+        ax.axvline(0, color='0.7', lw=0.8, zorder=0)
+    else:
+        ax.set_xlabel('Radial Distance (µm)')
     ax.set_ylabel('Pathway Contribution (%)')
-    ax.set_title(f"Flow Pathway Breakdown - Mat {kwargs.get('maturity_idx', 0)}")
+    title = f"Flow Pathway Breakdown - Mat {kwargs.get('maturity_idx', 0)}"
+    if x_axis == 'signed':
+        title += ' — wet→dry transect'
+    ax.set_title(title)
     ax.set_ylim(0, 100)
     ax.legend(loc='lower left')
     plt.tight_layout()
-    plt.show()
+
+    save_path = kwargs.get('save_path', None)
+    if save_path is not None:
+        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"Saved → {save_path}")
+    if kwargs.get('show_plot', True):
+        plt.show()
+    elif save_path is not None:
+        plt.close(fig)
 
 
 def _gather_edge_data(graph):
