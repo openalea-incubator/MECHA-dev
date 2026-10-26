@@ -142,7 +142,7 @@ def base_scenario(input_data: InData) -> dict:
     scenario['osmotic_left_soil'] = -1.5E3    # soil osmotic potential, left side
     scenario['osmotic_right_soil'] = -1.5E3   # soil osmotic potential, right side
     scenario['osmotic_epi'] = -6.8E3          # epidermis osmotic potential
-    scenario['osmotic_exo'] = -7.55E-3        # exodermis osmotic potential
+    scenario['osmotic_exo'] = -7.55E3         # exodermis osmotic potential
     scenario['osmotic_endo'] = -4.80E3        # endodermis osmotic potential
     scenario['osmotic_peri'] = -5.5E3         # pericycle osmotic potential
     scenario['osmotic_stele'] = -5.5E3        # stele osmotic potential
@@ -154,7 +154,7 @@ def base_scenario(input_data: InData) -> dict:
     return scenario
 
 
-def test_waterpump() -> None:
+def run_waterpump() -> None:
     """Run standard water pump scenarios and visualize radial profiles and flows.
 
     This function tests control night/day and stress night/day scenarios for different
@@ -273,11 +273,11 @@ def test_waterpump() -> None:
     plt.show()
 
 
-def test_stress_osmotic_sweep() -> None:
+def run_stress_osmotic_sweep() -> None:
     """Run 1D parameter sweep for osmotic_peri and osmotic_stele (set equal) under stress.
 
-    This function sweeps osmotic_peri (and sets osmotic_stele equal to it) from -0.5 MPa to -1.5 MPa
-    (which correspond to -5E3 hPa to -15E3 hPa in model units) for both the stress night (scenario 3)
+    This function sweeps osmotic_peri (and sets osmotic_stele equal to it) from -0.1 MPa to -0.8 MPa
+    (which correspond to -1E3 hPa to -8E3 hPa in model units) for both the stress night (scenario 3)
     and stress day (scenario 4) conditions. It determines if and when positive water uptake (total flow > 0)
     is triggered for both maturity stages (stage 0: suberized, stage 1: non-suberized) and plots the
     results as 1D line plots.
@@ -291,7 +291,7 @@ def test_stress_osmotic_sweep() -> None:
     # Setup the base scenario (Scenario 0)
     base_scenario(default_input)
 
-    # Define sweep values (-0.5 MPa to -1.5 MPa, i.e., -5000 to -15000 hPa)
+    # Define sweep values (-0.1 MPa to -0.8 MPa, i.e., -1000 to -8000 hPa)
     peri_vals = np.linspace(-1E3, -8E3, 11)
 
     scen_map_night = np.zeros((len(peri_vals)), dtype=int)
@@ -409,5 +409,5 @@ def test_stress_osmotic_sweep() -> None:
 
 
 if __name__ == "__main__":
-    test_waterpump()
-    # test_stress_osmotic_sweep()
+    run_waterpump()
+    # run_stress_osmotic_sweep()
