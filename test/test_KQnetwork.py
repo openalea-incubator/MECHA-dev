@@ -27,10 +27,8 @@ import matplotlib.colors as mcolors
 import matplotlib.cm as cm
 import networkx as nx
 
-from mecha.mecha_class import Mecha
-from mecha.utils.data_loader import InData
-from mecha.utils.network_builder import NetworkBuilder
-from granap.root_class import RootAnatomy
+from openalea.mecha import Mecha, InData, NetworkBuilder
+from openalea.granap.root_class import RootAnatomy
 
 # ---------------------------------------------------------------------------
 # Helper: build a small standard root anatomy and a Mecha instance
@@ -242,7 +240,7 @@ def plot_conductance_network(mecha, save_path: str = None):
         widths = 0.3 + 4.5 * log_K
 
         # Colour map: low K = dark, high K = bright
-        cmap   = cm.get_cmap('plasma')
+        cmap   = plt.colormaps['plasma']
         colors = [cmap(v) for v in log_K]
 
         nx.draw_networkx_edges(
