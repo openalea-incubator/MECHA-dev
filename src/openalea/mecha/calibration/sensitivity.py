@@ -44,7 +44,7 @@ from openalea.mecha.calibration import (
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 1. Normal (well-watered) boundary condition
+# 1. Normal boundary condition
 # ══════════════════════════════════════════════════════════════════════════════
 # A single representative "normal conditions" operating point. The observed
 # value is irrelevant for a sensitivity study (only the *model* response to

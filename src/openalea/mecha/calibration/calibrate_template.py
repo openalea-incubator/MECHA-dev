@@ -48,12 +48,12 @@ from openalea.mecha.calibration import (
 #
 # Replace the illustrative numbers below with your own data.
 MEASUREMENTS = [
-    Measurement(psi_xyl=-200, rh_airspace=0.98, E_obs=6.7, label="well-watered"),
+    Measurement(psi_xyl=-200, rh_airspace=0.99, E_obs=6.7, label="well-watered"),
     #Measurement(psi_xyl=-200.0, rh_airspace=0.999, kr_obs=7.7e-4, label="well-watered"),
 ]
 
 CONSTRAINTS = [
-    FlatnessConstraint(rh_airspace=0.98, psi_range=(-1000.0, -200.0),
+    FlatnessConstraint(rh_airspace=0.99, psi_range=(-10000.0, -200.0),
                        n_anchors=3, weight=1.0, relative=True, label="flat kr"),
 ]
 

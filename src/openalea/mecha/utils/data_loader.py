@@ -1660,7 +1660,7 @@ class InData:
                                                   # exact unknown
 
         # Lignified hypodermis–epidermis / hypodermis–mesophyll layer.
-        # Apoplastic wall is blocked and the (2, 4) plasmodesmata are cut
+        # Apoplastic wall is blocked (Donalson (2018)) and the (2, 4) plasmodesmata are cut
         # in the solver, isolating the outer ring both apoplastically and 
         # symplastically. The transmembrane path (kmb + kaqp_epi) is retained
         # so water/solutes still reach the outer ring through membranes 
@@ -1689,9 +1689,7 @@ class InData:
         sc = data.boundary.scenarios[0]
 
         # Clear all scenario values to NaN 
-        for key in sc.keys(): sc[key] = np.nan
-
-        sc['psi_soil_left'] = 0.0
+        for key in sc.keys(): sc[key] = 0.0
 
         return data
 
@@ -1701,3 +1699,6 @@ class InData:
 
 # Liesche J, Martens HJ, Schulz A. 2011. Symplasmic transport and
 # phloem loading in gymnosperm leaves. Protoplasma 248, 181–190
+
+# Donalson L. and Williams N. 2018. Imaging and Spectroscopy of Natural
+# Fluorophores in Pine Needles, Plants 2018, 7, 10
