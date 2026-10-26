@@ -193,7 +193,8 @@ class MechaHydraulics(MechaSections):
     kaqp_exo_factor: float = _p("", "factor of kaqp in the exodermis", 1.0)
     kaqp_epi_factor: float = _p("", "factor of kaqp in the epidermis", 1.0)
     kaqp_cortex_factor: float = _p("", "factor of kaqp in the cortex", 1.0)
-    ratio_cortex: float = _p("", "ratio of the cortex's outer to inner aquaporin activity (1: uniform)", 1.0)
+    ratio_cortex: float = _p("", "the cortex's aquaporin activity at its innermost walls over its outermost "
+                                 "(1: uniform)", 1.0)
     k_interc: float = _p("cm hPa-1 d-1", "membrane conductivity of intercellular spaces (with barriers)", 0.0)
     kpl: float = _p("cm3 hPa-1 d-1", "conductance of one plasmodesma", 5.3E-12)
     plasmodesmata_rules: float = _p("", "the plasmodesmata's rules: 1 the original MECHA's, 2 the refactored legacy's "
