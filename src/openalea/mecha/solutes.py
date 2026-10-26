@@ -1,5 +1,5 @@
 """
-MECHA's solutes (devplan_metafspm.md, §28): sucrose, mobile, and starch, immobile, on the liquid network of every
+MECHA's solutes (doc/equations.rst): sucrose, mobile, and starch, immobile, on the liquid network of every
 section (protoplasts, walls, junctions; not the air nodes), from the reactions branch's transport
 (``SoluteTransport``, ``MultiSoluteTransport``, its needle simulations), in implicit Euler.
 
@@ -15,7 +15,7 @@ Per node and time step (dt, days): V (c − c_prev) / dt = T c + K V c + s, with
   K          the sucrose ⇄ starch reaction (d⁻¹), in the cells only (Q-U4)
   s          the sources (sucrose_source, mol d⁻¹: photosynthesis), and the sinks (Dirichlet at c_sink): the
              phloem-loading cells (Strasburger cells, else phloem) and the xylem.
-The reactions' problems not ported (§28b, Q-U1–Q-U4): r1 (the osmotic flow counted twice), r2 (σ on the wrong
+The reactions' problems not ported (doc/legacy.rst): r1 (the osmotic flow counted twice), r2 (σ on the wrong
 membrane end), r3 (two σ: here the membranes' one), r4 (starch in the walls), r12 (solutes along the vapour edges).
 """
 from dataclasses import dataclass
@@ -66,7 +66,7 @@ def edge_weights(De, F):
 @dataclass
 class MechaSolutes(MechaSections):
     """
-    Sucrose and starch in the liquid network of the sections (plan §28). Inputs: MechaHydraulics' water flows,
+    Sucrose and starch in the liquid network of the sections. Inputs: MechaHydraulics' water flows,
     diffusion factors and volumes, the membranes' reflection coefficients (the "Osmotic" role: MechaOsmoticPresets),
     the photosynthetic sources (role "Photosynthesis"). Outputs: the concentrations, and the sucrose's osmotic
     potential −R T c on the cells (the presets add it to their baseline).

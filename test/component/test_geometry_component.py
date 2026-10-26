@@ -27,7 +27,7 @@ def test_ranks_and_perimeters_written(three_segments):
 def test_one_geometry_per_template(three_segments):
     g, ds, mecha = three_segments
     templates = set(np.asarray(ds.get("anatomy_template")).tolist())
-    assert len(mecha._geometries) == len(templates)
+    assert len(mecha.kept("geometries")) == len(templates)
 
 
 def test_shared_geometry_is_each_sections_own(three_segments):

@@ -1,5 +1,5 @@
 """
-MECHA as a metafspm functional component on the MPG DataStructure (devplan_metafspm.md, §3 and §8).
+MECHA as a metafspm functional component on the MPG DataStructure (doc/equations.rst, doc/legacy.rst).
 
     ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiring=junction_rules(g))
     anatomy = GranapAnatomy(data_structure=ds)
@@ -119,7 +119,10 @@ class MechaSections(FunctionalComponent):
                 continue
             index = template.get(segment, -1.)
             key = ("template", int(index)) if index >= 0 else ("segment", segment)
-            cache = self.__dict__.setdefault("_geometries", {})      # {anatomy key: (sizes, SectionGeometry)}
+            cache = self.kept("geometries")                          # {anatomy key: (sizes, SectionGeometry)}
+            if cache is None:
+                cache = {}
+                self.keep("geometries", cache, saved=False)          # rebuilt when missing: not checkpointed
             cached = cache.get(key)
             if cached is None or cached[0] != (nodes.size, edges.size):
                 cached = cache[key] = ((nodes.size, edges.size),
@@ -130,19 +133,17 @@ class MechaSections(FunctionalComponent):
     def section_roles(self) -> tuple:
         """
         (first, roots, leaves): the SubOrgan vids without a parent (a root system's first section), those labelled
-        RootSegment and those labelled LeafElement; read from the MPG once per topology (reading it flushes the
-        DataStructure's variables).
+        RootSegment and those labelled LeafElement; read from the MPG once per topology.
         """
-        ds = self.data_structure
-        cached = self.__dict__.get("_section_roles")
-        if cached is None or cached[0] != ds.topology_version:
-            g = ds.mtg
-            labels, L = g.property("label"), g.labels.SubOrgan
+        def build():
+            ds = self.data_structure
+            g = ds.structure
             segments = [int(v) for v in ds.entity_ids("SubOrgan")]
-            cached = self.__dict__["_section_roles"] = (ds.topology_version, (
-                {v for v in segments if g.parent(v) is None}, {v for v in segments if labels.get(v) == L.RootSegment},
-                {v for v in segments if labels.get(v) == L.LeafElement}))
-        return cached[1]
+            labels = ds.labels(of="SubOrgan", per_node=False).tolist()
+            return ({v for v in segments if g.parent(v) is None},
+                    {v for v, label in zip(segments, labels) if label == "RootSegment"},
+                    {v for v, label in zip(segments, labels) if label == "LeafElement"})
+        return self.cached("section_roles", build)
 
     def _leaf_nodes(self, geometries) -> np.ndarray:
         """bool per node: in a leaf section."""
@@ -196,7 +197,7 @@ class MechaHydraulics(MechaSections):
     k_interc: float = _p("cm hPa-1 d-1", "membrane conductivity of intercellular spaces (with barriers)", 0.0)
     kpl: float = _p("cm3 hPa-1 d-1", "conductance of one plasmodesma", 5.3E-12)
     plasmodesmata_rules: float = _p("", "the plasmodesmata's rules: 1 the original MECHA's, 2 the refactored legacy's "
-                                        "(for the comparison with it, devplan_metafspm.md §18b)", 1.)
+                                        "(for the comparison with it, doc/legacy.rst)", 1.)
     kpl_cortex_factor: float = _p("", "plasmodesmata aperture factor of the cortex (outer layer-cortex, cortex-cortex, "
                                       "cortex-endodermis)", 1.0)
     kpl_endo_in_factor: float = _p("", "plasmodesmata factor on the stelar side of the endodermis", 1.0)
@@ -242,7 +243,7 @@ class MechaHydraulics(MechaSections):
     standard_psi_sieve: float = _p("hPa", "the protophloem's potential in the standard problem (barrier 0; NaN: "
                                    "no phloem boundary, the legacy's default)", float("nan"))
     # plasmodesmata frequency × height (cm-1; × a wall's length: its plasmodesmata), by interface: the original's,
-    # then those of the tissues the legacy added, with its values (the original rules, §18b)
+    # then those of the tissues the legacy added, with its values (the original rules)
     fplxheight_default: float = _p("cm-1", "plasmodesmata frequency, other interfaces", 800000.0)
     fplxheight_epi_exo: float = _p("cm-1", "plasmodesmata frequency, epidermis-exodermis", 1080000.0)
     fplxheight_outer_cortex: float = _p("cm-1", "plasmodesmata frequency, outer layer-cortex", 2280000.0)
@@ -338,7 +339,7 @@ class MechaHydraulics(MechaSections):
                                                      initialize=0., scale=SCALES.Compartment, location="node",
                                                      state_variable_type="NonInertialIntensive")
 
-    # ── State variables: the solutes' diffusion factors and the nodes' volumes (MechaSolutes, §28) ──
+    # ── State variables: the solutes' diffusion factors and the nodes' volumes (MechaSolutes) ──
     apoplastic_diffusion_factor: float = state_variable(**_doc("cm", "× the apoplastic diffusivity: the edge's "
                                                                "solute conductance (walls: their geometry × kw ratio; "
                                                                "mature vessels' membranes)"),
@@ -357,7 +358,7 @@ class MechaHydraulics(MechaSections):
                                         initialize=0., scale=SCALES.Compartment, location="node",
                                         state_variable_type="NonInertialExtensive")
 
-    # ── State variables: the leaves' vapour path, from their evaporating walls to their surface (§27) ──
+    # ── State variables: the leaves' vapour path, from their evaporating walls to their surface ──
     surface_inflow: float = state_variable(**_doc("cm3 d-1", "on a leaf organ's surface node: minus its "
                                                   "transpiration (the Neumann condition; 0 elsewhere)"),
                                            initialize=0., scale=SCALES.Compartment, location="node",
@@ -591,7 +592,7 @@ class MechaHydraulics(MechaSections):
         """
         The standard problem's flow condition (2): the flow into the xylem split among the vessels (the network's,
         by cgroup) as their areas. The legacy (``_distribute_xylem_flow``) computes the ratios on its cell manager's
-        xylem (by tissue) and gives them by rank to the network's, so that a vessel may get another's (§2 o, fixed).
+        xylem (by tissue) and gives them by rank to the network's, so that a vessel may get another's (doc/legacy.rst, o: fixed).
         """
         out = np.zeros(self.data_structure.n_nodes())
         for nodes, _, geo in geometries.values():
@@ -686,7 +687,7 @@ class MechaHydraulics(MechaSections):
         return kinds, "collar_value", values
 
     # ── The standard problem: each section alone, MECHA's definition of kr (Q-M5) ──
-    # tol (cm3 d-1): the pinned walls' penalty (§25) puts their residuals' round-off at ~1e-9; the systems are linear,
+    # tol (cm3 d-1): the pinned walls' penalty puts their residuals' round-off at ~1e-9; the systems are linear,
     # solved by the first Newton step
     @graph_system(node_unknowns=["standard_psi"], solver="newton", max_iter=3, tol=1e-8, schedule_as="state",
                   filters={"in_standard_problem": ">0"})

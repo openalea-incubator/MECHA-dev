@@ -27,6 +27,12 @@ pip install -e MECHA-dev
 Keep the folder names above: GRANAP's own environment file (`GRANAP/conda/environment.yaml`) expects `metafspm` next
 to it. To update, `git pull` in each repository; the editable installs follow.
 
+## Documentation
+
+`doc/` (Sphinx: `python -m sphinx -b html doc doc/_build/html`): the components rendered from their declarations, the
+equations with the functions computing them, the legacy MECHA compared (its behaviours, each with what the port does),
+the performance.
+
 ## Tutorials
 
 Executed notebooks in [`example/tutorials/`](example/tutorials/), on MECHA's metafspm components (start with GRANAP's

@@ -11,3 +11,6 @@ src_old/*
 src_old
 example/**/outputs/
 /dev*.md
+
+# documentation builds
+doc/_build/

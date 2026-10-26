@@ -1,5 +1,5 @@
 """
-MECHA's section-scale results from a solution (devplan_metafspm.md, §8, step 4): the soil uptake and the radial
+MECHA's section-scale results from a solution (doc/equations.rst): the soil uptake and the radial
 conductivity kr (``Mecha.standard_water_flow``), and the axial conductances by Poiseuille's law
 (``Mecha.calculate_axial_conductance``), with the legacy's operations and summation orders, so that they are exact.
 The legacy's module imports pylab's names (``from pylab import *``): its ``sum`` is numpy's, a pairwise summation,
@@ -43,7 +43,7 @@ def axial_conductances(geo, height, barrier) -> tuple:
     """
     (Kx, Kx_phloem) (cm⁴ hPa⁻¹ d⁻¹): Σ of the conduits' Poiseuille conductances × height / 1e4, the xylem vessels'
     (barrier > 0) and the sieve tubes' (barrier > 0) or protosieve cells' (barrier 0), each in cell order. Kx is 0 at
-    barrier 0 (no mature xylem: decision D3; the legacy fails there, §2 e).
+    barrier 0 (no mature xylem: the legacy fails there, legacy e).
     """
     height = float(height)
     position = np.empty(geo.legacy_order.size, dtype=np.int64)

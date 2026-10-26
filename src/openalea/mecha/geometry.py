@@ -1,5 +1,5 @@
 """
-MECHA's own geometry of a cross-section (devplan_metafspm.md, §8, step 2): the quantities the legacy derives in
+MECHA's own geometry of a cross-section (doc/legacy.rst): the quantities the legacy derives in
 ``NetworkBuilder.populate_from_network``, computed from the section's network as the DataStructure holds it (GRANAP's
 columns, in mm), in MECHA's units (µm, cm) and with the legacy's summation orders, so that they are exact.
 
@@ -9,7 +9,7 @@ columns, in mm), in MECHA's units (µm, cm) and with the legacy's summation orde
 Nodes are the section's Compartments in the DataStructure's order (protoplasts, then walls, then junctions, each in
 GRANAP's order); edges are its Connections in the DataStructure's order (GRANAP's connection order). The legacy numbers
 the nodes walls, junctions, cells (``legacy_order``). Its junction rebuild by position only renumbers GRANAP's junctions
-(§7), so the port keeps them; it does reproduce the rebuild's rule that a wall with fewer than two junctions loses
+(doc/legacy.rst), so the port keeps them; it does reproduce the rebuild's rule that a wall with fewer than two junctions loses
 its junction edges.
 """
 from dataclasses import dataclass, field
@@ -18,7 +18,7 @@ import numpy as np
 
 PROTOPLAST, WALL, JUNCTION = 0, 1, 2                                     # GRANAP's kind
 MEMBRANE, WALL_AIR, WALL_PATH, PLASMODESMATA, AIR_LINK = 0, 1, 2, 3, 4   # GRANAP's network_path
-STOMATAL = 6                     # a pore to its leaf organ's surface node (GRANAP §60)
+STOMATAL = 6                     # a pore to its leaf organ's surface node (GRANAP)
 LEAF_SURFACE = 3                 # GRANAP's kind of a leaf organ's surface node
 
 MM = 1000.                                                               # mm -> µm
@@ -95,7 +95,7 @@ class SectionGeometry:
     concentrated_cortex_endo: float
     xylem_cells: np.ndarray       # local nodes (cgroup 13, 19, 20), cell order
     sieve_cells: np.ndarray
-    protosieve_cells: np.ndarray  # with the legacy's duplicates (§2 f)
+    protosieve_cells: np.ndarray  # with the legacy's duplicates (doc/legacy.rst, f)
     passage_cells: np.ndarray     # local nodes (tissue 'passage')
     intercellular_cells: np.ndarray  # local nodes (the network's list: by the elif chain)
     typed: dict = field(default_factory=dict)   # the cell manager's sets by tissue: intercellular, passage, xylem...
@@ -397,7 +397,7 @@ def section_parts(ds) -> dict:
     """
     {SubOrgan vid: (nodes, edges)}: each section's Compartments (DataStructure indices, in order) and its own
     Connections (edge indices, in order; the axial junctions to the neighbouring sections excluded). A leaf organ's
-    surface node (kind 3) and its stomatal Connections (path 6) belong to the organ, not to a section (GRANAP §60).
+    surface node (kind 3) and its stomatal Connections (path 6) belong to the organ, not to a section (GRANAP).
     """
     owner = ds.owner("SubOrgan").copy()
     ids = ds.entity_ids("SubOrgan")

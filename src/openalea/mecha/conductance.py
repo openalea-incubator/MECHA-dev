@@ -1,5 +1,5 @@
 """
-MECHA's conductances (devplan_metafspm.md, §8, step 3): the conductance K of every edge of every section, and the
+MECHA's conductances (doc/equations.rst): the conductance K of every edge of every section, and the
 boundary terms of their nodes, as the legacy's ``HydraulicMatrixBuilder`` computes them (its rules and formulas,
 element by element, so that the values are exact), vectorised over all the sections' edges at once.
 
@@ -38,9 +38,9 @@ _KW_CONFIGS = {   # barrier: sources of _KW_KEYS (kw_septa is always kw_septa, k
 _KW_INTERFACES = {(3, 3): "kw_endo_endo", (3, 4): "kw_endo_cortex", (3, 5): "kw_endo_peri", (3, 11): "kw_endo_peri",
                   (3, 12): "kw_endo_peri", (3, 13): "kw_endo_peri", (3, 16): "kw_endo_peri", (1, 1): "kw_exo_exo",
                   (1, 2): "kw_exo_epi", (1, 4): "kw_exo_cortex", (4, 4): "kw_cortex_cortex",
-                  (2, 4): "kw_meso_hypo"}       # the reactions' needle (kw unless kw_meso_hypo is given; §25, r9)
+                  (2, 4): "kw_meso_hypo"}       # the reactions' needle (kw unless kw_meso_hypo is given; legacy r9)
 # ── Plasmodesmata ──
-# The original MECHA's rules (src_old/6_MECHAv4_SRS2025.py, its radial plasmodesmata; devplan_metafspm.md §18b,
+# The original MECHA's rules (src_old/6_MECHAv4_SRS2025.py, its radial plasmodesmata; doc/legacy.rst,
 # plasmodesmata_rules 1): per interface, a frequency (per unit wall length and height) and an aperture factor, then
 # the endodermis side's factor. Its frequencies' parameters and its projects' values (GRANAR):
 FPLXHEIGHT_ORIGINAL = {"fplxheight_default": 8.0E5, "fplxheight_epi_exo": 1.08E6, "fplxheight_outer_cortex": 2.28E6,
@@ -60,7 +60,7 @@ FPLXHEIGHT = {(1, 1): 8.0E5, (2, 2): 8.0E5, (1, 2): 1.08E6, (1, 4): 2.28E6, (4, 
               (12, 17): 1.08E6, (12, 18): 0.0, (13, 16): 1.08E6, (13, 13): 6.4E5, (13, 23): 0.0, (13, 17): 1.08E6,
               (13, 18): 1.76E6, (17, 17): 8.0e5, (17, 18): 0.0, (18, 18): 0.0, (23, 23): 0.0}
 FPLXHEIGHT_LEGACY_DEFAULT = 8.0E5
-# the legacy's aperture factors, as resolved against its kpl configuration (§2 a: the other keys give 1)
+# the legacy's aperture factors, as resolved against its kpl configuration (doc/legacy.rst, a: the other keys give 1)
 KPL_FACTOR_INTERFACES = {(12, 12): "kpl_PCC_factor", (11, 12): "kpl_PCC_factor", (11, 16): "kpl_PST_factor",
                          (11, 13): "kpl_PST_factor", (5, 11): "kpl_PST_factor"}
 
@@ -108,7 +108,7 @@ class Network:
     border_wall: np.ndarray
     border_junction: np.ndarray
     xylem: np.ndarray             # int per node: occurrences in the network's xylem list (cgroup)
-    protosieve: np.ndarray        # int per node: occurrences in the legacy's protosieve list (duplicates, §2 f)
+    protosieve: np.ndarray        # int per node: occurrences in the legacy's protosieve list (duplicates, legacy f)
     outercortex_connec_rank: np.ndarray   # per section
     concentrated: np.ndarray              # (sections, 3): outer–cortex, cortex–cortex, cortex–endodermis
 
@@ -239,11 +239,11 @@ def _select(code, table: dict, values: dict, default) -> np.ndarray:
 def edge_conductances(net: Network, P: dict, barrier, height, factors: dict = None):
     """
     (K, in_matrix): the conductance of every edge (cm³ hPa⁻¹ d⁻¹), and whether the legacy's matrix has it (its wall,
-    membrane and plasmodesmata edges; not the wall_air and air_link edges, §2 i, nor the wall edges its junction
+    membrane and plasmodesmata edges; not the wall_air and air_link edges, legacy i, nor the wall edges its junction
     rebuild drops). P: {parameter: value per edge}; barrier: code per edge; height: µm per edge.
 
     With *factors* (a dict), the solutes' diffusion factors per edge are written in it (cm, the reactions' c_flag
-    terms of HydraulicMatrixBuilder and SoluteTransport, plan §28): "apoplastic" (walls: temp × their kw ratio, the
+    terms of HydraulicMatrixBuilder and SoluteTransport): "apoplastic" (walls: temp × their kw ratio, the
     xylem-pieces septa 1e-16; the membranes of mature vessels: 1e-4 × wall length × height / thickness), "symplastic"
     (plasmodesmata: pd_section × their quantity / thickness × 1e-4), "membrane" (every membrane: length × height
     × 1e-4 / dist), each to be multiplied by its diffusivity (cm² d⁻¹).
@@ -380,7 +380,7 @@ def boundary_terms(net: Network, P: dict, barrier, height):
         k_sieve = np.where(np.asarray(P["standard_axial_source"]) == 1,
                            poiseuille(net.cell_area, height, VISCOSITY_PHLOEM), k_sieve)
     axial = np.where(xylem, k_xyl, np.where(protosieve, k_sieve, 0.))
-    return soil, axial, axial.copy()          # each protosieve cell once (the legacy adds k_sieve per duplicate, §2 f)
+    return soil, axial, axial.copy()          # each protosieve cell once (the legacy adds k_sieve per duplicate, legacy f)
 
 
 def cortex_parameters(geo, kaqp_cortex: float, ratio_cortex: float, height: float) -> tuple:
@@ -508,7 +508,7 @@ def _plasmodesmata_original(net: Network, e, P, b):
         added_value = np.where(match, param(fplxheight_name(interface)), added_value)
     rules = [
         (interc & (b > 0), 0.0),
-        (np.isfinite(param("kw_meso_hypo")) & pair(2, 4), 0.0),      # the needle's lignified (2, 4) walls (§25)
+        (np.isfinite(param("kw_meso_hypo")) & pair(2, 4), 0.0),      # the needle's lignified (2, 4) walls
         ((param("xylem_pieces") > 0) & (gi == 13) & (gj == 13), 10000 * param("fplxheight_default") * length),
         ((b > 0) & ((gi == 13) | (gj == 13)), 0.0),
         (pair(2, 1), param("fplxheight_epi_exo") * length),
@@ -553,7 +553,7 @@ def kelvin_alpha(temperature):
 
 def vapour_conductances(net: Network, P: dict, height, pore_width, pore_depth, cell_area, aperture, length):
     """
-    The leaves' vapour path (plan §27), in cm³ d⁻¹ of liquid water per unit of relative vapour pressure x, from
+    The leaves' vapour path, in cm³ d⁻¹ of liquid water per unit of relative vapour pressure x, from
     vapour diffusion, G = D_v A / d × e_sat V_w / (R T):
 
       wall → air space (wall_air): A the wall's face (its length × the height), d its distance to the air space's

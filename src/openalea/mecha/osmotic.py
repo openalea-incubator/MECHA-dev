@@ -1,5 +1,5 @@
 """
-MECHA's osmotic presets (devplan_metafspm.md, §20): the osmotic potentials of the cells and walls, and the reflection
+MECHA's osmotic presets (doc/equations.rst): the osmotic potentials of the cells and walls, and the reflection
 coefficients of the membranes, of the legacy's scenarios (``Mecha.initialize_scenarios``), on every root section.
 
 MechaHydraulics reads them as inputs (role "Solutes"): this component stands for a metabolism or solute model until
@@ -376,7 +376,7 @@ class MechaOsmoticPresets(MechaSections):
     def _osmotic_potential(self, kind, barrier, anatomy_template, sucrose_osmotic_potential) \
             -> tuple[np.ndarray, str, np.ndarray]:
         """The presets of every root section, each with its plant's parameters and its barrier, as the baseline; plus
-        the solutes' −R T c on the cells (MechaSolutes, §28: the reactions' baseline − R T c)."""
+        the solutes' −R T c on the cells (MechaSolutes: the reactions' baseline − R T c)."""
         ds = self.data_structure
         psi_os, sigma = np.zeros(ds.n_nodes()), np.zeros(ds.n_edges())
         view = ds.to_graph_view()
