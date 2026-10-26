@@ -356,7 +356,12 @@ class HydraulicMatrixBuilder:
             kaqp_curr = kaqp_config['kaqp_epi']
         elif cgroup == 3:
             kaqp_curr = kaqp_config['kaqp_endo']
-        elif cgroup in [13, 19, 20]:
+        elif cgroup in [13, 19, 20] or (
+            cgroup == 18 and getattr(self.hydraulic, 'tracheid_as_xylem', False)
+        ):
+            # Transfusion tracheids join the xylem branch only on request: a
+            # water-filled intercellular space modelled as an apoplastic conduit.
+            # They are not in xylem_cells, so they get no xylem boundary condition.
             if barrier > 0:
                 kaqp_curr = kaqp_config['kaqp_stele'] * 10000
                 if self.boundary.c_flag and self.general.c_flag:

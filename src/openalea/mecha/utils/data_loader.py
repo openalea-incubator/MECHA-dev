@@ -836,6 +836,12 @@ class HydraulicData:
     # Single-value parameters
     kmb: float = 3.0E-5
     ratio_cortex: float = 1.0
+
+    # Give transfusion tracheids (cgroup 18) the xylem membrane treatment
+    # (kaqp_stele * 1e4 under a barrier) -- e.g. water-filled air spaces from
+    # GRANAP.  Off by default so needle results do not change.  Never adds a
+    # boundary condition: only cgroup 13/19/20 are in network.xylem_cells.
+    tracheid_as_xylem: bool = False
     
     # PD height (Fplxheight) parameters for different tissue interfaces
     fplxheight_map: Dict[Tuple[int, int], float] = field(default_factory=lambda: {

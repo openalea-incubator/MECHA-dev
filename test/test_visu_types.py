@@ -13,8 +13,6 @@ def test_all_visu_types():
     print("--- Setting up Root Anatomy ---")
     root = RootAnatomy()
     # Add some complexity: aerenchyma and intercellular spaces
-    root.update_params("aerenchyma", "aerenchyma_proportion", 0.0)
-    root.update_params("inter_cellular_spaces", "tissue", "cortex")
     root.export_to_adjencymatrix()
 
     # 2. Setup MECHA
