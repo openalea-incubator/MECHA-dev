@@ -261,6 +261,15 @@ class HydraulicMatrixBuilder:
             if kw > 0:
                 temp_factor = kw_val / kw 
 
+        # ── Guard 3: Lignified sclerenchyma wall ──────────────────────────────
+        # Any wall of a sclerenchyma cell (scl–scl, scl–exo, scl–cortex, and
+        # junctions touching one) → kw_scler, for barrier stages defining it.
+        elif 'kw_scler' in kw_config and any(c.cell_type == 'sclerenchyma' for c in cells_i):
+            kw_val = kw_config['kw_scler']
+            K = kw_val * temp
+            if kw > 0:
+                temp_factor = kw_val / kw
+
         # ── Interface-based lookup (mirrors _fill_plasmodesmata) ──────────────
         # Two known living cells → build canonical interface tuple, look up map.
         elif len(cells_i) == 2:
