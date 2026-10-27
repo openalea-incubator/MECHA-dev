@@ -51,14 +51,29 @@ class LegacyRun:
     stages: list = field(default_factory=list)
 
 
-def legacy_section(organ, barriers=(1,), height=200.0, h=0, kpl=None, hydraulic=None, edit_network=None) -> LegacyRun:
+def legacy_section(organ, barriers=(1,), height=200.0, h=0, kpl=None, hydraulic=None, edit_network=None,
+                   hormones=None, package=None) -> LegacyRun:
     """The legacy MECHA on a GRANAP organ, one solve per maturity stage (barrier code, height in µm); *kpl*: its
-    plasmodesmata configuration's entries (legacy_input); *hydraulic*: its HydraulicData's attributes to set
-    ({name: value}); *edit_network*: a function of its NetworkBuilder, called once the network is built."""
+    plasmodesmata configuration's entries (legacy_input); *hydraulic*, *hormones*: its HydraulicData's and
+    HormonesData's attributes to set ({name: value}); *edit_network*: a function of its NetworkBuilder, called once the
+    network is built; *package*: the legacy module (openalea.mecha.legacy, or legacy_reactions)."""
+    global InData, Mecha, NetworkBuilder
+    if package is not None:
+        InData, Mecha, NetworkBuilder = package.InData, package.Mecha, package.NetworkBuilder
+    try:
+        return _legacy_section(organ, barriers, height, h, kpl, hydraulic, edit_network, hormones)
+    finally:
+        from openalea.mecha import legacy
+        InData, Mecha, NetworkBuilder = legacy.InData, legacy.Mecha, legacy.NetworkBuilder
+
+
+def _legacy_section(organ, barriers, height, h, kpl, hydraulic, edit_network, hormones) -> LegacyRun:
     organ.export_to_adjencymatrix()
     data = legacy_input(kpl)
     for name, value in (hydraulic or {}).items():
         setattr(data.hydraulic, name, value)
+    for name, value in (hormones or {}).items():
+        setattr(data.hormones, name, value)
     data.geometry.set_maturity_stages(list(barriers), height=[height] * len(barriers))
     network = NetworkBuilder(organ)
     network.populate_from_network()

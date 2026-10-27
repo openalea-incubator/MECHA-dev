@@ -178,6 +178,10 @@ class MechaHydraulics(MechaSections):
     reflection_coefficient: float = input_variable(**_doc("", "the membrane's reflection coefficient (0: none)"),
                                                    by="Solutes", initialize=0., scale=SCALES.Connection,
                                                    location="edge", state_variable_type="NonInertialIntensive")
+    soil_contact_cell: float = input_variable(**_doc("", "1 on a protoplast whose border walls touch the soil, whatever "
+                                                         "x_contact (MECHA's Contactrange: a root partly in contact)"),
+                                              by="Soil", initialize=0., scale=SCALES.Compartment, location="node",
+                                              state_variable_type="descriptor")
     # ── Parameters (per plant; MECHA's units: cm hPa-1 d-1 for kw, kmb, kaqp; cm3 hPa-1 d-1 for kpl, k_xyl) ──
     kw: float = _p("cm2 hPa-1 d-1", "cell wall hydraulic conductivity", 0.00024)
     kw_septa: float = _p("cm2 hPa-1 d-1", "conductivity of the septa between aerenchyma (intercellular) cells", 0.00012)
@@ -227,6 +231,9 @@ class MechaHydraulics(MechaSections):
     kpl_cambium_stele_factor: float = _p("adim", "plasmodesmata aperture factor between the stele and the cambium (the "
                                                  "legacy's rules only)", 1.0)
     x_contact: float = _p("µm", "the border walls at x >= x_contact are in contact with the soil", -15E9)
+    contact_junction_rule: float = _p("", "a border junction between protoplasts in contact (soil_contact_cell) is in "
+                                          "contact: 1 when all its cells are (develop's), 2 when any is (the reactions "
+                                          "branch's)", 1.)
     standard_axial_source: float = _p("", "the standard problem's conductance between a conduit and the axial "
                                           "boundary: 1 its Poiseuille conductance over the height (the original "
                                           "MECHA's), 2 k_xyl and k_sieve (the legacy's)", 1.)
@@ -567,6 +574,7 @@ class MechaHydraulics(MechaSections):
         view = ds.to_graph_view()
         set_edge_ends(net, view.tail, view.head, np.asarray(ds.get("network_path")))
         set_wall_thickness(net, np.asarray(ds.get("wall_thickness"), dtype=float))
+        net.soil_contact_cell = (np.asarray(ds.get("soil_contact_cell"), dtype=float) > 0) & (net.kind == 0)
         return net
 
     def cortex_gradient(self, geometries: dict, height_by_node, P_node) -> tuple:

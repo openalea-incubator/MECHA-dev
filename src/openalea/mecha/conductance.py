@@ -121,6 +121,7 @@ class Network:
     wall_length: np.ndarray
     border_wall: np.ndarray
     border_junction: np.ndarray
+    soil_contact_cell: np.ndarray  # bool per node: a protoplast whose border walls touch the soil (MECHA's Contactrange)
     xylem: np.ndarray             # int per node: occurrences in the network's xylem list (cgroup)
     protosieve: np.ndarray        # int per node: occurrences in the legacy's protosieve list (duplicates, legacy f)
     sieve: np.ndarray             # int per node: occurrences in the sieve tubes' list (by tissue)
@@ -149,7 +150,8 @@ def assemble(n_nodes: int, n_edges: int, geometries: list, phi_thick=None) -> Ne
         sclerenchyma=nodes_full(False, bool),
         phi_thick=nodes_full(False, bool), wall_cells=nodes_full(-1, np.int64, (2,)),
         distance_center_grav=nodes_full(np.nan), x=nodes_full(np.nan), y=nodes_full(np.nan), cell_area=nodes_full(0.), wall_thickness=nodes_full(np.nan), wall_length=nodes_full(0.),
-        border_wall=nodes_full(False, bool), border_junction=nodes_full(False, bool), xylem=nodes_full(0, np.int64),
+        border_wall=nodes_full(False, bool), border_junction=nodes_full(False, bool),
+        soil_contact_cell=nodes_full(False, bool), xylem=nodes_full(0, np.int64),
         protosieve=nodes_full(0, np.int64), sieve=nodes_full(0, np.int64), outercortex_connec_rank=np.zeros(len(geometries), dtype=np.int64),
         concentrated=np.zeros((len(geometries), 3)))
     for i, (nodes, edges, geo) in enumerate(geometries):
@@ -407,12 +409,38 @@ def edge_conductances(net: Network, P: dict, barrier, height, factors: dict = No
     return K, in_matrix
 
 
-def contact_distances(net: Network, x_contact, sections) -> np.ndarray:
+def soil_contact(net: Network, x_contact, junction_rule) -> np.ndarray:
+    """
+    Per node, whether it is a border wall or junction in contact with the soil (``HydraulicMatrixBuilder._contact_nodes``):
+    at x >= *x_contact* (per node), or along a protoplast in contact (``soil_contact_cell``, MECHA's Contactrange): a
+    border wall of such a cell, a border junction whose cells all are (*junction_rule* 1, develop's) or any is (2, the
+    reactions branch's). A junction's cells are those of the walls it joins (the legacy's ``junction_wall_cell``).
+    """
+    contact = (net.border_wall | net.border_junction) & (net.x >= np.asarray(x_contact, dtype=float))
+    if not net.soil_contact_cell.any():
+        return contact
+    cells = net.wall_cells
+    flagged = np.where(cells >= 0, net.soil_contact_cell[np.maximum(cells, 0)], False)
+    contact |= net.border_wall & flagged.any(axis=1)
+    e = np.flatnonzero(net.junction_edge)
+    wall_is_a = net.kind[net.a[e]] == WALL
+    wall, junction = np.where(wall_is_a, net.a[e], net.b[e]), np.where(wall_is_a, net.b[e], net.a[e])
+    pairs = np.column_stack((np.repeat(junction, 2), cells[wall].reshape(-1)))
+    pairs = np.unique(pairs[pairs[:, 1] >= 0], axis=0)                       # each (junction, cell) once
+    n = net.kind.size
+    n_cells = np.bincount(pairs[:, 0], minlength=n)
+    n_flagged = np.bincount(pairs[:, 0], weights=net.soil_contact_cell[pairs[:, 1]], minlength=n)
+    rule = np.asarray(junction_rule, dtype=float) * np.ones(n)
+    by_cells = np.where(rule == 2, n_flagged > 0, (n_cells > 0) & (n_flagged == n_cells))
+    return contact | (net.border_junction & by_cells)
+
+
+def contact_distances(net: Network, contact, sections) -> np.ndarray:
     """
     Per node (µm; NaN elsewhere and where unreachable), the shortest distance along each of *sections*' graphs (its
     walls, junctions and cells, joined by their wall, membrane, plasmodesmata and vapour edges, each its Euclidean
-    length) to its soil-contact nodes: the border walls and junctions at x >= *x_contact* (per node)
-    (HydraulicMatrixBuilder._contact_nodes, _pd_spatial_coefficients).
+    length) to its soil-contact nodes (*contact*, a bool per node: soil_contact) (HydraulicMatrixBuilder._contact_nodes,
+    _pd_spatial_coefficients).
     """
     from scipy.sparse import coo_matrix
     from scipy.sparse.csgraph import dijkstra
@@ -427,10 +455,10 @@ def contact_distances(net: Network, x_contact, sections) -> np.ndarray:
         weight = np.hypot(net.x[net.a[e]] - net.x[net.b[e]], net.y[net.a[e]] - net.y[net.b[e]])
         weight = np.where(weight > 0., weight, 1e-300)                   # a zero-length edge is still an edge
         graph = coo_matrix((weight, (local[net.a[e]], local[net.b[e]])), shape=(nodes.size, nodes.size)).tocsr()
-        contact = (net.border_wall[nodes] | net.border_junction[nodes]) & (net.x[nodes] >= x_contact[nodes])
-        if not contact.any():
+        sources = np.flatnonzero(contact[nodes])
+        if not sources.size:
             continue
-        distance[nodes] = dijkstra(graph, directed=False, indices=np.flatnonzero(contact), min_only=True)
+        distance[nodes] = dijkstra(graph, directed=False, indices=sources, min_only=True)
     return np.where(np.isfinite(distance), distance, np.nan)
 
 
@@ -447,10 +475,12 @@ def plasmodesmata_spatial_coefficients(net: Network, P: dict, e):
     sections = np.unique(net.section_of_edge[e[profile > 0]])
     if sections.size == 0:
         return coefficient, np.full(net.cgroup.size, np.nan)
-    of_section = np.full(int(net.section_of_node.max()) + 1, np.inf)        # a plant's x_contact, per section
-    of_section[net.section_of_edge[e]] = np.asarray(P["x_contact"], dtype=float)[e]
-    x_contact = np.where(net.section_of_node >= 0, of_section[np.maximum(net.section_of_node, 0)], np.inf)
-    distance = contact_distances(net, x_contact, sections)
+    def per_node(name):                                                       # a plant's value, per section
+        of_section = np.full(int(net.section_of_node.max()) + 1, np.inf)
+        of_section[net.section_of_edge[e]] = np.asarray(P[name], dtype=float)[e]
+        return np.where(net.section_of_node >= 0, of_section[np.maximum(net.section_of_node, 0)], np.inf)
+    distance = contact_distances(net, soil_contact(net, per_node("x_contact"), per_node("contact_junction_rule")),
+                                 sections)
     d = 0.5 * (distance[net.a[e]] + distance[net.b[e]])
     c_wet = np.asarray(P["pd_spatial_c_wet"], dtype=float)[e]
     c_dry = np.asarray(P["pd_spatial_c_dry"], dtype=float)[e]
@@ -485,7 +515,7 @@ def boundary_terms(net: Network, P: dict, barrier, height):
     kw = np.asarray(P["kw"], dtype=float)
     thickness = _thickness(net, P, np.arange(n))
     height = np.asarray(height, dtype=float)
-    contact = net.x >= np.asarray(P["x_contact"], dtype=float)
+    contact = soil_contact(net, P["x_contact"], P["contact_junction_rule"])
     soil = np.zeros(n)
     w = np.flatnonzero(net.border_wall & contact)
     soil[w] = kw[w] * (1.0E-04 * (net.wall_length[w] / 2 * height[w]) / (thickness[w] / 2))

@@ -804,6 +804,14 @@ What ``develop`` (945b2be) adds to the refactored legacy, and the behaviours fou
      - ``conserve_boundary`` enters only the upwind operator (``build_advection_matrix``): the Scharfetter–Gummel
        operator, the needle's, has no liquid boundary whatever its value
      - ``solute_boundary_advection`` acts in both schemes; the Scharfetter–Gummel comparisons set it to 0
+   * - d10
+     - the soil contact by cells (the hormones file's ``Contactrange``, ``hormones.contact``): the border walls of the
+       listed protoplasts, whatever ``x_contact``; a border junction when all its cells are listed (``develop``'s
+       ``_contact_nodes``; the reactions branch: when any is). Also the source of ``pd_spatial_config``'s distances
+     - ported (2026-10-28): ``soil_contact_cell`` (a protoplast's input, 1 in contact), ``contact_junction_rule`` (1
+       all, develop's, by default; 2 any); a junction's cells those of the walls it joins (the legacy's
+       ``junction_wall_cell``, without its first-three truncation, which only an inner junction of four cells meets).
+       Soil terms bit for bit, solution to 10⁻¹² against both legacies (``test_soil_contact_cells.py``)
 
 
 Constants
