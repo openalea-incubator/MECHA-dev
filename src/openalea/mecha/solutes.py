@@ -204,6 +204,12 @@ class MechaSolutes(MechaSections):
                                            by="Photosynthesis", initialize=0., scale=SCALES.Compartment,
                                            location="node", state_variable_type="NonInertialExtensive")
 
+    fixed_sucrose: float = input_variable(**_doc("mol cm-3", "a sucrose concentration held on the node: a source or a "
+                                                             "sink given by the experiment (develop's boundary "
+                                                             "conditions; NaN: free)"),
+                                          by="Solutes", initialize=float("nan"), scale=SCALES.Compartment,
+                                          location="node", state_variable_type="NonInertialIntensive")
+
     # ── Parameters (per plant) ──
     d_apoplast: float = _p("cm2 d-1", "sucrose's diffusivity in the walls", 0.1)
     d_plasmodesmata: float = _p("cm2 d-1", "sucrose's diffusivity through the plasmodesmata", 0.5)
@@ -211,6 +217,8 @@ class MechaSolutes(MechaSections):
     k_starch_synthesis: float = _p("d-1", "the cells' sucrose → starch rate", 0.)
     k_starch_degradation: float = _p("d-1", "the cells' starch → sucrose rate", 0.)
     c_sink: float = _p("mol cm-3", "the sucrose concentration of the sinks (phloem loading, xylem)", 0.)
+    solute_sinks: float = _p("", "the sinks held at c_sink: 1 the phloem-loading cells (Strasburger, else phloem) and "
+                                 "the xylem (the reactions' needle), 0 none (only the nodes of fixed_sucrose)", 1.)
     storage_fraction_wall: float = _p("adim", "the fraction of a wall's (or junction's) volume storing sucrose (the "
                                               "reactions' C_wall)", 1.)
     storage_fraction_cell: float = _p("adim", "the fraction of a protoplast's volume storing sucrose (the reactions' "
@@ -233,7 +241,9 @@ class MechaSolutes(MechaSections):
     solute_solve: float = _p("", "1 one transport step per time step, on the water flows given (flow or "
                                  "standard_flow); 2 the steady state of the sucrose coupled with the standard problem's "
                                  "water (its osmotic potentials −R T c), each section alone, solved by Newton (the "
-                                 "reactions' coupled_water_solute_solve; no starch)", 1.)
+                                 "reactions' coupled_water_solute_solve; no starch); 3 the steady state on the water "
+                                 "flows given (develop's SoluteTransport.solve without a time step: the transport, "
+                                 "the loss and the boundary; no starch)", 1.)
     solute_flows: float = _p("", "the water flows carrying the solutes: 1 the plant problem's (flow), 2 the standard "
                                  "problem's (standard_flow: the legacy's standard_solute_flux, each section alone)", 1.)
 
@@ -243,16 +253,21 @@ class MechaSolutes(MechaSections):
     starch: float = state_variable(**_doc("mol cm-3", "starch concentration (sucrose equivalents; cells)"),
                                    initialize=0., scale=SCALES.Compartment, location="node",
                                    state_variable_type="intensive")
-    sucrose_sink: float = state_variable(**_doc("", "1 on the sinks: the phloem-loading cells (Strasburger, else "
-                                                    "phloem) and the xylem"),
+    sucrose_sink: float = state_variable(**_doc("", "1 on the nodes held at a concentration: the sinks (the "
+                                                    "phloem-loading cells, Strasburger, else phloem, and the xylem: "
+                                                    "solute_sinks 1) and the nodes of fixed_sucrose"),
                                          initialize=0., scale=SCALES.Compartment, location="node",
                                          state_variable_type="descriptor")
-    sucrose_sink_value: float = state_variable(**_doc("mol cm-3", "the sinks' concentration (c_sink)"),
+    sucrose_sink_value: float = state_variable(**_doc("mol cm-3", "the held concentration (fixed_sucrose, else "
+                                                                  "c_sink)"),
                                                initialize=0., scale=SCALES.Compartment, location="node",
                                                state_variable_type="NonInertialIntensive")
     liquid_node: float = state_variable(**_doc("", "1 on the nodes the solutes are solved on (the liquid nodes of "
                                                    "their pathway)"), initialize=0.,
                                         scale=SCALES.Compartment, location="node", state_variable_type="descriptor")
+    steady_node: float = state_variable(**_doc("", "1 on the nodes of the steady state on given flows (solute_solve "
+                                                   "3)"), initialize=0., scale=SCALES.Compartment, location="node",
+                                        state_variable_type="descriptor")
     coupled_node: float = state_variable(**_doc("", "1 on the nodes of the sections solving the coupled steady state "
                                                     "(solute_solve 2)"), initialize=0., scale=SCALES.Compartment,
                                          location="node", state_variable_type="descriptor")
@@ -334,11 +349,12 @@ class MechaSolutes(MechaSections):
     def _tail_weight(self, flow, standard_flow, reflection_coefficient, apoplastic_diffusion_factor,
                            symplastic_diffusion_factor, membrane_diffusion_factor, node_volume, vapour_node, kind,
                            cgroup, tissue, network_path, osmotic_potential, sucrose_osmotic_potential,
-                           in_standard_problem, standard_psi, coupled_psi) \
+                           in_standard_problem, standard_psi, coupled_psi, fixed_sucrose) \
             -> tuple[np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,
                      str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str,
                      np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,
-                     str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray]:
+                     str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,
+                     str, np.ndarray]:
         """Each liquid edge's Scharfetter–Gummel weights; the sinks; the cells' reaction rates; the storage and the
         first-order loss; the liquid boundary's exchanges."""
         ds = self.data_structure
@@ -348,7 +364,8 @@ class MechaSolutes(MechaSections):
         P_node = {name: np.asarray(self.parameter_values(name, "node"), dtype=float)
                   for name in ("k_starch_synthesis", "k_starch_degradation", "c_sink", "solute_boundary_advection",
                                "c_boundary", "storage_fraction_wall", "storage_fraction_cell", "k_decay",
-                               "solute_pathway", "solute_theta", "solute_solve", "solute_temperature")}
+                               "solute_pathway", "solute_theta", "solute_solve", "solute_temperature",
+                               "solute_sinks")}
         edge_pathway = np.asarray(self.parameter_values("solute_pathway", "edge"))
         upwind = np.asarray(self.parameter_values("solute_scheme", "edge")) == 2
         kind = np.asarray(kind)
@@ -367,7 +384,10 @@ class MechaSolutes(MechaSections):
               + np.asarray(membrane_diffusion_factor) * P_edge["d_membrane"])
         carried = np.where(path == MEMBRANE, 1.0 - np.asarray(reflection_coefficient, dtype=float), 1.0)
         a, b = edge_weights(np.where(on_liquid, De, 0.), np.where(on_liquid, np.asarray(flow) * carried, 0.), upwind)
-        sink = self._sinks(kind, np.asarray(cgroup), np.asarray(tissue, dtype=object)) & liquid
+        fixed = np.asarray(fixed_sucrose, dtype=float)
+        held = np.isfinite(fixed)
+        sink = ((self._sinks(kind, np.asarray(cgroup), np.asarray(tissue, dtype=object)) & (P_node["solute_sinks"] == 1))
+                | held) & liquid
         coupled = (P_node["solute_solve"] == 2) & (np.asarray(in_standard_problem) > 0)
         transient = liquid & (P_node["solute_solve"] == 1)
         cell = (kind == 0) & liquid
@@ -378,8 +398,9 @@ class MechaSolutes(MechaSections):
         advected = liquid & (P_node["solute_boundary_advection"] > 0)
         boundary_outflow, boundary_inflow = liquid_boundary_exchange(view.incidence, flow, counted, advected)
         return (a, "head_weight", b, "sucrose_sink", sink.astype(float),
-                "sucrose_sink_value", P_node["c_sink"],
-                "liquid_node", transient.astype(float), "implicit_weight", P_node["solute_theta"],
+                "sucrose_sink_value", np.where(held, fixed, P_node["c_sink"]),
+                "liquid_node", transient.astype(float),
+                "steady_node", (liquid & (P_node["solute_solve"] == 3)).astype(float), "implicit_weight", P_node["solute_theta"],
                 # Newton's start: the standard problem's water, balanced (on the flows of an unbalanced guess the
                 # steady sucrose has no solution: water converging on a node without an exit)
                 "coupled_psi", np.where(coupled, np.asarray(standard_psi, dtype=float), np.asarray(coupled_psi)),
@@ -464,6 +485,32 @@ class MechaSolutes(MechaSections):
                           theta @ diags(-degradation_rate)],
                          [theta @ diags(-synthesis_rate),
                           diags(node_volume / days) + theta @ diags(degradation_rate)]], format="csr")
+
+    # ── The steady state on the water flows given (solute_solve 3) ──
+    @graph_system(node_unknowns=["sucrose"], solver="newton", max_iter=3, tol=1e-14, schedule_as="state",
+                  filters={"steady_node": ">0"})
+    class _steady_transport:
+        """The sucrose's steady state on the flows given (develop's SoluteTransport.solve without a time step, T c =
+        −s): L(c) − S − b = 0, L(c) = B q(c) + k V c + O c (the transport, the first-order loss, the boundary's
+        outflow; S the sources, b the solute the boundary's inflow brings), with the held concentrations."""
+
+        @node_balance(field="sucrose")
+        def _sucrose(self, sucrose, tail_weight, head_weight, decay_rate, sucrose_source, boundary_outflow,
+                     boundary_source):
+            B = self._graph_view.incidence
+            q = tail_weight * np.asarray(B.maximum(0).T @ sucrose).reshape(-1) - \
+                head_weight * np.asarray((-B).maximum(0).T @ sucrose).reshape(-1)
+            return (np.asarray(B @ q).reshape(-1) + (decay_rate + boundary_outflow) * sucrose
+                    - sucrose_source - boundary_source)
+
+        sinks = boundary_set(filters={"sucrose_sink": ">0"}, kind="dirichlet", value="sucrose_sink_value",
+                             field="sucrose")
+
+        @graph_jacobian
+        def _jacobian(self, tail_weight, head_weight, decay_rate, boundary_outflow):
+            B = self._graph_view.incidence
+            transport = B @ diags(tail_weight) @ B.maximum(0).T - B @ diags(head_weight) @ (-B).maximum(0).T
+            return (transport + diags(decay_rate + boundary_outflow)).tocsr()
 
     # ── The steady state of the sucrose coupled with the standard problem's water (solute_solve 2) ──
     # tol: the water's scaled residuals (hPa) and the sucrose's (µmol cm⁻³): _row_scales

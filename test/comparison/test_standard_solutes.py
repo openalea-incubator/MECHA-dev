@@ -2,7 +2,10 @@
 The solutes on a root section's standard problem (MechaSolutes with solute_flows 2) against the legacy's
 ``Mecha.standard_solute_flux`` (develop's SoluteTransport on its scenario 0's edge flows): one step from a pulse in
 the cortex and the left half's walls, the sinks (phloem, xylem) at 0; in the apoplast or the symplast only
-(solute_pathway, its modes 'apo' and 'sym'); upwind (solute_scheme 2) and Crank–Nicolson (solute_theta 0.5).
+(solute_pathway, its modes 'apo' and 'sym'); upwind (solute_scheme 2) and Crank–Nicolson (solute_theta 0.5); the
+steady state on the standard flows with held sources (solute_solve 3, fixed_sucrose, solute_sinks 0: develop's
+tutorial 04, its epidermis at 1 and a first-order loss); its operators 'D' and 'A' alone (diffusion only, advection
+only), which the port gives with no water flow or no diffusivities.
 Develop's Scharfetter–Gummel operator has no liquid boundary (its ``conserve_boundary`` enters only the upwind
 operator, doc/legacy.rst d9): solute_boundary_advection 0 there.
 """
@@ -19,7 +22,8 @@ from plants import template_organ
 D_APO, D_PD, D_MEM, DT = 0.1, 0.5, 1e-6, 1. / 24.                     # cm2 d-1, d
 PULSE = 50e-6                                                         # mol cm-3, in the cortex cells
 SOLUTES = dict(d_apoplast=D_APO, d_plasmodesmata=D_PD, d_membrane=D_MEM, solute_flows=2.)
-RESET = dict(solute_flows=1., solute_boundary_advection=1., solute_pathway=1., solute_scheme=1., solute_theta=1.)
+RESET = dict(solute_flows=1., solute_boundary_advection=1., solute_pathway=1., solute_scheme=1., solute_theta=1.,
+             solute_solve=1., solute_sinks=1., k_decay=0., d_apoplast=D_APO, d_plasmodesmata=D_PD, d_membrane=D_MEM)
 
 
 @pytest.fixture(scope="module")
@@ -43,10 +47,12 @@ def root_case(case):
     c0 = np.where(np.asarray(ds.get("cgroup"))[nodes] == 4, PULSE, 0.)
     # and in the walls of the left half (for the apoplast alone)
     c0 = np.where((geo.kind != 0) & (geo.x < geo.x[geo.cells].mean()), PULSE, c0)
-    yield dict(ds=ds, solutes=solutes, nodes=nodes, index=index, run=run, c0=c0, kind=geo.kind)
+    yield dict(ds=ds, solutes=solutes, nodes=nodes, index=index, run=run, c0=c0, kind=geo.kind, geo=geo,
+               mecha=mecha)
     for name, value in RESET.items():
         setattr(solutes, name, value)
     ds.set("sucrose", np.zeros(ds.n_nodes()))
+    ds.set("fixed_sucrose", np.full(ds.n_nodes(), np.nan))
 
 
 def port_step(root_case, **parameters):
@@ -109,3 +115,60 @@ def test_schemes_and_theta(root_case, scheme, theta):
                               solute_scheme=2. if scheme == "upwind" else 1., solute_theta=theta)
     reference = legacy_step(root_case, sink, conserve_boundary=bool(advection), scheme=scheme, theta=theta)
     np.testing.assert_allclose(sucrose, reference, rtol=0, atol=1e-11 * abs(reference).max())
+
+
+@pytest.mark.parametrize("k_decay", [0., 48.])
+def test_steady_state_with_held_sources(root_case, k_decay):
+    """develop's tutorial 04 (its part 2): the epidermis held at 1, no sinks, the steady state on the standard flows
+    (upwind, its liquid boundary: the clean soil water dilutes, the xylem's carries the solute out), without and with
+    a first-order loss k_deg (48 d-1: MECHA's hormone default): every node to 1e-11."""
+    from openalea.mecha.legacy.utils.solute_transport import SoluteTransport
+    ds, nodes, geo = root_case["ds"], root_case["nodes"], root_case["geo"]
+    epidermis = geo.cells[geo.cgroup[geo.cells] == 2]
+    fixed = np.full(ds.n_nodes(), np.nan)
+    fixed[nodes[epidermis]] = 1.0
+    ds.set("fixed_sucrose", fixed)
+    try:
+        sucrose, held = port_step(root_case, solute_solve=3., solute_sinks=0., solute_scheme=2., k_decay=k_decay,
+                                  solute_boundary_advection=1., solute_pathway=1.)
+    finally:
+        ds.set("fixed_sucrose", np.full(ds.n_nodes(), np.nan))
+        for name in ("solute_solve", "solute_sinks", "solute_scheme", "k_decay"):
+            setattr(root_case["solutes"], name, RESET[name])
+    index = root_case["index"]
+    assert np.array_equal(np.flatnonzero(held), epidermis)
+    run = root_case["run"]
+    transport = SoluteTransport(run.mecha, {"apo_wall": D_APO, "plasmodesmata": D_PD, "membrane": D_MEM},
+                                capacitance_params=None, mode="full", reaction_params={"k_deg": k_decay})
+    reference = transport.solve(h=0, i_maturity=0, i_scenario=0, rhs=np.zeros(index.size),
+                                boundary_conditions={int(i): 1.0 for i in index[epidermis]}, scheme="upwind")[index]
+    assert reference.min() < 0.5
+    np.testing.assert_allclose(sucrose, reference, rtol=0, atol=1e-11)
+
+
+@pytest.mark.parametrize("operators", ["D", "A"])
+def test_operators_alone(root_case, operators):
+    """The legacy's diffusion-only ('D') and advection-only ('A') steps (upwind): the port's step with the standard
+    flows at 0 (the soil and the xylem at one potential) or the diffusivities at 0, to 1e-11 and 2e-5 of the range. They are
+    diagnostics of the operator: the port gives them with its physical parameters, so it has no option for them."""
+    mecha, solutes = root_case["mecha"], root_case["solutes"]
+    if operators == "D":
+        mecha.standard_psi_xylem = mecha.standard_psi_soil = 0.
+        try:
+            mecha()
+            assert abs(np.asarray(root_case["ds"].get("standard_flow"))).max() < 1e-15
+            sucrose, sink = port_step(root_case, solute_scheme=2., solute_boundary_advection=1., solute_theta=1.,
+                                      solute_pathway=1.)
+        finally:
+            mecha.standard_psi_xylem, mecha.standard_psi_soil = -5.0E3, 0.
+            mecha()
+    else:
+        sucrose, sink = port_step(root_case, solute_scheme=2., solute_boundary_advection=1., solute_theta=1.,
+                                  solute_pathway=1., d_apoplast=0., d_plasmodesmata=0., d_membrane=0.)
+    for name in ("solute_scheme", "d_apoplast", "d_plasmodesmata", "d_membrane"):
+        setattr(solutes, name, RESET[name])
+    reference = legacy_step(root_case, sink, scheme="upwind", operators=operators, conserve_boundary=True)
+    # advection alone: the concentrations follow the flows' ratios, and the two solves' flows agree to 1e-12 of K x
+    # the potentials' range, 1e-5 of the flow on the edges of nearly equal potentials (no diffusion damps it)
+    tolerance = 1e-11 if operators == "D" else 2e-5
+    np.testing.assert_allclose(sucrose, reference, rtol=0, atol=tolerance * abs(reference).max())

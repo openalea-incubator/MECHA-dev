@@ -743,8 +743,10 @@ The ``reactions`` branch
        coupled solve (``solute_solve`` 2: Newton on the coupled residual, instead of Picard, JFNK and continuation),
        against the Picard iteration with the reactions' r1 and r3 removed, the sucrose to 10⁻¹¹ and the water to
        10⁻¹² of their ranges (``test_coupled_steady.py``). The operators' ``'D'`` and ``'A'`` alone (diffusion
-       only, advection only: a diagnostic of the operator, its diffusivities or its flows at 0 do the same), the
-       calibration package and the scenario builder are not ported
+       only, advection only: a diagnostic of the operator) are not ported: the water flows at 0 (one potential for
+       the soil and the xylem) or the diffusivities at 0 give them, to 10⁻¹¹ and 2 × 10⁻⁵ of the range
+       (``test_standard_solutes.py``, ``test_operators_alone``). The calibration package and the scenario builder are
+       not ported (F9, F10)
 
 The ``develop`` branch
 ----------------------
@@ -822,6 +824,13 @@ What ``develop`` (945b2be) adds to the refactored legacy, and the behaviours fou
        all, develop's, by default; 2 any); a junction's cells those of the walls it joins (the legacy's
        ``junction_wall_cell``, without its first-three truncation, which only an inner junction of four cells meets).
        Soil terms bit for bit, solution to 10⁻¹² against both legacies (``test_soil_contact_cells.py``)
+   * - d11
+     - ``SoluteTransport.solve`` with ``boundary_conditions`` (any nodes held at a concentration: its tutorials hold
+       the epidermis at 1, with no sink) and without a time step (its steady state, ``T c = −s``), one species
+     - ported (2026-10-28): ``fixed_sucrose`` (a node's input: the concentration held, NaN free), ``solute_sinks`` (1
+       the reactions' needle sinks at ``c_sink``, by default; 0 none), ``solute_solve`` 3 (the steady state on the
+       flows given: the transport, the loss and the liquid boundary; no starch). Its tutorial 04's steady states (no
+       loss; ``k_deg`` 48 d⁻¹) to 10⁻¹¹ (``test_standard_solutes.py``)
 
 
 Constants
