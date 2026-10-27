@@ -17,7 +17,15 @@ from plants import template_organ
 SCENARIOS = [dict(os_hetero=0, s_hetero=0, s_factor=1.0), dict(os_hetero=1, s_hetero=1, s_factor=1.0),
              dict(os_hetero=2, s_hetero=2, s_factor=1.0), dict(os_hetero=3, s_hetero=0, s_factor=0.7),
              dict(os_hetero=4, s_hetero=1, s_factor=0.9, osmotic_epi=-5100., osmotic_exo=-5300., osmotic_peri=-5600.,
-                  osmotic_stele=-6000.)]
+                  osmotic_stele=-6000.),
+             # the walls' solutions: the soil's left to right and the xylem's uniform; both radial, with exponents;
+             # both radial with a diffusivity (the legacy's convective profile, flat: ME-24)
+             dict(os_hetero=0, s_hetero=0, s_factor=1.0, osmotic_left_soil=-300., osmotic_right_soil=-900.,
+                  osmotic_symmetry_soil=1, osmotic_xyl=-1800., osmotic_endo=-4800., osmotic_symmetry_xyl=1),
+             dict(os_hetero=1, s_hetero=0, s_factor=1.0, osmotic_left_soil=-300., osmotic_right_soil=-900.,
+                  osmotic_symmetry_soil=2, osmotic_shape_soil=2., osmotic_symmetry_xyl=2, osmotic_shape_xyl=0.5),
+             dict(os_hetero=0, s_hetero=0, s_factor=1.0, osmotic_left_soil=-300., osmotic_symmetry_soil=2,
+                  osmotic_diffusivity_soil=1., osmotic_symmetry_xyl=2, osmotic_diffusivity_xyl=1.)]
 # the legacy's presets (its problems p and q, fixed in the port's default rules)
 PORT_ONLY = dict(presets_rules=2.)
 
@@ -41,10 +49,17 @@ def both(case, request):
     port = {name: np.asarray(ds.get(name)).copy() for name in
             ("osmotic_potential", "reflection_coefficient", "standard_psi", "standard_flow", "conductance",
              "standard_uptake")}
+    geo = mecha.section_geometries()[case["segment"]][2]
+    x_cells = geo.x[geo.cells]
+
+    def port_x_range(network):                    # the walls' relative x from the port's cell centroids (ME-22)
+        network.x_min, network.x_max = float(x_cells.min()), float(x_cells.max())
+        network.r_rel = network.x_rel = None
+
     legacy = legacy_osmotic(template_organ(case["anatomy"], g, case["segment"]), barrier, height=case["height"],
+                            edit_network=port_x_range if scenario.get("osmotic_symmetry_soil") == 1 else None,
                             **scenario)
     nodes, edges = section_parts(ds)[case["segment"]]
-    geo = mecha.section_geometries()[case["segment"]][2]
     net = case["legacy"].network
     mecha_index = g.property("mecha_index")
     index = np.array([int(mecha_index[int(v)]) for v in ds.entity_ids("node")[nodes]])
@@ -52,6 +67,9 @@ def both(case, request):
     yield dict(port=port, legacy=legacy, nodes=nodes, edges=edges, index=index, ds=ds)
     # the case's DataStructure is shared with the other comparisons: no solutes left on it
     mecha.standard_osmotic = 0.
+    defaults = {name: field.default for name, field in MechaOsmoticPresets.__dataclass_fields__.items()}
+    for name in {**scenario, **PORT_ONLY}:        # a plant's parameters outlive the component: its defaults back
+        setattr(presets, name, defaults[name])
     ds.set("osmotic_potential", np.zeros(ds.n_nodes()))
     ds.set("reflection_coefficient", np.zeros(ds.n_edges()))
 
