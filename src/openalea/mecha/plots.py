@@ -1,8 +1,10 @@
 """
 Plots of one section's hydraulics (the legacy's ``utils/visu`` views, as functions of arrays): its cells by tissue or
 by water potential, its conductances by pathway, the radial profile of the potential, the share of each pathway in
-the radial flow, the flow vectors. Each takes a SectionFrame, built from the DataStructure (``port_frame``) or, for
-the comparison, from the legacy's network (``test/comparison``), so that both are drawn the same way.
+the radial flow, the flow vectors; and develop's views of a section partly in contact with the soil: the same
+profiles along the wet→dry transect (``axis="signed"``), the maps of the distance to the soil contact and of the
+plasmodesmata's aperture. Each takes a SectionFrame, built from the DataStructure (``port_frame``) or, for the
+comparison, from the legacy's network (``test/comparison``), so that both are drawn the same way.
 """
 from dataclasses import dataclass, field
 
@@ -33,6 +35,9 @@ class SectionFrame:
     Q: np.ndarray = None                     # from a to b
     polygons: list = field(default_factory=list)      # per cell (kind 0, in order): a shapely polygon or None
     centre: tuple = (0., 0.)
+    contact: np.ndarray = None               # per node: in contact with the soil (border walls and junctions)
+    distance: np.ndarray = None              # per node: the distance to the soil contact along the graph (µm)
+    aperture: np.ndarray = None              # per edge: the plasmodesmata's spatial aperture coefficient (NaN: other)
 
 
 def port_frame(mecha, segment, psi="standard_psi", flow="standard_flow", libraries=()) -> SectionFrame:
@@ -58,13 +63,22 @@ def port_frame(mecha, segment, psi="standard_psi", flow="standard_flow", librari
         scale = 1000.                                                     # mm -> µm
         polygons = [None if polygons_of[int(row[int(v)])] is None else
                     affinity.scale(polygons_of[int(row[int(v)])], scale, scale, origin=(0, 0)) for v in vids]
+    path = np.array([_PATH_OF_CODE[c] for c in np.asarray(ds.get("network_path"))[e].astype(int)])
+    aperture = np.full(e.size, np.nan)
+    plasmodesmata = path == "plasmodesmata"
+    if plasmodesmata.any():
+        from openalea.mecha.conductance import plasmodesmata_spatial_coefficients
+        aperture[plasmodesmata], _ = plasmodesmata_spatial_coefficients(mecha.network(), mecha.parameter_table("edge"),
+                                                                        e[plasmodesmata])
+    distance = np.asarray(ds.get("contact_distance"))[nodes] if ds.has("contact_distance") else None
     return SectionFrame(xy=np.c_[geo.x, geo.y], kind=geo.kind, rank=geo.cell_rank, tissue=geo.tissue,
-                        a=local[view.tail[e]], b=local[view.head[e]],
-                        path=np.array([_PATH_OF_CODE[c] for c in np.asarray(ds.get("network_path"))[e].astype(int)]),
+                        a=local[view.tail[e]], b=local[view.head[e]], path=path,
                         K=np.asarray(ds.get("conductance"))[e],
                         psi=None if psi is None else np.asarray(ds.get(psi))[nodes],
                         Q=None if flow is None else np.asarray(ds.get(flow))[e],
-                        polygons=polygons, centre=geo.gravity_center)
+                        polygons=polygons, centre=geo.gravity_center,
+                        contact=np.asarray(ds.get("soil_conductance"))[nodes] > 0, distance=distance,
+                        aperture=aperture)
 
 
 def _cells(frame):
@@ -133,11 +147,41 @@ def conductance_by_path(axes, frame, norm=None):
     return out
 
 
-def radial_profile(ax, frame, label=None, bins=40, **style):
-    """The mean potential of the cells and of the apoplast against the distance to the centre (hPa vs µm); NaN
-    values (nodes left out) are skipped."""
-    r = np.hypot(frame.xy[:, 0] - frame.centre[0], frame.xy[:, 1] - frame.centre[1])
-    edges = np.linspace(0, r.max(), bins + 1)
+def wetdry_axis(frame):
+    """(origin, unit vector) of the wet→dry transect (develop's _wetdry_axis): from the centroid of the nodes in contact
+    with the soil toward the section's centre, and on to the dry side; None without contact, or when the contact
+    surrounds the centre (their centroid on it)."""
+    if frame.contact is None or not frame.contact.any():
+        return None
+    origin = np.asarray(frame.centre, dtype=float)
+    towards = origin - frame.xy[frame.contact].mean(axis=0)
+    norm = np.hypot(*towards)
+    return None if norm < 1e-9 else (origin, towards / norm)
+
+
+def _coordinate(frame, axis):
+    """(coordinate of points, component of a vector along the axis, label): the distance to the centre ("radial") or
+    the signed position along the wet→dry transect, negative on the wet side ("signed")."""
+    centre = np.asarray(frame.centre, dtype=float)
+    if axis == "radial":
+        return (lambda points: np.hypot(*(np.asarray(points) - centre).T),
+                lambda points, vectors: (vectors * (np.asarray(points) - centre)).sum(axis=1)
+                / np.maximum(np.hypot(*(np.asarray(points) - centre).T), 1e-300),
+                "distance to the centre (µm)")
+    transect = wetdry_axis(frame)
+    if transect is None:
+        raise ValueError("no wet→dry axis: no node in contact with the soil, or the contact all around")
+    origin, unit = transect
+    return (lambda points: ((np.asarray(points) - origin) * unit).sum(axis=1),
+            lambda points, vectors: (vectors * unit).sum(axis=1), "wet ← transect (µm) → dry")
+
+
+def radial_profile(ax, frame, label=None, bins=40, axis="radial", **style):
+    """The mean potential of the cells and of the apoplast against the distance to the centre, or the position along
+    the wet→dry transect (*axis* "signed") (hPa vs µm); NaN values (nodes left out) are skipped."""
+    coordinate, _, axis_label = _coordinate(frame, axis)
+    r = coordinate(frame.xy)
+    edges = np.linspace(0 if axis == "radial" else r.min(), r.max(), bins + 1)
     middle = (edges[1:] + edges[:-1]) / 2
     for chosen, part, marker in ((frame.kind == 0, "cells", "o"), (frame.kind > 0, "apoplast", "")):
         which = np.digitize(r[chosen], edges) - 1
@@ -145,16 +189,20 @@ def radial_profile(ax, frame, label=None, bins=40, **style):
         mean = np.array([np.nanmean(values[which == k]) if np.isfinite(values[which == k]).any() else np.nan
                          for k in range(bins)])
         ax.plot(middle, mean, marker=marker, ms=3, label=f"{label + ', ' if label else ''}{part}", **style)
-    ax.set(xlabel="distance to the centre (µm)", ylabel="ψ (hPa)", title="radial profile of the potential")
+    ax.set(xlabel=axis_label, ylabel="ψ (hPa)", title="radial profile of the potential")
 
 
-def pathway_flows(frame):
+def pathway_flows(frame, axis="radial"):
     """
     (R, ranks, flows): the radial flow carried by each pathway at each layer radius (the legacy's
     ``plot_flow_pathway_breakdown``): each edge's radial component of |Q| assigned to the nearest of the mean radii
     *R* (µm) of the cell layers (by rank: the cells' centres and their inner and outer walls); *ranks* the cell rank
-    of each radius; *flows* {pathway: cm³ d⁻¹ per radius}.
+    of each radius; *flows* {pathway: cm³ d⁻¹ per radius}. With *axis* "signed" (develop's ``x_axis='signed'``): the
+    layers' positions and the edges' middles along the wet→dry transect, the flow's component along it; each layer's
+    wet and dry halves apart (a whole ring's mean position along the transect is near 0, as develop's radial profile
+    found).
     """
+    coordinate, component, _ = _coordinate(frame, axis)
     centre = np.asarray(frame.centre)
     xy = frame.xy - centre
     cells = _cells(frame)
@@ -168,7 +216,9 @@ def pathway_flows(frame):
         rc = np.hypot(*xy[c])
         if rc < 1e-6:
             continue
-        radii.setdefault((frame.rank[c], "mid"), []).append(rc)
+        own = coordinate(frame.xy[c][None])[0]
+        half = 0 if axis == "radial" else (own >= 0)                  # the signed axis: the wet and dry halves
+        radii.setdefault((frame.rank[c], "mid", half), []).append(own)
         for w in walls_of.get(int(c), []):
             vw = xy[w] - xy[c]
             nw = np.hypot(*vw)
@@ -176,31 +226,65 @@ def pathway_flows(frame):
                 continue
             cos = (xy[c] @ vw) / (rc * nw)
             if cos > 0.4:
-                radii.setdefault((frame.rank[c], "out"), []).append(np.hypot(*xy[w]))
+                radii.setdefault((frame.rank[c], "out", half), []).append(coordinate(frame.xy[w][None])[0])
             elif cos < -0.4:
-                radii.setdefault((frame.rank[c], "in"), []).append(np.hypot(*xy[w]))
+                radii.setdefault((frame.rank[c], "in", half), []).append(coordinate(frame.xy[w][None])[0])
     rank_of = {np.mean(v): key[0] for key, v in radii.items()}
     R = np.unique(list(rank_of))
-    mid = (xy[frame.a] + xy[frame.b]) / 2
+    middle = (frame.xy[frame.a] + frame.xy[frame.b]) / 2
     vec = xy[frame.b] - xy[frame.a]
-    n_mid, n_vec = np.hypot(*mid.T), np.hypot(*vec.T)
-    radial = np.where((n_mid < 1e-6) | (n_vec < 1e-6), 1.,
-                      abs((vec * mid).sum(axis=1)) / np.maximum(n_mid * n_vec, 1e-300))
-    q = abs(frame.Q) * radial
-    nearest = R[np.argmin(abs(R[None, :] - n_mid[:, None]), axis=1)]
+    n_vec = np.hypot(*vec.T)
+    position = coordinate(middle)
+    at_centre = (axis == "radial") & (np.hypot(*(middle - centre).T) < 1e-6)
+    along = np.where(at_centre | (n_vec < 1e-6), 1., abs(component(middle, vec)) / np.maximum(n_vec, 1e-300))
+    q = abs(frame.Q) * along
+    nearest = R[np.argmin(abs(R[None, :] - position[:, None]), axis=1)]
     flows = {path: np.array([q[(frame.path == path) & (nearest == r)].sum() for r in R]) for path in PATHS}
     return R, np.array([rank_of[r] for r in R]), flows
 
 
-def pathway_breakdown(ax, frame, title="pathways of the radial flow"):
-    """The share of each pathway in the radial flow, against the distance to the centre (pathway_flows)."""
-    R, _, shares = pathway_flows(frame)
+def pathway_breakdown(ax, frame, title="pathways of the radial flow", axis="radial"):
+    """The share of each pathway in the radial flow, against the distance to the centre or, *axis* "signed", the
+    position along the wet→dry transect (pathway_flows)."""
+    R, _, shares = pathway_flows(frame, axis)
     total = sum(shares.values())
     total[total == 0] = 1.
     ax.stackplot(R, *[100 * shares[p] / total for p in PATHS], labels=list(PATHS.values()),
                  colors=[PATH_COLOURS[p] for p in PATHS], alpha=0.7)
-    ax.set(xlabel="distance to the centre (µm)", ylabel="share of the radial flow (%)", ylim=(0, 100), title=title)
+    ax.set(xlabel=_coordinate(frame, axis)[2], ylabel="share of the radial flow (%)", ylim=(0, 100), title=title)
     ax.legend(loc="lower left", fontsize=7)
+
+
+def contact_distance_map(axes, frame):
+    """Two panels (develop's plot_contact_distance_map): the cells coloured by their distance to the soil contact
+    along the graph (µm), and by the mean spatial aperture coefficient of their plasmodesmata; the cells next to a
+    contact node outlined. Returns the two colour mappings."""
+    cells = _cells(frame)
+    pd = (frame.path == "plasmodesmata") & np.isfinite(frame.aperture)
+    total = np.bincount(np.r_[frame.a[pd], frame.b[pd]], weights=np.r_[frame.aperture[pd], frame.aperture[pd]],
+                        minlength=frame.kind.size)
+    count = np.bincount(np.r_[frame.a[pd], frame.b[pd]], minlength=frame.kind.size)
+    aperture = np.divide(total, count, out=np.full(frame.kind.size, np.nan), where=count > 0)
+    membranes = frame.path == "membrane"
+    wetted = np.zeros(frame.kind.size, dtype=bool)
+    for a, b in zip(frame.a[membranes], frame.b[membranes]):
+        cell, wall = (a, b) if frame.kind[a] == 0 else (b, a)
+        wetted[cell] |= frame.contact[wall]
+    out = []
+    for ax, values, cmap, label in ((axes[0], frame.distance, "viridis", "distance to the soil contact (µm)"),
+                                    (axes[1], aperture, "magma", "plasmodesmata's aperture coefficient")):
+        finite = values[cells][np.isfinite(values[cells])]
+        norm = matplotlib.colors.Normalize(*(np.nanmin(finite), np.nanmax(finite)) if finite.size else (0., 1.))
+        colours = matplotlib.colormaps[cmap](norm(np.where(np.isfinite(values[cells]), values[cells], np.nan)))
+        if frame.polygons:
+            _draw_cells(ax, frame, colours)
+        else:
+            ax.scatter(*frame.xy[cells].T, c=colours, s=6)
+            ax.set_aspect("equal")
+        ax.scatter(*frame.xy[cells[wetted[cells]]].T, s=4, facecolors="none", edgecolors="k", linewidths=0.4)
+        ax.set(title=label, xlabel="µm")
+        out.append(matplotlib.cm.ScalarMappable(norm=norm, cmap=cmap))
+    return out
 
 
 def flow_vectors(ax, frame, path="membrane", title=None, scale=None):

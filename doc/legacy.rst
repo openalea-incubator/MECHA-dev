@@ -755,6 +755,12 @@ What ``develop`` (945b2be) adds to the refactored legacy, and the behaviours fou
      - ``solute_boundary_advection`` (1 by default; 0 the reactions branch's, for its comparisons), ``c_boundary``;
        the vapour edges counted in the residual, so that evaporating water leaves its solutes behind (develop has no
        vapour edges in a root); the exchange compared with ``_boundary_flux`` to 10⁻⁹ of its largest
+   * - d8
+     - views: the radial profile and the pathways' breakdown along the wet→dry transect (``x_axis='signed'``; its
+       breakdown averages each ring's position, near 0), the maps of the contact distance and of the plasmodesmata's
+       aperture
+     - ``plots``: ``axis="signed"`` of ``radial_profile``, ``pathway_flows``, ``pathway_breakdown`` (each layer's wet
+       and dry halves apart), ``wetdry_axis``, ``contact_distance_map``; developer tutorial 02
 
 
 Constants
