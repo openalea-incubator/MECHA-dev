@@ -146,12 +146,14 @@ def legacy_frame(run, stage, organ):
                         centre=(net.x_grav, net.y_grav))
 
 
-def legacy_osmotic(organ, barrier, height=200.0, scenario_zero=None, edit_network=None, hydraulic=None, **overrides):
+def legacy_osmotic(organ, barrier, height=200.0, scenario_zero=None, edit_network=None, hydraulic=None,
+                   before_solve=None, **overrides):
     """
     The legacy's osmotic scenario (``Mecha.water_flux``, its scenario 1: the default scenario with *overrides*, e.g.
     os_hetero, s_hetero) on one maturity stage. *scenario_zero*: entries of its scenario 0 too (the scenario loop
     reads some of scenario i_maturity's: doc/legacy.rst, h); *edit_network*: a function of its NetworkBuilder, called
-    once the network is built; *hydraulic*: its HydraulicData's attributes to set ({name: value}). Returns
+    once the network is built; *hydraulic*: its HydraulicData's attributes to set ({name: value}); *before_solve*: a
+    function of its Mecha, called before its scenarios are solved. Returns
     dict(solution, psi_os {node: π}, sigma {(wall, cell): σ}, edge_Q {(u, v): Q}, total_flow, mecha (its Mecha,
     scenario 1 solved)).
     """
@@ -169,6 +171,8 @@ def legacy_osmotic(organ, barrier, height=200.0, scenario_zero=None, edit_networ
     if edit_network is not None:
         edit_network(network)
     mecha = Mecha(data, network=network)
+    if before_solve is not None:
+        before_solve(mecha)
     mecha.water_flux(verbose=False)
     result = [r for r in mecha.results if r.get("scenario") == 1][-1]
     cm = network.cell_manager
@@ -361,6 +365,8 @@ def legacy_fractions(organ, barrier, height=200.0):
     network = NetworkBuilder(organ)
     network.populate_from_network()
     mecha = Mecha(data, network=network)
+    if before_solve is not None:
+        before_solve(mecha)
     mecha.water_flux(verbose=False)
     membranes = []
     for node, edges in network.graph.adjacency():

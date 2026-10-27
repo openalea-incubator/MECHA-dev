@@ -277,6 +277,11 @@ class MechaHydraulics(MechaSections):
                                                "legacy's phloem pressure of its scenarios >= 1, with k_sieve or "
                                                "Poiseuille as standard_axial_source; NaN: no phloem boundary)",
                                         float("nan"))
+    standard_sieve_flow: float = _p("cm3 d-1", "the flow into the phloem in the standard problem (the legacy's "
+                                               "phloem flowrate): into the protophloem at barrier 0, the sieve tubes "
+                                               "at barrier > 0, where their potential is not given (NaN), split among "
+                                               "them as their areas; negative: the phloem unloading water into the "
+                                               "section (NaN: none)", float("nan"))
     elongation_midpoint_rate: float = _p("cm d-1", "the cells' elongation rate at the section's middle (barrier 0, "
                                                    "the elongation zone; MECHA's BCs.xml 2.8 for maize, Pritchard et "
                                                    "al. 1988; 0: none)", 0.)
@@ -362,9 +367,10 @@ class MechaHydraulics(MechaSections):
                                                              "standard problem"),
                                                initialize=0., scale=SCALES.Compartment, location="node",
                                                state_variable_type="NonInertialIntensive")
-    standard_axial_inflow: float = state_variable(**_doc("cm3 d-1", "the water entering a xylem vessel from the axial "
-                                                         "boundary in the standard problem (condition 2; negative: "
-                                                         "the vessel's share of the flow into the xylem)"),
+    standard_axial_inflow: float = state_variable(**_doc("cm3 d-1", "the water entering a xylem vessel or a phloem "
+                                                         "conduit from the axial boundary in the standard problem "
+                                                         "(standard_axial_condition 2, standard_sieve_flow; negative: "
+                                                         "its share of the flow into the xylem or the phloem)"),
                                                   initialize=0., scale=SCALES.Compartment, location="node",
                                                   state_variable_type="NonInertialIntensive")
     elongation_sink: float = state_variable(**_doc("cm3 d-1", "the water the elongating wall or protoplast withdraws "
@@ -698,21 +704,35 @@ class MechaHydraulics(MechaSections):
 
     def _standard_axial_inflow(self, geometries, P_node, flow_condition) -> np.ndarray:
         """
-        The standard problem's flow condition (2): the flow into the xylem split among the vessels (the network's,
-        by cgroup) as their areas. The legacy (``_distribute_xylem_flow``) computes the ratios on its cell manager's
-        xylem (by tissue) and gives them by rank to the network's, so that a vessel may get another's (doc/legacy.rst, o: fixed).
+        The standard problem's flow conditions: the flow into the xylem (standard_axial_condition 2) split among the
+        vessels (the network's, by cgroup) as their areas; the flow into the phloem (standard_sieve_flow, where its
+        potential is NaN) among the protosieve cells (barrier 0, each once) or the sieve tubes (barrier > 0) as their
+        areas. The legacy (``_distribute_xylem_flow``) computes the xylem's ratios on its cell manager's xylem (by
+        tissue) and gives them by rank to the network's, so that a vessel may get another's (doc/legacy.rst, o:
+        fixed); its phloem's, the protosieve cells' areas, also by rank to the sieve tubes (ME-42: fixed).
         """
         out = np.zeros(self.data_structure.n_nodes())
+        barrier = np.asarray(self.data_structure.get("barrier"))
         for nodes, _, geo in geometries.values():
             v = nodes[0]
-            if not flow_condition[v]:
+            if flow_condition[v]:
+                vessels = geo.xylem_cells
+                total = 0.
+                for c in vessels:
+                    total += float(geo.cell_area[c])
+                for c in vessels:
+                    out[nodes[c]] = -float(P_node["standard_axial_flow"][v]) * (float(geo.cell_area[c]) / total)
+            flow = float(P_node["standard_sieve_flow"][v])
+            if np.isnan(flow):
                 continue
-            vessels = geo.xylem_cells
-            total = 0.
-            for c in vessels:
-                total += float(geo.cell_area[c])
-            for c in vessels:
-                out[nodes[c]] = -float(P_node["standard_axial_flow"][v]) * (float(geo.cell_area[c]) / total)
+            mature = barrier[v] > 0
+            potential = float(P_node["standard_psi_sieve_tube" if mature else "standard_psi_sieve"][v])
+            if not np.isnan(potential):
+                raise ValueError("standard_sieve_flow and the phloem's potential (standard_psi_sieve at barrier 0, "
+                                 "standard_psi_sieve_tube at barrier > 0) are both given: one condition only")
+            conduits = geo.sieve_cells if mature else np.unique(geo.protosieve_cells)
+            area = np.asarray(geo.cell_area[conduits], dtype=float)
+            out[nodes[conduits]] = -flow * area / area.sum()
         return out
 
     @rate(include_inactive=True)
@@ -817,7 +837,7 @@ class MechaHydraulics(MechaSections):
                             weight="soil_conductance", field="standard_psi")
         axial = boundary_set(filters={"axial_boundary_conductance": ">0"}, kind="robin", value="standard_axial_psi",
                              weight="axial_boundary_conductance", field="standard_psi")
-        axial_flow = boundary_set(filters={"standard_axial_inflow": "<0"}, kind="neumann", value="standard_axial_inflow",
+        axial_flow = boundary_set(filters={"standard_axial_inflow": "!=0"}, kind="neumann", value="standard_axial_inflow",
                                   field="standard_psi")
 
         @graph_jacobian
@@ -927,6 +947,12 @@ class MechaHydraulics(MechaSections):
                     psi_axial = 0.0
                     for c in vessels:
                         psi_axial += standard[nodes[c]] / len(vessels)
+                    psi_axial = float(psi_axial)
+                elif b == 0 and np.isfinite(P["standard_sieve_flow"][v]):  # the protophloem's: its cells' mean
+                    protosieve = np.unique(geo.protosieve_cells)
+                    psi_axial = 0.0
+                    for c in protosieve:
+                        psi_axial += standard[nodes[c]] / len(protosieve)
                     psi_axial = float(psi_axial)
                 out["standard_uptake"][i] = soil_uptake(geo, soil[nodes], standard[nodes], standard_soil[nodes])
                 out["kr"][i] = radial_conductivity(out["standard_uptake"][i], psi_soil, psi_axial, geo.perimeter, h)

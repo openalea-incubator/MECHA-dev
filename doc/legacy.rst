@@ -621,6 +621,15 @@ Inputs, outputs and scenarios
    * - ID
      - legacy
      - port
+   * - ME-42
+     - the phloem's flow condition (scenario ``flowrate_prox`` at the sieve boundary): split with the protophloem
+       cells' area ratios, given by rank to the protophloem (barrier 0) or to the sieve tubes (barrier > 0), so that a
+       sieve tube gets a protophloem cell's share, or NaN (GRANAP's roots have no protophloem cells: every right-hand
+       side NaN)
+     - ported (2026-10-28) and fixed: ``standard_sieve_flow``, split among the conduits as their own areas (the
+       protosieve cells, each once, at barrier 0; the sieve tubes at barrier > 0), where the phloem's potential is NaN
+       (both given: an error, as the legacy's); kr at barrier 0 through the protophloem's mean potential. Against
+       the legacy's scenario 1 given the sieve tubes' shares, to 10⁻¹² (``test_scenario_boundaries.py``)
    * - ME-27
      - its own GRANAR cellset XML builder: cell areas as polygons through the wall midpoints and junctions (0.77 % less
        area than the true outlines), wall positions moving the mean epidermis distance by 0.05 %. On GRANAR's

@@ -491,7 +491,7 @@ class MechaSolutes(MechaSections):
                              osmotic_slope, air_tail_conductance, air_head_conductance, air_offset)
             inflow = (soil_conductance * (standard_soil_psi - coupled_psi)
                       + axial_boundary_conductance * (standard_axial_psi - coupled_psi)
-                      + np.minimum(standard_axial_inflow, 0.))
+                      + standard_axial_inflow)
             water, _ = _row_scales(B, conductance, air_tail_conductance, air_head_conductance, soil_conductance,
                                    axial_boundary_conductance, diffusion_conductance, decay_rate)
             return (np.asarray(B @ F).reshape(-1) + standard_elongation_sink - inflow) / water

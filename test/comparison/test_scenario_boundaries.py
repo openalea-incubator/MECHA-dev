@@ -2,10 +2,12 @@
 The boundary conditions of the legacy's scenarios >= 1 in the standard problem, against its scenario 1
 (``Mecha.water_flux``): the elongation sink at barrier 0 (``elongation_BC``: standard_elongation,
 elongation_midpoint_rate, elongation_side_rate_difference), the sieve tubes' pressure at barrier > 0
-(standard_psi_sieve_tube) and the soil's left and right potentials (standard_psi_soil, standard_psi_soil_right), with
+(standard_psi_sieve_tube) or flow (standard_sieve_flow) and the soil's left and right potentials (standard_psi_soil, standard_psi_soil_right), with
 the osmotic terms (standard_osmotic) of its default scenario. The legacy's walls take MECHA's thickness for the
 elongation (its HydraulicWall's is 1 µm on GRANAP's path, doc/legacy.rst ME-39) and the port's x range (its cells'
-centroids, ME-22), and its k_sieve as a one-element array (its scenario loop indexes it, ME-36).
+centroids, ME-22), and its k_sieve as a one-element array (its scenario loop indexes it, ME-36). Its phloem flow is
+split among the sieve tubes as their areas, the port's (the legacy splits it with the protophloem's areas, none on
+these roots: NaN, ME-42).
 """
 import numpy as np
 import pytest
@@ -26,11 +28,13 @@ CASES = {
                                                         psi_soil_right=-3.0E3),
                                  port=dict(standard_psi_sieve_tube=1.1E4, standard_psi_soil=-1.0E3,
                                            standard_psi_soil_right=-3.0E3)),
+    "sieve_flow": dict(barrier=1, legacy=dict(psi_soil_left=-1.0E3, psi_soil_right=-1.0E3), sieve_flow=-2.0E-5,
+                       port=dict(standard_sieve_flow=-2.0E-5, standard_psi_soil=-1.0E3)),
 }
 PRESETS = dict(os_hetero=0., s_hetero=0., s_factor=1.0, presets_rules=2.)
 RESET = dict(standard_elongation=0., elongation_midpoint_rate=0., elongation_side_rate_difference=0.,
              standard_psi_sieve_tube=float("nan"), standard_psi_soil=0., standard_psi_soil_right=float("nan"),
-             standard_osmotic=0.)
+             standard_osmotic=0., standard_sieve_flow=float("nan"))
 
 
 @pytest.fixture(scope="module", params=list(CASES))
@@ -61,9 +65,18 @@ def both(case, request):
         network.x_min, network.x_max = float(x_cells.min()), float(x_cells.max())
         network.r_rel = network.x_rel = None
 
+    def sieve_flow(legacy_mecha):                 # scenario 1's phloem flow, split as the sieve tubes' areas (ME-42)
+        if "sieve_flow" not in spec:
+            return
+        flow, sieve = spec["sieve_flow"], legacy_mecha.network.cell_manager.sieve
+        area = np.array([cell.area for cell in sieve])
+        legacy_mecha.psi_sieve[1, :, 1] = np.nan
+        legacy_mecha.distributed_flow_sieve[1, 0, 1] = flow
+        legacy_mecha.distributed_flow_sieve[1, 1:len(sieve) + 1, 1] = flow * area / area.sum()
+
     legacy = legacy_osmotic(template_organ(case["anatomy"], g, case["segment"]), spec["barrier"],
                             height=case["height"], scenario_zero=spec["legacy"], edit_network=edit,
-                            hydraulic=dict(k_sieve=np.array([1.0])), **spec["legacy"])
+                            hydraulic=dict(k_sieve=np.array([1.0])), before_solve=sieve_flow, **spec["legacy"])
     nodes, edges = section_parts(ds)[case["segment"]]
     net = case["legacy"].network
     mecha_index = g.property("mecha_index")
