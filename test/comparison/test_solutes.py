@@ -162,3 +162,26 @@ def test_one_step_with_storage_and_decay(needle_case):
     np.testing.assert_allclose(sucrose[liquid], expected[liquid], rtol=0, atol=1e-11 * abs(expected).max())
     plain, _ = _run(c, c["reference"])
     assert np.abs(plain - sucrose)[liquid].max() > 1e-3 * abs(expected).max()      # the options matter
+
+
+def test_crank_nicolson(needle_case):
+    """θ = 0.5 (Crank–Nicolson, solute_theta): sucrose and starch coupled by the reaction against the reactions'
+    MultiSoluteTransport (its reaction in the cells only, Q-U4; it takes no k_deg), and sucrose alone with storage
+    fractions and a first-order loss against its SoluteTransport: to 1e-11 of the ranges."""
+    c = needle_case
+    liquid = c["liquid"]
+    c["solutes"].solute_theta = 0.5
+    try:
+        reference = legacy_reactions_step(c["organ"], d_apo=D_APO, d_pd=D_PD, d_mem=D_MEM, dt=DT, starch=STARCH,
+                                          cells_only=True, theta=0.5)
+        sucrose, starch = _run(c, reference, starch=STARCH)
+        for port, legacy in ((sucrose, reference["c1"]), (starch, reference["starch1"])):
+            legacy = legacy[c["index"]]
+            np.testing.assert_allclose(port[liquid], legacy[liquid], rtol=0, atol=1e-11 * abs(legacy).max())
+        reference = legacy_reactions_step(c["organ"], d_apo=D_APO, d_pd=D_PD, d_mem=D_MEM, dt=DT, storage=(0.3, 0.8),
+                                          k_deg=0.5, theta=0.5)
+        sucrose, _ = _run(c, reference, storage=(0.3, 0.8), k_decay=0.5)
+        expected = reference["c1"][c["index"]]
+        np.testing.assert_allclose(sucrose[liquid], expected[liquid], rtol=0, atol=1e-11 * abs(expected).max())
+    finally:
+        c["solutes"].solute_theta = 1.

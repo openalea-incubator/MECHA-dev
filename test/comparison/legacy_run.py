@@ -136,8 +136,9 @@ def legacy_osmotic(organ, barrier, height=200.0, scenario_zero=None, edit_networ
     The legacy's osmotic scenario (``Mecha.water_flux``, its scenario 1: the default scenario with *overrides*, e.g.
     os_hetero, s_hetero) on one maturity stage. *scenario_zero*: entries of its scenario 0 too (the scenario loop
     reads some of scenario i_maturity's: doc/legacy.rst, h); *edit_network*: a function of its NetworkBuilder, called
-    once the network is built; *hydraulic*: its HydraulicData's attributes to set ({name: value}). Returns dict(solution, psi_os {node: π}, sigma {(wall, cell): σ}, edge_Q {(u, v): Q},
-    total_flow, mecha (its Mecha, scenario 1 solved)).
+    once the network is built; *hydraulic*: its HydraulicData's attributes to set ({name: value}). Returns
+    dict(solution, psi_os {node: π}, sigma {(wall, cell): σ}, edge_Q {(u, v): Q}, total_flow, mecha (its Mecha,
+    scenario 1 solved)).
     """
     organ.export_to_adjencymatrix()
     data = legacy_input()
@@ -222,7 +223,7 @@ def legacy_reactions_needle(organ, psi_air=-1.0E4, psi_xyl=-200.0, sigma=0.7):
 def legacy_reactions_step(organ, d_apo=0.1, d_pd=0.5, d_mem=1e-6, dt=0.1, c_pulse=50e-6, starch=None, cells_only=False,
                           source=None, solute_sigma=None, osmotic_term=True, air_flows=False, reference=None,
                           c_start=None, starch_start=None, psi_air=-1.0E4, psi_xyl=-200.0, sigma=0.7, storage=None,
-                          k_deg=0.0):
+                          k_deg=0.0, theta=1.0):
     """
     One transport step of the reactions branch's needle (``simulations/needle.py``, NeedleDynamicSimulation), on the
     water state of legacy_reactions_needle: its SoluteTransport ('full', SG, θ = 1), the solute's σ 0 and the air
@@ -234,7 +235,7 @@ def legacy_reactions_step(organ, d_apo=0.1, d_pd=0.5, d_mem=1e-6, dt=0.1, c_puls
     *source* {cell id: increment}, its photosynthetic increment before the step; from *c_start* (and *starch_start*)
     instead of the pulse, on the water state *reference* (a previous step's, its air flows already as *air_flows*)
     to chain steps; with *storage* (C_wall, C_cell), its capacitance's storage fractions, and *k_deg* (d⁻¹) its
-    first-order degradation. Returns dict(D, volumes, flows
+    first-order degradation; *theta* its time step's θ. Returns dict(D, volumes, flows
     {(u, v): Q}, bc, c0, c1[, starch1]).
     """
     from scipy.sparse import csgraph
@@ -305,19 +306,19 @@ def legacy_reactions_step(organ, d_apo=0.1, d_pd=0.5, d_mem=1e-6, dt=0.1, c_puls
         o.psi_os = 0.0
     try:
         s0 = np.zeros(c0.size) if starch_start is None else np.asarray(starch_start, dtype=float)
-        _legacy_solve(out, st, mecha, geometry, cap, bc, c_prev, s0, starch, cells_only, kinds, nwj)
+        _legacy_solve(out, st, mecha, geometry, cap, bc, c_prev, s0, starch, cells_only, kinds, nwj, theta)
     finally:
         for o, value in zip(held, saved):
             o.psi_os = value
     return out
 
 
-def _legacy_solve(out, st, mecha, geometry, cap, bc, c_prev, s_prev, starch, cells_only, kinds, nwj):
+def _legacy_solve(out, st, mecha, geometry, cap, bc, c_prev, s_prev, starch, cells_only, kinds, nwj, theta=1.0):
     """legacy_reactions_step's step: its SoluteTransport, or its MultiSoluteTransport with starch."""
     from openalea.mecha.legacy_reactions.utils.solute_transport import MultiSoluteTransport, SoluteTransport
     if starch is None:
         out["c1"] = st.solve(h=0, i_maturity=0, i_scenario=1, rhs=np.zeros(c_prev.size), boundary_conditions=bc,
-                             c_prev=c_prev, theta=1.0, scheme="sg")
+                             c_prev=c_prev, theta=theta, scheme="sg")
     else:
         immobile = SoluteTransport(mecha, {"apo_wall": 0.0, "plasmodesmata": 0.0, "membrane": 0.0}, cap,
                                    mode="full", mobile=False, geometry=geometry)
@@ -330,7 +331,7 @@ def _legacy_solve(out, st, mecha, geometry, cap, bc, c_prev, s_prev, starch, cel
             multi._mode_volumes = lambda i_maturity: volumes
         out["c1"], out["starch1"] = multi.solve_coupled(h=0, i_maturity=0, i_scenario=1,
                                                        c_prev=[c_prev, s_prev],
-                                                       boundary_conditions=[bc, None], theta=1.0, scheme="sg")
+                                                       boundary_conditions=[bc, None], theta=theta, scheme="sg")
 
 
 def legacy_fractions(organ, barrier, height=200.0):
@@ -363,12 +364,14 @@ def legacy_standard_solute_flux(run, c_prev, boundary_conditions, d_apo=0.1, d_p
                                 rhs=None):
     """
     One solute step of the legacy's ``Mecha.standard_solute_flux`` on *run* (a legacy_section's, its first maturity
-    stage's standard problem: its scenario 0's edge flows), from *c_prev* (by legacy index) with the Dirichlet
-    *boundary_conditions* {legacy index: c}; *dt* None: its steady state. Returns the concentrations (its mode's
-    nodes).
+    stage's standard problem: its scenario 0's edge flows), from *c_prev* (every node, by legacy index) with the
+    Dirichlet *boundary_conditions* {legacy index: c}; *dt* None: its steady state. Returns the concentrations of its
+    *mode*'s nodes (the apoplast's: walls and junctions; the symplast's: the cells).
     """
     params = {"apo_wall": d_apo, "plasmodesmata": d_pd, "membrane": d_mem, "conserve_boundary": conserve_boundary}
-    size = {"full": c_prev.size, "apo": run.network.n_wall_junction, "sym": run.network.n_cells}[mode]
+    nwj = run.network.n_wall_junction
+    c_prev = {"full": c_prev, "apo": c_prev[:nwj], "sym": c_prev[nwj:]}[mode]
+    size = c_prev.size
     return run.mecha.standard_solute_flux(h=0, i_maturity=0, i_scenario=0, diffusion_params=params,
                                           capacitance_params=None if dt is None else {"dt": dt}, mode=mode,
                                           rhs=np.zeros(size) if rhs is None else rhs,

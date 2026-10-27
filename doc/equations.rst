@@ -353,10 +353,19 @@ with the Scharfetter–Gummel scheme (``edge_weights``): with :math:`P = F / D_e
 
    J = D_e\,\big(B(-P)\,c_\text{tail} - B(P)\,c_\text{head}\big),
 
-upwind (:math:`J = \max(F,0)\,c_\text{tail} + \min(F,0)\,c_\text{head}`) where :math:`D_e = 0`.
+upwind (:math:`J = \max(F,0)\,c_\text{tail} + \min(F,0)\,c_\text{head}`) where :math:`D_e = 0`. With
+``solute_scheme`` 2, the upwind scheme on every edge (the reactions' default): :math:`J = D_e (c_\text{tail} -
+c_\text{head}) + \max(F,0)\,c_\text{tail} + \min(F,0)\,c_\text{head}`.
 
-**Balance** (``_transport``), implicit Euler over :math:`\Delta t` (days), :math:`V` the node's volume
-(``_node_volumes``: a wall :math:`\ell_w h t`, a junction :math:`\ell_j h t / 2`, a cell :math:`A_c h`, × 10⁻¹²):
+**Pathways** (``solute_pathway``; the reactions' modes): 1 the whole liquid network; 2 the apoplast only (the walls and
+junctions, along the wall edges); 3 the symplast only (the protoplasts, through the plasmodesmata). The other nodes
+keep their concentration; the liquid boundary below is still the water's (the whole liquid network's), so that the
+water crossing a membrane out of the pathway leaves its solutes behind.
+
+**Balance** (``_transport``), implicit Euler over :math:`\Delta t` (days) as written below, :math:`V` the node's volume
+(``_node_volumes``: a wall :math:`\ell_w h t`, a junction :math:`\ell_j h t / 2`, a cell :math:`A_c h`, × 10⁻¹²);
+with ``solute_theta`` :math:`\theta < 1` (0.5: Crank–Nicolson), every term but the time derivatives and the sources is
+:math:`\theta` × its value at the step's end + :math:`(1 - \theta)` × its value at its start, at the step's flows:
 
 .. math::
 

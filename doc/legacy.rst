@@ -721,9 +721,13 @@ The ``reactions`` branch
      - the steady coupled solver (Picard, JFNK, continuation), the calibration package, the ``apo`` and ``sym`` modes,
        the upwind-only solve, θ ≠ 1: used by no simulation. The capacitance's storage fractions (``C_wall``,
        ``C_cell``) and the single-species degradation (``k_deg``), used by ``develop``'s tutorial 04
-     - not ported; implicit Euler only (θ = 1). The storage fractions and the degradation ported (2026-10-27):
-       ``storage_fraction_wall``, ``storage_fraction_cell``, ``k_decay`` (sucrose only; the starch stores in its whole
-       volume), compared to 10⁻¹¹ (``test_solutes.py``)
+     - ported (2026-10-27): the storage fractions and the degradation (``storage_fraction_wall``,
+       ``storage_fraction_cell``, ``k_decay``: sucrose only, the starch stores in its whole volume), to 10⁻¹¹
+       (``test_solutes.py``); the modes (``solute_pathway`` 2, 3), the upwind scheme (``solute_scheme`` 2) and θ
+       (``solute_theta``), to 10⁻¹¹ (``test_standard_solutes.py``; θ with starch, ``test_solutes.py``); the steady
+       coupled solve, below. The operators' ``'D'`` and ``'A'`` alone (diffusion only, advection only: a diagnostic
+       of the operator, its diffusivities or its flows at 0 do the same) and the calibration package are not
+       ported
 
 The ``develop`` branch
 ----------------------
