@@ -223,6 +223,14 @@ the potential ``collar_psi`` (``collar_condition`` 1) or the flow ``collar_flow`
 conductances, :math:`q_v = -Q_\text{collar}\,A_v^2 / \sum A^2` (``collar_condition`` 2); each leaf organ's
 transpiration :math:`E` as a Neumann outflow at its leaf-surface node, :math:`q = -E`.
 
+**Transmembrane fractions** (``_standard_transmembrane_fraction``, MECHA's standard transmembrane fractions): per
+membrane, its standard flow from wall to cell over its section's standard uptake, :math:`f_m = Q_{w \to c} / Q_\text{std}`;
+none (0) on the membranes of the intercellular spaces and of the mature vessels (:math:`b > 0`). Each membrane's layer
+row (``osmotic.membrane_rows``: its cell's rank's row; + 1 on an exodermis membrane facing the epidermis; on an
+endodermis membrane facing the cortex + 3, + 2 for a passage cell at :math:`b = 2`; + 1 on a passage cell's facing the
+stele at :math:`b = 2`). ``postprocess.transmembrane_layers`` and ``transmembrane_cells`` sum them by row and by cell,
+the positive and the negative apart.
+
 **Water potential** (``_water_potential``): :math:`\psi_w = \psi + \pi` on the liquid nodes, and Kelvin's liquid
 equivalent :math:`\psi_w = \ln(x)/\alpha` on the air nodes (``_liquid_equivalent``).
 
@@ -336,7 +344,8 @@ plasmodesmata's quantity and aperture as above, :math:`t` the thickness of the w
 ``thickness_source`` 2, ``thickness`` with 1); :math:`f_\text{mem} = \ell_e h \, 10^{-4} / d_e` on every membrane; :math:`D_\text{apo}`, :math:`D_\text{pd}`, :math:`D_\text{mem}` the diffusivities
 (cm² d⁻¹).
 
-**Advection** by the water's flow :math:`F = Q` (the plant problem's), :math:`F = (1 - \sigma)\,Q` on the membranes,
+**Advection** by the water's flow :math:`F = Q` (the plant problem's; the standard problem's with ``solute_flows`` 2,
+the legacy's ``standard_solute_flux``), :math:`F = (1 - \sigma)\,Q` on the membranes,
 with the Scharfetter–Gummel scheme (``edge_weights``): with :math:`P = F / D_e` and :math:`B(x) = x/(e^x - 1)`
 (``bernoulli``), the solute's flow from tail to head is
 

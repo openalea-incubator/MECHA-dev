@@ -92,6 +92,10 @@ class MechaSolutes(MechaSections):
     flow: float = input_variable(**_doc("cm3 d-1", "the water's flow along the edge (MechaHydraulics' plant problem)"),
                                  by="Hydraulics", initialize=0., scale=SCALES.Connection, location="edge",
                                  state_variable_type="NonInertialExtensive")
+    standard_flow: float = input_variable(**_doc("cm3 d-1", "the water's flow along the edge in MechaHydraulics' "
+                                                           "standard problem (solute_flows 2)"),
+                                          by="Hydraulics", initialize=0., scale=SCALES.Connection, location="edge",
+                                          state_variable_type="NonInertialExtensive")
     apoplastic_diffusion_factor: float = input_variable(**_doc("cm", "MechaHydraulics'"), by="Hydraulics",
                                                         initialize=0., scale=SCALES.Connection, location="edge",
                                                         state_variable_type="NonInertialIntensive")
@@ -132,6 +136,8 @@ class MechaSolutes(MechaSections):
                                               "1 (develop's conserve_boundary), 0 none (the reactions branch's)", 1.)
     c_boundary: float = _p("mol cm-3", "the sucrose concentration of the liquid water entering from the boundary", 0.)
     solute_temperature: float = _p("K", "the temperature of van't Hoff's law", 298.15)
+    solute_flows: float = _p("", "the water flows carrying the solutes: 1 the plant problem's (flow), 2 the standard "
+                                 "problem's (standard_flow: the legacy's standard_solute_flux, each section alone)", 1.)
 
     # ── State variables ──
     sucrose: float = state_variable(**_doc("mol cm-3", "sucrose concentration (liquid nodes)"), initialize=0.,
@@ -180,7 +186,7 @@ class MechaSolutes(MechaSections):
                                                       state_variable_type="NonInertialIntensive")
 
     @rate(include_inactive=True)
-    def _tail_weight(self, flow, reflection_coefficient, apoplastic_diffusion_factor,
+    def _tail_weight(self, flow, standard_flow, reflection_coefficient, apoplastic_diffusion_factor,
                            symplastic_diffusion_factor, membrane_diffusion_factor, node_volume, vapour_node, kind,
                            cgroup, tissue, network_path) \
             -> tuple[np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,
@@ -196,6 +202,8 @@ class MechaSolutes(MechaSections):
                                "c_boundary", "storage_fraction_wall", "storage_fraction_cell", "k_decay")}
         liquid = np.asarray(vapour_node) == 0
         path = np.asarray(network_path)
+        standard = np.asarray(self.parameter_values("solute_flows", "edge")) == 2
+        flow = np.where(standard, np.asarray(standard_flow, dtype=float), np.asarray(flow, dtype=float))
         on_liquid = liquid[view.tail] & liquid[view.head] & np.isin(path, (WALL_PATH, MEMBRANE, PLASMODESMATA))
         De = (np.asarray(apoplastic_diffusion_factor) * P_edge["d_apoplast"]
               + np.asarray(symplastic_diffusion_factor) * P_edge["d_plasmodesmata"]

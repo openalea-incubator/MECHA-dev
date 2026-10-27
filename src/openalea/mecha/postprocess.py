@@ -59,3 +59,49 @@ def axial_conductances(geo, height, barrier) -> tuple:
     if barrier > 0:
         return total(geo.typed["xylem"], VISCOSITY_XYLEM), total(geo.typed["sieve"], VISCOSITY_PHLOEM)
     return 0., total(geo.typed["protosieve"], VISCOSITY_PHLOEM)
+
+
+def transmembrane_layers(ds, segment) -> "pd.DataFrame":
+    """
+    The section *segment*'s standard transmembrane flows by layer row (MECHA's ``uptake_layer_plus``, ``_minus``,
+    ``stf_layer_plus``, ``_minus``), from MechaHydraulics' standard_flow, standard_transmembrane_fraction and
+    membrane_layer: per row, the membranes' flows into their cells (cm³ d⁻¹) summed where positive and where negative,
+    and their fractions likewise.
+    """
+    import pandas as pd
+    from openalea.mecha.geometry import section_parts
+    _, edges = section_parts(ds)[segment]
+    layer = np.asarray(ds.get("membrane_layer"))[edges].astype(np.int64)
+    fraction = np.asarray(ds.get("standard_transmembrane_fraction"))[edges]
+    uptake = np.asarray(ds.get("standard_uptake"))[list(ds.entity_ids("SubOrgan")).index(segment)]
+    flow = fraction * uptake
+    on = layer >= 0
+    n = int(layer[on].max()) + 1 if on.any() else 0
+
+    def by_row(values):
+        return np.bincount(layer[on], weights=values[on], minlength=n)
+    return pd.DataFrame({"layer": np.arange(n), "uptake_plus": by_row(np.maximum(flow, 0.)),
+                         "uptake_minus": by_row(np.minimum(flow, 0.)),
+                         "fraction_plus": by_row(np.maximum(fraction, 0.)),
+                         "fraction_minus": by_row(np.minimum(fraction, 0.))})
+
+
+def transmembrane_cells(ds, segment) -> "pd.DataFrame":
+    """
+    The section *segment*'s standard transmembrane fractions by protoplast (MECHA's ``stf_cell_plus``, ``_minus``):
+    per cell (its DataStructure node), its membranes' fractions summed where positive and where negative.
+    """
+    import pandas as pd
+    from openalea.mecha.geometry import section_parts
+    nodes, edges = section_parts(ds)[segment]
+    view = ds.to_graph_view()
+    kind = np.asarray(ds.get("kind"))
+    on = np.asarray(ds.get("membrane_layer"))[edges] >= 0
+    fraction = np.asarray(ds.get("standard_transmembrane_fraction"))[edges][on]
+    tail, head = view.tail[edges][on], view.head[edges][on]
+    cell = np.where(kind[tail] == 0, tail, head)
+    cells = nodes[kind[nodes] == 0]
+    index = np.searchsorted(cells, cell)
+    return pd.DataFrame({"node": cells,
+                         "fraction_plus": np.bincount(index, weights=np.maximum(fraction, 0.), minlength=cells.size),
+                         "fraction_minus": np.bincount(index, weights=np.minimum(fraction, 0.), minlength=cells.size)})

@@ -331,3 +331,47 @@ def _legacy_solve(out, st, mecha, geometry, cap, bc, c_prev, s_prev, starch, cel
         out["c1"], out["starch1"] = multi.solve_coupled(h=0, i_maturity=0, i_scenario=1,
                                                        c_prev=[c_prev, s_prev],
                                                        boundary_conditions=[bc, None], theta=1.0, scheme="sg")
+
+
+def legacy_fractions(organ, barrier, height=200.0):
+    """
+    The legacy's standard transmembrane fractions (``Mecha.water_flux``, its scenario 0): dict(membranes [(wall,
+    cell)] in its membrane order, stf_mb, stf_layer_plus, stf_layer_minus, uptake_layer_plus, uptake_layer_minus,
+    stf_cell_plus, stf_cell_minus, total_flow, solution), each of its scenario 0 and maturity stage 0.
+    """
+    organ.export_to_adjencymatrix()
+    data = legacy_input()
+    data.geometry.set_maturity_stages([barrier], height=[height])
+    network = NetworkBuilder(organ)
+    network.populate_from_network()
+    mecha = Mecha(data, network=network)
+    mecha.water_flux(verbose=False)
+    membranes = []
+    for node, edges in network.graph.adjacency():
+        i = mecha.indice[node]
+        if i < network.n_walls:
+            membranes += [(i, mecha.indice[j]) for j, attrs in edges.items() if attrs["path"] == "membrane"]
+    out = {name: np.asarray(getattr(mecha, name))[..., 0, 0].copy() for name in
+           ("stf_mb", "stf_layer_plus", "stf_layer_minus", "uptake_layer_plus", "uptake_layer_minus",
+            "stf_cell_plus", "stf_cell_minus")}
+    return dict(membranes=membranes, total_flow=float(np.asarray(mecha.total_flow[0][0]).reshape(-1)[0]),
+                solution=np.asarray(mecha.results[0]["solution"]).reshape(-1), mecha=mecha, **out)
+
+
+def legacy_standard_solute_flux(run, c_prev, boundary_conditions, d_apo=0.1, d_pd=0.5, d_mem=1e-6, dt=0.1,
+                                mode="full", theta=1.0, scheme="sg", operators="T", conserve_boundary=True,
+                                rhs=None):
+    """
+    One solute step of the legacy's ``Mecha.standard_solute_flux`` on *run* (a legacy_section's, its first maturity
+    stage's standard problem: its scenario 0's edge flows), from *c_prev* (by legacy index) with the Dirichlet
+    *boundary_conditions* {legacy index: c}; *dt* None: its steady state. Returns the concentrations (its mode's
+    nodes).
+    """
+    params = {"apo_wall": d_apo, "plasmodesmata": d_pd, "membrane": d_mem, "conserve_boundary": conserve_boundary}
+    size = {"full": c_prev.size, "apo": run.network.n_wall_junction, "sym": run.network.n_cells}[mode]
+    return run.mecha.standard_solute_flux(h=0, i_maturity=0, i_scenario=0, diffusion_params=params,
+                                          capacitance_params=None if dt is None else {"dt": dt}, mode=mode,
+                                          rhs=np.zeros(size) if rhs is None else rhs,
+                                          boundary_conditions=boundary_conditions,
+                                          c_prev=None if dt is None else c_prev, theta=theta, operators=operators,
+                                          scheme=scheme)

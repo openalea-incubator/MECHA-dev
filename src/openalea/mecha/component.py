@@ -22,8 +22,8 @@ from openalea.metafspm.solve.decorator import (boundary_set, graph_jacobian, gra
 from openalea.mecha.conductance import (Network, assemble, boundary_terms, cortex_parameters, edge_conductances,
                                        elongation_sink, kelvin_alpha, set_edge_ends, set_wall_thickness,
                                        sieve_tube_terms, vapour_conductances)
-from openalea.mecha.geometry import (AXIAL_JUNCTION, LEAF_SURFACE, STOMATAL, XYLEM_CGROUPS, phi_thick_cells, section_geometry,
-                                     section_of, section_parts)
+from openalea.mecha.geometry import (AXIAL_JUNCTION, LEAF_SURFACE, MEMBRANE, STOMATAL, XYLEM_CGROUPS, phi_thick_cells,
+                                     section_geometry, section_of, section_parts)
 from openalea.mecha.postprocess import (VISCOSITY_PHLOEM, VISCOSITY_XYLEM, axial_conductances, poiseuille,
                                         radial_conductivity, soil_uptake)
 
@@ -495,6 +495,19 @@ class MechaHydraulics(MechaSections):
                                                    "plant problem"),
                                  initialize=0., scale=SCALES.Connection, location="edge",
                                  state_variable_type="NonInertialIntensive")
+    standard_transmembrane_fraction: float = state_variable(**_doc("adim", "the membrane's share of the section's "
+                                                                   "standard uptake: its standard flow from wall to "
+                                                                   "cell / the uptake (MECHA's standard transmembrane "
+                                                                   "fraction; 0 on the other edges and membranes_layer "
+                                                                   "-1)"),
+                                                             initialize=0., scale=SCALES.Connection, location="edge",
+                                                             state_variable_type="NonInertialIntensive")
+    membrane_layer: float = state_variable(**_doc("", "the membrane's layer row in its section (MECHA's radial "
+                                                      "discretisation, from the stele, 0, to the epidermis; -1: not a "
+                                                      "membrane, or one without transmembrane flow: an intercellular "
+                                                      "space's, a mature xylem vessel's)"),
+                                           initialize=-1., scale=SCALES.Connection, location="edge",
+                                           state_variable_type="descriptor")
     standard_uptake: float = state_variable(**_doc("cm3 d-1", "the section's water uptake from the soil, standard "
                                                               "problem"),
                                             initialize=np.nan, scale=SCALES.SubOrgan,
@@ -921,6 +934,38 @@ class MechaHydraulics(MechaSections):
         water = np.where(vapour, kelvin, water)
         return tuple(x for name in names for x in ((out[name],) if name == "kr" else (name, out[name]))) + (
             "standard_water_potential", water)
+
+    @totalstate(include_inactive=True)
+    def _standard_transmembrane_fraction(self, standard_flow, standard_uptake, barrier, network_path) \
+            -> tuple[np.ndarray, str, np.ndarray]:
+        """
+        Each membrane's standard transmembrane fraction (its standard flow from wall to cell / its section's standard
+        uptake: ``Mecha.standard_transmembrane_fractions``) and its layer row (postprocess.transmembrane_layers sums
+        them by layer), on the root sections solving the standard problem.
+        """
+        from openalea.mecha.osmotic import membrane_rows             # osmotic imports this module
+        ds = self.data_structure
+        view = ds.to_graph_view()
+        fraction, layer = np.zeros(ds.n_edges()), np.full(ds.n_edges(), -1.)
+        flow, path, kind = np.asarray(standard_flow, dtype=float), np.asarray(network_path), np.asarray(ds.get("kind"))
+        uptake, barrier = np.asarray(standard_uptake, dtype=float), np.asarray(barrier)
+        where = {int(v): i for i, v in enumerate(ds.entity_ids("SubOrgan"))}
+        standard = self.parameter_table("node")["standard_solve"] > 0
+        roots = self.section_roles()[1]
+        for segment, (nodes, edges, geo) in self.section_geometries().items():
+            if segment not in roots or not standard[nodes[0]]:
+                continue
+            local = np.full(ds.n_nodes(), -1, dtype=np.int64)
+            local[nodes] = np.arange(nodes.size)
+            membranes = edges[path[edges] == MEMBRANE]
+            tail, head = view.tail[membranes], view.head[membranes]
+            wall_is_tail = kind[tail] != 0
+            walls, cells = np.where(wall_is_tail, tail, head), np.where(wall_is_tail, head, tail)
+            rows = membrane_rows(geo, int(barrier[nodes[0]]), local[walls], local[cells])
+            into_cell = np.where(wall_is_tail, flow[membranes], -flow[membranes])
+            fraction[membranes] = np.where(rows >= 0, into_cell / uptake[where[segment]], 0.)
+            layer[membranes] = rows
+        return fraction, "membrane_layer", layer
 
 
 MechaHydraulics.PARAMETERS = tuple(MechaHydraulics._plant_parameter_fields())

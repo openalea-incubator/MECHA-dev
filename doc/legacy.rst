@@ -82,8 +82,7 @@ The legacy's chain and the port's modules
      - ``openalea.mecha.plots`` (tissues, ψ maps, radial profiles, conductances by pathway, pathway shares, flow
        vectors); no file export
    * - not ported
-     - ``coupled_solver`` (Picard, JFNK), ``scenario_builder``, ``calibration``,
-       ``standard_transmembrane_fractions``, ``standard_solute_flux``, the legacy's ``SoluteTransport``
+     - ``coupled_solver`` (Picard, JFNK), ``scenario_builder``, ``calibration``, the legacy's ``SoluteTransport``
      - —
 
 The tutorials are ported in ``example/tutorials/developer/`` (four notebooks on the metafspm components) and
@@ -581,8 +580,11 @@ The osmotic scenarios
        2.8 cm d⁻¹ is maize's, an input: a section's sink does not scale with its height)
    * - ME-26
      - the layer-wise uptake and transmembrane fractions (``standard_transmembrane_fractions``,
-       ``create_layer_discretization``)
-     - not ported (the layer rows are, for the presets)
+       ``create_layer_discretization``); the solutes on the standard problem's flows (``standard_solute_flux``)
+     - ported (2026-10-27): ``standard_transmembrane_fraction`` and ``membrane_layer`` per membrane,
+       ``postprocess.transmembrane_layers`` and ``transmembrane_cells``, compared per membrane to 10⁻¹⁰ and by layer
+       to 10⁻¹² (``test_transmembrane_fractions.py``); MechaSolutes' ``solute_flows`` 2, compared to 10⁻¹¹
+       (``test_standard_solutes.py``)
    * - ME-38
      - a cortex rank with no layer row (an incomplete outermost layer with no layer after it: the layer rows' loop
        skips it): the presets look its row up by value (``rank in rank_to_row``), 0 when absent
@@ -592,6 +594,17 @@ The osmotic scenarios
      - ``elongation_BC`` takes each wall's ``HydraulicWall.thickness``, which GRANAP's path leaves at its default,
        1 µm, while the conductances take the geometry's (1.5 µm)
      - fixed: the walls' thickness (``thickness_source``); the comparison sets the legacy's walls to 1.5 µm
+   * - ME-40
+     - the transmembrane fractions look a cell's layer row up by value (``rank in rank_to_row``, as ME-38): only the
+       membranes whose rank is one of the rows' numbers are counted (on GRANAP's monocot root, the epidermis,
+       exodermis, endodermis and pericycle: the cortex and the stele are left out, the fractions sum to −0.19)
+     - fixed: every membrane its row (``osmotic.membrane_rows``); the comparison takes the membranes the legacy counts
+   * - ME-41
+     - the transmembrane fractions compare the cell's id with ``geometry.passage_cell_ids`` and
+       ``intercellular_ids``, which hold the cell objects (``cell_manager.passage``, ``.intercellular``): the passage
+       cells' row offsets (barrier 2) are never applied, the intercellular spaces' membranes never excluded
+     - fixed: the original's rules (``membrane_rows``; ``intercellular=False`` keeps the spaces', for the
+       comparison)
 
 Inputs, outputs and scenarios
 -----------------------------
@@ -776,6 +789,10 @@ What ``develop`` (945b2be) adds to the refactored legacy, and the behaviours fou
        aperture
      - ``plots``: ``axis="signed"`` of ``radial_profile``, ``pathway_flows``, ``pathway_breakdown`` (each layer's wet
        and dry halves apart), ``wetdry_axis``, ``contact_distance_map``; developer tutorial 02
+   * - d9
+     - ``conserve_boundary`` enters only the upwind operator (``build_advection_matrix``): the Scharfetter–Gummel
+       operator, the needle's, has no liquid boundary whatever its value
+     - ``solute_boundary_advection`` acts in both schemes; the Scharfetter–Gummel comparisons set it to 0
 
 
 Constants

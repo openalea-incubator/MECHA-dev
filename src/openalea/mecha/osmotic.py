@@ -202,6 +202,30 @@ def wall_counts(geo):
     return counts
 
 
+def membrane_rows(geo, barrier, walls, cells, intercellular=True):
+    """
+    The layer row of each membrane (wall *walls[k]*, cell *cells[k]*: local nodes) for the transmembrane fractions
+    (``Mecha.standard_transmembrane_fractions``): its cell's rank's row (legacy_rows; a cortex rank without one, the
+    previous layer's: ME-38), + 1 for an exodermis membrane facing the epidermis, + 3 (a passage cell at barrier 2:
+    + 2) for an endodermis membrane facing the cortex, + 1 for a passage cell's facing the stele at barrier 2; -1 for
+    the membranes that carry no transmembrane flow: an intercellular space's, a mature xylem vessel's (barrier > 0).
+    *intercellular* False keeps the intercellular spaces' (the legacy's, which never excludes them: ME-41).
+    """
+    rank_to_row, _, _ = legacy_rows(geo.n_layer, geo.layer_dist)
+    counts = wall_counts(geo)
+    walls, cells = np.asarray(walls, dtype=np.int64), np.asarray(cells, dtype=np.int64)
+    rank = geo.cell_rank[cells]
+    row = np.array([_cortex_row(rank_to_row, int(r)) if 40 <= r < 50 else rank_to_row[int(r)] for r in rank])
+    passage = np.isin(cells, geo.typed["passage"]) & (barrier == 2)
+    endodermis = rank == 3
+    row = row + np.where((rank == 1) & (counts["epi"][walls] > 0), 1, 0)
+    row = row + np.where(endodermis & (counts["cortex"][walls] > 0), np.where(passage, 2, 3),
+                         np.where(endodermis & (counts["stele"][walls] > 0) & passage, 1, 0))
+    excluded = (np.isin(cells, geo.typed["intercellular"]) & intercellular) | \
+        (np.isin(cells, geo.xylem_cells) & (barrier > 0))
+    return np.where(excluded | np.isnan(row), -1, np.nan_to_num(row, nan=-1)).astype(np.int64)
+
+
 def tissue_values(P):
     """The legacy's osmotic potentials (hPa) by tissue (os_hetero), and reflection coefficients (s_hetero)."""
     os_cortex, os_sieve, hetero = P["os_cortex"], P["osmotic_sieve"], int(P["os_hetero"])
