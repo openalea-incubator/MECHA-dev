@@ -36,6 +36,7 @@ BARRIER_KEY = {
     7 : "Ex_cs",
     8 : "En_sub + Ex_sub",
     9 : "Ex_Lcap",
+    10 : "Ex_sub + Ex_lig",
     11 : "En_sub + Ex_sub + Scl_lig"
 }
 
@@ -937,6 +938,12 @@ class HydraulicData:
             (4, 4):   'cortex_factor',                # cortex–cortex
             (12, 12): 'phloem_companion_cell_factor',  # companion–companion
             (11, 11): 'phloem_sieve_tube_factor',      # sieve–sieve
+            (1, 1):   'exo_factor',                    # exo–exo
+            (2, 2):   'epi_factor',                    # epi–epi
+
+            # Outer part of the root (cross-tissue)
+            (1, 2):   ('epi_factor', 'exo_factor'),    # epi–exo (harmonic mean)
+            (1, 4):   'exo_factor',                    # exo–cortex/sclerenchyma
 
             # Cross-tissue: inner endodermis (peri/stele side)
             (3, 5):   'endo_in_factor',                # endo–stele
@@ -1113,6 +1120,8 @@ class HydraulicData:
             kpl_dict['cortex_factor'] = float(kpl_elem.get("cortex_factor", 1.0))
             kpl_dict['endo_in_factor'] = float(kpl_elem.get("endo_in_factor", 1.0))
             kpl_dict['endo_out_factor'] = float(kpl_elem.get("endo_out_factor", 1.0))
+            kpl_dict['exo_factor'] = float(kpl_elem.get("exo_factor", 1.0))
+            kpl_dict['epi_factor'] = float(kpl_elem.get("epi_factor", 1.0))
 
             self.kpl.append(kpl_dict)
 
@@ -1231,11 +1240,38 @@ class HydraulicData:
 
         return kw_barrier_casparian, kw_barrier_suberin_all, kw_barrier_lignin
 
+    def get_kw_opr_barrier_values(self, h: int, kw_barrier_casparian: float,
+                                  kw_barrier_suberin: List[float],
+                                  kw_barrier_lignin: float) -> Tuple[float, List[float], float]:
+        """Get the outer-part-of-root (OPR) barrier conductivities.
+
+        Optional ``kw_barrier`` attributes ``Casp_exo`` (exodermal Casparian
+        band), ``Sub_exo`` (exodermal suberin) and ``Lig_scl`` (sclerenchyma
+        lignin) let the exodermis/sclerenchyma differ from the endodermis.
+        Each falls back to the shared Casp / Sub / Lig value when absent.
+        """
+        if self.n_kw_barrier == self.n_hydraulics and h < len(self.kw_barrier_elems):
+            elem = self.kw_barrier_elems[h]
+        elif self.n_kw_barrier <= 1:
+            elem = self.kw_barrier_elems[0] if self.kw_barrier_elems else {}
+        else:
+            elem = self.kw_barrier_elems[int(h/(self.n_kaqp*self.n_kpl*self.n_kw)) % self.n_kw_barrier]
+
+        casp_exo = elem.get("Casp_exo")
+        sub_exo = elem.get("Sub_exo")
+        lig_scl = elem.get("Lig_scl")
+        casp_exo = kw_barrier_casparian if casp_exo is None else float(casp_exo)
+        sub_exo = list(kw_barrier_suberin) if sub_exo is None else [float(sub_exo)] * 2
+        lig_scl = kw_barrier_lignin if lig_scl is None else float(lig_scl)
+        return casp_exo, sub_exo, lig_scl
+
     def get_wall_conductivities(self, barrier: int, h: int) -> Dict[str, float]:
         """Get wall conductivities based on barrier type."""
         kw =  self.get_kw_value(h)
         kw_septa = self.get_kw_septa_value(h)
         kw_barrier_casparian, kw_barrier_suberin, kw_barrier_lignin = self.get_kw_barrier_values(h)
+        casp_exo, sub_exo, lig_scl = self.get_kw_opr_barrier_values(
+            h, kw_barrier_casparian, kw_barrier_suberin, kw_barrier_lignin)
         barrier_configs = {
             0: {  # No Casparian strip
                 'kw_endo_endo': kw,
@@ -1288,7 +1324,7 @@ class HydraulicData:
             },
             4: {  # Endodermis full and exodermis radial walls
                 'kw_endo_endo': kw_barrier_casparian,
-                'kw_exo_exo': kw_barrier_casparian,
+                'kw_exo_exo': casp_exo,
                 'kw_exo_epi': kw,
                 'kw_exo_cortex': kw,
                 'kw_septa': kw_septa,
@@ -1300,7 +1336,7 @@ class HydraulicData:
             },
             5: {  # Endodermal & exodermal Casparian strips
                 'kw_endo_endo': kw_barrier_casparian,
-                'kw_exo_exo': kw_barrier_casparian,
+                'kw_exo_exo': casp_exo,
                 'kw_exo_epi': kw,
                 'kw_exo_cortex': kw,
                 'kw_septa': kw_septa,
@@ -1312,9 +1348,9 @@ class HydraulicData:
             },
             6: {  # Exodermis full and endodermis radial walls
                 'kw_endo_endo': kw_barrier_casparian,
-                'kw_exo_exo': kw_barrier_casparian,
-                'kw_exo_epi': kw_barrier_suberin[1],
-                'kw_exo_cortex': kw_barrier_suberin[0],
+                'kw_exo_exo': casp_exo,
+                'kw_exo_epi': sub_exo[1],
+                'kw_exo_cortex': sub_exo[0],
                 'kw_septa': kw_septa,
                 'kw_cortex_cortex': kw,
                 'kw_endo_peri': kw,
@@ -1324,7 +1360,7 @@ class HydraulicData:
             },
             7: {  # Exodermis radial walls
                 'kw_endo_endo': kw,
-                'kw_exo_exo': kw_barrier_casparian,
+                'kw_exo_exo': casp_exo,
                 'kw_exo_epi': kw,
                 'kw_exo_cortex': kw,
                 'kw_septa': kw_septa,
@@ -1336,9 +1372,9 @@ class HydraulicData:
             },
             8: {  # Exodermis full suberized and endodermis full suberized
                 'kw_endo_endo': kw_barrier_casparian,
-                'kw_exo_exo': kw_barrier_casparian,
-                'kw_exo_epi': kw_barrier_suberin[1],
-                'kw_exo_cortex': kw_barrier_suberin[0],
+                'kw_exo_exo': casp_exo,
+                'kw_exo_epi': sub_exo[1],
+                'kw_exo_cortex': sub_exo[0],
                 'kw_septa': kw_septa,
                 'kw_cortex_cortex': kw,
                 'kw_endo_peri': kw_barrier_suberin[0],
@@ -1348,7 +1384,7 @@ class HydraulicData:
             },
             9: {  # Lignin Cap
                 'kw_endo_endo': kw_barrier_casparian,
-                'kw_exo_exo': kw_barrier_casparian,
+                'kw_exo_exo': casp_exo,
                 'kw_exo_epi': kw_barrier_lignin,
                 'kw_exo_cortex': kw,
                 'kw_septa': kw_septa,
@@ -1360,22 +1396,22 @@ class HydraulicData:
             },
             11: {  # Exodermis and endodermis fully suberized + lignified sclerenchyma
                 'kw_endo_endo': kw_barrier_casparian,
-                'kw_exo_exo': kw_barrier_casparian,
-                'kw_exo_epi': kw_barrier_suberin[1],
-                'kw_exo_cortex': kw_barrier_suberin[0],
+                'kw_exo_exo': casp_exo,
+                'kw_exo_epi': sub_exo[1],
+                'kw_exo_cortex': sub_exo[0],
                 'kw_septa': kw_septa,
                 'kw_cortex_cortex': kw,
                 'kw_endo_peri': kw_barrier_suberin[0],
                 'kw_endo_cortex': kw_barrier_suberin[1],
                 'kw_passage': kw,
                 'kw_phi_thick': kw_barrier_lignin,
-                'kw_scler': kw_barrier_lignin
+                'kw_scler': lig_scl
             },
             10: {  # Exodermis sub + lignin
                 'kw_endo_endo': kw,
-                'kw_exo_exo': kw_barrier_casparian,
-                'kw_exo_epi': kw_barrier_suberin[1],
-                'kw_exo_cortex': kw_barrier_suberin[0],
+                'kw_exo_exo': casp_exo,
+                'kw_exo_epi': sub_exo[1],
+                'kw_exo_cortex': sub_exo[0],
                 'kw_septa': kw_septa,
                 'kw_cortex_cortex': kw,
                 'kw_endo_peri': kw,
