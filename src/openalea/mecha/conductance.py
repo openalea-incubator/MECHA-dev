@@ -418,7 +418,8 @@ def soil_contact(net: Network, x_contact, junction_rule) -> np.ndarray:
     reactions branch's). A junction's cells are those of the walls it joins (the legacy's ``junction_wall_cell``).
     """
     contact = (net.border_wall | net.border_junction) & (net.x >= np.asarray(x_contact, dtype=float))
-    if not net.soil_contact_cell.any():
+    flags = getattr(net, "soil_contact_cell", None)                 # a stand-in network may have none
+    if flags is None or not flags.any():
         return contact
     cells = net.wall_cells
     flagged = np.where(cells >= 0, net.soil_contact_cell[np.maximum(cells, 0)], False)
@@ -480,7 +481,7 @@ def plasmodesmata_spatial_coefficients(net: Network, P: dict, e):
         of_section = np.full(int(net.section_of_node.max()) + 1, np.inf)
         of_section[net.section_of_edge[e]] = np.asarray(P[name], dtype=float)[e]
         return np.where(net.section_of_node >= 0, of_section[np.maximum(net.section_of_node, 0)], np.inf)
-    distance = contact_distances(net, soil_contact(net, per_node("x_contact"), per_node("contact_junction_rule")),
+    distance = contact_distances(net, soil_contact(net, per_node("x_contact"), per_node("contact_junction_rule") if "contact_junction_rule" in P else 1.),
                                  sections)
     d = 0.5 * (distance[net.a[e]] + distance[net.b[e]])
     c_wet = np.asarray(P["pd_spatial_c_wet"], dtype=float)[e]
@@ -516,7 +517,7 @@ def boundary_terms(net: Network, P: dict, barrier, height):
     kw = np.asarray(P["kw"], dtype=float)
     thickness = _thickness(net, P, np.arange(n))
     height = np.asarray(height, dtype=float)
-    contact = soil_contact(net, P["x_contact"], P["contact_junction_rule"])
+    contact = soil_contact(net, P["x_contact"], P.get("contact_junction_rule", 1.))
     soil = np.zeros(n)
     w = np.flatnonzero(net.border_wall & contact)
     soil[w] = kw[w] * (1.0E-04 * (net.wall_length[w] / 2 * height[w]) / (thickness[w] / 2))
@@ -528,7 +529,7 @@ def boundary_terms(net: Network, P: dict, barrier, height):
     xylem = (barrier > 0) & (net.xylem > 0)
     protosieve = (barrier == 0) & (net.protosieve > 0)
     with np.errstate(divide="ignore", invalid="ignore"):
-        measured = net.measured_axial_conductivity / (height / 1.0E04)      # a conduit's own over the height
+        measured = getattr(net, "measured_axial_conductivity", np.full(n, np.nan)) / (height / 1.0E04)      # a conduit's own over the height
         k_xyl = np.where(np.asarray(P["standard_axial_source"]) == 1,
                          np.where(np.isfinite(measured), measured, poiseuille(net.cell_area, height, VISCOSITY_XYLEM)),
                          k_xyl)

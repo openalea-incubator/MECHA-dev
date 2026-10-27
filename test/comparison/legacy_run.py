@@ -371,8 +371,6 @@ def legacy_fractions(organ, barrier, height=200.0):
     network = NetworkBuilder(organ)
     network.populate_from_network()
     mecha = Mecha(data, network=network)
-    if before_solve is not None:
-        before_solve(mecha)
     mecha.water_flux(verbose=False)
     membranes = []
     for node, edges in network.graph.adjacency():

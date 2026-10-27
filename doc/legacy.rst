@@ -856,7 +856,7 @@ The ``reactions`` branch
        against the Picard iteration with the reactions' r1 and r3 removed, the sucrose to 10⁻¹¹ and the water to
        10⁻¹² of their ranges (``test_coupled_steady.py``). The operators' ``'D'`` and ``'A'`` alone (diffusion
        only, advection only: a diagnostic of the operator) are not ported: the water flows at 0 (one potential for
-       the soil and the xylem) or the diffusivities at 0 give them, to 10⁻¹¹ and 2 × 10⁻⁵ of the range
+       the soil and the xylem) or the diffusivities at 0 give them, to 10⁻¹¹ and 5 × 10⁻⁵ of the range
        (``test_standard_solutes.py``, ``test_operators_alone``). The calibration package and the scenario builder are
        not ported (F9, F10)
 
