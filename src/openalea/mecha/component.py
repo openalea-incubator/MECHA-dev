@@ -98,7 +98,9 @@ class MechaSections(FunctionalComponent):
 
     barrier: float = input_variable(**_doc("", "the segment's apoplastic barriers (MECHA's maturity code: 0 none, 1 "
                                                  "endodermal Casparian strip, 2 + suberin with passage cells, 3 "
-                                                 "endodermis fully suberized, 4-9 exodermis variants)"),
+                                                 "endodermis fully suberized, 4-9 exodermis variants, 10 exodermis "
+                                                 "suberized with a Casparian strip, 11 endodermis and exodermis "
+                                                 "suberized and the sclerenchyma's walls lignified)"),
                                     by="Development", initialize=1., scale=SCALES.SubOrgan, location="node",
                                     mapping="broadcast", state_variable_type="descriptor")
     length: float = input_variable(**_doc("m", "the segment's length (MECHA's section height)"),

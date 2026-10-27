@@ -33,7 +33,12 @@ _KW_CONFIGS = {   # barrier: sources of _KW_KEYS (kw_septa is always kw_septa, k
     8: ("kw_casparian", "kw_casparian", "kw_suberin_out", "kw_suberin_in", "kw", "kw_suberin_in", "kw_suberin_out",
         "kw"),
     9: ("kw_casparian", "kw_casparian", "kw_lignin", "kw", "kw", "kw", "kw", "kw"),
+    10: ("kw", "kw_casparian", "kw_suberin_out", "kw_suberin_in", "kw", "kw", "kw", "kw"),
+    11: ("kw_casparian", "kw_casparian", "kw_suberin_out", "kw_suberin_in", "kw", "kw_suberin_in", "kw_suberin_out",
+         "kw"),
 }
+# the barrier codes lignifying every wall of a sclerenchyma cell (develop's kw_scler), and its source
+_KW_SCLER_CONFIGS = {11: "kw_lignin"}
 # a wall's interface (its two cells' cgroups, sorted) -> its kw key (HydraulicData.interface_kw_key_map)
 _KW_INTERFACES = {(3, 3): "kw_endo_endo", (3, 4): "kw_endo_cortex", (3, 5): "kw_endo_peri", (3, 11): "kw_endo_peri",
                   (3, 12): "kw_endo_peri", (3, 13): "kw_endo_peri", (3, 16): "kw_endo_peri", (3, 22): "kw_endo_peri",
@@ -105,6 +110,7 @@ class Network:
     rank: np.ndarray
     intercellular: np.ndarray     # bool per node (the cell manager's, by tissue)
     passage: np.ndarray
+    sclerenchyma: np.ndarray      # bool per node (by tissue)
     phi_thick: np.ndarray
     wall_cells: np.ndarray        # (n, 2) global nodes, -1
     distance_center_grav: np.ndarray
@@ -138,6 +144,7 @@ def assemble(n_nodes: int, n_edges: int, geometries: list, phi_thick=None) -> Ne
         edge_lateral_distance=edges_full(np.nan), edge_dist=edges_full(np.nan), cgroup=nodes_full(-1, np.int64),
         kind=nodes_full(-1, np.int64),
         rank=nodes_full(-1, np.int64), intercellular=nodes_full(False, bool), passage=nodes_full(False, bool),
+        sclerenchyma=nodes_full(False, bool),
         phi_thick=nodes_full(False, bool), wall_cells=nodes_full(-1, np.int64, (2,)),
         distance_center_grav=nodes_full(np.nan), x=nodes_full(np.nan), cell_area=nodes_full(0.), wall_thickness=nodes_full(np.nan), wall_length=nodes_full(0.),
         border_wall=nodes_full(False, bool), border_junction=nodes_full(False, bool), xylem=nodes_full(0, np.int64),
@@ -152,6 +159,7 @@ def assemble(n_nodes: int, n_edges: int, geometries: list, phi_thick=None) -> Ne
         net.rank[nodes] = geo.cell_rank
         net.intercellular[nodes[geo.typed["intercellular"]]] = True
         net.passage[nodes[geo.typed["passage"]]] = True
+        net.sclerenchyma[nodes[geo.typed["sclerenchyma"]]] = True
         if phi_thick is not None:
             net.phi_thick[nodes] = phi_thick[i]
         cells = geo.wall_cells
@@ -240,6 +248,9 @@ def wall_configuration(barrier, P) -> dict:
     config = {key: _per_code(codes, _KW_CONFIGS, P, i) for i, key in enumerate(_KW_KEYS)}
     config["kw_septa"] = np.asarray(P["kw_septa"], dtype=float)
     config["kw_phi_thick"] = np.asarray(P["kw_lignin"], dtype=float)
+    config["kw_scler"] = np.full(codes.size, np.nan)
+    for code, source in _KW_SCLER_CONFIGS.items():
+        config["kw_scler"] = np.where(codes == code, np.asarray(P[source], dtype=float), config["kw_scler"])
     meso_hypo = np.asarray(P["kw_meso_hypo"], dtype=float)
     config["kw_meso_hypo"] = np.where(np.isfinite(meso_hypo), meso_hypo, np.asarray(P["kw"], dtype=float))
     return config
@@ -314,6 +325,9 @@ def edge_conductances(net: Network, P: dict, barrier, height, factors: dict = No
     sub = {key: values[e] for key, values in kw_config.items()}
     kw_val = _select(interface[e], _KW_INTERFACES, sub, kw[e])
     kw_val = np.where(phi, sub["kw_phi_thick"], kw_val)
+    # a wall of a sclerenchyma cell, lignified at the barrier codes defining kw_scler (develop's barrier 11)
+    sclerenchyma = (count(net.sclerenchyma)[e] > 0) & np.isfinite(sub["kw_scler"])
+    kw_val = np.where(sclerenchyma, sub["kw_scler"], kw_val)
     kw_val = np.where(has_passage, sub["kw_passage"], kw_val)
     kw_val = np.where(ghost, sub["kw_septa"], kw_val)
     K_wall = kw_val * temp

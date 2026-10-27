@@ -15,9 +15,10 @@ Compartments); its edges are the membranes (wall–cell), the wall edges (wall�
 (cell–cell) (GRANAP's Connections); successive sections are joined by axial junctions between their conducting cells.
 :math:`t` is a wall's thickness, :math:`\ell_e` an edge's length, :math:`d_e` the distance between its nodes, a cell's
 cgroup its MECHA cell group (1 exodermis, 2 epidermis, 3 endodermis, 4 cortex, 5 stele, 11 sieve tube, 12 companion
-cell, 13 xylem, 16 pericycle, 23 protophloem). The barrier code :math:`b` (0–9) is the segment's maturity: 0 no
-barrier, 1 an endodermal Casparian strip, 2 suberin with passage cells, 3 a fully suberized endodermis, 4–9 exodermal
-variants.
+cell, 13 xylem, 16 pericycle, 22 cambium, 23 protophloem). The barrier code :math:`b` (0–11) is the segment's
+maturity: 0 no barrier, 1 an endodermal Casparian strip, 2 suberin with passage cells, 3 a fully suberized endodermis,
+4–9 exodermal variants, 10 a suberized exodermis with its Casparian strip (no endodermal strip), 11 the endodermis and
+exodermis suberized and the sclerenchyma's walls lignified.
 
 
 Geometry (``geometry.section_geometry``)
@@ -63,7 +64,8 @@ with :math:`k_w` (cm² hPa⁻¹ d⁻¹) chosen by rules (``wall_configuration``,
 two cells (exodermis, epidermis–exodermis, exodermis–cortex, cortex–cortex, endodermis, endodermis–cortex,
 endodermis–stele), each of which the barrier code sets to ``kw`` or to a barrier value (``kw_casparian``,
 ``kw_suberin_in``, ``kw_suberin_out``, ``kw_lignin``; the table is in :doc:`legacy`); then ``kw_lignin`` between two
-φ-thickened cells of the same rank, ``kw_passage`` next to a passage cell, ``kw_septa`` for a wall with two
+φ-thickened cells of the same rank, ``kw_lignin`` for every wall of a sclerenchyma cell at :math:`b = 11`,
+``kw_passage`` next to a passage cell, ``kw_septa`` for a wall with two
 intercellular cells at :math:`b > 0` and, with ``xylem_pieces``, :math:`K_w = 10^{-16}` for a wall between two xylem
 cells (a vessel's septa). The thickness :math:`t` is each wall's own (``thickness_source`` 2, GRANAP's) or one value
 for every wall (``thickness_source`` 1, ``thickness``).

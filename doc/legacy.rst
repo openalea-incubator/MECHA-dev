@@ -725,6 +725,13 @@ What ``develop`` (945b2be) adds to the refactored legacy, and the behaviours fou
      - 22 in both rules (the original rules: develop's frequencies as parameters, ``fplxheight_*_cambium``), its walls'
        ``kw_endo_peri``, ``kpl_cambium_stele_factor`` (rules 2, 1 by default); 24 and 26 companion cells in the
        original rules. GRANAP writes none of them (its cambium is 12)
+   * - d4
+     - barrier 10 (its comment "Exodermis sub + lignin", its README "suberized exodermis with Casparian strip"; no
+       endodermal Casparian strip; absent from ``BARRIER_KEY``) and 11 (barrier 8, ``kw_scler`` = the lignin value on
+       every wall of a ``sclerenchyma`` cell, after septa and passage cells, before φ-thickening and the interface
+       table)
+     - as coded (``test_develop_barriers.py``: bit for bit); the sclerenchyma by GRANAP's tissue (GRANAP gives it
+       cgroup 4), its walls after φ-thickening and before passage cells and septa (the legacy's precedence)
 
 
 Constants

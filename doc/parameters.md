@@ -18,7 +18,9 @@ MECHA's main parameters, with their default values. MECHA works in centimetres, 
 
 The barriers' stage is not a parameter but an input of each root segment, `barrier` (MECHA's maturity code): 1 an
 endodermal Casparian strip, 2 the endodermis suberized with passage cells, 3 fully suberized, 4–9 the exodermis'
-strip and suberin in various combinations, 0 none (a root tip whose xylem does not conduct yet).
+strip and suberin in various combinations, 10 the exodermis suberized with its strip, 11 both endodermis and
+exodermis suberized and the sclerenchyma's (fibres') walls lignified, 0 none (a root tip whose xylem does not
+conduct yet).
 
 The radial conductivity kr is given in cm hPa⁻¹ d⁻¹; 1 cm hPa⁻¹ d⁻¹ is 1/864 m s⁻¹ MPa⁻¹, the unit of most
 publications.

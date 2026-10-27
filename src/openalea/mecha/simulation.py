@@ -163,8 +163,8 @@ def simulate(parameters: dict = None, anatomy: dict = None, barrier: float = 1.,
     """Solve the water flow across one root cross section: GRANAP's anatomy (*anatomy*: its parameters, e.g.
     {"preset": "for_dicot_root", "cortex": {"n_layers": 3}}; a monocot root by default), MECHA's hydraulics with its
     defaults changed by *parameters* ({name: value}), the apoplastic barriers *barrier* (MECHA's maturity code: 1
-    an endodermal Casparian strip, 2 + suberin with passage cells, 3 a fully suberized endodermis, 4–9 the
-    exodermis' variants; 0, none, is a root tip whose water goes to the protophloem: the standard problem then needs
+    an endodermal Casparian strip, 2 + suberin with passage cells, 3 a fully suberized endodermis, 4–10 the
+    exodermis' variants, 11 both suberized and the sclerenchyma's walls lignified; 0, none, is a root tip whose water goes to the protophloem: the standard problem then needs
     parameters={"standard_psi_sieve": ...}), the soil at *soil_psi* and the xylem at *xylem_psi* (hPa).
 
     The summary: kr, the radial conductivity (cm hPa-1 d-1; kr_SI in m s-1 MPa-1), the water uptake (cm³ d-1), the

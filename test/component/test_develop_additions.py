@@ -12,14 +12,19 @@ from openalea.mecha.geometry import MEMBRANE, PLASMODESMATA, WALL_PATH
 from plants import anatomy_component, anatomy_data_structure, root
 
 
-def section(barrier=1., retag=None, preset=None, **parameters):
+def section(barrier=1., retag=None, preset=None, tissues=None, **parameters):
     """A one-segment root's conductances (and its network; GRANAP's *preset*, the monocot root by default), its cells'
-    cgroups changed by *retag* ({old: new}) before the first call, the component's *parameters* set."""
+    cgroups changed by *retag* ({old: new}) and their tissues by *tissues* ({old: new}) before the first call, the
+    component's *parameters* set."""
     g, ds, anatomy = anatomy_data_structure(root(1), anatomy_component(preset))
     cgroup = np.asarray(ds.get("cgroup"), dtype=float).copy()
     for old, new in (retag or {}).items():
         cgroup[cgroup == old] = new
     ds.set("cgroup", cgroup)
+    tissue = np.asarray(ds.get("tissue"), dtype=object).copy()
+    for old, new in (tissues or {}).items():
+        tissue[tissue == old] = new
+    ds.set("tissue", tissue)
     ds.register("barrier", np.full(ds.n_nodes(), float(barrier)), location="node")
     mecha = MechaHydraulics(data_structure=ds)
     for name, value in parameters.items():
@@ -59,3 +64,23 @@ def test_develop_companion_cells_in_the_original_rules():
     for tag in (24, 26):
         K, _ = section(preset="for_dicot_root", retag={12: tag}, kpl_PCC_factor=0.5)
         np.testing.assert_array_equal(K, K12)
+
+
+def test_the_sclerenchyma_lignified_at_barrier_11():
+    """The cortex retagged sclerenchyma: at barrier 11 (barrier 8 and the sclerenchyma's walls lignified), the walls
+    between two of its cells take kw_lignin instead of kw (barrier 8's cortex-cortex); without sclerenchyma,
+    barrier 11 is barrier 8."""
+    K8, net = section(barrier=8., tissues={"cortex": "sclerenchyma"})
+    K11, _ = section(barrier=11., tissues={"cortex": "sclerenchyma"})
+    walls = np.flatnonzero(net.in_section & net.junction_edge)
+    wall = np.where(np.isin(net.a[walls], np.flatnonzero(net.kind == 1)), net.a[walls], net.b[walls])
+    cells = net.wall_cells[wall]
+    both = (cells >= 0).all(axis=1) & net.sclerenchyma[np.maximum(cells, 0)].all(axis=1)
+    assert both.sum() > 0
+    mecha = MechaHydraulics
+    np.testing.assert_allclose(K11[walls[both]] / K8[walls[both]], mecha.kw_lignin / mecha.kw, rtol=1e-13)
+    untouched = ~(cells >= 0).any(axis=1) | ~net.sclerenchyma[np.maximum(cells, 0)].any(axis=1)
+    np.testing.assert_array_equal(K11[walls[untouched]], K8[walls[untouched]])
+    plain8, _ = section(barrier=8.)
+    plain11, _ = section(barrier=11.)
+    np.testing.assert_array_equal(plain11, plain8)

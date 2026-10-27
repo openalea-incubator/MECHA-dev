@@ -36,6 +36,7 @@ INTERCELLULAR_TYPES = ("intercellular", "air space", "aerenchyma")
 XYLEM_TYPES = ("protoxylem", "metaxylem", "xylem")
 SIEVE_TYPES = ("sieve", "phloem")
 PROTOSIEVE_TYPES = ("protosieve", "protophloem")
+SCLERENCHYMA_TYPES = ("sclerenchyma",)
 
 
 @dataclass
@@ -248,7 +249,7 @@ def section_geometry(section: Section) -> SectionGeometry:
     protosieve += extra_protosieve
     typed = {name: cells[np.isin(tissue[cells], types)] for name, types in (
         ("intercellular", INTERCELLULAR_TYPES), ("passage", ("passage",)), ("xylem", XYLEM_TYPES),
-        ("sieve", SIEVE_TYPES), ("protosieve", PROTOSIEVE_TYPES))}
+        ("sieve", SIEVE_TYPES), ("protosieve", PROTOSIEVE_TYPES), ("sclerenchyma", SCLERENCHYMA_TYPES))}
 
     wall_cells = np.full((n, 2), -1, dtype=np.int64)
     by_cell = np.lexsort((position[m_cell], m_wall))                # a wall's cells in cell order
