@@ -43,7 +43,9 @@ def needle_case():
     view = ds.to_graph_view()
     ends = np.c_[index[local[view.tail[edges]]], index[local[view.head[edges]]]]
     solutes = MechaSolutes(data_structure=ds, time_step=DT * 86400.)
-    for name, value in dict(d_apoplast=D_APO, d_plasmodesmata=D_PD, d_membrane=D_MEM).items():
+    # the reactions branch's: no solute carried by the liquid boundary (doc/legacy.rst, d7)
+    for name, value in dict(d_apoplast=D_APO, d_plasmodesmata=D_PD, d_membrane=D_MEM,
+                            solute_boundary_advection=0.).items():
         setattr(solutes, name, value)
     legacy = reference["reference"]["mecha"]
     graph = net.graph

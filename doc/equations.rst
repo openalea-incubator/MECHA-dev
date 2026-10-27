@@ -332,10 +332,15 @@ upwind (:math:`J = \max(F,0)\,c_\text{tail} + \min(F,0)\,c_\text{head}`) where :
 
 .. math::
 
-   V\frac{c - c^{\text{prev}}}{\Delta t} + \sum J + k_\text{syn} V c - k_\text{deg} V s = S, \qquad
-   V\frac{s - s^{\text{prev}}}{\Delta t} - k_\text{syn} V c + k_\text{deg} V s = 0,
+   V\frac{c - c^{\text{prev}}}{\Delta t} + \sum J + k_\text{syn} V c - k_\text{deg} V s + O\,c = S + I\,c_b,
+   \qquad V\frac{s - s^{\text{prev}}}{\Delta t} - k_\text{syn} V c + k_\text{deg} V s = 0,
 
 the reaction in the cells only, :math:`S` the source ``sucrose_source`` (mol d⁻¹), the sinks (the phloem-loading cells:
-Strasburger cells, else the phloem; and the xylem) held at ``c_sink``. After the step, the cells' osmotic potential
+Strasburger cells, else the phloem; and the xylem) held at ``c_sink``. :math:`O` and :math:`I` (cm³ d⁻¹, ≥ 0;
+``liquid_boundary_exchange``) are the water the node gives the boundary and takes from it, with
+``solute_boundary_advection`` 1 (develop's ``conserve_boundary``; 0 none): minus and plus its net outflow
+:math:`\sum_e F_e` along the liquid edges and the vapour edges. The boundary is what the section's liquid network
+exchanges with its outside: the soil, the axial boundaries, its axial junctions (the sections are solved apart);
+water leaving as vapour is an edge of that sum, so it leaves its solute behind. :math:`c_b` is ``c_boundary``. After the step, the cells' osmotic potential
 (van 't Hoff, ``_sucrose_osmotic_potential``) is :math:`\pi_c = -R\,T\,c` with :math:`R = 8.314 \times 10^4` hPa cm³
 mol⁻¹ K⁻¹, which the next water solve reads.

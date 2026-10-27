@@ -135,7 +135,7 @@ def legacy_osmotic(organ, barrier, height=200.0, **overrides):
     """
     The legacy's osmotic scenario (``Mecha.water_flux``, its scenario 1: the default scenario with *overrides*, e.g.
     os_hetero, s_hetero) on one maturity stage. Returns dict(solution, psi_os {node: π}, sigma {(wall, cell): σ},
-    edge_Q {(u, v): Q}, total_flow).
+    edge_Q {(u, v): Q}, total_flow, mecha (its Mecha, scenario 1 solved)).
     """
     organ.export_to_adjencymatrix()
     data = legacy_input()
@@ -159,7 +159,7 @@ def legacy_osmotic(organ, barrier, height=200.0, **overrides):
         sigma[(wall, cell)] = mb.sigma
     edge_Q = {(int(u), int(v)): float(attrs["Q"]) for u, v, attrs in network.graph.edges(data=True) if "Q" in attrs}
     return dict(solution=np.asarray(result["solution"]).reshape(-1), psi_os=psi_os, sigma=sigma, edge_Q=edge_Q,
-                total_flow=float(np.asarray(mecha.total_flow[0][1]).reshape(-1)[0]))
+                total_flow=float(np.asarray(mecha.total_flow[0][1]).reshape(-1)[0]), mecha=mecha)
 
 
 def legacy_reactions_needle(organ, psi_air=-1.0E4, psi_xyl=-200.0, sigma=0.7):

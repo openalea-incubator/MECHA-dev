@@ -745,6 +745,13 @@ What ``develop`` (945b2be) adds to the refactored legacy, and the behaviours fou
      - ``pd_spatial_profile`` (0 by default), ``pd_spatial_c_wet``, ``pd_spatial_c_dry``, ``pd_spatial_length_scale``;
        the distance by scipy's Dijkstra per section (``contact_distance``); compared to 10⁻¹² (both profiles, both
        roots)
+   * - d7
+     - ``conserve_boundary`` (True by default): the water each node exchanges with the boundary, its edges' flows'
+       residual, carries the node's concentration out where it leaves, ``c_boundary`` in where it enters (the
+       reactions branch: no such term, a node drained by the boundary concentrates, up to 1.8 × a Dirichlet source)
+     - ``solute_boundary_advection`` (1 by default; 0 the reactions branch's, for its comparisons), ``c_boundary``;
+       the vapour edges counted in the residual, so that evaporating water leaves its solutes behind (develop has no
+       vapour edges in a root); the exchange compared with ``_boundary_flux`` to 10⁻⁹ of its largest
 
 
 Constants
