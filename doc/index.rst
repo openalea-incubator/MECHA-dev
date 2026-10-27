@@ -44,6 +44,9 @@ after the first user tutorial.
     notebooks/developer/04_full_plant
     notebooks/developer/05_extend_the_component
     notebooks/developer/06_solute_storage_and_decay
+    notebooks/developer/07_section_options
+    notebooks/developer/08_standard_problem
+    notebooks/developer/09_solute_options
     components
     equations
     legacy

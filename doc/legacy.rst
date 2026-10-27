@@ -90,11 +90,10 @@ The legacy's chain and the port's modules
        the port's components), the legacy's ``SoluteTransport`` itself
      - —
 
-The tutorials are ported in ``example/tutorials/developer/`` (four notebooks on the metafspm components) and
-``example/tutorials/tutorial_01_input.py``, ``tutorial_02_bc.py``; ``example/comparison/tutorial_01_input.py`` and
-``tutorial_02_bc.py`` run the same sections through the legacy and the port. The diffusion tutorial (03) stays in
-``example/legacy/``; the solute transport is compared in ``example/comparison/compare_solutes.py`` and
-``compare_solutes_day.py``.
+The legacy's tutorials are in ``example/legacy/`` (with its inputs); ``example/comparison/tutorial_01_input.py``
+and ``tutorial_02_bc.py`` run their sections through the legacy and the port, ``compare_solutes.py`` and
+``compare_solutes_day.py`` the solute transport. The port's tutorials are in ``example/tutorials/``: the user series,
+and the developer series, whose tutorials 07–09 go through every option of the coverage table below.
 
 
 Geometry

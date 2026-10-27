@@ -79,11 +79,14 @@ for the anatomies):
 |---|---|
 | [00 — overview](example/tutorials/developer/00_overview.ipynb) | the modules, the original MECHA and its reactions branch, how the port is validated, the docs |
 | [01 — GRANAP and MECHA](example/tutorials/developer/01_granap_mecha.ipynb) | coupling GRANAP's anatomies and MECHA's hydraulics in a plant model; MECHA's inputs by role; its parameters in the plants' scenarios; the barriers |
-| [02 — a soil gradient](example/tutorials/developer/02_soil_gradient.ipynb) | the plant problem with a soil drier on one side of a root section: where the water enters and leaves, hydraulic redistribution, the barriers' role |
+| [02 — a soil gradient](example/tutorials/developer/02_soil_gradient.ipynb) | the plant problem with a soil drier on one side of a root section: where the water enters and leaves, hydraulic redistribution, the barriers' role; a root partly out of contact, by position or by cells |
 | [03 — a pine needle's water and sugars](example/tutorials/developer/03_needle_solutes.ipynb) | an organ of three sections joined axially; its transpiration as an Organ-scale input; MechaSolutes over a day (photosynthesis, starch, the sugars' osmotic feedback) |
 | [04 — a whole plant in its soil](example/tutorials/developer/04_full_plant.ipynb) | the soil–plant–atmosphere seedling: the plant model, the soil model and their links, run to the fixed point |
 | [05 — extend the component](example/tutorials/developer/05_extend_the_component.ipynb) | a new variable and process in MECHA's component, run and tested |
 | [06 — solute storage and decay](example/tutorials/developer/06_solute_storage_and_decay.ipynb) | the solutes' storage fractions, first-order loss and liquid boundary |
+| [07 — the section's options](example/tutorials/developer/07_section_options.ipynb) | the barrier codes 0–11, φ-thickenings, aquaporins, plasmodesmata rules and factors, walls and air spaces, xylem pieces, tracheids, measured axial conductances, monocots and dicots |
+| [08 — the standard problem](example/tutorials/developer/08_standard_problem.ipynb) | its boundaries (the soil's two sides, the xylem's and the phloem's pressures or flows, the elongation zone), the osmotic scenarios, the flows by layer |
+| [09 — the solutes' options](example/tutorials/developer/09_solute_options.ipynb) | the pathways (apoplast, symplast), the schemes and time steps, held concentrations and steady states, the water and the sugar coupled |
 
 Run them locally with `jupyter lab example/tutorials/` (the `mecha` environment above). Examples:
 [`example/hydraulics/`](example/hydraulics/) (sections, a root axis, the osmotic presets),
