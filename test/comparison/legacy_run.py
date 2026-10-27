@@ -378,3 +378,66 @@ def legacy_standard_solute_flux(run, c_prev, boundary_conditions, d_apo=0.1, d_p
                                           boundary_conditions=boundary_conditions,
                                           c_prev=None if dt is None else c_prev, theta=theta, operators=operators,
                                           scheme=scheme)
+
+
+def legacy_coupled(organ, barrier, sources, sinks, solute_sigma, height=200.0, d_apo=0.1, d_pd=0.5, d_mem=1e-6,
+                   temperature=298.15, tol=1e-10, max_iter=200, edit_network=None, cell_sigma=None, **overrides):
+    """
+    The legacy's steady coupled water and solute solve (``coupled_solver.coupled_water_solute_solve``, Picard,
+    Scharfetter–Gummel) on its osmotic scenario 1 (the default scenario with *overrides*), one maturity stage: the
+    production *sources* {legacy index: mol d⁻¹}, the Dirichlet *sinks* {legacy index: c}, its solute's
+    *solute_sigma* {cgroup: σ}; its transport's psi_os held at 0 while solving, so that the osmotic flow its edge
+    flows already carry is not added again (reactions r1); *cell_sigma* {legacy index: σ}: those cells' solute σ
+    instead of their cgroup's (its σ is per cgroup, r3: each such cell is given its own cgroup while the transport is
+    solved, its diffusion matrix built before). Returns dict(c (every node, by legacy index), solution (its scenario
+    1's water), n_iter, converged).
+    """
+    from openalea.mecha.legacy.utils.coupled_solver import coupled_water_solute_solve
+    from openalea.mecha.legacy.utils.solute_transport import SoluteTransport
+    organ.export_to_adjencymatrix()
+    data = legacy_input()
+    data.geometry.set_maturity_stages([barrier], height=[height])
+    scenario = dict(data.boundary.scenarios[0])
+    scenario.update(overrides)
+    data.boundary.add_scenario(scenario)
+    network = NetworkBuilder(organ)
+    network.populate_from_network()
+    if edit_network is not None:
+        edit_network(network)
+    mecha = Mecha(data, network=network)
+    transport = SoluteTransport(mecha, {"apo_wall": d_apo, "plasmodesmata": d_pd, "membrane": d_mem,
+                                        "sigma": dict(solute_sigma), "conserve_boundary": False}, None, mode="full")
+    cm, nwj = network.cell_manager, network.n_wall_junction
+    solve = transport.solve
+    diffusion = transport._diffusion_full(0, 0)                       # on the cells' own cgroups
+    transport._diffusion_full = lambda h, i_maturity: diffusion
+    node_of = {mecha.indice[node]: node for node in network.graph.nodes}
+    own = {node_of[i]: 1000 + k for k, i in enumerate(cell_sigma or {})}
+    transport.sigma.update({1000 + k: float(value) for k, value in enumerate((cell_sigma or {}).values())})
+
+    def solve_without_osmotic_flow(*args, **kwargs):
+        held = [o for o in list(cm) + [cm.get_wall_by_node_id(i) for i in range(nwj)]
+                if o is not None and getattr(o, "psi_os", None) is not None]
+        saved = [o.psi_os for o in held]
+        for o in held:
+            o.psi_os = 0.0
+        cgroups = {node: network.graph.nodes[node].get("cgroup") for node in own}
+        for node, code in own.items():
+            network.graph.nodes[node]["cgroup"] = code
+        try:
+            return solve(*args, **kwargs)
+        finally:
+            for o, value in zip(held, saved):
+                o.psi_os = value
+            for node, cgroup in cgroups.items():
+                network.graph.nodes[node]["cgroup"] = cgroup
+    transport.solve = solve_without_osmotic_flow
+    rhs = np.zeros(network.graph.number_of_nodes())
+    for i, production in sources.items():
+        rhs[i] = -production
+    c, n_iter, converged = coupled_water_solute_solve(mecha, transport, temperature, boundary_conditions=sinks,
+                                                      rhs=rhs, i_scenario=1, tol=tol, max_iter=max_iter,
+                                                      scheme="sg")
+    result = [r for r in mecha.results if r.get("scenario") == 1][-1]
+    return dict(c=np.asarray(c), solution=np.asarray(result["solution"]).reshape(-1), n_iter=n_iter,
+                converged=converged, mecha=mecha)

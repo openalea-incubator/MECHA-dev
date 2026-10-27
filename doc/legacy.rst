@@ -81,8 +81,13 @@ The legacy's chain and the port's modules
      - ``visu``, ``network_export``, ``paraview_export``, ``prepare_paraview``
      - ``openalea.mecha.plots`` (tissues, ψ maps, radial profiles, conductances by pathway, pathway shares, flow
        vectors); no file export
+   * - the steady coupled water and solutes (``reactions`` branch)
+     - ``coupled_solver.coupled_water_solute_solve`` (Picard, JFNK, continuation)
+     - MechaSolutes' ``solute_solve`` 2: one Newton system (``_steady_coupled``), its Jacobian analytic
    * - not ported
-     - ``coupled_solver`` (Picard, JFNK), ``scenario_builder``, ``calibration``, the legacy's ``SoluteTransport``
+     - ``scenario_builder`` (XML scenarios: the port's scenarios are its plants' parameters), ``calibration``
+       (fitting the transport coefficients on needle anatomies: a tool on top of the model, its fits rerunnable with
+       the port's components), the legacy's ``SoluteTransport`` itself
      - —
 
 The tutorials are ported in ``example/tutorials/developer/`` (four notebooks on the metafspm components) and
@@ -725,9 +730,11 @@ The ``reactions`` branch
        ``storage_fraction_cell``, ``k_decay``: sucrose only, the starch stores in its whole volume), to 10⁻¹¹
        (``test_solutes.py``); the modes (``solute_pathway`` 2, 3), the upwind scheme (``solute_scheme`` 2) and θ
        (``solute_theta``), to 10⁻¹¹ (``test_standard_solutes.py``; θ with starch, ``test_solutes.py``); the steady
-       coupled solve, below. The operators' ``'D'`` and ``'A'`` alone (diffusion only, advection only: a diagnostic
-       of the operator, its diffusivities or its flows at 0 do the same) and the calibration package are not
-       ported
+       coupled solve (``solute_solve`` 2: Newton on the coupled residual, instead of Picard, JFNK and continuation),
+       against the Picard iteration with the reactions' r1 and r3 removed, the sucrose to 10⁻¹¹ and the water to
+       10⁻¹² of their ranges (``test_coupled_steady.py``). The operators' ``'D'`` and ``'A'`` alone (diffusion
+       only, advection only: a diagnostic of the operator, its diffusivities or its flows at 0 do the same), the
+       calibration package and the scenario builder are not ported
 
 The ``develop`` branch
 ----------------------

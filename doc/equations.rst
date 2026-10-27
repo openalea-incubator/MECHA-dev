@@ -384,3 +384,19 @@ exchanges with its outside: the soil, the axial boundaries, its axial junctions 
 water leaving as vapour is an edge of that sum, so it leaves its solute behind. :math:`c_b` is ``c_boundary``. After the step, the cells' osmotic potential
 (van 't Hoff, ``_sucrose_osmotic_potential``) is :math:`\pi_c = -R\,T\,c` with :math:`R = 8.314 \times 10^4` hPa cm³
 mol⁻¹ K⁻¹, which the next water solve reads.
+
+**The coupled steady state** (``solute_solve`` 2, ``_steady_coupled``; the reactions' ``coupled_water_solute_solve``):
+each root section's standard problem with the osmotic drives of :math:`\pi_c = \pi_{c,0} - R T c` on its cells
+(:math:`\pi_0` the presets' potential without the sucrose's, ``osmotic_baseline``), and the steady sucrose on that
+water's flows,
+
+.. math::
+
+   B\,Q(\psi, c) + e = q_b, \qquad \sum J(Q, c) + k_\text{decay} V c + O(Q)\,c = S + I(Q)\,c_b,
+
+one Newton system in :math:`(\psi, c)` (``coupled_psi``, ``sucrose``; no starch), from the standard problem's
+:math:`\psi`. Its Jacobian is analytic: :math:`\partial Q/\partial\psi = \mathrm{diag}(K) B^\top`,
+:math:`\partial Q/\partial c = -\mathrm{diag}(K\sigma) B^\top \mathrm{diag}(RT)`; the weights' derivatives in the
+advective flow (``weight_derivatives``: :math:`-B'(-P)`, :math:`B'(P)` with ``bernoulli_derivative``; upwind, the
+indicators) and the boundary exchange's. Each balance is divided by its node's total conductance (``_row_scales``),
+so that the tolerance bounds the potentials (hPa) and the concentrations (µmol cm⁻³).
