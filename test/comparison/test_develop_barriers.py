@@ -1,7 +1,8 @@
 """
-develop's barrier codes 10 (the exodermis suberized, with a Casparian strip) and 11 (the endodermis and exodermis
-suberized, the sclerenchyma's walls lignified): the port's conductances are the legacy's, edge by edge and bit for
-bit (doc/legacy.rst, d4; the sections have no sclerenchyma: its walls are tested in test_develop_additions.py).
+Every barrier code, 0 to 11 (MECHA's 0-9; develop's 10, the exodermis suberized with a Casparian strip, and 11, the
+endodermis and exodermis suberized, the sclerenchyma's walls lignified): the port's conductances are the legacy's,
+edge by edge and bit for bit (doc/legacy.rst, d4; the sections have no sclerenchyma: its walls are tested in
+test_develop_additions.py).
 """
 import numpy as np
 import pytest
@@ -12,7 +13,7 @@ from openalea.mecha.geometry import section_parts
 from legacy_run import legacy_options, legacy_section
 from plants import anatomy_data_structure, root, template_organ
 
-DEVELOP_BARRIERS = (10, 11)
+DEVELOP_BARRIERS = tuple(range(12))
 
 
 @pytest.fixture(scope="module")
