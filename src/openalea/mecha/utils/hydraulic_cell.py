@@ -637,6 +637,8 @@ class HydraulicCell:
 
         self.Q_in: Optional[float] = None
         self.Q_out: Optional[float] = None
+        # Relative humidity of the cell air space (0-1)
+        self.RH: Optional[float] = None
 
     # ------------------------------------------------------------------
     # Convenience

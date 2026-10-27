@@ -45,7 +45,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 from openalea.mecha import Mecha, InData, SoluteTransport, ScenarioBuilder
 
 _OUT_DIR    = 'outputs'
-_CELLSET    = os.path.join('inputs', 'current_root.xml')
+_CELLSET    = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'inputs', 'current_root.xml')
 
 def _build_mecha_homogeneous() -> Mecha:
     data  = InData(cellset_file=_CELLSET)

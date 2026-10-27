@@ -957,8 +957,16 @@ class HydraulicMatrixBuilder:
         eattr['K'] = float(K)
         eattr['A'] = float(area)
 
-    def _apply_soil_boundary(self, x_contact, height, thickness, kw, barrier, boundary, rhs_s, rhs_C):
-        wall_to_cell = self.geo_props['wall_to_cell']
+    def _contact_nodes(self, x_contact):
+        """Return the set of node ids in water contact with the soil.
+
+        A border wall is a contact node when its position lies at/beyond
+        ``x_contact`` or it belongs to a cell listed in ``self.hormones.contact``.
+        A border junction is a contact node under the same positional rule, or
+        when all of its real neighbour cells are contact cells. This mirrors
+        (and is shared with) the boundary-stamping logic in
+        :meth:`_apply_soil_boundary`, so the two can never diverge.
+        """
         junction_wall_cell = self.geo_props['junction_wall_cell']
         contact_id_cell = self.hormones.contact
         cm = self.network.cell_manager
