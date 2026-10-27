@@ -20,7 +20,8 @@ from openalea.metafspm.solve.decorator import (boundary_set, graph_jacobian, gra
                                                 node_balance, rate, totalstate)
 
 from openalea.mecha.conductance import (Network, assemble, boundary_terms, cortex_parameters, edge_conductances,
-                                       kelvin_alpha, set_edge_ends, set_wall_thickness, vapour_conductances)
+                                       elongation_sink, kelvin_alpha, set_edge_ends, set_wall_thickness,
+                                       sieve_tube_terms, vapour_conductances)
 from openalea.mecha.geometry import (AXIAL_JUNCTION, LEAF_SURFACE, STOMATAL, XYLEM_CGROUPS, phi_thick_cells, section_geometry,
                                      section_of, section_parts)
 from openalea.mecha.postprocess import (VISCOSITY_PHLOEM, VISCOSITY_XYLEM, axial_conductances, poiseuille,
@@ -257,10 +258,28 @@ class MechaHydraulics(MechaSections):
                                          "(standard_psi_xylem, see standard_axial_source), 2 its flow (standard_axial_flow)", 1.)
     standard_axial_flow: float = _p("cm3 d-1", "the flow into the xylem in the standard problem (condition 2), "
                                     "split among the vessels as their areas (the legacy's distribution)", 0.)
-    standard_psi_soil: float = _p("hPa", "the soil's potential in the standard problem", 0.0)
+    standard_psi_soil: float = _p("hPa", "the soil's potential in the standard problem (on the left of the section, "
+                                         "x_rel 0, with standard_psi_soil_right)", 0.0)
+    standard_psi_soil_right: float = _p("hPa", "the soil's potential on the right of the section (x_rel 1) in the "
+                                               "standard problem, linear in x between the two (the legacy's "
+                                               "psi_soil_right; NaN: standard_psi_soil all around)", float("nan"))
     standard_psi_xylem: float = _p("hPa", "the xylem's potential in the standard problem (barrier > 0)", -5.0E3)
     standard_psi_sieve: float = _p("hPa", "the protophloem's potential in the standard problem (barrier 0; NaN: "
                                    "no phloem boundary, the legacy's default)", float("nan"))
+    standard_psi_sieve_tube: float = _p("hPa", "the sieve tubes' potential in the standard problem (barrier > 0: the "
+                                               "legacy's phloem pressure of its scenarios >= 1, with k_sieve or "
+                                               "Poiseuille as standard_axial_source; NaN: no phloem boundary)",
+                                        float("nan"))
+    elongation_midpoint_rate: float = _p("cm d-1", "the cells' elongation rate at the section's middle (barrier 0, "
+                                                   "the elongation zone; MECHA's BCs.xml 2.8 for maize, Pritchard et "
+                                                   "al. 1988; 0: none)", 0.)
+    elongation_side_rate_difference: float = _p("cm d-1", "the elongation rate's difference from the section's left "
+                                                          "to its right (positive: faster on the right)", 0.)
+    water_fraction_apoplast: float = _p("adim", "the walls' volumetric water content (the elongation's water)", 0.69)
+    water_fraction_symplast: float = _p("adim", "the protoplasts' volumetric water content (the elongation's "
+                                                "water)", 0.7)
+    standard_elongation: float = _p("", "1: the standard problem with the elongation sink (the legacy's scenarios "
+                                        ">= 1), 0: without (its scenario 0, MECHA's kr)", 0.)
     # plasmodesmata frequency × height (cm-1; × a wall's length: its plasmodesmata), by interface: the original's,
     # then those of the tissues the legacy added, with its values (the original rules)
     fplxheight_default: float = _p("cm-1", "plasmodesmata frequency, other interfaces", 800000.0)
@@ -341,6 +360,14 @@ class MechaHydraulics(MechaSections):
                                                          "the vessel's share of the flow into the xylem)"),
                                                   initialize=0., scale=SCALES.Compartment, location="node",
                                                   state_variable_type="NonInertialIntensive")
+    elongation_sink: float = state_variable(**_doc("cm3 d-1", "the water the elongating wall or protoplast withdraws "
+                                                          "(barrier 0; plant problem)"),
+                                            initialize=0., scale=SCALES.Compartment, location="node",
+                                            state_variable_type="NonInertialExtensive")
+    standard_elongation_sink: float = state_variable(**_doc("cm3 d-1", "the elongation sink in the standard problem "
+                                                                       "(0 unless standard_elongation)"),
+                                                     initialize=0., scale=SCALES.Compartment, location="node",
+                                                     state_variable_type="NonInertialExtensive")
     in_standard_problem: float = state_variable(**_doc("", "1 on the Compartments of the plants solving the standard "
                                                            "problem (standard_solve)"),
                                                 initialize=0., scale=SCALES.Compartment, location="node",
@@ -565,6 +592,14 @@ class MechaHydraulics(MechaSections):
         axial = np.where(np.isnan(axial_psi), 0., axial)
         flow_condition = (P_node["standard_axial_condition"] == 2) & (barrier_node > 0)
         axial = np.where(flow_condition, 0., axial)                    # the flow condition replaces k_xyl's
+        sieve_tube = sieve_tube_terms(net, P_node, barrier_node, height_node)       # the phloem, barrier > 0
+        sieve_tube = np.where(np.isnan(P_node["standard_psi_sieve_tube"]), 0., sieve_tube)
+        axial = np.where(sieve_tube > 0, sieve_tube, axial)
+        axial_psi = np.where(sieve_tube > 0, P_node["standard_psi_sieve_tube"], axial_psi)
+        relative_x = self.relative_x(geometries)
+        right = P_node["standard_psi_soil_right"]
+        standard_soil = np.where(np.isnan(right), P_node["standard_psi_soil"],
+                                 P_node["standard_psi_soil"] * (1 - relative_x) + right * relative_x)
         inflow = self._standard_axial_inflow(geometries, P_node, flow_condition)
         root = self._root_nodes(geometries)
         soil = np.where(root, soil, 0.)                               # stems and leaves: no soil (E1)
@@ -589,7 +624,7 @@ class MechaHydraulics(MechaSections):
         surface_inflow = -ds.map_to(leaf_transpiration, "Organ", "node", "split", weights=surface)
         standard = (P_node["standard_solve"] > 0) & root
         return (K, "soil_conductance", soil, "axial_boundary_conductance", axial,
-                "standard_soil_psi", P_node["standard_psi_soil"].astype(float),
+                "standard_soil_psi", standard_soil.astype(float),
                 "standard_axial_psi", np.where(np.isnan(axial_psi), 0., axial_psi),
                 "in_standard_problem", standard.astype(float), "standard_axial_inflow", inflow,
                 "air_tail_conductance", np.where(wall_end >= 0, air_tail, 0.),
@@ -601,6 +636,26 @@ class MechaHydraulics(MechaSections):
                 "membrane_diffusion_factor", np.where(in_matrix, factors["membrane"], 0.),
                 "node_volume", self._node_volumes(net, P_node, height_node, kind),
                 "contact_distance", factors["contact_distance"])
+
+    def relative_x(self, geometries: dict) -> np.ndarray:
+        """Per node, its x relative to its section's cells' x range (0 left, 1 right; the legacy's x_rel, from the
+        cells' centroids: doc/legacy.rst, ME-22)."""
+        out = np.zeros(self.data_structure.n_nodes())
+        for nodes, _, geo in geometries.values():
+            x_cells = geo.x[geo.cells]
+            low, high = x_cells.min(), x_cells.max()
+            out[nodes] = (geo.x - low) / (high - low) if high > low else 0.
+        return out
+
+    @rate(include_inactive=True)
+    def _elongation_sink(self, barrier, anatomy_template) -> tuple[np.ndarray, str, np.ndarray]:
+        """The elongation sink of the sections without barriers (barrier 0), in the plant problem, and in the
+        standard problem of the plants with standard_elongation."""
+        geometries = self.section_geometries()
+        net = self.network(geometries)
+        P_node = self.parameter_table("node")
+        sink = elongation_sink(net, P_node, np.asarray(barrier), self.relative_x(geometries))
+        return sink, "standard_elongation_sink", np.where(P_node["standard_elongation"] > 0, sink, 0.)
 
     def _node_volumes(self, net, P_node, height, kind):
         """Each node's volume (cm³; the reactions' SoluteGeometry.node_volumes): a wall's length × height ×
@@ -731,11 +786,11 @@ class MechaHydraulics(MechaSections):
 
         @node_balance(field="standard_psi")
         def _balance(self, standard_psi, conductance, standard_osmotic_drive, air_tail_conductance,
-                     air_head_conductance, air_offset):
+                     air_head_conductance, air_offset, standard_elongation_sink):
             B = self._graph_view.incidence
             drop = np.asarray(B.T @ standard_psi).reshape(-1) + standard_osmotic_drive
             q = _wall_air_flow(B, standard_psi, air_tail_conductance, air_head_conductance, air_offset)
-            return np.asarray(B @ (conductance * drop + q)).reshape(-1)
+            return np.asarray(B @ (conductance * drop + q)).reshape(-1) + standard_elongation_sink
 
         soil = boundary_set(filters={"soil_conductance": ">0"}, kind="robin", value="standard_soil_psi",
                             weight="soil_conductance", field="standard_psi")
@@ -769,11 +824,12 @@ class MechaHydraulics(MechaSections):
 
         @node_balance(field="psi")
         def _balance(self, psi, conductance, xylem_axial_conductance, osmotic_drive, air_tail_conductance,
-                     air_head_conductance, air_offset):
+                     air_head_conductance, air_offset, elongation_sink):
             B = self._graph_view.incidence
             K = conductance + xylem_axial_conductance
             q = _wall_air_flow(B, psi, air_tail_conductance, air_head_conductance, air_offset)
-            return np.asarray(B @ (K * (np.asarray(B.T @ psi).reshape(-1) + osmotic_drive) + q)).reshape(-1)
+            return np.asarray(B @ (K * (np.asarray(B.T @ psi).reshape(-1) + osmotic_drive) + q)).reshape(-1) + \
+                elongation_sink
 
         soil = boundary_set(filters={"soil_conductance": ">0"}, kind="robin", value="soil_psi",
                             weight="soil_conductance", field="psi")
@@ -814,7 +870,8 @@ class MechaHydraulics(MechaSections):
 
     # ── The sections' results ──
     @totalstate(include_inactive=True)
-    def _kr(self, standard_psi, psi, soil_conductance, soil_psi, barrier, length, osmotic_potential) \
+    def _kr(self, standard_psi, psi, soil_conductance, soil_psi, barrier, length, osmotic_potential,
+            standard_soil_psi) \
             -> tuple[np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,
                      str, np.ndarray]:
         """
@@ -840,7 +897,9 @@ class MechaHydraulics(MechaSections):
             if segment not in roots:                                  # kr, uptake: root quantities (E1)
                 continue
             if P["standard_solve"][v] > 0:
-                psi_soil = float(P["standard_psi_soil"][v])
+                contact = nodes[soil[nodes] > 0]
+                standard_soil = np.asarray(standard_soil_psi, dtype=float)
+                psi_soil = float(standard_soil[contact].mean()) if contact.size else float(P["standard_psi_soil"][v])
                 psi_axial = float(P["standard_psi_xylem"][v] if b > 0 else P["standard_psi_sieve"][v])
                 if b > 0 and P["standard_axial_condition"][v] == 2:      # the xylem's potential: its vessels' mean
                     vessels = geo.xylem_cells
@@ -848,7 +907,7 @@ class MechaHydraulics(MechaSections):
                     for c in vessels:
                         psi_axial += standard[nodes[c]] / len(vessels)
                     psi_axial = float(psi_axial)
-                out["standard_uptake"][i] = soil_uptake(geo, soil[nodes], standard[nodes], psi_soil)
+                out["standard_uptake"][i] = soil_uptake(geo, soil[nodes], standard[nodes], standard_soil[nodes])
                 out["kr"][i] = radial_conductivity(out["standard_uptake"][i], psi_soil, psi_axial, geo.perimeter, h)
             contact = nodes[soil[nodes] > 0]
             out["uptake"][i] = float(np.sum(soil[contact] * (soil_psi[contact] - plant[contact])))

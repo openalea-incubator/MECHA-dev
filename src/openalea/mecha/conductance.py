@@ -123,6 +123,7 @@ class Network:
     border_junction: np.ndarray
     xylem: np.ndarray             # int per node: occurrences in the network's xylem list (cgroup)
     protosieve: np.ndarray        # int per node: occurrences in the legacy's protosieve list (duplicates, legacy f)
+    sieve: np.ndarray             # int per node: occurrences in the sieve tubes' list (by tissue)
     outercortex_connec_rank: np.ndarray   # per section
     concentrated: np.ndarray              # (sections, 3): outer–cortex, cortex–cortex, cortex–endodermis
 
@@ -149,7 +150,7 @@ def assemble(n_nodes: int, n_edges: int, geometries: list, phi_thick=None) -> Ne
         phi_thick=nodes_full(False, bool), wall_cells=nodes_full(-1, np.int64, (2,)),
         distance_center_grav=nodes_full(np.nan), x=nodes_full(np.nan), y=nodes_full(np.nan), cell_area=nodes_full(0.), wall_thickness=nodes_full(np.nan), wall_length=nodes_full(0.),
         border_wall=nodes_full(False, bool), border_junction=nodes_full(False, bool), xylem=nodes_full(0, np.int64),
-        protosieve=nodes_full(0, np.int64), outercortex_connec_rank=np.zeros(len(geometries), dtype=np.int64),
+        protosieve=nodes_full(0, np.int64), sieve=nodes_full(0, np.int64), outercortex_connec_rank=np.zeros(len(geometries), dtype=np.int64),
         concentrated=np.zeros((len(geometries), 3)))
     for i, (nodes, edges, geo) in enumerate(geometries):
         net.section_of_node[nodes] = i
@@ -174,6 +175,7 @@ def assemble(n_nodes: int, n_edges: int, geometries: list, phi_thick=None) -> Ne
         net.border_junction[nodes] = geo.border_junction
         np.add.at(net.xylem, nodes[geo.xylem_cells], 1)
         np.add.at(net.protosieve, nodes[geo.protosieve_cells], 1)
+        np.add.at(net.sieve, nodes[geo.sieve_cells], 1)
         net.outercortex_connec_rank[i] = geo.outercortex_connec_rank
         net.concentrated[i] = (geo.concentrated_outer_cortex, geo.concentrated_cortex_cortex,
                                geo.concentrated_cortex_endo)
@@ -501,6 +503,49 @@ def boundary_terms(net: Network, P: dict, barrier, height):
                            poiseuille(net.cell_area, height, VISCOSITY_PHLOEM), k_sieve)
     axial = np.where(xylem, k_xyl, np.where(protosieve, k_sieve, 0.))
     return soil, axial, axial.copy()          # each protosieve cell once (the legacy adds k_sieve per duplicate, legacy f)
+
+
+def sieve_tube_terms(net: Network, P: dict, barrier, height) -> np.ndarray:
+    """
+    Per node (cm³ hPa⁻¹ d⁻¹): the conductance between a sieve tube of a section with barriers (barrier > 0) and the
+    phloem boundary (the legacy's scenarios ≥ 1 with a phloem pressure, ``Mecha.water_flux``): as the axial terms
+    (``standard_axial_source``), 1 its Poiseuille conductance over the height (phloem sap), 2 ``k_sieve``.
+    """
+    sieve = (np.asarray(barrier) > 0) & (net.sieve > 0)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        k_sieve = np.where(np.asarray(P["standard_axial_source"]) == 1,
+                           poiseuille(net.cell_area, np.asarray(height, dtype=float), VISCOSITY_PHLOEM),
+                           np.asarray(P["k_sieve"], dtype=float))
+    return np.where(sieve, k_sieve, 0.)
+
+
+def elongation_sink(net: Network, P: dict, barrier, relative_x) -> np.ndarray:
+    """
+    Per node (cm³ d⁻¹): the water the elongating walls and protoplasts of the sections without barriers (barrier 0,
+    the elongation zone) withdraw (``Mecha.elongation_BC``): a wall its length × half its thickness × the elongation
+    rate × the apoplast's water fraction, a protoplast its area less its walls' half thickness along its perimeter ×
+    the rate × the symplast's water fraction (none where the walls take its whole area). The rate is
+    elongation_midpoint_rate + (x_rel − 0.5) × elongation_side_rate_difference at the node's relative x. A cell's
+    thickness is its walls' mean, its perimeter their lengths' sum. P per node.
+    """
+    rate = np.asarray(P["elongation_midpoint_rate"], dtype=float) + \
+        (np.asarray(relative_x, dtype=float) - 0.5) * np.asarray(P["elongation_side_rate_difference"], dtype=float)
+    thickness = _thickness(net, P, np.arange(net.kind.size))
+    walls = np.flatnonzero(net.kind == WALL)
+    ends = net.wall_cells[walls]
+    has = ends >= 0
+    cell_of, wall_of = ends[has], np.repeat(walls, has.sum(axis=1))
+    n = net.kind.size
+    perimeter = np.bincount(cell_of, weights=net.wall_length[wall_of], minlength=n)
+    count = np.bincount(cell_of, minlength=n)
+    mean_thickness = np.divide(np.bincount(cell_of, weights=thickness[wall_of], minlength=n), count,
+                               out=np.zeros(n), where=count > 0)
+    free_area = net.cell_area - perimeter * mean_thickness / 2
+    sink = np.where(net.kind == WALL,
+                    net.wall_length * thickness / 2 * 1.0E-08 * rate * np.asarray(P["water_fraction_apoplast"]),
+                    np.where((net.kind == 0) & (free_area > 0),
+                             free_area * 1.0E-08 * rate * np.asarray(P["water_fraction_symplast"]), 0.))
+    return np.where((np.asarray(barrier) == 0) & (net.section_of_node >= 0), sink, 0.)
 
 
 def cortex_parameters(geo, kaqp_cortex: float, ratio_cortex: float, height: float) -> tuple:

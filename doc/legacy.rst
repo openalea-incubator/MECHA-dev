@@ -82,7 +82,7 @@ The legacy's chain and the port's modules
      - ``openalea.mecha.plots`` (tissues, ψ maps, radial profiles, conductances by pathway, pathway shares, flow
        vectors); no file export
    * - not ported
-     - ``coupled_solver`` (Picard, JFNK), ``scenario_builder``, ``calibration``, ``elongation_BC``,
+     - ``coupled_solver`` (Picard, JFNK), ``scenario_builder``, ``calibration``,
        ``standard_transmembrane_fractions``, ``standard_solute_flux``, the legacy's ``SoluteTransport``
      - —
 
@@ -374,9 +374,10 @@ Crashes and wrong values
      - ``k_xyl`` and ``k_sieve`` are lists, used as scalars in places
      - dropped (scalar parameters)
    * - h
-     - the scenario loop reads ``scenarios[i_maturity]`` for the elongation; the interface flows take the left soil
-       potential even with a left–right profile
-     - dropped (the scenario loop, the elongation sink and the left–right soil are not ported)
+     - the scenario loop reads ``scenarios[i_maturity]`` for the elongation's side rate difference; the interface
+       flows take the left soil potential even with a left–right profile
+     - fixed: the plant's own parameters (no scenario loop); the uptake with each border node's soil potential
+       (``test_scenario_boundaries.py``)
    * - i
      - GRANAP's ``wall_air`` and ``air_link`` edges (leaves, needles) ignored by the matrix
      - corrected: the leaves' vapour path (Kelvin exchange on ``wall_air``, vapour diffusion on ``air_link``, stomata to
@@ -565,14 +566,19 @@ The osmotic scenarios
    * - ME-23
      - the soil's left and right potentials (``psi_soil_left``, ``psi_soil_right``), read only by the scenario loop;
        no scenario of the branch sets them apart
-     - not ported; the presets keep the left–right weighting of the soil solution (``osmotic_symmetry_soil`` 1)
+     - ported (2026-10-27): ``standard_psi_soil``, ``standard_psi_soil_right`` in the standard problem (the plant
+       problem takes a soil potential per node, ``soil_psi``), compared to 10⁻¹² (``test_scenario_boundaries.py``)
    * - ME-24
      - the radial profiles' convection velocity is never computed (0): the "convective" profile is flat
      - reproduced (flat)
    * - ME-25
      - the elongation sink at barrier 0 (``elongation_BC``); a phloem boundary at barrier > 0 (``pressure_sieve`` NaN
        by default)
-     - not ported
+     - ported (2026-10-27): ``elongation_midpoint_rate``, ``elongation_side_rate_difference``,
+       ``water_fraction_apoplast``, ``water_fraction_symplast`` (the sink in the plant problem, and in the standard
+       problem with ``standard_elongation`` 1); ``standard_psi_sieve_tube``. The sink per node to 10⁻¹⁵, the
+       solutions to 10⁻¹² of their range (``test_scenario_boundaries.py``). The rate is 0 by default (``BCs.xml``'s
+       2.8 cm d⁻¹ is maize's, an input: a section's sink does not scale with its height)
    * - ME-26
      - the layer-wise uptake and transmembrane fractions (``standard_transmembrane_fractions``,
        ``create_layer_discretization``)
@@ -582,6 +588,10 @@ The osmotic scenarios
        skips it): the presets look its row up by value (``rank in rank_to_row``), 0 when absent
      - fixed: the row of the previous assigned cortex rank, as the incomplete layers before it merge (the tomato root,
        rank 49; ``test_simulation.py``); the port raised (NaN row)
+   * - ME-39
+     - ``elongation_BC`` takes each wall's ``HydraulicWall.thickness``, which GRANAP's path leaves at its default,
+       1 µm, while the conductances take the geometry's (1.5 µm)
+     - fixed: the walls' thickness (``thickness_source``); the comparison sets the legacy's walls to 1.5 µm
 
 Inputs, outputs and scenarios
 -----------------------------

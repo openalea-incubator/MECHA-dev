@@ -15,12 +15,13 @@ def soil_uptake(geo, soil, psi, psi_soil) -> float:
     """
     The section's water uptake from the soil (cm³ d⁻¹, positive into the root): Σ K_soil (ψ_soil − ψ) over the
     border walls, then the border junctions, in the legacy's order (its wall ids, then its rebuilt junction ids).
-    *soil* and *psi*: per local node of the section.
+    *soil* and *psi*: per local node of the section; *psi_soil*: one value, or one per local node.
     """
     walls = geo.walls[geo.border_wall[geo.walls]]
     junctions = geo.junction_order[geo.border_junction[geo.junction_order]]
     nodes = np.r_[walls, junctions]
-    q = -soil[nodes] * (psi[nodes] - psi_soil)
+    psi_soil = np.asarray(psi_soil, dtype=float)
+    q = -soil[nodes] * (psi[nodes] - (psi_soil[nodes] if psi_soil.ndim else psi_soil))
     return float(np.sum(q))
 
 

@@ -98,3 +98,15 @@ def test_neumann_collar():
     g, ds, mecha = _root(2, collar_condition=2., collar_flow=1e-3)
     assert (ds.get("collar_kind")[ds.get("collar_kind") > 0] == 2).all()
     assert ds.get("uptake").sum() == pytest.approx(1e-3, rel=1e-9)
+
+
+def test_elongation_sink_drawn_from_the_soil():
+    """A root tip without barriers (barrier 0) and an older section: the elongation sink of the tip (MECHA's 2.8
+    cm d-1) is the plant problem's, the standard problem's only with standard_elongation; with no collar flow the
+    root takes from the soil what elongation withdraws."""
+    g, ds, mecha = _root(2, barriers=(1, 0), elongation_midpoint_rate=2.8, collar_condition=2., collar_flow=0.)
+    sink = np.asarray(ds.get("elongation_sink"))
+    owner = ds.owner("SubOrgan")
+    assert sink[owner == 1].sum() > 0 and sink[owner == 0].sum() == 0
+    assert np.asarray(ds.get("standard_elongation_sink")).sum() == 0
+    assert np.nansum(ds.get("root_uptake")) == pytest.approx(sink.sum(), rel=1e-9)

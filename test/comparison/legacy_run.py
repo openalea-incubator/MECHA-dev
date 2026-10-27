@@ -131,20 +131,27 @@ def legacy_frame(run, stage, organ):
                         centre=(net.x_grav, net.y_grav))
 
 
-def legacy_osmotic(organ, barrier, height=200.0, **overrides):
+def legacy_osmotic(organ, barrier, height=200.0, scenario_zero=None, edit_network=None, hydraulic=None, **overrides):
     """
     The legacy's osmotic scenario (``Mecha.water_flux``, its scenario 1: the default scenario with *overrides*, e.g.
-    os_hetero, s_hetero) on one maturity stage. Returns dict(solution, psi_os {node: π}, sigma {(wall, cell): σ},
-    edge_Q {(u, v): Q}, total_flow, mecha (its Mecha, scenario 1 solved)).
+    os_hetero, s_hetero) on one maturity stage. *scenario_zero*: entries of its scenario 0 too (the scenario loop
+    reads some of scenario i_maturity's: doc/legacy.rst, h); *edit_network*: a function of its NetworkBuilder, called
+    once the network is built; *hydraulic*: its HydraulicData's attributes to set ({name: value}). Returns dict(solution, psi_os {node: π}, sigma {(wall, cell): σ}, edge_Q {(u, v): Q},
+    total_flow, mecha (its Mecha, scenario 1 solved)).
     """
     organ.export_to_adjencymatrix()
     data = legacy_input()
     data.geometry.set_maturity_stages([barrier], height=[height])
+    data.boundary.scenarios[0].update(scenario_zero or {})
+    for name, value in (hydraulic or {}).items():
+        setattr(data.hydraulic, name, value)
     scenario = dict(data.boundary.scenarios[0])
     scenario.update(overrides)
     data.boundary.add_scenario(scenario)
     network = NetworkBuilder(organ)
     network.populate_from_network()
+    if edit_network is not None:
+        edit_network(network)
     mecha = Mecha(data, network=network)
     mecha.water_flux(verbose=False)
     result = [r for r in mecha.results if r.get("scenario") == 1][-1]

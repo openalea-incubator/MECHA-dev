@@ -185,16 +185,35 @@ plasmodesmata); :math:`\sigma(\pi_i - \pi_j)` is the edge's osmotic drive (``_os
 
 .. math::
 
-   \sum_j Q_{ij} + \sum_{\text{wall–air}} Q_{w \to a} = \sum_{\text{boundaries}} q_i,
+   \sum_j Q_{ij} + \sum_{\text{wall–air}} Q_{w \to a} + e_i = \sum_{\text{boundaries}} q_i,
 
 with the boundary inflows :math:`q_i`: a Robin term :math:`K_b(\psi_b - \psi_i)`, a Dirichlet potential, or a Neumann
-flow. The system is linear; it is solved by a Newton step on the sparse Jacobian
+flow; and :math:`e_i` the water an elongating node withdraws (``conductance.elongation_sink``, sections without
+barriers, :math:`b = 0`: the elongation zone; ``Mecha.elongation_BC``):
+
+.. math::
+
+   e_w = \ell_w\,\frac{t_w}{2}\,10^{-8}\,v(x_w)\,\theta_\text{apo}, \qquad
+   e_c = \max\!\Big(0,\ A_c - P_c\,\frac{\bar t_c}{2}\Big)\,10^{-8}\,v(x_c)\,\theta_\text{sym},
+   \qquad v(x) = v_0 + (x - 0.5)\,\Delta v,
+
+for a wall of length :math:`\ell_w` and thickness :math:`t_w`, a protoplast of area :math:`A_c`, perimeter :math:`P_c`
+(its walls' lengths) and mean wall thickness :math:`\bar t_c`; :math:`x` the node's relative x in its section
+(``relative_x``), :math:`v_0` ``elongation_midpoint_rate`` and :math:`\Delta v` ``elongation_side_rate_difference``
+(cm d⁻¹), :math:`\theta_\text{apo}`, :math:`\theta_\text{sym}` the water fractions ``water_fraction_apoplast``,
+``water_fraction_symplast``. The rate is 0 by default (MECHA's ``BCs.xml`` gives 2.8 cm d⁻¹ for maize). The system is linear; it is solved by a Newton step on the sparse Jacobian
 :math:`B\,\mathrm{diag}(K)\,B^\top` plus the wall–air terms (:math:`B` the incidence matrix).
 
 **The standard problem** (``_standard_problem``, MECHA's definition of :math:`k_r`): each root section alone, the axial
-junctions without conductance; Robin terms with the soil (:math:`K_s`, ``standard_psi_soil``) and with the axial
-boundary (:math:`K_{ax}`, ``standard_psi_xylem`` at :math:`b > 0`, ``standard_psi_sieve`` at :math:`b = 0`, none where
-that potential is NaN). With ``standard_axial_condition`` 2, the axial boundary is a Neumann flow instead, split among
+junctions without conductance; Robin terms with the soil (:math:`K_s`, ``standard_psi_soil``; with
+``standard_psi_soil_right``, :math:`\psi_s = \psi_\text{left}(1 - x) + \psi_\text{right}\,x` at the node's relative
+x, the legacy's scenarios' left and right potentials) and with the axial boundary (:math:`K_{ax}`,
+``standard_psi_xylem`` at :math:`b > 0`, ``standard_psi_sieve`` at :math:`b = 0`, none where that potential is NaN);
+at :math:`b > 0`, with ``standard_psi_sieve_tube``, a Robin term between the sieve tubes and the phloem
+(``conductance.sieve_tube_terms``: :math:`K_P(A_c, h, \eta_\text{phloem})` or ``k_sieve``, as
+``standard_axial_source``). The elongation sink enters with ``standard_elongation`` 1 (the legacy's scenarios ≥ 1; its
+scenario 0, MECHA's :math:`k_r`, has none). The uptake is :math:`\sum K_s (\psi_s - \psi)` with each border node's
+own :math:`\psi_s`, and :math:`k_r` takes their mean. With ``standard_axial_condition`` 2, the axial boundary is a Neumann flow instead, split among
 the vessels as their areas (``_standard_axial_inflow``): :math:`q_v = -Q_\text{std}\,A_v / \sum A`. The osmotic drives
 enter only with ``standard_osmotic`` 1.
 
