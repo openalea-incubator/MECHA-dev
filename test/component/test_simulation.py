@@ -70,3 +70,30 @@ def test_a_root_axis():
     assert abs(table["uptake"].iloc[2]) < 1e-12                             # the tip's xylem does not conduct yet
     ds = table.attrs["scene"].populations[0].data_structure
     np.testing.assert_allclose(table["uptake"], ds.get("uptake"))
+
+
+def test_osmotic_potentials():
+    """With osmotic (MECHA's presets): the cells' osmotic potentials are the presets' (os_hetero 4, per tissue), and
+    a soil solution more concentrated than the cells' takes the uptake down."""
+    osmotic = dict(os_hetero=4, os_cortex=-8.3E3, osmotic_epi=-6.8E3, osmotic_endo=-4.8E3, osmotic_peri=-5.5E3,
+                   osmotic_stele=-5.5E3, osmotic_left_soil=-1.5E3, osmotic_right_soil=-1.5E3)
+    fresh = simulate(osmotic=osmotic, xylem_psi=-2.5E3)
+    ds = fresh.data_structure
+    tissue, potential = np.asarray(ds.get("tissue"), dtype=object), np.asarray(ds.get("osmotic_potential"))
+    assert (potential[tissue == "epidermis"] == -6.8E3).all() and (potential[tissue == "stele"] == -5.5E3).all()
+    salty = simulate(osmotic=dict(osmotic, osmotic_left_soil=-7.5E3, osmotic_right_soil=-7.5E3), xylem_psi=-2.5E3)
+    assert salty.summary["uptake"] < fresh.summary["uptake"]
+
+
+def test_an_incomplete_outer_cortex_layer():
+    """A cortex rank without a layer row (an incomplete outermost layer, with no layer after it: the tomato root's rank
+    49) takes its inner neighbour's row (doc/legacy.rst, ME-38): every cortex cell gets its preset."""
+    from openalea.mecha.osmotic import legacy_rows
+    from openalea.mecha.simulation import TOMATO_ROOT
+    section = simulate(anatomy=TOMATO_ROOT, osmotic=dict(os_hetero=4, os_cortex=-8.3E3))
+    geo = list(section.hydraulics.section_geometries().values())[0][2]
+    rank_to_row, _, _ = legacy_rows(geo.n_layer, geo.layer_dist)
+    assert any(geo.n_layer[r] > 0 and np.isnan(rank_to_row[r]) for r in range(40, 50))
+    ds = section.data_structure
+    cortex = np.asarray(ds.get("tissue"), dtype=object) == "cortex"
+    assert cortex.sum() > 0 and np.isfinite(np.asarray(ds.get("osmotic_potential"))[cortex]).all()

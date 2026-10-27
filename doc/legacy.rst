@@ -577,6 +577,11 @@ The osmotic scenarios
      - the layer-wise uptake and transmembrane fractions (``standard_transmembrane_fractions``,
        ``create_layer_discretization``)
      - not ported (the layer rows are, for the presets)
+   * - ME-38
+     - a cortex rank with no layer row (an incomplete outermost layer with no layer after it: the layer rows' loop
+       skips it): the presets look its row up by value (``rank in rank_to_row``), 0 when absent
+     - fixed: the row of the previous assigned cortex rank, as the incomplete layers before it merge (the tomato root,
+       rank 49; ``test_simulation.py``); the port raised (NaN row)
 
 Inputs, outputs and scenarios
 -----------------------------

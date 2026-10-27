@@ -124,6 +124,16 @@ def legacy_rows(n_layer, layer_dist):
     return rank_to_row, np.asarray(distance, dtype=float), row_outer_cortex
 
 
+def _cortex_row(rank_to_row, rank):
+    """A cortex rank's row; a rank legacy_rows leaves without one (an incomplete outermost layer with no layer after
+    it) merged into the previous assigned layer's row, as legacy_rows merges the other incomplete layers (doc/legacy.rst,
+    ME-38)."""
+    for r in range(rank, 39, -1):
+        if not np.isnan(rank_to_row[r]):
+            return rank_to_row[r]
+    return rank_to_row[40]
+
+
 def relative_positions(geo, rank_to_row, distance):
     """
     (r_rel, x_rel) per local node (``NetworkBuilder.compute_relative_positions``): a wall's radial position, negative
@@ -297,7 +307,7 @@ def section_presets(geo, P, barrier, membranes, per_membrane=False):
                 if legacy:                       # problem p: every cortex cell in row 0, and the layers reversed
                     key = f"c{max(1, min(8, 8 - (row_outer_cortex - row)))}"
                 else:                            # the original's: c1 the outer cortex row, c8 the 8th and deeper
-                    depth = row_outer_cortex - int(rank_to_row[rank]) + 1
+                    depth = row_outer_cortex - int(_cortex_row(rank_to_row, rank)) + 1
                     key = f"c{depth}" if 1 <= depth <= 8 and len(cortex_rows) > 1 else "c8"
                 cell_os, sig = vals.get(key, vals.get("c1", 1)), s_vals["cortex"]
         elif cgroup == 5:

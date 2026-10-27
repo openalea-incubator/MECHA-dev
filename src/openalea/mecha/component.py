@@ -453,7 +453,8 @@ class MechaHydraulics(MechaSections):
                                          state_variable_type="NonInertialIntensive")
 
     # ── State variables: the solutions, and the sections' results ──
-    standard_psi: float = state_variable(**_doc("hPa", "water potential, in its section's standard problem"),
+    standard_psi: float = state_variable(**_doc("hPa", "water potential, in its section's standard problem (its "
+                                                       "pressure potential with standard_osmotic 1)"),
                                          initialize=0., scale=SCALES.Compartment, location="node",
                                          state_variable_type="NonInertialIntensive")
     standard_flow: float = state_variable(**_doc("cm3 d-1", "flow along the edge, from its first node to its second, "

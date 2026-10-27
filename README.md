@@ -58,7 +58,9 @@ Step by step, for newcomers to the model, to plant hydraulics or to Python model
 3. [Combine parameters](example/tutorials/user/03_combine_parameters.ipynb): walls against aquaporins;
 4. [Sensitivity analysis](example/tutorials/user/04_sensitivity_analysis.ipynb): which parameters matter most for kr;
 5. [Experimental data](example/tutorials/user/05_experimental_data.ipynb): measured anatomies, observed kr, fitting;
-6. [Along a root](example/tutorials/user/06_along_a_root.ipynb): a root axis with sections of different maturity.
+6. [Along a root](example/tutorials/user/06_along_a_root.ipynb): a root axis with sections of different maturity;
+7. [A tomato root by day and by night](example/tutorials/user/07_tomato_day_and_night.ipynb): osmotic potentials,
+   day and night, a stressful soil.
 
 ## For developers
 
@@ -81,6 +83,7 @@ for the anatomies):
 | [03 — a pine needle's water and sugars](example/tutorials/developer/03_needle_solutes.ipynb) | an organ of three sections joined axially; its transpiration as an Organ-scale input; MechaSolutes over a day (photosynthesis, starch, the sugars' osmotic feedback) |
 | [04 — a whole plant in its soil](example/tutorials/developer/04_full_plant.ipynb) | the soil–plant–atmosphere seedling: the plant model, the soil model and their links, run to the fixed point |
 | [05 — extend the component](example/tutorials/developer/05_extend_the_component.ipynb) | a new variable and process in MECHA's component, run and tested |
+| [06 — solute storage and decay](example/tutorials/developer/06_solute_storage_and_decay.ipynb) | the solutes' storage fractions, first-order loss and liquid boundary |
 
 Run them locally with `jupyter lab example/tutorials/` (the `mecha` environment above). Examples:
 [`example/hydraulics/`](example/hydraulics/) (sections, a root axis, the osmotic presets),

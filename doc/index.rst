@@ -24,6 +24,7 @@ explore them, use experimental data, follow the water along a root. Each tutoria
     notebooks/user/04_sensitivity_analysis
     notebooks/user/05_experimental_data
     notebooks/user/06_along_a_root
+    notebooks/user/07_tomato_day_and_night
     parameters
 
 Developer guide
@@ -42,6 +43,7 @@ after the first user tutorial.
     notebooks/developer/03_needle_solutes
     notebooks/developer/04_full_plant
     notebooks/developer/05_extend_the_component
+    notebooks/developer/06_solute_storage_and_decay
     components
     equations
     legacy

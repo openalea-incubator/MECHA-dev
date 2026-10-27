@@ -12,6 +12,7 @@ MECHA for users: the water flow across one root cross section in a few lines, it
     simulate({"kw": 2.4e-5})                      another cell wall conductivity
     simulate(anatomy={"preset": "for_dicot_root"})    another anatomy (GRANAP's parameters)
     simulate(barrier=3)                           a fully suberized endodermis
+    simulate(osmotic={"os_hetero": 4, "osmotic_epi": -6800., ...})   with osmotic potentials (MECHA's presets)
     simulate_root(barriers=(3, 3, 1, 1, 0))       a root axis: its sections from the collar to the tip, joined by
                                                   their xylem, in a soil at soil_psi; a table per section
 
@@ -33,6 +34,26 @@ from openalea.mecha.component import MechaHydraulics
 MAIN_PARAMETERS = ("kw", "kmb", "kaqp", "kpl", "kw_casparian", "kw_suberin_in", "kw_suberin_out", "thickness",
                    "kaqp_endo_factor", "kaqp_exo_factor", "kaqp_cortex_factor", "kaqp_stele_factor", "ratio_cortex")
 CORTEX_RANKS = range(40, 50)                       # MECHA's cell ranks of the cortex layers
+# A tomato's young root (develop's tutorials/root_example.py and dicot_tomato.py, Solanum lycopersicum), GRANAP's
+# dicot root tuned: a two-armed xylem star, its phloem and cambium, its cell sizes. Their inner and outer cortex
+# layers are one cortex of 4 layers here, and the exodermis is kept: GRANAP's anatomy parameters set its sections'
+# fields, they neither add layers nor remove one.
+TOMATO_ROOT = {
+    "preset": "for_dicot_root",
+    "aerenchyma": {"aerenchyma_proportion": 0.0},
+    "stele": {"thickness": 0.116, "cell_diameter": 0.01, "cell_diameter_center": 0.030},
+    "xylem": {"n_vascular_peak": 2, "radius_valley_side": 0.015, "radius_peak_side": 0.058, "arc_peak_side": 0.008,
+              "arc_valley_side": 0.015, "vessel_diameter": 0.0166, "vessel_diameter_min": 0.01, "pith_radius": 0.0,
+              "gradient_inflection": 0.8, "gradient_steepness": 5, "allow_ellipse": True},
+    "phloem": {"sieve_diameter": 0.005, "relative_distance": 0.8, "cluster_height": 0.013, "cluster_width": 0.035},
+    "cambium": {"radius_valley_side": 0.017, "radius_peak_side": 0.059, "visible_distance": 0.02,
+                "arc_peak_side": 0.013, "arc_valley_side": 0.016, "cell_diameter": 0.005, "cell_width": 0.01},
+    "endodermis": {"cell_diameter": 0.015, "cell_width": 0.019},
+    "pericycle": {"cell_diameter": 0.0141, "cell_width": 0.0086},
+    "cortex": {"cell_diameter": 0.025, "cell_width": 0.024, "n_layers": 4},
+    "epidermis": {"cell_diameter": 0.027, "cell_width": 0.0255},
+    "inter_cellular_spaces": {"smoothness": 0.05, "tissue": ["cortex"]},
+}
 # cm hPa-1 d-1 to m s-1 MPa-1: 1e-2 m / 1e-4 MPa / 86400 s
 KR_TO_M_PER_S_PER_MPA = 1e-2 / 1e-4 / 86400.
 
@@ -69,13 +90,35 @@ class _RootSection(CompositeModel):
         self.hydraulics()
 
 
-def _plant_model():
+class _OsmoticRootSection(CompositeModel):
+    """One root segment: GRANAP's anatomy, MECHA's osmotic presets (the cells', walls' and soil's osmotic
+    potentials), MECHA's hydraulics."""
+    from_scale, nodes = "SubOrgan", "Compartment"
+
+    def __init__(self, data_structure, time_step):
+        from openalea.granap.metafspm.component import GranapAnatomy
+        from openalea.mecha.osmotic import MechaOsmoticPresets
+
+        self.anatomy = GranapAnatomy(data_structure=data_structure, time_step=time_step)
+        self.presets = MechaOsmoticPresets(data_structure=data_structure, time_step=time_step)
+        self.hydraulics = MechaHydraulics(data_structure=data_structure, time_step=time_step)
+        self.declare_data_and_couple_components(translator_path=Translator(),
+                                                components=(self.anatomy, self.presets, self.hydraulics))
+
+    def run(self):
+        self.anatomy()
+        self.presets()
+        self.hydraulics()
+
+
+def _plant_model(osmotic=False):
     from openalea.granap.metafspm.architectures import RootAxis
     from openalea.granap.metafspm.component import GranapAnatomy, junction_rules
 
-    _RootSection.initiators = (RootAxis, GranapAnatomy)
-    _RootSection.wiring = junction_rules
-    return _RootSection
+    model = _OsmoticRootSection if osmotic else _RootSection
+    model.initiators = (RootAxis, GranapAnatomy)
+    model.wiring = junction_rules
+    return model
 
 
 @dataclass
@@ -159,13 +202,16 @@ def _summary(section: Section) -> pd.Series:
 
 
 def simulate(parameters: dict = None, anatomy: dict = None, barrier: float = 1., soil_psi: float = 0.,
-             xylem_psi: float = -5000.) -> Section:
+             xylem_psi: float = -5000., osmotic: dict = None) -> Section:
     """Solve the water flow across one root cross section: GRANAP's anatomy (*anatomy*: its parameters, e.g.
     {"preset": "for_dicot_root", "cortex": {"n_layers": 3}}; a monocot root by default), MECHA's hydraulics with its
     defaults changed by *parameters* ({name: value}), the apoplastic barriers *barrier* (MECHA's maturity code: 1
     an endodermal Casparian strip, 2 + suberin with passage cells, 3 a fully suberized endodermis, 4–10 the
     exodermis' variants, 11 both suberized and the sclerenchyma's walls lignified; 0, none, is a root tip whose water goes to the protophloem: the standard problem then needs
-    parameters={"standard_psi_sieve": ...}), the soil at *soil_psi* and the xylem at *xylem_psi* (hPa).
+    parameters={"standard_psi_sieve": ...}), the soil at *soil_psi* and the xylem at *xylem_psi* (hPa). With
+    *osmotic* ({name: value} of MECHA's osmotic presets, MechaOsmoticPresets: os_hetero, osmotic_epi, os_cortex,
+    osmotic_left_soil...), the cells', walls' and soil's osmotic potentials act across the membranes (their reflection
+    coefficients); *soil_psi* and *xylem_psi* are then their pressure potentials.
 
     The summary: kr, the radial conductivity (cm hPa-1 d-1; kr_SI in m s-1 MPa-1), the water uptake (cm³ d-1), the
     perimeter (cm), the number of cells, and the share of the radial flow carried across the cortex by the walls,
@@ -173,8 +219,10 @@ def simulate(parameters: dict = None, anatomy: dict = None, barrier: float = 1.,
     scenario = dict(parameters or {}, standard_psi_soil=soil_psi, standard_psi_xylem=xylem_psi)
     if anatomy is not None:
         scenario["root_anatomy"] = dict(anatomy)
-    table = pd.DataFrame([dict(plant="plant", model=_plant_model(), x=0., y=0., z=0., rotation=0.,
-                               scenario={"parameters": scenario})])
+    if osmotic is not None:
+        scenario.update(osmotic, standard_osmotic=1.)
+    table = pd.DataFrame([dict(plant="plant", model=_plant_model(osmotic is not None), x=0., y=0., z=0.,
+                               rotation=0., scenario={"parameters": scenario})])
     scene = Scene(table)
     ds = scene.populations[0].data_structure
     ds.set("barrier", np.full(ds.n_nodes(), float(barrier)))
