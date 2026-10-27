@@ -283,6 +283,12 @@ class MechaHydraulics(MechaSections):
     fplxheight_tparenchyma_ttracheid: float = _p("cm-1", "plasmodesmata frequency, tparenchyma-ttracheid", 0.0)
     fplxheight_ttracheid_ttracheid: float = _p("cm-1", "plasmodesmata frequency, ttracheid-ttracheid", 0.0)
     fplxheight_protophloem_protophloem: float = _p("cm-1", "plasmodesmata frequency, protophloem-protophloem", 0.0)
+    fplxheight_endo_cambium: float = _p("cm-1", "plasmodesmata frequency, endo-cambium", 1080000.0)
+    fplxheight_stele_cambium: float = _p("cm-1", "plasmodesmata frequency, stele-cambium", 1080000.0)
+    fplxheight_sieve_cambium: float = _p("cm-1", "plasmodesmata frequency, sieve-cambium", 1200000.0)
+    fplxheight_comp_cambium: float = _p("cm-1", "plasmodesmata frequency, comp-cambium", 1200000.0)
+    fplxheight_xylem_cambium: float = _p("cm-1", "plasmodesmata frequency, xylem-cambium", 640000.0)
+    fplxheight_cambium_cambium: float = _p("cm-1", "plasmodesmata frequency, cambium-cambium", 1000000.0)
 
     # ── State variables: MECHA's geometry ──
     cell_rank: float = state_variable(**_doc("", "MECHA's cell rank: the cgroup, or the cortex (40-49) and stele "

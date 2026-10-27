@@ -36,7 +36,8 @@ _KW_CONFIGS = {   # barrier: sources of _KW_KEYS (kw_septa is always kw_septa, k
 }
 # a wall's interface (its two cells' cgroups, sorted) -> its kw key (HydraulicData.interface_kw_key_map)
 _KW_INTERFACES = {(3, 3): "kw_endo_endo", (3, 4): "kw_endo_cortex", (3, 5): "kw_endo_peri", (3, 11): "kw_endo_peri",
-                  (3, 12): "kw_endo_peri", (3, 13): "kw_endo_peri", (3, 16): "kw_endo_peri", (1, 1): "kw_exo_exo",
+                  (3, 12): "kw_endo_peri", (3, 13): "kw_endo_peri", (3, 16): "kw_endo_peri", (3, 22): "kw_endo_peri",
+                  (1, 1): "kw_exo_exo",
                   (1, 2): "kw_exo_epi", (1, 4): "kw_exo_cortex", (4, 4): "kw_cortex_cortex",
                   (2, 4): "kw_meso_hypo"}       # the reactions' needle (kw unless kw_meso_hypo is given; legacy r9)
 # ── Plasmodesmata ──
@@ -50,7 +51,7 @@ FPLXHEIGHT_ORIGINAL = {"fplxheight_default": 8.0E5, "fplxheight_epi_exo": 1.08E6
                        "fplxheight_comp_comp": 6.8E5, "fplxheight_comp_sieve": 1.76E6, "fplxheight_peri_sieve": 7.2E5,
                        "fplxheight_stele_sieve": 9.0E5}
 CGROUP_NAMES = {1: "exo", 2: "epi", 3: "endo", 4: "cortex", 5: "stele", 11: "sieve", 12: "comp", 13: "xylem",
-                16: "peri", 17: "tparenchyma", 18: "ttracheid", 23: "protophloem"}
+                16: "peri", 17: "tparenchyma", 18: "ttracheid", 22: "cambium", 23: "protophloem"}
 # The legacy's per-interface frequencies (HydraulicData.fplxheight_map; others 8e5), plasmodesmata_rules 2
 FPLXHEIGHT = {(1, 1): 8.0E5, (2, 2): 8.0E5, (1, 2): 1.08E6, (1, 4): 2.28E6, (4, 4): 8.6E5, (3, 4): 8.8E5,
               (3, 3): 6.4E5, (3, 16): 9.6E5, (3, 5): 9.6E5, (3, 17): 1.08E6, (3, 18): 0.0, (5, 16): 1.08E6,
@@ -58,7 +59,8 @@ FPLXHEIGHT = {(1, 1): 8.0E5, (2, 2): 8.0E5, (1, 2): 1.08E6, (1, 4): 2.28E6, (4, 
               (5, 18): 0.0, (11, 12): 1.76E6, (11, 16): 7.2E5, (11, 13): 0.0, (11, 11): 0.0, (11, 23): 0.0,
               (11, 17): 6.4E5, (11, 18): 0.0, (12, 13): 9.8E5, (12, 16): 7.0E5, (12, 12): 6.8E5, (12, 23): 6.8E5,
               (12, 17): 1.08E6, (12, 18): 0.0, (13, 16): 1.08E6, (13, 13): 6.4E5, (13, 23): 0.0, (13, 17): 1.08E6,
-              (13, 18): 1.76E6, (17, 17): 8.0e5, (17, 18): 0.0, (18, 18): 0.0, (23, 23): 0.0}
+              (13, 18): 1.76E6, (17, 17): 8.0e5, (17, 18): 0.0, (18, 18): 0.0, (23, 23): 0.0,
+              (3, 22): 1.08E6, (5, 22): 1.08E6, (11, 22): 1.2E6, (12, 22): 1.2E6, (13, 22): 6.4E5, (22, 22): 1.0E6}
 FPLXHEIGHT_LEGACY_DEFAULT = 8.0E5
 # the legacy's aperture factors per interface (develop's interface_kpl_factor_map, its keys fixed: doc/legacy.rst,
 # d2); an interface not listed has factor 1
@@ -73,9 +75,10 @@ def fplxheight_name(interface) -> str:
     return "fplxheight_" + "_".join(CGROUP_NAMES[c] for c in interface)
 
 
-# The interfaces of the tissues the legacy added (transfusion parenchyma 17, tracheids 18, protophloem 23), which
-# the original's rules do not know: kept, with the legacy's frequencies, as parameters (in the original rules)
-ADDED_TISSUES = (17, 18, 23)
+# The interfaces of the tissues the legacy added (transfusion parenchyma 17, tracheids 18, cambium 22, protophloem
+# 23), which the original's rules do not know: kept, with the legacy's frequencies, as parameters (in the original
+# rules)
+ADDED_TISSUES = (17, 18, 22, 23)
 FPLXHEIGHT_ADDED = {k: v for k, v in FPLXHEIGHT.items() if set(k) & set(ADDED_TISSUES)}
 FPLXHEIGHT_PARAMETERS = {**FPLXHEIGHT_ORIGINAL, **{fplxheight_name(k): v for k, v in FPLXHEIGHT_ADDED.items()}}
 
@@ -505,7 +508,8 @@ def _plasmodesmata_original(net: Network, e, P, b):
     The original MECHA's plasmodesmata (its radial rules, first match wins): quantity × aperture per edge *e*, then
     × endo_in_factor on the stelar side of the endodermis (both cells endodermis or stele: the wall they share is in
     the original's rows up to the endodermis'), × endo_out_factor on the cortical side. The cgroups of its newer
-    CellSet versions are read as it does (19, 20: xylem; 21: pericycle).
+    CellSet versions are read as it does (19, 20: xylem; 21: pericycle), and develop's companion cells 24 and 26 as
+    companion cells (12).
     """
     def param(name):
         return np.asarray(P[name], dtype=float)[e]
@@ -514,6 +518,7 @@ def _plasmodesmata_original(net: Network, e, P, b):
     for g in (gi, gj):
         g[np.isin(g, (19, 20))] = 13
         g[g == 21] = 16
+        g[np.isin(g, (24, 26))] = 12
 
     def pair(x, y):
         x, y = np.atleast_1d(x), np.atleast_1d(y)

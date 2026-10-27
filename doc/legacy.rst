@@ -717,6 +717,14 @@ What ``develop`` (945b2be) adds to the refactored legacy, and the behaviours fou
        stores PPP under ``pericycle_phloem_pole_factor``, the solver reads ``phloem_pericycle_pole_factor`` (always 0)
      - not reproduced: the comparisons give the legacy PPP 1 (under the key its solver reads); the port's
        ``kpl_PPP_factor`` stays 1 by default
+   * - d3
+     - tissue groups: 22 the cambium (plasmodesmata frequencies at its interfaces with the endodermis, stele, sieve
+       tubes, companion cells, xylem and itself; its walls with the endodermis ``kw_endo_peri``; a stele–cambium factor
+       whose key exists nowhere, so 1); 23 labelled "phloem" (still the protosieve list); 24 and 26 labelled companion
+       cells (the label only: its tables read the raw cgroup; its ranks read 26 as 12)
+     - 22 in both rules (the original rules: develop's frequencies as parameters, ``fplxheight_*_cambium``), its walls'
+       ``kw_endo_peri``, ``kpl_cambium_stele_factor`` (rules 2, 1 by default); 24 and 26 companion cells in the
+       original rules. GRANAP writes none of them (its cambium is 12)
 
 
 Constants
