@@ -18,9 +18,21 @@ from openalea.mecha.legacy import InData, Mecha, NetworkBuilder
 
 
 # The port's options that reproduce the legacy where it departs from the original MECHA:
-# its plasmodesmata rules and its aperture factors' defaults, its prescribed xylem boundary, its one wall thickness
+# its plasmodesmata rules and its aperture factors' defaults, its prescribed xylem boundary, its one wall thickness,
+# its membrane floor (ME-33), its axial penalty conductances (ME-32: develop's 1.0)
 LEGACY_OPTIONS = dict(plasmodesmata_rules=2., kpl_PCC_factor=0., kpl_PST_factor=0., standard_axial_source=2.,
-                      thickness_source=1.)
+                      thickness_source=1., membrane_floor=2., k_xyl=1.0, k_sieve=1.0)
+
+
+def legacy_input():
+    """The legacy's default input (InData()), with its phloem-pole plasmodesmata factor (PPP) 1 instead of 0: with
+    develop's factors applied (doc/legacy.rst, ME-10), PPP 0 closes the companion cells' plasmodesmata with the stele,
+    xylem and pericycle, isolating them; the port does not reproduce that. Set under the key the solver reads
+    (``phloem_pericycle_pole_factor``; the loader stores the input's under ``pericycle_phloem_pole_factor``)."""
+    data = InData()
+    for entry in data.hydraulic.kpl:
+        entry["phloem_pericycle_pole_factor"] = 1.0
+    return data
 
 
 def legacy_options(mecha):
@@ -40,7 +52,7 @@ class LegacyRun:
 def legacy_section(organ, barriers=(1,), height=200.0, h=0) -> LegacyRun:
     """The legacy MECHA on a GRANAP organ, one solve per maturity stage (barrier code, height in µm)."""
     organ.export_to_adjencymatrix()
-    data = InData()
+    data = legacy_input()
     data.geometry.set_maturity_stages(list(barriers), height=[height] * len(barriers))
     network = NetworkBuilder(organ)
     network.populate_from_network()
@@ -67,7 +79,7 @@ def legacy_neumann(organ, barrier, flow, height=200.0):
     from it as the tutorial does. Returns dict(solution, total_flow, psi_xyl, kr).
     """
     organ.export_to_adjencymatrix()
-    data = InData()
+    data = legacy_input()
     data.geometry.set_maturity_stages([barrier], height=[height])
     network = NetworkBuilder(organ)
     network.populate_from_network()
@@ -118,7 +130,7 @@ def legacy_osmotic(organ, barrier, height=200.0, **overrides):
     edge_Q {(u, v): Q}, total_flow).
     """
     organ.export_to_adjencymatrix()
-    data = InData()
+    data = legacy_input()
     data.geometry.set_maturity_stages([barrier], height=[height])
     scenario = dict(data.boundary.scenarios[0])
     scenario.update(overrides)

@@ -1,6 +1,7 @@
 """
 The port's conductances are the legacy's, edge by edge and bit for bit, as are the
-soil terms; its matrix agrees to 4 ulp and its solution to 1e-12 (decision D1: summation and node orders differ).
+soil terms; its matrix agrees to 4 ulp and its solution to 1e-12 (decision D1: summation and node orders differ), the
+xylem's diagonals to 2 ulp of the axial penalty the legacy adds then removes (k_xyl 1.0, ME-32).
 """
 import numpy as np
 import pytest
@@ -89,7 +90,9 @@ def test_matrix(port, barrier):
     W.eliminate_zeros()
     reference.eliminate_zeros()
     eps = np.finfo(float).eps
-    excess = abs(W - reference) - 4 * eps * (abs(W) + abs(reference)) / 2
+    # the axial term added then removed (k_xyl, develop's 1.0: ME-32) leaves those diagonals rounded at its scale
+    rounding = diags(2 * eps * removed[np.argsort(port["legacy"])])
+    excess = abs(W - reference) - 4 * eps * (abs(W) + abs(reference)) / 2 - rounding
     assert excess.data.size == 0 or excess.data.max() <= 0.
 
 

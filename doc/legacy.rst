@@ -661,13 +661,16 @@ The ``reactions`` branch
        sugar sinks
      - fixed: solutes on the liquid nodes only (2 × 10⁻¹² on one needle step)
    * - ME-32
-     - ``k_xyl`` and ``k_sieve`` default to 1.0 (10⁻⁶ in the legacy)
+     - ``k_xyl`` and ``k_sieve`` default to 1.0 (10⁻⁶ in the refactored legacy before ``develop``; ``develop`` too has
+       1.0)
      - not ported: the Poiseuille boundary (ME-19) holds the vessels (monocot root, barrier 1: kr 1.0619 × 10⁻⁴ against the
-       branch's 1.0618 × 10⁻⁴)
+       branch's 1.0618 × 10⁻⁴); the comparisons give ``k_xyl`` and ``k_sieve`` 1.0. The legacy returns its matrix after
+       adding then removing that 1.0 on the xylem's diagonals, rounded at its scale: compared to 2 ulp of it
    * - ME-33
      - the 10⁻¹⁶ membrane floor only when ``kmb`` is 0 too: air-filled intercellular spaces conduct through ``kmb``
-       (5 × 10⁶ times more on the root's, 26 membranes of the needle's air spaces)
-     - not adopted: the original's floor (an air-filled space has no water-conducting membrane)
+       (5 × 10⁶ times more on the root's, 26 membranes of the needle's air spaces); ``develop`` has it too
+     - not adopted: the original's floor (an air-filled space has no water-conducting membrane), ``membrane_floor`` 1;
+       ``membrane_floor`` 2 reproduces it (the comparisons: 1196 membranes of the monocot root)
    * - ME-34
      - tissue names (``hypodermis`` → cgroup 2, ``vascular parenchyma``)
      - inert: GRANAP's cells carry their cgroup; the type fallback only applies without one
@@ -685,6 +688,30 @@ The ``reactions`` branch
      - the steady coupled solver (Picard, JFNK, continuation), the calibration package, the ``apo`` and ``sym`` modes,
        the upwind-only solve, θ ≠ 1, single-species degradation: used by no simulation
      - not ported; implicit Euler only (θ = 1)
+
+The ``develop`` branch
+----------------------
+
+What ``develop`` (945b2be) adds to the refactored legacy, and the behaviours found merging it.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 8 52 40
+
+   * - ID
+     - develop
+     - port
+   * - d1
+     - its merge left ``HydraulicMatrixBuilder._contact_nodes``'s header as a second ``_apply_soil_boundary``: every
+       solve raised AttributeError
+     - the legacy repaired (46a6f08's header); nothing to port
+   * - d2
+     - the plasmodesmata factors' keys fixed (ME-09–ME-12): ``develop``'s map applies them. Its phloem-pole factor
+       (PPP) on the companion cells' interfaces (stele, xylem, pericycle), not on the phloem-pole pericycle's; with its
+       default 0 (and PCC 0), the companion cells are symplastically isolated. The input cannot change it: the loader
+       stores PPP under ``pericycle_phloem_pole_factor``, the solver reads ``phloem_pericycle_pole_factor`` (always 0)
+     - not reproduced: the comparisons give the legacy PPP 1 (under the key its solver reads); the port's
+       ``kpl_PPP_factor`` stays 1 by default
 
 
 Constants

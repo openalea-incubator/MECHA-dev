@@ -347,8 +347,11 @@ def edge_conductances(net: Network, P: dict, barrier, height, factors: dict = No
         K_mb = 1 / (1 / (kw_val / (t / 2 * 1.0E-04)) + 1 / (kmb + kaqp_curr)) * 1.0E-08 * (height[e]
                                                                                           + net.edge_dist[e]) * net.edge_length[e]
     K_mb = np.where(kw_val == 0.0, 0.0, K_mb)
-    # no aquaporin activity outside the barriers: 1e-16 (an air-filled intercellular space, the original's)
-    K_mb = np.where(~barrier_interface & (kaqp_curr == 0.0), 1.00E-16, K_mb)
+    # no aquaporin activity outside the barriers: 1e-16 (an air-filled intercellular space, the original's);
+    # membrane_floor 2: only where kmb is 0 too (the reactions branch's and develop's)
+    floor = ~barrier_interface & (kaqp_curr == 0.0)
+    floor &= (np.asarray(P["membrane_floor"], dtype=float)[e] != 2) | (kmb == 0.0)
+    K_mb = np.where(floor, 1.00E-16, K_mb)
     K[e] = K_mb
     if factors is not None:
         vessel = xylem & (b > 0)
