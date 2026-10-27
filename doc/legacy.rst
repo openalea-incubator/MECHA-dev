@@ -732,6 +732,11 @@ What ``develop`` (945b2be) adds to the refactored legacy, and the behaviours fou
        table)
      - as coded (``test_develop_barriers.py``: bit for bit); the sclerenchyma by GRANAP's tissue (GRANAP gives it
        cgroup 4), its walls after φ-thickening and before passage cells and septa (the legacy's precedence)
+   * - d5
+     - ``tracheid_as_xylem`` (False by default): the transfusion tracheids' membranes take the xylem's branch
+       (kaqp_stele × 10⁴ with barriers, the vessels' apoplastic solute term), never the xylem's boundary
+     - ``tracheid_as_xylem`` (0 by default), the same; compared bit for bit on a root whose stele is half retagged
+       tracheids
 
 
 Constants

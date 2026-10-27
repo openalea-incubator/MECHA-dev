@@ -51,14 +51,19 @@ class LegacyRun:
     stages: list = field(default_factory=list)
 
 
-def legacy_section(organ, barriers=(1,), height=200.0, h=0, kpl=None) -> LegacyRun:
+def legacy_section(organ, barriers=(1,), height=200.0, h=0, kpl=None, hydraulic=None, edit_network=None) -> LegacyRun:
     """The legacy MECHA on a GRANAP organ, one solve per maturity stage (barrier code, height in µm); *kpl*: its
-    plasmodesmata configuration's entries (legacy_input)."""
+    plasmodesmata configuration's entries (legacy_input); *hydraulic*: its HydraulicData's attributes to set
+    ({name: value}); *edit_network*: a function of its NetworkBuilder, called once the network is built."""
     organ.export_to_adjencymatrix()
     data = legacy_input(kpl)
+    for name, value in (hydraulic or {}).items():
+        setattr(data.hydraulic, name, value)
     data.geometry.set_maturity_stages(list(barriers), height=[height] * len(barriers))
     network = NetworkBuilder(organ)
     network.populate_from_network()
+    if edit_network is not None:
+        edit_network(network)
     mecha = Mecha(data, network=network)
     run = LegacyRun(network=network, mecha=mecha)
     for i, barrier in enumerate(barriers):

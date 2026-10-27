@@ -349,7 +349,8 @@ def edge_conductances(net: Network, P: dict, barrier, height, factors: dict = No
                for name in ("stele", "endo", "exo", "epi", "cortex")}
     a_cortex, b_cortex = P["a_cortex"][e], P["b_cortex"][e]
     cortex_value = a_cortex * net.distance_center_grav[wall] * 1.0E-04 + b_cortex
-    xylem = np.isin(cg, XYLEM_CGROUPS)
+    # the transfusion tracheids as xylem membranes on request (develop's tracheid_as_xylem), never its boundary
+    xylem = np.isin(cg, XYLEM_CGROUPS) | ((cg == 18) & (np.asarray(P["tracheid_as_xylem"], dtype=float)[e] > 0))
     kaqp_curr = np.select(
         [cg == 1, cg == 2, cg == 3, xylem & (b > 0), xylem, cg > 4, net.intercellular[cell] & (b > 0), cg == 4],
         [kaqp_of["exo"], kaqp_of["epi"], kaqp_of["endo"], kaqp_of["stele"] * 10000, kaqp_of["stele"],

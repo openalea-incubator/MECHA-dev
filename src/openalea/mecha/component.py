@@ -198,6 +198,9 @@ class MechaHydraulics(MechaSections):
     ratio_cortex: float = _p("adim", "the cortex's aquaporin activity at its innermost walls over its outermost "
                                  "(1: uniform)", 1.0)
     k_interc: float = _p("cm hPa-1 d-1", "membrane conductivity of intercellular spaces (with barriers)", 0.0)
+    tracheid_as_xylem: float = _p("", "1: the transfusion tracheids' (cgroup 18) membranes are the xylem's (kaqp_stele "
+                                      "x 1e4 with barriers, the vessels' apoplastic solute term), as water-filled "
+                                      "conduits, without the xylem's boundary (develop's); 0: a stele cell's", 0.)
     membrane_floor: float = _p("", "a membrane without aquaporin activity outside the barriers (an air-filled "
                                    "intercellular space): 1 cut (1e-16, the original MECHA's), 2 cut only where kmb is "
                                    "0 too (the reactions branch's and develop's, for the comparisons)", 1.)
