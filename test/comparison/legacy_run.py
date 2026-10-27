@@ -24,14 +24,16 @@ LEGACY_OPTIONS = dict(plasmodesmata_rules=2., kpl_PCC_factor=0., kpl_PST_factor=
                       thickness_source=1., membrane_floor=2., k_xyl=1.0, k_sieve=1.0)
 
 
-def legacy_input():
+def legacy_input(kpl=None):
     """The legacy's default input (InData()), with its phloem-pole plasmodesmata factor (PPP) 1 instead of 0: with
-    develop's factors applied (doc/legacy.rst, ME-10), PPP 0 closes the companion cells' plasmodesmata with the stele,
+    develop's factors applied (doc/legacy.rst, d2), PPP 0 closes the companion cells' plasmodesmata with the stele,
     xylem and pericycle, isolating them; the port does not reproduce that. Set under the key the solver reads
-    (``phloem_pericycle_pole_factor``; the loader stores the input's under ``pericycle_phloem_pole_factor``)."""
+    (``phloem_pericycle_pole_factor``; the loader stores the input's under ``pericycle_phloem_pole_factor``).
+    *kpl*: other entries of its plasmodesmata configuration ({key the solver reads: value})."""
     data = InData()
     for entry in data.hydraulic.kpl:
         entry["phloem_pericycle_pole_factor"] = 1.0
+        entry.update(kpl or {})
     return data
 
 
@@ -49,10 +51,11 @@ class LegacyRun:
     stages: list = field(default_factory=list)
 
 
-def legacy_section(organ, barriers=(1,), height=200.0, h=0) -> LegacyRun:
-    """The legacy MECHA on a GRANAP organ, one solve per maturity stage (barrier code, height in µm)."""
+def legacy_section(organ, barriers=(1,), height=200.0, h=0, kpl=None) -> LegacyRun:
+    """The legacy MECHA on a GRANAP organ, one solve per maturity stage (barrier code, height in µm); *kpl*: its
+    plasmodesmata configuration's entries (legacy_input)."""
     organ.export_to_adjencymatrix()
-    data = legacy_input()
+    data = legacy_input(kpl)
     data.geometry.set_maturity_stages(list(barriers), height=[height] * len(barriers))
     network = NetworkBuilder(organ)
     network.populate_from_network()

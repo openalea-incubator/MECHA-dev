@@ -336,8 +336,8 @@ Parameters silently not applied
        (``cortex``, ``endo_in`` …): only the companion-cell and sieve-tube factors apply, the others fall back to 1; a
        duplicate ``(11, 11)`` key
      - corrected: ``plasmodesmata_rules`` 1 (the original's rules and factors, ``kpl_cortex_factor``,
-       ``kpl_endo_in_factor``, ``kpl_endo_out_factor``, ``kpl_PPP_factor``, ``kpl_PCC_factor``); 2 reproduces the
-       legacy's
+       ``kpl_endo_in_factor``, ``kpl_endo_out_factor``, ``kpl_PPP_factor``, ``kpl_PCC_factor``); fixed upstream by
+       ``develop`` (d2), whose map ``plasmodesmata_rules`` 2 reproduces (``test_plasmodesmata_factors.py``)
    * - b
      - the ``Fplxheight`` values of the XML file are never applied (the interface map is filled after loading)
      - dropped (no XML input); every frequency is a parameter (``fplxheight_*``)
@@ -462,7 +462,12 @@ Plasmodesmata, against the original MECHA
 
 The legacy's tables (``interface_kpl_factor_map``, ``fplxheight_map``) against the original's radial rules. All are
 corrected by ``plasmodesmata_rules`` 1 (default) and reproduced by 2 (with ``kpl_PCC_factor`` = ``kpl_PST_factor`` =
-0, the legacy's defaults without an XML file). Reviewed difference (standard problem): monocot root, kr +0.01 %
+0, the legacy's defaults without an XML file). The legacy column describes the refactored legacy before ``develop``;
+``develop`` applies its factors (d2): the cortex's at cortex–cortex, the endodermis' at endodermis–stele,
+endodermis–pericycle (inner) and endodermis–cortex (outer), PPP at stele–companion, companion–xylem and
+companion–pericycle, PCC at companion–companion and companion–sieve, PST at sieve–sieve, sieve–pericycle,
+sieve–xylem and stele–sieve, ``kpl_cambium_stele_factor`` at stele–cambium; still not where the original puts PPP
+(the phloem-pole pericycle) and PCC (also stele and xylem–companion). Reviewed difference (standard problem): monocot root, kr +0.01 %
 (stele–sieve opened); dicot root, kr −0.06 % at barrier 1 and −0.03 % at barrier 3.
 
 .. list-table::

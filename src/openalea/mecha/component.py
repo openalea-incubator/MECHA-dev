@@ -201,7 +201,7 @@ class MechaHydraulics(MechaSections):
                                    "0 too (the reactions branch's and develop's, for the comparisons)", 1.)
     kpl: float = _p("cm3 hPa-1 d-1", "conductance of one plasmodesma", 5.3E-12)
     plasmodesmata_rules: float = _p("", "the plasmodesmata's rules: 1 the original MECHA's, 2 the refactored legacy's "
-                                        "(for the comparison with it, doc/legacy.rst)", 1.)
+                                        "(develop's factor map; for the comparison with it, doc/legacy.rst)", 1.)
     kpl_cortex_factor: float = _p("adim", "plasmodesmata aperture factor of the cortex (outer layer-cortex, "
                                           "cortex-cortex, cortex-endodermis)", 1.0)
     kpl_endo_in_factor: float = _p("adim", "plasmodesmata factor on the stelar side of the endodermis", 1.0)
@@ -210,6 +210,8 @@ class MechaHydraulics(MechaSections):
     kpl_PCC_factor: float = _p("adim", "plasmodesmata aperture factor of the companion cells", 1.0)
     kpl_PST_factor: float = _p("adim", "plasmodesmata aperture factor of the sieve tubes (the legacy's rules only; the "
                                    "original uses it for the axial plasmodesmata of 3D sections)", 1.0)
+    kpl_cambium_stele_factor: float = _p("adim", "plasmodesmata aperture factor between the stele and the cambium (the "
+                                                 "legacy's rules only)", 1.0)
     x_contact: float = _p("µm", "the border walls at x >= x_contact are in contact with the soil", -15E9)
     standard_axial_source: float = _p("", "the standard problem's conductance between a conduit and the axial "
                                           "boundary: 1 its Poiseuille conductance over the height (the original "

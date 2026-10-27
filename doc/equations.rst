@@ -113,8 +113,9 @@ quantity
 (with 1 for the other side) across interfaces; then :math:`f_\text{endo}` is ``kpl_endo_in_factor`` when both cells are
 endodermis or stele (or the section has no xylem), ``kpl_endo_out_factor`` otherwise. With ``plasmodesmata_rules`` 2
 (the legacy's, ``_plasmodesmata_legacy``), the legacy's frequency table, :math:`\alpha = f` or :math:`2f/(f + 1)` from
-``kpl_PCC_factor`` and ``kpl_PST_factor`` only, 10000 × the frequency between any two xylem cells, and no
-:math:`f_\text{endo}`.
+``develop``'s factor map (``conductance.KPL_FACTOR_INTERFACES``: the cortex's, the endodermis' inner and outer, PPP,
+PCC, PST and ``kpl_cambium_stele_factor``, each at its interfaces; doc/legacy.rst, d2), 10000 × the frequency between
+any two xylem cells, and no :math:`f_\text{endo}`.
 
 **Soil and axial boundary terms** (``conductance.boundary_terms``), per node: a border wall and a border junction at
 :math:`x \ge` ``x_contact``, on root sections only,

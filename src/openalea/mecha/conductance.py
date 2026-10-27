@@ -60,9 +60,13 @@ FPLXHEIGHT = {(1, 1): 8.0E5, (2, 2): 8.0E5, (1, 2): 1.08E6, (1, 4): 2.28E6, (4, 
               (12, 17): 1.08E6, (12, 18): 0.0, (13, 16): 1.08E6, (13, 13): 6.4E5, (13, 23): 0.0, (13, 17): 1.08E6,
               (13, 18): 1.76E6, (17, 17): 8.0e5, (17, 18): 0.0, (18, 18): 0.0, (23, 23): 0.0}
 FPLXHEIGHT_LEGACY_DEFAULT = 8.0E5
-# the legacy's aperture factors, as resolved against its kpl configuration (doc/legacy.rst, a: the other keys give 1)
-KPL_FACTOR_INTERFACES = {(12, 12): "kpl_PCC_factor", (11, 12): "kpl_PCC_factor", (11, 16): "kpl_PST_factor",
-                         (11, 13): "kpl_PST_factor", (5, 11): "kpl_PST_factor"}
+# the legacy's aperture factors per interface (develop's interface_kpl_factor_map, its keys fixed: doc/legacy.rst,
+# d2); an interface not listed has factor 1
+KPL_FACTOR_INTERFACES = {(4, 4): "kpl_cortex_factor", (12, 12): "kpl_PCC_factor", (11, 11): "kpl_PST_factor",
+                         (3, 5): "kpl_endo_in_factor", (3, 16): "kpl_endo_in_factor", (3, 4): "kpl_endo_out_factor",
+                         (5, 12): "kpl_PPP_factor", (12, 13): "kpl_PPP_factor", (11, 12): "kpl_PCC_factor",
+                         (11, 16): "kpl_PST_factor", (11, 13): "kpl_PST_factor", (5, 11): "kpl_PST_factor",
+                         (12, 16): "kpl_PPP_factor", (5, 22): "kpl_cambium_stele_factor"}
 
 
 def fplxheight_name(interface) -> str:
