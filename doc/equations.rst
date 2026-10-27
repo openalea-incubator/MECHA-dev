@@ -104,9 +104,15 @@ quantity
 
 .. math::
 
-   N_p = F_{ij}\,10^{-4}\,\ell_e \cdot \alpha_{ij} \cdot c_k \cdot f_\text{endo},
+   N_p = F_{ij}\,10^{-4}\,\ell_e \cdot \alpha_{ij} \cdot c_k \cdot f_\text{endo} \cdot s_{ij},
 
 :math:`F_{ij}` the interface's frequency × height (cm⁻¹, ``fplxheight_*``), :math:`\alpha_{ij}` its aperture factor,
+:math:`s_{ij}` the aperture by the distance to the soil contact (``pd_spatial_profile``; 1 by default, and between two
+xylem cells): with :math:`d` the plasmodesma's mean end distance to the section's soil-contact walls and junctions
+along its graph (Euclidean edge lengths: ``contact_distance``), :math:`u = (d - d_\min)/(d_\max - d_\min)` over the
+section's plasmodesmata, :math:`s = c_w - (c_w - c_d)\,u` (profile 1) or :math:`c_d + (c_w - c_d)\,e^{-(d -
+d_\min)/L}` (profile 2), :math:`c_w`, :math:`c_d`, :math:`L` the parameters ``pd_spatial_c_wet``, ``pd_spatial_c_dry``,
+``pd_spatial_length_scale`` (NaN: a third of the range), :math:`c_d` where not connected;
 :math:`c_k` the concentration above at the cortical interfaces. With ``plasmodesmata_rules`` 1 (the original MECHA's,
 ``_plasmodesmata_original``), first match wins: none at an intercellular space (:math:`b > 0`), ``10000`` ×
 ``fplxheight_default`` between the pieces of one vessel (``xylem_pieces``), none to mature xylem; the factors

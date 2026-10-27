@@ -98,3 +98,44 @@ def test_tracheids_as_xylem():
     tracheid_membranes = [e for e in in_matrix if graph.edges[key(e)]["path"] == "membrane"
                           and (set(key(e)) & retagged)]
     assert len(tracheid_membranes) > 0
+
+
+@pytest.mark.parametrize("profile", ("linear", "exp"))
+def test_plasmodesmata_by_distance_to_the_soil(case, profile):
+    """develop's pd_spatial_config (c_wet 1, c_dry 0.6; the exponential's length 40 µm): the nodes' distances to the
+    soil contact are the legacy's, and so are the plasmodesmata's conductances (to 1e-12: the shortest paths' sums)."""
+    config = dict(c_wet=1.0, c_dry=0.6, profile=profile, length_scale=40.0 if profile == "exp" else None)
+    ds, g = case["ds"], case["g"]
+    run = legacy_section(template_organ(case["anatomy"], g, case["segment"]), barriers=(1,), height=case["height"],
+                         hydraulic=dict(pd_spatial_config=config))
+    if not ds.has("barrier"):
+        ds.register("barrier", np.ones(ds.n_nodes()), location="node")
+    ds.set("barrier", np.ones(ds.n_nodes()))
+    mecha = legacy_options(MechaHydraulics(data_structure=ds))
+    try:                                     # the parameters are the shared case's: restored for the other tests
+        mecha.pd_spatial_profile = 1. if profile == "linear" else 2.
+        mecha.pd_spatial_length_scale = config["length_scale"] or float("nan")
+        mecha()
+        K, net = np.asarray(ds.get("conductance")).copy(), mecha.network()
+        distance = np.asarray(ds.get("contact_distance")).copy()
+    finally:
+        mecha.pd_spatial_profile, mecha.pd_spatial_length_scale = 0., float("nan")
+    nodes, edges = section_parts(ds)[case["segment"]]
+    mecha_index = g.property("mecha_index")
+    legacy = np.array([int(mecha_index[int(v)]) for v in ds.entity_ids("node")[nodes]])
+    geo = mecha.section_geometries()[case["segment"]][2]
+    graph = run.network.graph
+    by_position = {tuple(graph.nodes[j]["position"]): j for j in range(run.network.n_walls, run.network.n_wall_junction)}
+    for v in geo.junctions:
+        legacy[v] = by_position[(geo.x[v], geo.y[v])]
+    reference = np.array([run.network.contact_distance.get(int(j), np.nan) for j in legacy])
+    np.testing.assert_allclose(distance[nodes], reference, rtol=1e-12, equal_nan=True)
+    local = np.full(net.cgroup.size, -1, dtype=np.int64)
+    local[nodes] = np.arange(nodes.size)
+    expected = {tuple(sorted(k)): v for k, v in run.stages[0]["edge_K"].items() if graph.edges[k]["path"] == "plasmodesmata"}
+    key = lambda e: tuple(sorted((int(legacy[local[net.a[e]]]), int(legacy[local[net.b[e]]]))))   # noqa: E731
+    pd = [e for e in edges if key(e) in expected]
+    assert len(pd) == len(expected)
+    np.testing.assert_allclose([K[e] for e in pd], [expected[key(e)] for e in pd], rtol=1e-12)
+    coefficients = [graph.edges[key(e)]["pd_spatial_coef"] for e in pd]
+    assert min(coefficients) < 0.7 and max(coefficients) == 1.0           # the profile spans c_dry to c_wet

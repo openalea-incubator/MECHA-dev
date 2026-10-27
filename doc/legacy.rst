@@ -737,6 +737,14 @@ What ``develop`` (945b2be) adds to the refactored legacy, and the behaviours fou
        (kaqp_stele × 10⁴ with barriers, the vessels' apoplastic solute term), never the xylem's boundary
      - ``tracheid_as_xylem`` (0 by default), the same; compared bit for bit on a root whose stele is half retagged
        tracheids
+   * - d6
+     - ``pd_spatial_config`` (None by default): the plasmodesmata's aperture × a coefficient of their distance to the
+       soil-contact nodes along the graph (networkx's Dijkstra), linear or exponential from ``c_wet`` to ``c_dry`` over
+       the plasmodesmata's range; its K and its solutes' symplastic term; not the special cases (intercellular spaces,
+       xylem–xylem)
+     - ``pd_spatial_profile`` (0 by default), ``pd_spatial_c_wet``, ``pd_spatial_c_dry``, ``pd_spatial_length_scale``;
+       the distance by scipy's Dijkstra per section (``contact_distance``); compared to 10⁻¹² (both profiles, both
+       roots)
 
 
 Constants

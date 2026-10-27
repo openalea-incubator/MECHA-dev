@@ -198,6 +198,14 @@ class MechaHydraulics(MechaSections):
     ratio_cortex: float = _p("adim", "the cortex's aquaporin activity at its innermost walls over its outermost "
                                  "(1: uniform)", 1.0)
     k_interc: float = _p("cm hPa-1 d-1", "membrane conductivity of intercellular spaces (with barriers)", 0.0)
+    pd_spatial_profile: float = _p("", "the plasmodesmata's aperture by their distance to the soil contact (develop's "
+                                       "pd_spatial_config): 0 none, 1 linear, 2 exponential, from pd_spatial_c_wet "
+                                       "at the nearest to pd_spatial_c_dry", 0.)
+    pd_spatial_c_wet: float = _p("adim", "the plasmodesmata's aperture coefficient nearest the soil contact", 1.0)
+    pd_spatial_c_dry: float = _p("adim", "the plasmodesmata's aperture coefficient farthest from the soil contact "
+                                         "(and where not connected to it)", 0.6)
+    pd_spatial_length_scale: float = _p("µm", "the exponential profile's length (NaN: a third of the plasmodesmata's "
+                                              "distance range)", float("nan"))
     tracheid_as_xylem: float = _p("", "1: the transfusion tracheids' (cgroup 18) membranes are the xylem's (kaqp_stele "
                                       "x 1e4 with barriers, the vessels' apoplastic solute term), as water-filled "
                                       "conduits, without the xylem's boundary (develop's); 0: a stele cell's", 0.)
@@ -375,6 +383,10 @@ class MechaHydraulics(MechaSections):
                                                       "junction's half, a protoplast's area × height"),
                                         initialize=0., scale=SCALES.Compartment, location="node",
                                         state_variable_type="NonInertialExtensive")
+    contact_distance: float = state_variable(**_doc("µm", "the node's distance to its section's soil contact along "
+                                                          "its graph (with pd_spatial_profile > 0; NaN otherwise)"),
+                                             initialize=float("nan"), scale=SCALES.Compartment, location="node",
+                                             state_variable_type="NonInertialIntensive")
 
     # ── State variables: the leaves' vapour path, from their evaporating walls to their surface ──
     surface_inflow: float = state_variable(**_doc("cm3 d-1", "on a leaf organ's surface node: minus its "
@@ -531,7 +543,7 @@ class MechaHydraulics(MechaSections):
                      pore_width, pore_depth) \
             -> tuple[np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,
                      str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str,
-                     np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray]:
+                     np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray]:
         """
         Every edge's conductance, and the boundary conductances of the nodes (soil, axial), from MECHA's geometry,
         the segments' barriers and heights (their lengths), and the plants' parameters; the standard problem's
@@ -586,7 +598,8 @@ class MechaHydraulics(MechaSections):
                 "apoplastic_diffusion_factor", np.where(in_matrix, factors["apoplastic"], 0.),
                 "symplastic_diffusion_factor", np.where(in_matrix, factors["symplastic"], 0.),
                 "membrane_diffusion_factor", np.where(in_matrix, factors["membrane"], 0.),
-                "node_volume", self._node_volumes(net, P_node, height_node, kind))
+                "node_volume", self._node_volumes(net, P_node, height_node, kind),
+                "contact_distance", factors["contact_distance"])
 
     def _node_volumes(self, net, P_node, height, kind):
         """Each node's volume (cm³; the reactions' SoluteGeometry.node_volumes): a wall's length × height ×
