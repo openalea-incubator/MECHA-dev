@@ -639,6 +639,13 @@ Inputs, outputs and scenarios
        cm⁴ hPa⁻¹ d⁻¹, NaN: Poiseuille's) in Kx and Kx_phloem, the axial boundary (``standard_axial_source`` 1) and
        the plant problem's junctions; the boundary penalties stay ``k_xyl``, ``k_sieve``. Kx against the legacy's to
        10⁻¹⁵ (``test_postprocess.py``); the junctions: ``test_plant_problem.py``
+   * - ME-44
+     - the cortex's aquaporin gradient (``ratio_cortex`` ≠ 1) on GRANAP's path: ``_calculate_cortex_parameters`` sums
+       one-element arrays (``distance_center_grav[wall]``), so that ``a_cortex`` is one, which ``float()`` refuses
+       with numpy ≥ 2.3 (TypeError at every membrane of the cortex)
+     - fixed (scalars, ``conductance.cortex_parameters``); the comparison gives the legacy its value as a float:
+       every conductance bit for bit, with the φ-thickenings, the tissues' aquaporin factors, the xylem pieces and
+       other conductivities (``test_hydraulic_options.py``)
    * - ME-27
      - its own GRANAR cellset XML builder: cell areas as polygons through the wall midpoints and junctions (0.77 % less
        area than the true outlines), wall positions moving the mean epidermis distance by 0.05 %. On GRANAR's
