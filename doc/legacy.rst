@@ -316,6 +316,104 @@ Scharfetter–Gummel kernel and sinks (compared exactly: diffusion to 10⁻¹⁵
 the liquid nodes, after the fixes below.
 
 
+Coverage
+========
+
+Every input, option, boundary condition, solver path and output of the two legacies (2026-10-28, ``develop`` at
+945b2be and ``reactions`` at 4c9c8c2, module by module: their loaders' XML keys, ``Mecha``'s, the matrix builder's,
+the solute transport's and the coupled solver's branches), with the port's equivalent and the test comparing them.
+Each legacy problem met on the way is in the registry below, with what the port does.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 38 28
+
+   * - legacy
+     - port
+     - compared in
+   * - ``Geometry``: the maturity stages (barrier codes 0–11, height), the wall thickness, ``Xylem_pieces``,
+       ``kInterC``, ``PD_section``; ``passage_cell_range``, ``aerenchyma_range`` (cell ids)
+     - ``barrier`` and ``length`` per segment; ``thickness_source``, ``thickness``, ``xylem_pieces``, ``k_interc``,
+       ``pd_section``; passage cells and air spaces by their tissue (GRANAP's labels on the DataStructure)
+     - ``test_develop_barriers.py`` (every code, bit for bit), ``test_hydraulic_options.py``, ``test_conductance.py``
+   * - ``Hydraulics``: ``kw``, ``kw_septa``, the barriers' ``kw_barrier`` (Casparian, suberin in and out, lignin, φ),
+       ``km``, ``kAQP`` and its tissue factors, ``ratio_cortex``, ``phi_thick``, ``Kpl`` and its factors, the
+       frequencies (``Fplxheight``), ``Xcontact``, ``K_xyl``, ``K_sieve``, ``Kax_source``
+     - ``kw``, ``kw_septa``, ``kw_casparian``, ``kw_suberin_in``, ``kw_suberin_out``, ``kw_lignin``, ``kmb``,
+       ``kaqp``, ``kaqp_*_factor``, ``ratio_cortex``, ``n_phi_layers``, ``phi_type``, ``kpl``, ``kpl_*_factor``,
+       ``plasmodesmata_rules``, ``fplxheight_*``, ``x_contact``, ``k_xyl``, ``k_sieve``, ``standard_axial_source``,
+       ``measured_axial_conductivity``
+     - ``test_conductance.py``, ``test_hydraulic_options.py``, ``test_plasmodesmata_factors.py``, ``test_postprocess.py``
+   * - ``develop``'s hydraulics: the cambium, barriers 10 and 11 (``kw_scler``), ``tracheid_as_xylem``,
+       ``pd_spatial_config``, ``membrane floor``
+     - the same (d3–d6), ``membrane_floor``, ``pd_spatial_*``, ``contact_distance``
+     - ``test_develop_barriers.py``
+   * - the soil contact by cells (``Contactrange``)
+     - ``soil_contact_cell``, ``contact_junction_rule`` (d10)
+     - ``test_soil_contact_cells.py`` (both legacies)
+   * - ``BCs``: the soil's left and right potentials, the xylem's pressure or flow, the phloem's pressure or flow,
+       the elongation (midpoint rate, side difference, water fractions); the osmotic scenarios (``Os_hetero``,
+       ``s_hetero``, ``s_factor``, ``Os_cortex``, ``osmotic_sieve``, the soil's and the xylem's solutions: symmetry,
+       shape, diffusivity)
+     - ``standard_psi_soil``, ``standard_psi_soil_right``, ``standard_psi_xylem``, ``standard_axial_condition``,
+       ``standard_axial_flow``, ``standard_psi_sieve``, ``standard_psi_sieve_tube``, ``standard_sieve_flow``,
+       ``standard_elongation``, ``elongation_*``, ``water_fraction_*``, ``standard_osmotic``; MechaOsmoticPresets'
+       parameters of the same names; the plant problem's ``collar_*`` and ``soil_psi``
+     - ``test_scenario_boundaries.py``, ``test_boundary_conditions.py``, ``test_osmotic.py``
+   * - the solve (``solve_W``, ``water_flux``), kr, Kx, the edge flows, the transmembrane fractions by membrane,
+       cell and layer, the axial flows by layer
+     - the standard problem (each section) and the plant problem (the sections joined); ``kr``, ``Kx``,
+       ``Kx_phloem``, ``standard_flow``, ``standard_transmembrane_fraction``, ``membrane_layer``,
+       ``postprocess.transmembrane_layers``, ``transmembrane_cells``, ``axial_layers``
+     - ``test_conductance.py``, ``test_postprocess.py``, ``test_transmembrane_fractions.py``
+   * - needle transpiration (``reactions``): ``wall_air``, ``air_link``, the evaporating walls
+     - the vapour path (``vapour_conductances``: Kelvin walls, air links, stomata), ``leaf_transpiration``,
+       ``stomatal_aperture``
+     - ``test_solutes.py`` (the needle), ``test_shoot.py``; r11, ME-35
+   * - solutes (``SoluteTransport``, ``MultiSoluteTransport``): the diffusivities, σ, the modes ``full``, ``apo``,
+       ``sym``, the schemes (upwind, Scharfetter–Gummel), θ, the storage fractions, ``k_deg``, the sucrose–starch
+       reactions, the sources, ``conserve_boundary``, ``c_boundary``, the Dirichlet nodes, the steady state; the
+       standard problem's flows (``standard_solute_flux``)
+     - MechaSolutes: ``d_*``, the membranes' σ (the water's), ``solute_pathway``, ``solute_scheme``,
+       ``solute_theta``, ``storage_fraction_*``, ``k_decay``, ``k_starch_*``, ``sucrose_source``,
+       ``solute_boundary_advection``, ``c_boundary``, ``fixed_sucrose``, ``solute_sinks``, ``c_sink``,
+       ``solute_solve`` 1 and 3, ``solute_flows``
+     - ``test_solutes.py``, ``test_standard_solutes.py``, ``test_solute_boundary_exchange.py``
+   * - the steady coupled water and solute (``coupled_water_solute_solve``: Picard, JFNK, continuation, relaxation;
+       its time stepping)
+     - ``solute_solve`` 2 (Newton); the time stepping: ``solute_solve`` 1, the sucrose's osmotic potential fed to
+       the next water solve
+     - ``test_coupled_steady.py``
+   * - the views (``visu``: the anatomy, ψ, flows, pathways, the wet–dry transect, the contact distance)
+     - ``openalea.mecha.plots``
+     - ``test_plots_contact.py``
+
+Not ported, each for its reason:
+
+- **inputs and outputs**: the XML files themselves (the port's inputs are its parameters and the DataStructure's
+  variables), ``Output`` paths, the paraview, graphml and pickle exports (``General``'s ``Paraview*``, ``par_track``,
+  ``sym_contagion``, ``apo_contagion`` display flags; ME-29), the solver choice ``sparse_matrix`` (the graph systems are
+  sparse), the debug prints (m);
+- **dead in both legacies**: the hormones file's movement, active transport and contagion (``Hormone_movement``:
+  ``Degradation_constant_H1``, ``Diffusivity_*_H1``, ``H1_D2O``; ``Hormone_active_transport``; ``Sym_Contagion``,
+  ``Apo_Contagion``): the matrix builder's ``c_flag`` branch builds their terms under keys the loader never sets
+  (``diff1_pw1``, ``diff1_pd1``), ``_initialize_apo_j_zombies0`` is empty, and nothing solves the matrix (develop's
+  ``SoluteTransport`` empties the carriers and the sources before using the builder); the hydropatterning and
+  hydrotropism arrays (never computed); the distal pressures and flows and the pressure differences (``pressure_*_dist``, ``delta_p_*``: only a
+  consistency check, no 3D solve); the ``Geometry``'s ``cell_per_layer``, ``diffusion_length``, ``pile_up``,
+  ``xwalls``, ``print_layer``, ``interc_perim_search`` (never read); the ``reactions`` operators ``'D'`` and ``'A'``
+  alone (a diagnostic, given by the physical parameters: ME-37);
+- **replaced**: the cellset XML builder and its perimeter search for intercellular spaces (``interc_perims``, ME-27:
+  GRANAP's ``CellSetOrgan``), the combinatorial scenario sets (ME-28), the pinned evaporating walls (ME-35);
+- **tools on top of the model**: the scenario builder (F10) and the calibration package (F9).
+
+Every registered problem is fixed in the port's defaults; the options that reproduce one (``plasmodesmata_rules`` 2,
+``thickness_source`` 1, ``standard_axial_source`` 2, ``membrane_floor`` 2, ``presets_rules`` 2,
+``solute_boundary_advection`` 0, ``contact_junction_rule`` 2) are for the comparisons. Kept on purpose: the
+original MECHA's own choices (ME-17, ME-21), the radial profiles' flat convective form (ME-24, the original's
+velocity never computed), the needle's root presets (r7) and ``kw_meso_hypo``'s interface (r9).
+
+
 The registry
 ============
 
@@ -642,7 +740,7 @@ Inputs, outputs and scenarios
    * - ME-44
      - the cortex's aquaporin gradient (``ratio_cortex`` ≠ 1) on GRANAP's path: ``_calculate_cortex_parameters`` sums
        one-element arrays (``distance_center_grav[wall]``), so that ``a_cortex`` is one, which ``float()`` refuses
-       with numpy ≥ 2.3 (TypeError at every membrane of the cortex)
+       with this environment's numpy (2.5; deprecated since 1.25): TypeError at every membrane of the cortex
      - fixed (scalars, ``conductance.cortex_parameters``); the comparison gives the legacy its value as a float:
        every conductance bit for bit, with the φ-thickenings, the tissues' aquaporin factors, the xylem pieces and
        other conductivities (``test_hydraulic_options.py``)
