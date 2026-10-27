@@ -86,3 +86,25 @@ def test_port_solve(port, barrier):
     flows = stage["standard_flow"][port["edges"]]
     q_max = max(abs(q) for q in stage["legacy"]["edge_Q"].values())
     assert np.isfinite(flows).all() and abs(flows).max() == pytest.approx(q_max, rel=1e-10)
+
+
+@pytest.mark.parametrize("stage", range(len(BARRIERS)))
+def test_axial_flows_by_layer(case, stage):
+    """The xylem's flows by layer row (``flow_xyl_layer``) against the legacy's standard problem: postprocess.axial_layers.
+    Each is k_xyl (1.0, the comparisons') × a potential difference of 1e-4 hPa: the solutions' agreement to 1e-12 of
+    their 5e3 hPa range bounds it to 5e-9 per vessel. Their sum is minus the uptake, to the same."""
+    from openalea.mecha.postprocess import axial_layers
+    ds = case["ds"]
+    if not ds.has("barrier"):
+        ds.register("barrier", np.ones(ds.n_nodes()), location="node")
+    ds.set("barrier", np.full(ds.n_nodes(), float(BARRIERS[stage])))
+    mecha = legacy_options(MechaHydraulics(data_structure=ds))
+    mecha()
+    layers = axial_layers(mecha, case["segment"])
+    reference = np.asarray(case["legacy"].mecha.flow_xyl_layer)[:, stage, 0]
+    uptake = float(ds.get("standard_uptake")[0])
+    bound = 1e-12 * abs(PSI_XYL) * mecha.k_xyl * len(mecha.section_geometries()[case["segment"]][2].xylem_cells)
+    assert abs(layers["xylem"].sum() + uptake) <= bound
+    n = min(reference.size, len(layers))
+    assert not reference[n:].any() and not layers["xylem"][n:].any()
+    np.testing.assert_allclose(layers["xylem"][:n], reference[:n], rtol=0, atol=bound)

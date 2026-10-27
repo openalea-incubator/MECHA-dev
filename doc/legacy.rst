@@ -589,7 +589,8 @@ The osmotic scenarios
      - ported (2026-10-27): ``standard_transmembrane_fraction`` and ``membrane_layer`` per membrane,
        ``postprocess.transmembrane_layers`` and ``transmembrane_cells``, compared per membrane to 10⁻¹⁰ and by layer
        to 10⁻¹² (``test_transmembrane_fractions.py``); MechaSolutes' ``solute_flows`` 2, compared to 10⁻¹¹
-       (``test_standard_solutes.py``)
+       (``test_standard_solutes.py``); the axial flows by layer (``flow_xyl_layer``, ``flow_sieve_layer``):
+       ``postprocess.axial_layers``, compared to the solutions' agreement (``test_postprocess.py``)
    * - ME-38
      - a cortex rank with no layer row (an incomplete outermost layer with no layer after it: the layer rows' loop
        skips it): the presets look its row up by value (``rank in rank_to_row``), 0 when absent

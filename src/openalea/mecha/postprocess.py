@@ -105,3 +105,30 @@ def transmembrane_cells(ds, segment) -> "pd.DataFrame":
     return pd.DataFrame({"node": cells,
                          "fraction_plus": np.bincount(index, weights=np.maximum(fraction, 0.), minlength=cells.size),
                          "fraction_minus": np.bincount(index, weights=np.minimum(fraction, 0.), minlength=cells.size)})
+
+
+def axial_layers(mecha, segment) -> "pd.DataFrame":
+    """
+    The section *segment*'s standard axial flows by layer row (MECHA's ``flow_xyl_layer``, barrier > 0, and
+    ``flow_sieve_layer``, barrier 0 and the sieve tubes' at barrier > 0), from a solved MechaHydraulics *mecha*: per
+    row of its conduits' ranks (legacy_rows), the water entering the section from the axial boundary (cm³ d⁻¹;
+    negative: leaving it, the xylem's uptake), K (ψ_axial − ψ) and the flow conditions' shares.
+    """
+    import pandas as pd
+    from openalea.mecha.osmotic import legacy_rows
+    ds = mecha.data_structure
+    nodes, _, geo = mecha.section_geometries()[segment]
+    psi = np.asarray(ds.get("standard_psi"), dtype=float)[nodes]
+    entering = (np.asarray(ds.get("axial_boundary_conductance"), dtype=float)[nodes]
+                * (np.asarray(ds.get("standard_axial_psi"), dtype=float)[nodes] - psi)
+                + np.asarray(ds.get("standard_axial_inflow"), dtype=float)[nodes])
+    rank_to_row, _, _ = legacy_rows(geo.n_layer, geo.layer_dist)
+    n = int(np.nanmax(rank_to_row)) + 1
+    barrier = int(np.asarray(ds.get("barrier"))[nodes[0]])
+    xylem = geo.xylem_cells if barrier > 0 else np.zeros(0, dtype=np.int64)
+    phloem = geo.sieve_cells if barrier > 0 else np.unique(geo.protosieve_cells)
+
+    def by_row(cells):
+        rows = rank_to_row[geo.cell_rank[cells]].astype(np.int64)
+        return np.bincount(rows, weights=entering[cells], minlength=n)
+    return pd.DataFrame({"layer": np.arange(n), "xylem": by_row(xylem), "phloem": by_row(phloem)})
