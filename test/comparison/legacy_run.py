@@ -214,7 +214,8 @@ def legacy_reactions_needle(organ, psi_air=-1.0E4, psi_xyl=-200.0, sigma=0.7):
 
 def legacy_reactions_step(organ, d_apo=0.1, d_pd=0.5, d_mem=1e-6, dt=0.1, c_pulse=50e-6, starch=None, cells_only=False,
                           source=None, solute_sigma=None, osmotic_term=True, air_flows=False, reference=None,
-                          c_start=None, starch_start=None, psi_air=-1.0E4, psi_xyl=-200.0, sigma=0.7):
+                          c_start=None, starch_start=None, psi_air=-1.0E4, psi_xyl=-200.0, sigma=0.7, storage=None,
+                          k_deg=0.0):
     """
     One transport step of the reactions branch's needle (``simulations/needle.py``, NeedleDynamicSimulation), on the
     water state of legacy_reactions_needle: its SoluteTransport ('full', SG, θ = 1), the solute's σ 0 and the air
@@ -225,7 +226,8 @@ def legacy_reactions_step(organ, d_apo=0.1, d_pd=0.5, d_mem=1e-6, dt=0.1, c_puls
     *air_flows*, the air edges' flows kept (r12); with
     *source* {cell id: increment}, its photosynthetic increment before the step; from *c_start* (and *starch_start*)
     instead of the pulse, on the water state *reference* (a previous step's, its air flows already as *air_flows*)
-    to chain steps. Returns dict(D, volumes, flows
+    to chain steps; with *storage* (C_wall, C_cell), its capacitance's storage fractions, and *k_deg* (d⁻¹) its
+    first-order degradation. Returns dict(D, volumes, flows
     {(u, v): Q}, bc, c0, c1[, starch1]).
     """
     from scipy.sparse import csgraph
@@ -236,9 +238,11 @@ def legacy_reactions_step(organ, d_apo=0.1, d_pd=0.5, d_mem=1e-6, dt=0.1, c_puls
     graph, nwj = network.graph, network.n_wall_junction
     geometry = SoluteGeometry(mecha)
     cap = {"dt": dt}
+    if storage is not None:
+        cap.update(C_wall=storage[0], C_cell=storage[1])
     st = SoluteTransport(mecha, {"apo_wall": d_apo, "plasmodesmata": d_pd, "membrane": d_mem,
                                  "sigma": dict(solute_sigma or {})}, cap,
-                         mode="full", geometry=geometry)
+                         mode="full", geometry=geometry, reaction_params={"k_deg": k_deg} if k_deg else None)
     D = st.build_diffusion_matrix(0, 0)
     air = {(int(u), int(v)) for u, v, a in graph.edges(data=True) if a.get("path") in ("wall_air", "air_link")}
     for edge in [] if air_flows else mecha.edge_flux_list[0][1]:

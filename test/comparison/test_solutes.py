@@ -148,3 +148,17 @@ def test_reviewed_differences(needle_case):
     print(f"reviewed differences (max |Δc| / max c; r2 on cgroup {other}):",
           {k: f"{v:.3e}" for k, v in differences.items()})
     assert differences["r1"] > 1. and differences["r2"] < 1e-10 and differences["r12"] < 1e-10
+
+
+def test_one_step_with_storage_and_decay(needle_case):
+    """The capacitance's storage fractions (C_wall 0.3, C_cell 0.8) and a first-order degradation (k_deg 0.5 d⁻¹) of
+    the reactions' SoluteTransport: the port's storage_fraction_wall, _cell and k_decay, to 1e-11 of the range."""
+    c = needle_case
+    reference = legacy_reactions_step(c["organ"], d_apo=D_APO, d_pd=D_PD, d_mem=D_MEM, dt=DT, storage=(0.3, 0.8),
+                                      k_deg=0.5)
+    sucrose, _ = _run(c, reference, storage=(0.3, 0.8), k_decay=0.5)
+    expected = reference["c1"][c["index"]]
+    liquid = c["liquid"]
+    np.testing.assert_allclose(sucrose[liquid], expected[liquid], rtol=0, atol=1e-11 * abs(expected).max())
+    plain, _ = _run(c, c["reference"])
+    assert np.abs(plain - sucrose)[liquid].max() > 1e-3 * abs(expected).max()      # the options matter

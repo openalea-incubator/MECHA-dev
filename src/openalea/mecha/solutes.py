@@ -7,7 +7,8 @@ section (protoplasts, walls, junctions; not the air nodes), from the reactions b
     mecha = MechaHydraulics(data_structure=ds)         # the water flows, the diffusion factors, the volumes
     solutes = MechaSolutes(data_structure=ds)          # one transport step per time step, on the water's flows
 
-Per node and time step (dt, days): V (c − c_prev) / dt = T c + K V c + s, with
+Per node and time step (dt, days): C V (c − c_prev) / dt = T c + K V c − k V c + s, with C the storage fraction
+(storage_fraction_wall, _cell; the reactions' C_wall, C_cell), k the first-order loss (k_decay; their k_deg), and
   T c        the Scharfetter–Gummel fluxes along the liquid edges: per edge, its diffusion conductance D_e (the
              apoplastic, symplastic and membrane factors of MechaHydraulics × their diffusivities) and its advective
              flow F (the water's flow, × (1 − σ) on the membranes: Kedem–Katchalsky), P = F / D_e, the flow from tail
@@ -120,6 +121,12 @@ class MechaSolutes(MechaSections):
     k_starch_synthesis: float = _p("d-1", "the cells' sucrose → starch rate", 0.)
     k_starch_degradation: float = _p("d-1", "the cells' starch → sucrose rate", 0.)
     c_sink: float = _p("mol cm-3", "the sucrose concentration of the sinks (phloem loading, xylem)", 0.)
+    storage_fraction_wall: float = _p("adim", "the fraction of a wall's (or junction's) volume storing sucrose (the "
+                                              "reactions' C_wall)", 1.)
+    storage_fraction_cell: float = _p("adim", "the fraction of a protoplast's volume storing sucrose (the reactions' "
+                                              "C_cell)", 1.)
+    k_decay: float = _p("d-1", "sucrose's first-order loss on every liquid node (degradation, consumption: the "
+                               "reactions' and develop's k_deg)", 0.)
     solute_boundary_advection: float = _p("", "the liquid water leaving a section's liquid network (soil, axial "
                                               "boundaries) carries its solutes out, entering water brings c_boundary: "
                                               "1 (develop's conserve_boundary), 0 none (the reactions branch's)", 1.)
@@ -147,6 +154,13 @@ class MechaSolutes(MechaSections):
                                         state_variable_type="NonInertialIntensive")
     head_weight: float = state_variable(**_doc("cm3 d-1", "see tail_weight"), initialize=0., scale=SCALES.Connection,
                                         location="edge", state_variable_type="NonInertialIntensive")
+    storage_volume: float = state_variable(**_doc("cm3", "the node's volume storing sucrose: its volume × its storage "
+                                                         "fraction"),
+                                           initialize=0., scale=SCALES.Compartment, location="node",
+                                           state_variable_type="NonInertialExtensive")
+    decay_rate: float = state_variable(**_doc("cm3 d-1", "k_decay × V on the liquid nodes"), initialize=0.,
+                                       scale=SCALES.Compartment, location="node",
+                                       state_variable_type="NonInertialExtensive")
     boundary_outflow: float = state_variable(**_doc("cm3 d-1", "the liquid water the node gives the boundary (its "
                                                               "solute leaves with it; solute_boundary_advection 1)"),
                                              initialize=0., scale=SCALES.Compartment, location="node",
@@ -170,16 +184,16 @@ class MechaSolutes(MechaSections):
                            symplastic_diffusion_factor, membrane_diffusion_factor, node_volume, vapour_node, kind,
                            cgroup, tissue, network_path) \
             -> tuple[np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,
-                     str, np.ndarray, str, np.ndarray, str, np.ndarray]:
-        """Each liquid edge's Scharfetter–Gummel weights; the sinks; the cells' reaction rates; the liquid
-        boundary's exchanges."""
+                     str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray]:
+        """Each liquid edge's Scharfetter–Gummel weights; the sinks; the cells' reaction rates; the storage and the
+        first-order loss; the liquid boundary's exchanges."""
         ds = self.data_structure
         view = ds.to_graph_view()
         P_edge = {name: np.asarray(self.parameter_values(name, "edge"), dtype=float)
                   for name in ("d_apoplast", "d_plasmodesmata", "d_membrane")}
         P_node = {name: np.asarray(self.parameter_values(name, "node"), dtype=float)
                   for name in ("k_starch_synthesis", "k_starch_degradation", "c_sink", "solute_boundary_advection",
-                               "c_boundary")}
+                               "c_boundary", "storage_fraction_wall", "storage_fraction_cell", "k_decay")}
         liquid = np.asarray(vapour_node) == 0
         path = np.asarray(network_path)
         on_liquid = liquid[view.tail] & liquid[view.head] & np.isin(path, (WALL_PATH, MEMBRANE, PLASMODESMATA))
@@ -200,6 +214,9 @@ class MechaSolutes(MechaSections):
                 "liquid_node", liquid.astype(float),
                 "synthesis_rate", np.where(cell, P_node["k_starch_synthesis"] * volume, 0.),
                 "degradation_rate", np.where(cell, P_node["k_starch_degradation"] * volume, 0.),
+                "storage_volume", volume * np.where(np.asarray(kind) == 0, P_node["storage_fraction_cell"],
+                                                    P_node["storage_fraction_wall"]),
+                "decay_rate", np.where(liquid, P_node["k_decay"] * volume, 0.),
                 "boundary_outflow", boundary_outflow, "boundary_source", boundary_inflow * P_node["c_boundary"])
 
     def _sinks(self, kind, cgroup, tissue):
@@ -225,19 +242,20 @@ class MechaSolutes(MechaSections):
     @graph_system(node_unknowns=["sucrose", "starch"], solver="newton", transient=True, max_iter=3, tol=1e-14,
                   schedule_as="state", filters={"liquid_node": ">0"})
     class _transport:
-        """Implicit Euler on the liquid nodes: V (c − c_prev) / dt + B q − K V c + O c − s − b = 0, per species (O
-        the boundary's outflow, b the solute its inflow brings)."""
+        """Implicit Euler on the liquid nodes: C V (c − c_prev) / dt + B q − K V c + k V c + O c − s − b = 0 for the
+        sucrose (C V its storage volume, O the boundary's outflow, b the solute its inflow brings), V (s − s_prev) / dt
+        − K V c = 0 for the starch."""
 
         @node_balance(field="sucrose")
-        def _sucrose(self, sucrose, starch, tail_weight, head_weight, node_volume, synthesis_rate, degradation_rate,
-                     sucrose_source, boundary_outflow, boundary_source):
+        def _sucrose(self, sucrose, starch, tail_weight, head_weight, storage_volume, synthesis_rate, degradation_rate,
+                     decay_rate, sucrose_source, boundary_outflow, boundary_source):
             B = self._graph_view.incidence
             tail = np.asarray(B.maximum(0).T @ sucrose).reshape(-1)
             head = np.asarray((-B).maximum(0).T @ sucrose).reshape(-1)
             q = tail_weight * tail - head_weight * head
-            return (node_volume * (sucrose - self.previous("sucrose")) / (self.dt / SECONDS_PER_DAY)
+            return (storage_volume * (sucrose - self.previous("sucrose")) / (self.dt / SECONDS_PER_DAY)
                     + np.asarray(B @ q).reshape(-1) + synthesis_rate * sucrose - degradation_rate * starch
-                    + boundary_outflow * sucrose - sucrose_source - boundary_source)
+                    + (decay_rate + boundary_outflow) * sucrose - sucrose_source - boundary_source)
 
         @node_balance(field="starch")
         def _starch(self, sucrose, starch, node_volume, synthesis_rate, degradation_rate):
@@ -248,10 +266,11 @@ class MechaSolutes(MechaSections):
                              field="sucrose")
 
         @graph_jacobian
-        def _jacobian(self, tail_weight, head_weight, node_volume, synthesis_rate, degradation_rate,
-                      boundary_outflow):
+        def _jacobian(self, tail_weight, head_weight, node_volume, storage_volume, synthesis_rate, degradation_rate,
+                      decay_rate, boundary_outflow):
             B = self._graph_view.incidence
-            storage = node_volume / (self.dt / SECONDS_PER_DAY)
+            days = self.dt / SECONDS_PER_DAY
             transport = B @ diags(tail_weight) @ B.maximum(0).T - B @ diags(head_weight) @ (-B).maximum(0).T
-            return bmat([[transport + diags(storage + synthesis_rate + boundary_outflow), diags(-degradation_rate)],
-                         [diags(-synthesis_rate), diags(storage + degradation_rate)]], format="csr")
+            return bmat([[transport + diags(storage_volume / days + synthesis_rate + decay_rate + boundary_outflow),
+                          diags(-degradation_rate)],
+                         [diags(-synthesis_rate), diags(node_volume / days + degradation_rate)]], format="csr")

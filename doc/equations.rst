@@ -332,10 +332,13 @@ upwind (:math:`J = \max(F,0)\,c_\text{tail} + \min(F,0)\,c_\text{head}`) where :
 
 .. math::
 
-   V\frac{c - c^{\text{prev}}}{\Delta t} + \sum J + k_\text{syn} V c - k_\text{deg} V s + O\,c = S + I\,c_b,
+   C V\frac{c - c^{\text{prev}}}{\Delta t} + \sum J + k_\text{syn} V c - k_\text{deg} V s + k_\text{decay} V c + O\,c
+   = S + I\,c_b,
    \qquad V\frac{s - s^{\text{prev}}}{\Delta t} - k_\text{syn} V c + k_\text{deg} V s = 0,
 
-the reaction in the cells only, :math:`S` the source ``sucrose_source`` (mol d⁻¹), the sinks (the phloem-loading cells:
+the reaction in the cells only, :math:`C` the storage fraction (``storage_fraction_wall`` on the walls and junctions,
+``storage_fraction_cell`` on the protoplasts; 1 by default), :math:`k_\text{decay}` sucrose's first-order loss
+(``k_decay``, every liquid node; 0 by default), :math:`S` the source ``sucrose_source`` (mol d⁻¹), the sinks (the phloem-loading cells:
 Strasburger cells, else the phloem; and the xylem) held at ``c_sink``. :math:`O` and :math:`I` (cm³ d⁻¹, ≥ 0;
 ``liquid_boundary_exchange``) are the water the node gives the boundary and takes from it, with
 ``solute_boundary_advection`` 1 (develop's ``conserve_boundary``; 0 none): minus and plus its net outflow

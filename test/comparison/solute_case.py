@@ -57,11 +57,13 @@ def needle_case():
                 xy=np.c_[geo.x, geo.y], legacy_xy=legacy_xy)
 
 
-def port_step(case, reference, starch=(0., 0.), source=None, sigma=None, c_start=None, starch_start=None):
+def port_step(case, reference, starch=(0., 0.), source=None, sigma=None, c_start=None, starch_start=None,
+              storage=(1., 1.), k_decay=0.):
     """
     The port's step on the reactions' flows (*reference*: a legacy_reactions_step's), from its initial
     concentrations (or *c_start*, *starch_start*: by legacy index), σ 0 (or *sigma* per edge), the rates *starch*
-    (d⁻¹), the source *source* (mol d⁻¹, per DataStructure node). Returns the section's sucrose and starch.
+    (d⁻¹), the source *source* (mol d⁻¹, per DataStructure node), the storage fractions *storage* (walls, cells) and
+    the first-order loss *k_decay* (d⁻¹). Returns the section's sucrose and starch.
     """
     ds, nodes, edges = case["ds"], case["nodes"], case["edges"]
     flows, Q = reference["flows"], np.zeros(ds.n_edges())
@@ -76,6 +78,8 @@ def port_step(case, reference, starch=(0., 0.), source=None, sigma=None, c_start
         ds.set(name, values)
     ds.set("sucrose_source", np.zeros(ds.n_nodes()) if source is None else source)
     case["solutes"].k_starch_synthesis, case["solutes"].k_starch_degradation = starch
+    case["solutes"].storage_fraction_wall, case["solutes"].storage_fraction_cell = storage
+    case["solutes"].k_decay = k_decay
     case["solutes"]()
     return np.asarray(ds.get("sucrose"))[nodes].copy(), np.asarray(ds.get("starch"))[nodes].copy()
 

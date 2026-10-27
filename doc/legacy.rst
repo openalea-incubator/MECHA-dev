@@ -691,8 +691,11 @@ The ``reactions`` branch
      - dropped (not ported)
    * - ME-37
      - the steady coupled solver (Picard, JFNK, continuation), the calibration package, the ``apo`` and ``sym`` modes,
-       the upwind-only solve, θ ≠ 1, single-species degradation: used by no simulation
-     - not ported; implicit Euler only (θ = 1)
+       the upwind-only solve, θ ≠ 1: used by no simulation. The capacitance's storage fractions (``C_wall``,
+       ``C_cell``) and the single-species degradation (``k_deg``), used by ``develop``'s tutorial 04
+     - not ported; implicit Euler only (θ = 1). The storage fractions and the degradation ported (2026-10-27):
+       ``storage_fraction_wall``, ``storage_fraction_cell``, ``k_decay`` (sucrose only; the starch stores in its whole
+       volume), compared to 10⁻¹¹ (``test_solutes.py``)
 
 The ``develop`` branch
 ----------------------
