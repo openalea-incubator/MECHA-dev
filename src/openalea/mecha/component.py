@@ -182,6 +182,12 @@ class MechaHydraulics(MechaSections):
                                                          "x_contact (MECHA's Contactrange: a root partly in contact)"),
                                               by="Soil", initialize=0., scale=SCALES.Compartment, location="node",
                                               state_variable_type="descriptor")
+    measured_axial_conductivity: float = input_variable(**_doc("cm4 hPa-1 d-1", "a xylem vessel's or phloem conduit's "
+                                                               "measured specific axial conductance, its conductance "
+                                                               "× its length (MECHA's Kax_source 2, its K_xyl and "
+                                                               "K_sieve by cell; NaN: Poiseuille's)"),
+                                                        by="Anatomy", initialize=float("nan"), scale=SCALES.Compartment,
+                                                        location="node", state_variable_type="descriptor")
     # ── Parameters (per plant; MECHA's units: cm hPa-1 d-1 for kw, kmb, kaqp; cm3 hPa-1 d-1 for kpl, k_xyl) ──
     kw: float = _p("cm2 hPa-1 d-1", "cell wall hydraulic conductivity", 0.00024)
     kw_septa: float = _p("cm2 hPa-1 d-1", "conductivity of the septa between aerenchyma (intercellular) cells", 0.00012)
@@ -581,6 +587,8 @@ class MechaHydraulics(MechaSections):
         set_edge_ends(net, view.tail, view.head, np.asarray(ds.get("network_path")))
         set_wall_thickness(net, np.asarray(ds.get("wall_thickness"), dtype=float))
         net.soil_contact_cell = (np.asarray(ds.get("soil_contact_cell"), dtype=float) > 0) & (net.kind == 0)
+        net.measured_axial_conductivity = np.where(net.kind == 0, np.asarray(ds.get("measured_axial_conductivity"),
+                                                                             dtype=float), np.nan)
         return net
 
     def cortex_gradient(self, geometries: dict, height_by_node, P_node) -> tuple:
@@ -767,7 +775,9 @@ class MechaHydraulics(MechaSections):
         a, b = view.tail[edges], view.head[edges]
         area = np.asarray(cell_area, dtype=float) * 1.0E6                          # mm2 -> µm2
         half = np.asarray(length, dtype=float) * 1.0E6 / 2                         # m -> µm
-        k_a, k_b = (poiseuille(area[n], half[n], viscosity) for n in (a, b))
+        measured = np.asarray(ds.get("measured_axial_conductivity"), dtype=float)
+        k_a, k_b = (np.where(np.isfinite(measured[n]), measured[n] / (half[n] / 1.0E04),
+                             poiseuille(area[n], half[n], viscosity)) for n in (a, b))
         with np.errstate(divide="ignore"):
             K = np.where((k_a > 0) & (k_b > 0), 1 / (1 / k_a + 1 / k_b), 0.)
         if barrier is not None:
@@ -930,11 +940,12 @@ class MechaHydraulics(MechaSections):
         out = {name: np.full(segments.size, np.nan) for name in names}
         where = {int(v): i for i, v in enumerate(segments)}
         cgroup = np.asarray(ds.get("cgroup"))
+        measured = np.asarray(ds.get("measured_axial_conductivity"), dtype=float)
         roots = self.section_roles()[1]
         for segment, (nodes, edges, geo) in self.section_geometries().items():
             i, v = where[segment], nodes[0]
             b, h = int(barrier[v]), float(height[v])
-            out["Kx"][i], out["Kx_phloem"][i] = axial_conductances(geo, h, b)
+            out["Kx"][i], out["Kx_phloem"][i] = axial_conductances(geo, h, b, measured[nodes])
             if segment not in roots:                                  # kr, uptake: root quantities (E1)
                 continue
             if P["standard_solve"][v] > 0:

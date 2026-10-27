@@ -122,6 +122,7 @@ class Network:
     border_wall: np.ndarray
     border_junction: np.ndarray
     soil_contact_cell: np.ndarray  # bool per node: a protoplast whose border walls touch the soil (MECHA's Contactrange)
+    measured_axial_conductivity: np.ndarray  # per node: a conduit's specific axial conductance (cm4 hPa-1 d-1; NaN)
     xylem: np.ndarray             # int per node: occurrences in the network's xylem list (cgroup)
     protosieve: np.ndarray        # int per node: occurrences in the legacy's protosieve list (duplicates, legacy f)
     sieve: np.ndarray             # int per node: occurrences in the sieve tubes' list (by tissue)
@@ -151,7 +152,7 @@ def assemble(n_nodes: int, n_edges: int, geometries: list, phi_thick=None) -> Ne
         phi_thick=nodes_full(False, bool), wall_cells=nodes_full(-1, np.int64, (2,)),
         distance_center_grav=nodes_full(np.nan), x=nodes_full(np.nan), y=nodes_full(np.nan), cell_area=nodes_full(0.), wall_thickness=nodes_full(np.nan), wall_length=nodes_full(0.),
         border_wall=nodes_full(False, bool), border_junction=nodes_full(False, bool),
-        soil_contact_cell=nodes_full(False, bool), xylem=nodes_full(0, np.int64),
+        soil_contact_cell=nodes_full(False, bool), measured_axial_conductivity=nodes_full(np.nan), xylem=nodes_full(0, np.int64),
         protosieve=nodes_full(0, np.int64), sieve=nodes_full(0, np.int64), outercortex_connec_rank=np.zeros(len(geometries), dtype=np.int64),
         concentrated=np.zeros((len(geometries), 3)))
     for i, (nodes, edges, geo) in enumerate(geometries):
@@ -527,10 +528,13 @@ def boundary_terms(net: Network, P: dict, barrier, height):
     xylem = (barrier > 0) & (net.xylem > 0)
     protosieve = (barrier == 0) & (net.protosieve > 0)
     with np.errstate(divide="ignore", invalid="ignore"):
+        measured = net.measured_axial_conductivity / (height / 1.0E04)      # a conduit's own over the height
         k_xyl = np.where(np.asarray(P["standard_axial_source"]) == 1,
-                         poiseuille(net.cell_area, height, VISCOSITY_XYLEM), k_xyl)
+                         np.where(np.isfinite(measured), measured, poiseuille(net.cell_area, height, VISCOSITY_XYLEM)),
+                         k_xyl)
         k_sieve = np.where(np.asarray(P["standard_axial_source"]) == 1,
-                           poiseuille(net.cell_area, height, VISCOSITY_PHLOEM), k_sieve)
+                           np.where(np.isfinite(measured), measured,
+                                    poiseuille(net.cell_area, height, VISCOSITY_PHLOEM)), k_sieve)
     axial = np.where(xylem, k_xyl, np.where(protosieve, k_sieve, 0.))
     return soil, axial, axial.copy()          # each protosieve cell once (the legacy adds k_sieve per duplicate, legacy f)
 

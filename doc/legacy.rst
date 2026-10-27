@@ -631,6 +631,14 @@ Inputs, outputs and scenarios
        protosieve cells, each once, at barrier 0; the sieve tubes at barrier > 0), where the phloem's potential is NaN
        (both given: an error, as the legacy's); kr at barrier 0 through the protophloem's mean potential. Against
        the legacy's scenario 1 given the sieve tubes' shares, to 10⁻¹² (``test_scenario_boundaries.py``)
+   * - ME-43
+     - ``Kax_source`` 2: the conduits' axial conductances given by cell (the hydraulics file's ``K_xyl`` and
+       ``K_sieve`` by id, the same entries as the xylem's and the phloem's boundary penalties), in Kx only (the solve
+       keeps ``k_xyl``); at barrier 0 a sieve value read as its text's first character (``get("value")[0]``)
+     - ported (2026-10-28) and fixed: ``measured_axial_conductivity`` (a conduit's input, its specific conductance in
+       cm⁴ hPa⁻¹ d⁻¹, NaN: Poiseuille's) in Kx and Kx_phloem, the axial boundary (``standard_axial_source`` 1) and
+       the plant problem's junctions; the boundary penalties stay ``k_xyl``, ``k_sieve``. Kx against the legacy's to
+       10⁻¹⁵ (``test_postprocess.py``); the junctions: ``test_plant_problem.py``
    * - ME-27
      - its own GRANAR cellset XML builder: cell areas as polygons through the wall midpoints and junctions (0.77 % less
        area than the true outlines), wall positions moving the mean epidermis distance by 0.05 %. On GRANAR's

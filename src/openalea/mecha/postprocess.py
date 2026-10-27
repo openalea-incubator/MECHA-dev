@@ -40,11 +40,12 @@ def _poiseuille(area, height, viscosity) -> float:
     return float(area) ** 2 / (8 * 3.141592 * height * viscosity / 3600 / 24) * 1.0E-12
 
 
-def axial_conductances(geo, height, barrier) -> tuple:
+def axial_conductances(geo, height, barrier, measured=None) -> tuple:
     """
     (Kx, Kx_phloem) (cm⁴ hPa⁻¹ d⁻¹): Σ of the conduits' Poiseuille conductances × height / 1e4, the xylem vessels'
-    (barrier > 0) and the sieve tubes' (barrier > 0) or protosieve cells' (barrier 0), each in cell order. Kx is 0 at
-    barrier 0 (no mature xylem: the legacy fails there, legacy e).
+    (barrier > 0) and the sieve tubes' (barrier > 0) or protosieve cells' (barrier 0), each in cell order; a conduit
+    with a *measured* specific conductance (per local node, cm⁴ hPa⁻¹ d⁻¹, NaN: Poiseuille's) takes it (MECHA's
+    Kax_source 2). Kx is 0 at barrier 0 (no mature xylem: the legacy fails there, legacy e).
     """
     height = float(height)
     position = np.empty(geo.legacy_order.size, dtype=np.int64)
@@ -54,7 +55,9 @@ def axial_conductances(geo, height, barrier) -> tuple:
         """numpy's sum of the legacy's per-node vector (its node ids: walls, junctions, cells), × height / 1e4."""
         K_axial = np.zeros(geo.legacy_order.size)
         for c in cells:
-            K_axial[position[c]] = _poiseuille(geo.cell_area[c], height, viscosity)
+            given = np.nan if measured is None else float(measured[c])
+            K_axial[position[c]] = given / (height / 1.0E04) if np.isfinite(given) else \
+                _poiseuille(geo.cell_area[c], height, viscosity)
         return float(np.sum(K_axial)) * height / 1.0E04
     if barrier > 0:
         return total(geo.typed["xylem"], VISCOSITY_XYLEM), total(geo.typed["sieve"], VISCOSITY_PHLOEM)

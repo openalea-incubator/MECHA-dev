@@ -108,3 +108,49 @@ def test_axial_flows_by_layer(case, stage):
     n = min(reference.size, len(layers))
     assert not reference[n:].any() and not layers["xylem"][n:].any()
     np.testing.assert_allclose(layers["xylem"][:n], reference[:n], rtol=0, atol=bound)
+
+
+class _Element(dict):
+    """An XML element's stand-in (its attributes by get)."""
+
+
+@pytest.mark.parametrize("stage", range(len(BARRIERS)))
+def test_measured_axial_conductances(case, stage):
+    """MECHA's Kax_source 2 (each vessel's conductance given, K_xyl by cell id): Kx with measured_axial_conductivity
+    (their specific values: × the height) against the legacy's calculate_axial_conductance, to 1e-15; here twice
+    Poiseuille's, so that Kx doubles."""
+    ds, g = case["ds"], case["g"]
+    if not ds.has("barrier"):
+        ds.register("barrier", np.ones(ds.n_nodes()), location="node")
+    ds.set("barrier", np.full(ds.n_nodes(), float(BARRIERS[stage])))
+    mecha = legacy_options(MechaHydraulics(data_structure=ds))
+    nodes, _ = section_parts(ds)[case["segment"]]
+    geo = mecha.section_geometries()[case["segment"]][2]
+    from openalea.mecha.postprocess import poiseuille, VISCOSITY_XYLEM
+    height = case["height"]
+    vessels = geo.xylem_cells
+    conductance = 2 * poiseuille(geo.cell_area[vessels], height, VISCOSITY_XYLEM)       # cm3 hPa-1 d-1
+    measured = np.full(ds.n_nodes(), np.nan)
+    measured[nodes[vessels]] = conductance * height / 1.0E04
+    mecha()
+    poiseuille_kx = float(ds.get("Kx")[0])
+    ds.set("measured_axial_conductivity", measured)
+    try:
+        mecha()
+        kx = float(ds.get("Kx")[0])
+    finally:
+        ds.set("measured_axial_conductivity", np.full(ds.n_nodes(), np.nan))
+    mecha_index = g.property("mecha_index")
+    run = case["legacy"]
+    node_ids = ds.entity_ids("node")
+    elements = [_Element(id=str(int(mecha_index[int(node_ids[nodes[c]])]) - run.network.n_wall_junction), value=str(k))
+                for c, k in zip(vessels, conductance)]
+    hydraulic = run.mecha.hydraulic
+    saved = hydraulic.axial_conductance_source, hydraulic.k_xyl_elems
+    hydraulic.axial_conductance_source, hydraulic.k_xyl_elems = 2, elements
+    try:
+        _, reference = run.mecha.calculate_axial_conductance(stage)
+    finally:
+        hydraulic.axial_conductance_source, hydraulic.k_xyl_elems = saved
+    assert kx == pytest.approx(2 * poiseuille_kx, rel=1e-12)
+    assert kx == pytest.approx(float(np.asarray(reference).reshape(-1)[0]), rel=1e-15)

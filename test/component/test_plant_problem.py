@@ -110,3 +110,26 @@ def test_elongation_sink_drawn_from_the_soil():
     assert sink[owner == 1].sum() > 0 and sink[owner == 0].sum() == 0
     assert np.asarray(ds.get("standard_elongation_sink")).sum() == 0
     assert np.nansum(ds.get("root_uptake")) == pytest.approx(sink.sum(), rel=1e-9)
+
+
+def test_measured_axial_conductivities():
+    """measured_axial_conductivity (MECHA's Kax_source 2) replaces a conduit's Poiseuille conductance in the axial
+    junctions and the standard problem's axial boundary: Poiseuille's own values change nothing; doubled on every
+    vessel, the junctions' conductances double (cells in series), and so does Kx."""
+    g, ds, mecha = _root(3)
+    conduit = np.asarray(ds.get("axial_conduit"))
+    reference = {name: np.asarray(ds.get(name)).copy() for name in ("psi", "standard_psi", "xylem_axial_conductance",
+                                                                       "Kx")}
+    area, length = np.asarray(ds.get("cell_area")) * 1e6, np.asarray(ds.get("length")) * 1e6
+    vessels = np.isin(np.asarray(ds.get("cgroup")), (13, 19, 20))
+    own = np.where(vessels, poiseuille(area, length, VISCOSITY_XYLEM) * length / 1e4, np.nan)
+    ds.set("measured_axial_conductivity", own)
+    mecha()
+    for name in ("psi", "standard_psi", "xylem_axial_conductance", "Kx"):
+        np.testing.assert_allclose(ds.get(name), reference[name], rtol=1e-12, atol=1e-12 * abs(reference[name]).max())
+    ds.set("measured_axial_conductivity", 2 * own)
+    mecha()
+    xylem = conduit == 1
+    np.testing.assert_allclose(np.asarray(ds.get("xylem_axial_conductance"))[xylem],
+                               2 * reference["xylem_axial_conductance"][xylem], rtol=1e-12)
+    np.testing.assert_allclose(ds.get("Kx"), 2 * reference["Kx"], rtol=1e-12)
