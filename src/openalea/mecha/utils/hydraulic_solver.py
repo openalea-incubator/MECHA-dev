@@ -21,6 +21,66 @@ class HydraulicMatrixBuilder:
         self.position = position
         self.indice = indice
         self._pd_spatial_coef = {}
+        self._wall_thk = None
+        self._junction_thk = {}
+        self._scl_pd = {}
+
+    def _build_wall_thickness(self):
+        """Per-wall thickness map for ``geometry.use_wall_thickness``.
+
+        Reads the ``wall_thickness`` node attribute written by GRANAP (sum of the
+        two flanking cells' ``cell_wall_thickness``, i.e. the *double* wall
+        thickness MECHA's ``thickness`` stands for, µm). Walls without a positive
+        value are left out and fall back to the global thickness. Junctions get
+        the mean of their neighbouring walls. Returns ``None`` when disabled.
+        """
+        if not getattr(self.geometry, 'use_wall_thickness', False):
+            self._junction_thk = {}
+            return None
+        graph = self.network.graph
+        n_walls = self.network.n_walls
+        wall_thk = {}
+        for n in range(n_walls):
+            t = graph.nodes[n].get('wall_thickness') if n in graph else None
+            if t is not None and float(t) > 0.0:
+                wall_thk[n] = float(t)
+        self._junction_thk = {}
+        for n in range(n_walls, self.network.n_wall_junction):
+            vals = [wall_thk[m] for m in graph.neighbors(n) if m in wall_thk] if n in graph else []
+            if vals:
+                self._junction_thk[n] = sum(vals) / len(vals)
+        return wall_thk
+
+    def _local_thickness(self, default: float, *nodes: int) -> float:
+        """Thickness (µm) for the wall/junction *nodes*, or *default* if unset."""
+        if self._wall_thk is None:
+            return default
+        vals = [self._wall_thk[n] for n in nodes if n in self._wall_thk]
+        if not vals:
+            vals = [self._junction_thk[n] for n in nodes if n in self._junction_thk]
+        return sum(vals) / len(vals) if vals else default
+
+    def _build_scl_pd_factors(self, kpl_config: dict, barrier: int) -> dict:
+        """Per-cell PD factor of dead / apoptotic sclerenchyma (barrier 11 only).
+
+        A fraction ``scl_dead_fraction`` of the sclerenchyma cells (exact count,
+        chosen with a ``scl_seed``-seeded RNG) are dead (factor 0); the others
+        are apoptotic and keep ``scl_pd_factor`` of their PD. Returns ``{}`` when
+        inactive (other stages, no sclerenchyma, or fraction 0 and factor 1).
+        """
+        if barrier != 11:
+            return {}
+        dead_fraction = float(kpl_config.get('scl_dead_fraction', 0.8))
+        scl_factor = float(kpl_config.get('scl_pd_factor', 0.05))
+        if dead_fraction <= 0.0 and scl_factor == 1.0:
+            return {}
+        scl_ids = sorted(c.cell_id for c in self.network.cell_manager.get_by_type('sclerenchyma'))
+        if not scl_ids:
+            return {}
+        rng = np.random.default_rng(int(kpl_config.get('scl_seed', 0)))
+        n_dead = int(round(min(dead_fraction, 1.0) * len(scl_ids)))
+        dead = set(rng.permutation(len(scl_ids))[:n_dead].tolist())
+        return {cid: (0.0 if k in dead else scl_factor) for k, cid in enumerate(scl_ids)}
 
     def build(self, h, i_maturity, hydraulic_conductivities, boundary,
               psi_xyl, psi_sieve, distributed_flow_xyl, distributed_flow_sieve):
@@ -47,6 +107,8 @@ class HydraulicMatrixBuilder:
 
         n_nodes = self.network.graph.number_of_nodes()
         thickness = self.geometry.thickness
+        self._wall_thk = self._build_wall_thickness()
+        self._scl_pd = self._build_scl_pd_factors(kpl_config, barrier)
 
         # Initialize COO triplet lists for matrix_W
         self._rows_W = []
@@ -219,6 +281,7 @@ class HydraulicMatrixBuilder:
         """
         cm = self.network.cell_manager
         xylem_pieces: bool = getattr(self.geometry, 'xylem_pieces', False)
+        thickness = self._local_thickness(thickness, i, j)
 
         # Shared geometric conductance factor
         temp: float = (
@@ -227,6 +290,7 @@ class HydraulicMatrixBuilder:
             / eattr['length']
         )
         temp_factor: float = 1.0
+        kw_val: float = kw
 
         # Get the flanking cells for this wall node via HydraulicCellManager
         cells_i = self._get_cells_for_wall_node(i)
@@ -310,6 +374,15 @@ class HydraulicMatrixBuilder:
         else:
             K = kw * temp
 
+        # ── Air-space / living-cell wall: hydrated cell side + desiccated air side
+        # Each half is half the wall thickness, in parallel →
+        # k_eff = 0.5 * (kw_val + kw_spoke). Inert unless kw_spoke is set.
+        if 'kw_spoke' in kw_config and n_interc == 1 and barrier > 0:
+            kw_val = 0.5 * (kw_val + kw_config['kw_spoke'])
+            K = kw_val * temp
+            if kw > 0:
+                temp_factor = kw_val / kw
+
         # Store K on the HydraulicWall object for post-solve inspection
         wall = cm.get_wall_by_node_id(i)
         if wall is not None:
@@ -348,6 +421,7 @@ class HydraulicMatrixBuilder:
         """
         cm = self.network.cell_manager
         cgroup = self.network.graph.nodes[neighboor]['cgroup']
+        thickness = self._local_thickness(thickness, i)
         n_wall_junction = self.network.n_wall_junction
         intercellular_ids = np.array([c.cell_id for c in cm.intercellular])
 
@@ -680,8 +754,15 @@ class HydraulicMatrixBuilder:
             aperture_coef * base_area * barrier_modifier,  # default
         )
 
+        # Dead / apoptotic sclerenchyma (barrier 11): scale PD touching them
+        scl_factor = (
+            self._scl_pd.get(pd.cell_i.cell_id, 1.0) * self._scl_pd.get(pd.cell_j.cell_id, 1.0)
+            if self._scl_pd else 1.0
+        )
+        temp_factor *= scl_factor
+
         K = kpl * temp_factor
-        pd.n_pd = int(np.round(base_area * barrier_modifier))
+        pd.n_pd = int(np.round(base_area * barrier_modifier * scl_factor))
 
         self._add_W(i, i, -K)
         self._add_W(i, j,  K)
@@ -851,7 +932,8 @@ class HydraulicMatrixBuilder:
         if memb_cell_node is not None:
             K_memb = self._membrane_conductance(
                 wall.node_id, memb_cell_node, length, dist,
-                kw, kw_config, height, thickness, barrier,
+                kw, kw_config, height,
+                self._local_thickness(thickness, wall.node_id), barrier,
                 kaqp_config, a_cortex, b_cortex,
             )
         else:
@@ -1006,7 +1088,8 @@ class HydraulicMatrixBuilder:
             wall_has_contact = wall_id in contact_nodes
             graph.nodes[wall_id]['has_contact'] = wall_has_contact
             if wall_has_contact:
-                temp = 1.0E-04 * (self.network.wall_lengths[wall_id] / 2 * height) / (thickness / 2)
+                thk = self._local_thickness(thickness, wall_id)
+                temp = 1.0E-04 * (self.network.wall_lengths[wall_id] / 2 * height) / (thk / 2)
                 K = kw * temp
                 self._add_W(wall_id, wall_id, -K)
                 rhs_s[wall_id][0] = -K
@@ -1018,7 +1101,8 @@ class HydraulicMatrixBuilder:
             junction_has_contact = j_id in contact_nodes
             graph.nodes[j_id]['has_contact'] = junction_has_contact
             if junction_has_contact:
-                temp = 1.0E-04 * (self.network.wall_lengths[j_id] * height) / (thickness / 2)
+                thk = self._local_thickness(thickness, j_id)
+                temp = 1.0E-04 * (self.network.wall_lengths[j_id] * height) / (thk / 2)
                 K = kw * temp
                 self._add_W(j_id, j_id, -K)
                 rhs_s[j_id][0] = -K

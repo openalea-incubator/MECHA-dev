@@ -465,6 +465,11 @@ class GeometryData:
 
     # Geometry parameters
     thickness: float = 1.5 # µm
+    # Opt-in: use each wall's own double thickness (µm) from the network graph
+    # (GRANAP ``cell_wall_thickness``, node attribute ``wall_thickness`` = sum of
+    # both flanking cells' values) instead of the global ``thickness``. Walls
+    # without a value fall back to ``thickness``.
+    use_wall_thickness: bool = False
     # 7.47E-5 µm²: historical value used in MECHA simulations (Couvreur et al.)
     # 1.79E-4 µm²: PD type I width = 22 nm, desmotubule diameter = 16 nm --> cytoplasmic sleeve thickness = 3 nm (Nicolas et al. 2017)
     # 8.16E-4 µm²: PD type II + spokes: 36 nm, desmotubule diameter = 16 nm --> sleeve thick=10 nm (Nicolas et al. 2017)
@@ -534,6 +539,8 @@ class GeometryData:
         self.diffusion_length[1][0] = float(diff_length_elem.get("stele"))
         
         self.thickness = float(root.xpath('thickness')[0].get("value")) # in microns
+        use_wt = root.xpath('use_wall_thickness')
+        self.use_wall_thickness = bool(use_wt) and int(use_wt[0].get("flag")) == 1
         self.pd_section = float(root.xpath('PD_section')[0].get("value")) # in microns^2
         self.xylem_pieces = int(root.xpath('Xylem_pieces')[0].get("flag")) == 1
 
@@ -1025,6 +1032,11 @@ class HydraulicData:
     # anatomies set this to a near-zero value (e.g. 1e-16) via
     # ``needle_defaults`` to lignify/block the hypodermis–mesophyll wall.
     kw_meso_hypo: Optional[float] = None
+    # Conductivity of the desiccated air-side half of a wall between an air space
+    # and a living cell (the cell-side half stays hydrated at its usual kw). Both
+    # halves are half the wall thickness and in parallel, so the wall gets
+    # 0.5 * (kw_value + kw_spoke). ``None`` → inert (plain kw_value).
+    kw_spoke: Optional[float] = None
     kaqp: List[Dict[str, float]] = field(default_factory=lambda: [{'value': 0.000430, 'cortex_factor': 1.0, 'endo_factor': 1.0, 'epi_factor': 1.0, 'exo_factor': 1.0, 'stele_factor': 1.0}])
     kpl: List[Dict[str, float]] = field(default_factory=lambda: [{'value': 5.3E-12, 'phloem_companion_cell_factor': 0.0, 'pericycle_phloem_pole_factor': 0.0, 'phloem_sieve_tube_factor': 0.0, 'cortex_factor': 1.0}])
 
@@ -1099,6 +1111,8 @@ class HydraulicData:
         # Process parameter arrays
         self.kw = [float(kw.get("value")) for kw in self.kw_elems] if self.kw_elems else [0.00024]
         self.kw_septa = [float(kw_septa.get("value")) for kw_septa in self.kw_septa_elems] if self.kw_septa_elems else [0.00012]
+        kw_spoke_elem = root.xpath('kw_spoke')
+        self.kw_spoke = float(kw_spoke_elem[0].get("value")) if kw_spoke_elem else None
         self.kw_barrier = [float(kw_barrier.get("value")) for kw_barrier in self.kw_barrier_elems] if self.kw_barrier_elems else [1.00E-16]
 
         self.kaqp = []
@@ -1122,6 +1136,9 @@ class HydraulicData:
             kpl_dict['endo_out_factor'] = float(kpl_elem.get("endo_out_factor", 1.0))
             kpl_dict['exo_factor'] = float(kpl_elem.get("exo_factor", 1.0))
             kpl_dict['epi_factor'] = float(kpl_elem.get("epi_factor", 1.0))
+            kpl_dict['scl_dead_fraction'] = float(kpl_elem.get("scl_dead_fraction", 0.8))
+            kpl_dict['scl_pd_factor'] = float(kpl_elem.get("scl_pd_factor", 0.05))
+            kpl_dict['scl_seed'] = int(kpl_elem.get("scl_seed", 0))
 
             self.kpl.append(kpl_dict)
 
@@ -1426,6 +1443,8 @@ class HydraulicData:
 
         # Hypodermis/epidermis–mesophyll (2, 4) wall
         config['kw_meso_hypo'] = self.kw_meso_hypo if self.kw_meso_hypo is not None else kw
+        if self.kw_spoke is not None:
+            config['kw_spoke'] = float(self.kw_spoke)
         return config
 
     def get_plasmodesmatal_conductance(self, h: int) -> Dict[str, float]:
@@ -1498,7 +1517,14 @@ class HydraulicData:
             'cortex_factor': cortex_factor,
             'phloem_companion_cell_factor': phloem_companion_cell_factor, # PCC
             'pericycle_phloem_pole_factor': phloem_pericycle_pole_factor, # PPP
-            'phloem_sieve_tube_factor': phloem_sieve_tube_factor # PST
+            'phloem_sieve_tube_factor': phloem_sieve_tube_factor, # PST
+            # Barrier stage 11 only: dead / apoptotic sclerenchyma fibres. A
+            # fraction ``scl_dead_fraction`` of the sclerenchyma cells loses all
+            # PD, the rest keeps ``scl_pd_factor`` of them (seeded, see solver).
+            # Defaults to 0 / 1 to switch off.
+            'scl_dead_fraction': float(self.kpl[iPD].get('scl_dead_fraction', 0.8)),
+            'scl_pd_factor': float(self.kpl[iPD].get('scl_pd_factor', 0.05)),
+            'scl_seed': int(self.kpl[iPD].get('scl_seed', 0)),
         }
         # Legacy short aliases, kept so that downstream code reading
         # config['cortex'] / ['endo_in'] / ... keeps working.
