@@ -1032,11 +1032,6 @@ class HydraulicData:
     # anatomies set this to a near-zero value (e.g. 1e-16) via
     # ``needle_defaults`` to lignify/block the hypodermis–mesophyll wall.
     kw_meso_hypo: Optional[float] = None
-    # Conductivity of the desiccated air-side half of a wall between an air space
-    # and a living cell (the cell-side half stays hydrated at its usual kw). Both
-    # halves are half the wall thickness and in parallel, so the wall gets
-    # 0.5 * (kw_value + kw_spoke). ``None`` → inert (plain kw_value).
-    kw_spoke: Optional[float] = None
     kaqp: List[Dict[str, float]] = field(default_factory=lambda: [{'value': 0.000430, 'cortex_factor': 1.0, 'endo_factor': 1.0, 'epi_factor': 1.0, 'exo_factor': 1.0, 'stele_factor': 1.0}])
     kpl: List[Dict[str, float]] = field(default_factory=lambda: [{'value': 5.3E-12, 'phloem_companion_cell_factor': 0.0, 'pericycle_phloem_pole_factor': 0.0, 'phloem_sieve_tube_factor': 0.0, 'cortex_factor': 1.0}])
 
@@ -1111,8 +1106,6 @@ class HydraulicData:
         # Process parameter arrays
         self.kw = [float(kw.get("value")) for kw in self.kw_elems] if self.kw_elems else [0.00024]
         self.kw_septa = [float(kw_septa.get("value")) for kw_septa in self.kw_septa_elems] if self.kw_septa_elems else [0.00012]
-        kw_spoke_elem = root.xpath('kw_spoke')
-        self.kw_spoke = float(kw_spoke_elem[0].get("value")) if kw_spoke_elem else None
         self.kw_barrier = [float(kw_barrier.get("value")) for kw_barrier in self.kw_barrier_elems] if self.kw_barrier_elems else [1.00E-16]
 
         self.kaqp = []
@@ -1213,6 +1206,21 @@ class HydraulicData:
             return self.kw_septa[0]
         else:
             return self.kw_septa[int(h/(self.n_kaqp*self.n_kpl))%self.n_kw_septa]
+
+    @staticmethod
+    def check_kw_septa(kw: float, kw_septa: float) -> None:
+        """Raise if the desiccated-wall conductivity ``kw_septa`` is not below ``kw``.
+
+        ``kw_septa`` is used for septa between two air spaces and for the desiccated
+        air-side half of lacuna-lining walls (k_eff = 0.5 * (kw + kw_septa)), so it
+        must describe a drier, less conductive wall than the hydrated ``kw``.
+        """
+        if kw_septa >= kw:
+            raise ValueError(
+                f"kw_septa ({kw_septa:g}) must be smaller than kw ({kw:g}): it is the "
+                "conductivity of a desiccated wall bordering an air space. Lower "
+                "data.hydraulic.kw_septa or raise kw."
+            )
 
     def get_kw_barrier_values(self, h: int) -> Tuple[float, List[float]]:
         """Get the kw_barrier values based on the scenario index."""
@@ -1443,8 +1451,6 @@ class HydraulicData:
 
         # Hypodermis/epidermis–mesophyll (2, 4) wall
         config['kw_meso_hypo'] = self.kw_meso_hypo if self.kw_meso_hypo is not None else kw
-        if self.kw_spoke is not None:
-            config['kw_spoke'] = float(self.kw_spoke)
         return config
 
     def get_plasmodesmatal_conductance(self, h: int) -> Dict[str, float]:

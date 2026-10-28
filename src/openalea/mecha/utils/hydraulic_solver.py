@@ -24,6 +24,7 @@ class HydraulicMatrixBuilder:
         self._wall_thk = None
         self._junction_thk = {}
         self._scl_pd = {}
+        self._wall_air_cids = set()
 
     def _build_wall_thickness(self):
         """Per-wall thickness map for ``geometry.use_wall_thickness``.
@@ -109,6 +110,12 @@ class HydraulicMatrixBuilder:
         thickness = self.geometry.thickness
         self._wall_thk = self._build_wall_thickness()
         self._scl_pd = self._build_scl_pd_factors(kpl_config, barrier)
+        # Needle mesophyll air spaces (protect_topology) are handled by wall_air / air_link
+        # edges, not by the root aerenchyma (barrier > 0) rules below.
+        self._wall_air_cids = {
+            c.cell_id for c in self.network.cell_manager.intercellular
+            if self.network.is_wall_air_cell(c.node_id)
+        }
 
         # Initialize COO triplet lists for matrix_W
         self._rows_W = []
@@ -376,9 +383,16 @@ class HydraulicMatrixBuilder:
 
         # ── Air-space / living-cell wall: hydrated cell side + desiccated air side
         # Each half is half the wall thickness, in parallel →
-        # k_eff = 0.5 * (kw_val + kw_spoke). Inert unless kw_spoke is set.
-        if 'kw_spoke' in kw_config and n_interc == 1 and barrier > 0:
-            kw_val = 0.5 * (kw_val + kw_config['kw_spoke'])
+        # k_eff = 0.5 * (kw_val + kw_septa), kw_septa being the desiccated-wall value.
+        # Needle mesophyll (wall_air) air spaces are excluded: they keep the plain wall.
+        n_interc_root = sum(
+            1 for c in cells_i
+            if c.cell_id in intercellular_cids and c.cell_id not in self._wall_air_cids
+        )
+        if n_interc_root == 1 and barrier > 0:
+            kw_septa = kw_config.get('kw_septa', kw)
+            self.hydraulic.check_kw_septa(kw, kw_septa)
+            kw_val = 0.5 * (kw_val + kw_septa)
             K = kw_val * temp
             if kw > 0:
                 temp_factor = kw_val / kw
@@ -503,11 +517,20 @@ class HydraulicMatrixBuilder:
         # ── Membrane conductance calculation ──────────────────────────────────
         is_barrier_interface = (n_endo >= 2) or (n_exo >= 2) or (n_stele > 0 and n_endo > 0)
 
-        # Cut only when there is genuinely no membrane conductance
-        # (``kmb == 0`` *and* ``kaqp_curr == 0``); otherwise the normal
-        # series formula (which already includes ``kmb``) is used so the
-        # membrane stays permeable (mesohpyll cells).
-        if (not is_barrier_interface) and kaqp_curr == 0.0 and self.hydraulic.kmb == 0.0:
+        # Gas-filled intercellular space (barrier > 0, ``k_interc`` == 0): the cell
+        # carries no water, so the membrane is cut regardless of the background
+        # ``kmb`` (original MECHA: ``kaqp == 0`` -> K = 1e-16). Otherwise cut only
+        # when there is genuinely no membrane conductance (``kmb == 0`` *and*
+        # ``kaqp_curr == 0``); else the normal series formula (which includes
+        # ``kmb``) keeps the membrane permeable (mesophyll cells).
+        # Needle mesophyll (wall_air) air spaces are excluded: they keep the kmb path.
+        is_air_cell = (
+            barrier > 0 and (j - n_wall_junction) in intercellular_ids
+            and (j - n_wall_junction) not in self._wall_air_cids
+        )
+        if kaqp_curr == 0.0 and (
+            is_air_cell or ((not is_barrier_interface) and self.hydraulic.kmb == 0.0)
+        ):
             K = 1.00E-16
         else:
             if kw_val == 0.0:
@@ -607,7 +630,14 @@ class HydraulicMatrixBuilder:
         # Cut only when there is no background membrane conductance either 
         # (``kmb == 0``), so needle mesophyll membranes remain permeable through ``kmb``.
         is_barrier_interface = (n_endo >= 2) or (n_exo >= 2) or (n_stele > 0 and n_endo > 0)
-        if (not is_barrier_interface) and kaqp_curr == 0.0 and self.hydraulic.kmb == 0.0:
+        # A gas-filled intercellular cell is cut whatever ``kmb`` is (as in _fill_membrane).
+        is_air_cell = (
+            barrier > 0 and (cell_node - n_wall_junction) in intercellular_ids
+            and (cell_node - n_wall_junction) not in self._wall_air_cids
+        )
+        if kaqp_curr == 0.0 and (
+            is_air_cell or ((not is_barrier_interface) and self.hydraulic.kmb == 0.0)
+        ):
             K = 1.00E-16
         elif kw_val == 0.0:
             K = 0.0
