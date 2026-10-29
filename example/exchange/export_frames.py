@@ -11,6 +11,9 @@ the soil at 0 hPa and the xylem at -5000 hPa, with a barrier of maturity code B 
 section's whole MPG, its compartments with their water potentials, its connections with their conductances and water
 flows, and the cells' polygons as a display mesh. Each frame is then checked with fspm-TF's validator.
 
+A second, filtered export shows logging: the compartments and their connections only, with the water potential,
+the uptake and the flows, in ./outputs/log/frames (outputs only: such frames are not reimported).
+
 Open a frame in ParaView with fspm-TF's reader plugin (fspm-TF/paraview/fspm_tf_reader.py), colour by
 Compartment.water_potential; import_frames.py reads the files back.
 """
@@ -25,17 +28,20 @@ from openalea.mecha.simulation import simulate
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUTPUTS = os.path.join(HERE, "outputs")
 BARRIERS = (1, 3)
+# a log of the water: the compartments and their connections, their water potential, uptake and flows
+LOG = dict(scales=["Compartment"], variables=["tissue", "kind", "water_potential", "root_uptake", "flow"])
 
 
-def export(barriers=BARRIERS, outputs: str = OUTPUTS) -> list:
-    """Solve a section for each barrier and write it as a frame; the frames' paths."""
+def export(barriers=BARRIERS, outputs: str = OUTPUTS, options: dict = None) -> list:
+    """Solve a section for each barrier and write it as a frame (filtered by *options*, e.g. LOG); the frames'
+    paths."""
     folder = os.path.join(outputs, "frames")
     os.makedirs(folder, exist_ok=True)
     paths = []
     for barrier in barriers:
         section = simulate(barrier=barrier)
         path = os.path.join(folder, f"barrier_{barrier}.glb")
-        export_scene(path, section.scene)
+        export_scene(path, section.scene, **(options or {}))
         print(f"barrier {barrier}: radial conductivity kr {section.summary['kr']:.3g} cm hPa-1 d-1")
         paths.append(path)
     return paths
@@ -44,10 +50,15 @@ def export(barriers=BARRIERS, outputs: str = OUTPUTS) -> list:
 def main():
     parser = argparse.ArgumentParser(description="MECHA's solved sections as fspm-TF frames, one per barrier")
     parser.add_argument("--barriers", nargs="+", type=int, default=list(BARRIERS))
-    for path in export(parser.parse_args().barriers):
+    barriers = parser.parse_args().barriers
+    for path in export(barriers):
         report = validate_file(path)
         print(f"{path} ({os.path.getsize(path) / 1e6:.1f} MB): fspm-TF validator {len(report.errors)} error(s), "
               f"{len(report.warnings)} warning(s)")
+    for path in export(barriers, os.path.join(OUTPUTS, "log"), options=LOG):
+        report = validate_file(path)
+        print(f"logged {os.path.basename(path)} (scales {LOG['scales']}, {len(LOG['variables'])} variables): "
+              f"{os.path.getsize(path) / 1e6:.1f} MB, {len(report.errors)} error(s)")
 
 
 if __name__ == "__main__":
