@@ -22,11 +22,13 @@ in one environment.
 ```bash
 mkdir fspm && cd fspm                       # any folder: the three repositories side by side
 git clone -b data_structure_api https://github.com/openalea/metafspm.git metafspm
+git clone https://github.com/openalea/fspm-TF.git fspm-TF
 git clone -b to_metafspm https://github.com/openalea-incubator/GRANAP-dev.git GRANAP
 git clone -b to_metafspm https://github.com/openalea-incubator/MECHA-dev.git MECHA-dev
 
 mamba env create -f MECHA-dev/conda/environment.yaml     # the dependencies of the three, and MECHA itself
 mamba activate mecha
+pip install -e fspm-TF
 pip install -e metafspm
 pip install -e GRANAP
 pip install -e MECHA-dev
