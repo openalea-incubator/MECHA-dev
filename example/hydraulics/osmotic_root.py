@@ -19,10 +19,10 @@ from dataclasses import replace
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 
 from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.coupling.translator import Translator
+from openalea.metafspm.scene.population import Planting, planting
 from openalea.metafspm.scene.scene import Scene
 
 from openalea.granap.metafspm.architectures import RootAxis
@@ -58,9 +58,9 @@ class OsmoticRoot(CompositeModel):
 
 
 def main():
-    table = pd.DataFrame([dict(plant=case, model=OsmoticRoot, x=float(i), y=0., z=0., rotation=0.,
-                               scenario={"parameters": {"standard_osmotic": 1., **parameters}})
-                          for i, (case, parameters) in enumerate(CASES.items())])
+    # the plants p0, p1, p2: the cases in their order
+    table = planting([Planting(x=float(i)) for i in range(len(CASES))], OsmoticRoot, {"standard_osmotic": 1.},
+                     plant_scenarios=list(CASES.values()))
     scene = Scene(table)
     ds = scene.populations[0].data_structure
     mecha = scene.populations[0].instance.hydraulics

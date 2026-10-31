@@ -204,8 +204,8 @@ def development(ds, is_root, tip_segment=1e-9, strip=0.1):
 # rate, over its 10.8 cm2 of leaf blade (9 leaf elements of 3 cm, GRANAP's monocot leaf 4.0 mm wide).
 TRANSPIRATION = 0.04
 MM3_PER_S_TO_CM3_PER_DAY = 1e-3 * 86400.
-SEEDLING_SCENARIO = {"parameters": {"stem_anatomy": {}, "leaf_anatomy": {},   # the shoot's anatomies, its presets
-                                    "collar_condition": 0.},                   # the shoot above the roots: no collar
+SEEDLING_SCENARIO = {"stem_anatomy": {}, "leaf_anatomy": {},   # the shoot's anatomies, its presets
+                     "collar_condition": 0.,                   # the shoot above the roots: no collar
                      "transpiration": TRANSPIRATION}
 
 

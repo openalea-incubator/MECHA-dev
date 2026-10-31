@@ -1,7 +1,7 @@
 # The parameters in plain words
 
 MECHA's main parameters, with their default values. MECHA works in centimetres, hectopascals and days:
-`openalea.mecha.simulation.parameters()` lists every parameter with its value, its unit and its description, and
+`openalea.mecha.simulation.parameters()` lists every parameter with its value, its unit, its description and its declared bounds, and
 {doc}`components` gives the complete reference.
 
 | parameter | what it controls | default |

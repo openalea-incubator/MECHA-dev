@@ -11,8 +11,9 @@ import sys
 import time
 
 import numpy as np
-import pandas as pd
 
+from openalea.metafspm.scene.population import Planting, planting
+from openalea.metafspm.scene.recorder import SceneRecorder
 from openalea.metafspm.scene.scene import Scene
 
 from seedling_spac import (CM3_PER_DAY_TO_MM3_PER_S, SCENE_TRANSLATOR, SEEDLING_SCENARIO, SeedlingHydraulics, Soil,
@@ -21,12 +22,12 @@ import plots
 
 
 def scene(output_dirpath=None, tolerance=1e-4):
-    table = pd.DataFrame([dict(plant="seedling", model=SeedlingHydraulics, x=0.1, y=0.1, z=0., rotation=0.,
-                               scenario=SEEDLING_SCENARIO)])
-    table.attrs.update(xrange=0.2, yrange=0.2)                       # a 0.2 m x 0.2 m column of soil
+    table = planting([Planting(x=0.1, y=0.1)], SeedlingHydraulics, SEEDLING_SCENARIO, xrange=0.2,
+                     yrange=0.2)                                     # a 0.2 m x 0.2 m column of soil
     stop = largest_change(tolerance)
     built = Scene(table, environment=[Soil], environment_scenarios=[{}], translator=SCENE_TRANSLATOR, time_step=3600,
-                  mappings=root_surface_mappings, stop_when=stop, output_dirpath=output_dirpath)
+                  mappings=root_surface_mappings, stop_when=stop,
+                  recorder=SceneRecorder(output_dirpath) if output_dirpath else None)
     return built, stop
 
 

@@ -5,14 +5,13 @@ soil. The leaf transpires its organ's flow (an Organ-scale input, §27), from it
 evaporating walls through the air spaces and the stomata (GRANAP §60): what the leaf transpires, the root takes up.
 """
 import numpy as np
-import pandas as pd
 import pytest
 
 from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import StructuralComponent
 from openalea.metafspm.data_structure.configs import PropsConfig
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
-from openalea.metafspm.scene.population import build_population
+from openalea.metafspm.scene.population import Planting, build_population, planting
 
 from openalea.granap.leaf_class import LeafAnatomy
 from openalea.granap.stem_class import StemAnatomy
@@ -60,7 +59,7 @@ class Anatomy(GranapAnatomy):
 @pytest.fixture(scope="module")
 def plant():
     Choregrapher().add_simulation_time_step(3600.)
-    table = pd.DataFrame([dict(plant="p0", model=None, x=0., y=0., z=0., rotation=0., scenario={"parameters": {}})])
+    table = planting([Planting()], None)
     g, _ = build_population(table, initiators=(Seedling, Anatomy))
     g.convert_properties_to_arraydict()
     ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiring=junction_rules(g))

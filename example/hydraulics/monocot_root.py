@@ -12,10 +12,10 @@ import os
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 
 from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.coupling.translator import Translator
+from openalea.metafspm.scene.population import Planting, planting
 from openalea.metafspm.scene.scene import Scene
 
 from openalea.granap.metafspm.architectures import RootAxis
@@ -45,8 +45,7 @@ class RootHydraulics(CompositeModel):
 
 def main():
     scenario = {"root_segments": [[RADIUS, SEGMENT, (2 - i) * SEGMENT] for i in range(3)]}
-    scene = Scene(pd.DataFrame([dict(plant="root", model=RootHydraulics, x=0., y=0., z=0., rotation=0.,
-                                     scenario={"parameters": scenario})]))
+    scene = Scene(planting([Planting()], RootHydraulics, scenario))
     ds = scene.populations[0].data_structure
     mecha = scene.populations[0].instance.hydraulics
     ds.set("barrier", np.array(BARRIERS, dtype=float)[ds.owner("SubOrgan")])   # a development model's role

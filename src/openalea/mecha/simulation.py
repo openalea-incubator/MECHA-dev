@@ -8,13 +8,15 @@ MECHA for users: the water flow across one root cross section in a few lines, it
     result.tissues()                              per tissue: cells, area, mean water potential
     result.pathways()                             each pathway's share of the radial flow, layer by layer
     result.draw("potential")                      the section coloured by water potential ("tissues", "pathways")
-    parameters()                                  MECHA's parameters: value, unit and description
+    parameters()                                  MECHA's parameters: value, unit, description and bounds
     simulate({"kw": 2.4e-5})                      another cell wall conductivity
     simulate(anatomy={"preset": "for_dicot_root"})    another anatomy (GRANAP's parameters)
     simulate(barrier=3)                           a fully suberized endodermis
     simulate(osmotic={"os_hetero": 4, "osmotic_epi": -6800., ...})   with osmotic potentials (MECHA's presets)
     simulate_root(barriers=(3, 3, 1, 1, 0))       a root axis: its sections from the collar to the tip, joined by
                                                   their xylem, in a soil at soil_psi; a table per section
+    simulate(barrier=3, outputs="outputs")        the run saved in ./outputs: run.json (its status), scenario.json,
+                                                  Plant/<model>/summaries.csv and frames/ (the solved section, fspm-TF)
 
 The section is solved in MECHA's standard problem: the soil at soil_psi around it, its xylem vessels at xylem_psi.
 Quantities are in MECHA's units: cm, hPa, days (kr in cm hPa-1 d-1); positions in µm.
@@ -26,6 +28,9 @@ import pandas as pd
 
 from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.coupling.translator import Translator
+from openalea.metafspm.scene.population import Planting, planting
+from openalea.metafspm.scene.recorder import SceneRecorder
+from openalea.metafspm.scene.scenarios import parameter_table
 from openalea.metafspm.scene.scene import Scene
 from openalea.mecha import plots
 from openalea.mecha.component import MechaHydraulics
@@ -60,16 +65,10 @@ KR_TO_M_PER_S_PER_MPA = 1e-2 / 1e-4 / 86400.
 
 def parameters(values: dict = None, main_only: bool = False) -> pd.DataFrame:
     """MECHA's parameters, one row each: its name, its value (the default, or the one in *values*), its unit, its
-    description, and whether it is one of the main parameters (those first)."""
-    declarations = MechaHydraulics.declarations()
-    table = declarations[declarations["kind"] == "parameter"][["name", "default", "unit", "description"]]
-    table = table.rename(columns={"default": "value"}).reset_index(drop=True)
-    for name, value in (values or {}).items():
-        table.loc[table["name"] == name, "value"] = value
-    table["main"] = table["name"].isin(MAIN_PARAMETERS)
-    order = {name: rank for rank, name in enumerate(MAIN_PARAMETERS)}
-    table = table.assign(rank=table["name"].map(order).fillna(len(order))).sort_values("rank", kind="stable")
-    table = table.drop(columns="rank").reset_index(drop=True)
+    description, its declared bounds (min_value, max_value), its component, and whether it is one of the main
+    parameters (those first)."""
+    table = parameter_table(MechaHydraulics, values=values, main=MAIN_PARAMETERS, kinds=("parameter",))
+    table["value"] = pd.to_numeric(table["value"])                   # numbers, for display and arithmetic
     return table[table["main"]].reset_index(drop=True) if main_only else table
 
 
@@ -202,7 +201,7 @@ def _summary(section: Section) -> pd.Series:
 
 
 def simulate(parameters: dict = None, anatomy: dict = None, barrier: float = 1., soil_psi: float = 0.,
-             xylem_psi: float = -5000., osmotic: dict = None) -> Section:
+             xylem_psi: float = -5000., osmotic: dict = None, outputs: str = None) -> Section:
     """Solve the water flow across one root cross section: GRANAP's anatomy (*anatomy*: its parameters, e.g.
     {"preset": "for_dicot_root", "cortex": {"n_layers": 3}}; a monocot root by default), MECHA's hydraulics with its
     defaults changed by *parameters* ({name: value}), the apoplastic barriers *barrier* (MECHA's maturity code: 1
@@ -211,7 +210,10 @@ def simulate(parameters: dict = None, anatomy: dict = None, barrier: float = 1.,
     parameters={"standard_psi_sieve": ...}), the soil at *soil_psi* and the xylem at *xylem_psi* (hPa). With
     *osmotic* ({name: value} of MECHA's osmotic presets, MechaOsmoticPresets: os_hetero, osmotic_epi, os_cortex,
     osmotic_left_soil...), the cells', walls' and soil's osmotic potentials act across the membranes (their reflection
-    coefficients); *soil_psi* and *xylem_psi* are then their pressure potentials.
+    coefficients); *soil_psi* and *xylem_psi* are then their pressure potentials. With *outputs* (a folder), the run is
+    saved there: run.json (its status, timing and versions), scenario.json (the parameters it ran with),
+    Plant/<model>/summaries.csv (the section's state variables) and frames/ (the section before and after its solve,
+    fspm-TF files, openalea.fspm_tf.read reads them).
 
     The summary: kr, the radial conductivity (cm hPa-1 d-1; kr_SI in m s-1 MPa-1), the water uptake (cm³ d-1), the
     perimeter (cm), the number of cells, and the share of the radial flow carried across the cortex by the walls,
@@ -221,12 +223,11 @@ def simulate(parameters: dict = None, anatomy: dict = None, barrier: float = 1.,
         scenario["root_anatomy"] = dict(anatomy)
     if osmotic is not None:
         scenario.update(osmotic, standard_osmotic=1.)
-    table = pd.DataFrame([dict(plant="plant", model=_plant_model(osmotic is not None), x=0., y=0., z=0.,
-                               rotation=0., scenario={"parameters": scenario})])
-    scene = Scene(table)
+    recorder = SceneRecorder(outputs, frame_period=1) if outputs is not None else None
+    scene = Scene(planting([Planting()], _plant_model(osmotic is not None), scenario), recorder=recorder)
     ds = scene.populations[0].data_structure
     ds.set("barrier", np.full(ds.n_nodes(), float(barrier)))
-    scene.run()
+    scene.simulate(1)                                         # one solve, its state recorded with outputs
     section = Section(scene=scene, summary=pd.Series(dtype=float), parameters=dict(parameters or {}))
     section.summary = _summary(section)
     return section
@@ -234,25 +235,25 @@ def simulate(parameters: dict = None, anatomy: dict = None, barrier: float = 1.,
 
 def simulate_root(barriers=(3, 3, 3, 1, 1, 0), segment_length: float = 5e-3, radius: float = 0.55e-3,
                   parameters: dict = None, anatomy: dict = None, soil_psi: float = -1000.,
-                  collar_psi: float = -5000.) -> pd.DataFrame:
+                  collar_psi: float = -5000., outputs: str = None) -> pd.DataFrame:
     """Solve the water flow in a root axis (MECHA's plant problem): one section per entry of *barriers* (their
     maturity codes, from the collar to the tip), each *segment_length* m long and of *radius* m, joined by their
     xylem vessels; the soil at *soil_psi* around them, the collar's xylem at *collar_psi* (hPa). Returns a table, one
     row per section: its distance from the collar (mm), barrier, mean xylem potential (hPa), uptake (cm³ d-1), kr
     (its standard problem's) and kr_effective (in the root), both in cm hPa-1 d-1; table.attrs["scene"] is the
-    metafspm scene."""
+    metafspm scene. With *outputs* (a folder), the run is saved there as simulate saves it."""
     n = len(barriers)
     scenario = dict(parameters or {}, collar_condition=1., collar_psi=collar_psi,
                     root_segments=[[radius, segment_length, (n - 1 - i) * segment_length] for i in range(n)])
     if anatomy is not None:
         scenario["root_anatomy"] = dict(anatomy)
-    scene = Scene(pd.DataFrame([dict(plant="root", model=_plant_model(), x=0., y=0., z=0., rotation=0.,
-                                     scenario={"parameters": scenario})]))
+    recorder = SceneRecorder(outputs, frame_period=1) if outputs is not None else None
+    scene = Scene(planting([Planting()], _plant_model(), scenario), recorder=recorder)
     ds = scene.populations[0].data_structure
     owner = np.asarray(ds.owner("SubOrgan"))                  # the sections in order, the collar's first
     ds.set("barrier", np.asarray(barriers, dtype=float)[owner])
     ds.set("soil_psi", np.full(ds.n_nodes(), float(soil_psi)))
-    scene.run()
+    scene.simulate(1)                                         # one solve, its state recorded with outputs
     psi, xylem = np.asarray(ds.get("psi")), np.isin(np.asarray(ds.get("cgroup")), (13, 19, 20))
     table = pd.DataFrame({
         "distance": (np.arange(n) + 0.5) * segment_length * 1e3, "barrier": list(barriers),

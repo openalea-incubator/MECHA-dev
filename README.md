@@ -48,13 +48,15 @@ result = simulate()
 print(result.summary)                         # kr, the uptake, the pathways' shares in the cortex
 result.draw("potential")                      # the section coloured by water potential
 result = simulate({"kaqp": 8e-4}, barrier=3)  # more aquaporins, a suberized endodermis
+simulate(outputs="outputs")                   # the run saved: run.json, scenario.json, summaries, fspm-TF frames
 ```
 
 ### User tutorials
 
 Step by step, for newcomers to the model, to plant hydraulics or to Python modelling, in `example/tutorials/user/`:
 
-1. [Water across a root](example/tutorials/user/01_first_run.ipynb): solve a section, read and draw its results;
+1. [Water across a root](example/tutorials/user/01_first_run.ipynb): solve a section, read and draw its results, save
+   a run;
 2. [Change a parameter](example/tutorials/user/02_change_a_parameter.ipynb): the parameters, the barriers, the
    anatomy;
 3. [Combine parameters](example/tutorials/user/03_combine_parameters.ipynb): walls against aquaporins;

@@ -6,12 +6,11 @@ reaches its sinks, and its evaporating walls concentrate. The root's soil water 
 each section receives from its neighbour: the sections are not connected for the solutes).
 """
 import numpy as np
-import pandas as pd
 import pytest
 
 from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
-from openalea.metafspm.scene.population import build_population
+from openalea.metafspm.scene.population import Planting, build_population, planting
 
 from openalea.granap.metafspm.component import junction_rules
 from openalea.mecha.component import MechaHydraulics
@@ -28,7 +27,7 @@ C_SOIL = 2e-6                                              # mol cm-3, the soil 
 @pytest.fixture(scope="module")
 def stepped():
     Choregrapher().add_simulation_time_step(DT)
-    table = pd.DataFrame([dict(plant="p0", model=None, x=0., y=0., z=0., rotation=0., scenario={"parameters": {}})])
+    table = planting([Planting()], None)
     g, _ = build_population(table, initiators=(Seedling, Anatomy))
     g.convert_properties_to_arraydict()
     ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiring=junction_rules(g))

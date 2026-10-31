@@ -2,13 +2,11 @@
 The plants of the tests: a root of one or more segments (lengths in m, as metafspm's plant models), its GRANAP
 anatomies, and the DataStructure over their Compartments (anatomy mode).
 """
-import pandas as pd
-
 from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import StructuralComponent
 from openalea.metafspm.data_structure.configs import PropsConfig
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
-from openalea.metafspm.scene.population import build_population
+from openalea.metafspm.scene.population import Planting, build_population, planting
 
 from openalea.granap.metafspm.component import GranapAnatomy, junction_rules
 from openalea.granap.metafspm.library import AnatomyLibrary, preset_parameters
@@ -55,7 +53,7 @@ def anatomy_component(preset=None):
 def anatomy_data_structure(architecture, anatomy_class=Anatomy):
     """The plant, its GRANAP anatomies, and the DataStructure over their Compartments: (g, ds, anatomy)."""
     Choregrapher().add_simulation_time_step(3600.)
-    plants = pd.DataFrame([dict(plant="p0", model=None, x=0., y=0., z=0., rotation=0., scenario={"parameters": {}})])
+    plants = planting([Planting()], None)
     g, _ = build_population(plants, initiators=(architecture, anatomy_class))
     g.convert_properties_to_arraydict()
     ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiring=junction_rules(g))
