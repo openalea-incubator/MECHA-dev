@@ -64,7 +64,10 @@ Step by step, for newcomers to the model, to plant hydraulics or to Python model
 5. [Experimental data](example/tutorials/user/05_experimental_data.ipynb): measured anatomies, observed kr, fitting;
 6. [Along a root](example/tutorials/user/06_along_a_root.ipynb): a root axis with sections of different maturity;
 7. [A tomato root by day and by night](example/tutorials/user/07_tomato_day_and_night.ipynb): osmotic potentials,
-   day and night, a stressful soil.
+   day and night, a stressful soil;
+8. [The conductance of a root system](example/tutorials/user/08_root_system_conductance.ipynb): a seedling's root
+   system as one network, its conductance (Krs) and where the water enters (SUF), two membrane conductivities found
+   from Krs measured with and without the aquaporins inhibited.
 
 ## For developers
 
@@ -91,6 +94,7 @@ for the anatomies):
 | [07 — the section's options](example/tutorials/developer/07_section_options.ipynb) | the barrier codes 0–11, φ-thickenings, aquaporins, plasmodesmata rules and factors, walls and air spaces, xylem pieces, tracheids, measured axial conductances, monocots and dicots |
 | [08 — the standard problem](example/tutorials/developer/08_standard_problem.ipynb) | its boundaries (the soil's two sides, the xylem's and the phloem's pressures or flows, the elongation zone), the osmotic scenarios, the flows by layer |
 | [09 — the solutes' options](example/tutorials/developer/09_solute_options.ipynb) | the pathways (apoplast, symplast), the schemes and time steps, held concentrations and steady states, the water and the sugar coupled |
+| [10 — a root system's conductance](example/tutorials/developer/10_root_system_conductance.ipynb) | MARSHAL's Krs and SUF upscaled from the anatomical network: the upscaling's declaration (`upscaling(of=, law=, protocol=)`), metafspm's network operator, the check on the plant problem; elasticities, observations and residuals, the identifiability map, a two-parameter calibration |
 
 Run them locally with `jupyter lab example/tutorials/` (the `mecha` environment above). Examples:
 [`example/hydraulics/`](example/hydraulics/) (sections, a root axis, the osmotic presets),

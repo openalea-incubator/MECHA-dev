@@ -17,6 +17,10 @@ MECHA for users: the water flow across one root cross section in a few lines, it
                                                   their xylem, in a soil at soil_psi; a table per section
     simulate(barrier=3, outputs="outputs")        the run saved in ./outputs: run.json (its status), scenario.json,
                                                   Plant/<model>/summaries.csv and frames/ (the solved section, fspm-TF)
+    seedling = root_system()                      a seedling's root system, a main root and a lateral, one network:
+    seedling.conductance, seedling.sections       its conductance (Krs) and its sections' uptake fractions (SUF)
+    fit_root_system(observations)                 MECHA's membrane conductivities (kaqp, kmb) fitted to measured Krs,
+                                                  with and without the aquaporins inhibited
 
 The section is solved in MECHA's standard problem: the soil at soil_psi around it, its xylem vessels at xylem_psi.
 Quantities are in MECHA's units: cm, hPa, days (kr in cm hPa-1 d-1); positions in µm.
@@ -259,3 +263,166 @@ def simulate_root(barriers=(3, 3, 3, 1, 1, 0), segment_length: float = 5e-3, rad
         "kr_effective": np.asarray(ds.get("kr_effective"))})
     table.attrs["scene"] = scene
     return table
+
+
+# ── A root system's conductance (Krs) and its calibration ──
+
+# The experiments root_system knows: {name: function of the parameters' values -> the values it runs with};
+# "inhibited": the aquaporins blocked at 90 % (e.g. by azide or HgCl2), their contribution kaqp divided by 10
+EXPERIMENTS = {"control": lambda values: dict(values),
+               "inhibited": lambda values: dict(values, kaqp=0.1 * values.get("kaqp", MechaHydraulics.kaqp))}
+
+
+class _RootSystem(CompositeModel):
+    """A root system: GRANAP's anatomy on each segment, MECHA's hydraulics on the whole network, and its conductance
+    (RootSystemConductance)."""
+    from_scale, nodes = "SubOrgan", "Compartment"
+
+    def __init__(self, data_structure, time_step):
+        from openalea.granap.metafspm.component import GranapAnatomy
+        from openalea.mecha.root_system import RootSystemConductance
+
+        self.anatomy = GranapAnatomy(data_structure=data_structure, time_step=time_step)
+        self.hydraulics = MechaHydraulics(data_structure=data_structure, time_step=time_step)
+        self.conductance = RootSystemConductance(data_structure=data_structure, time_step=time_step)
+        self.couple(self.anatomy, self.hydraulics, self.conductance)
+
+    def run(self):
+        self.anatomy()
+        self.hydraulics()
+        self.conductance()
+
+
+def _root_system_model():
+    from openalea.granap.metafspm.architectures import RootAxis
+    from openalea.granap.metafspm.component import GranapAnatomy, junction_rules
+
+    _RootSystem.initiators = (RootAxis, GranapAnatomy)
+    _RootSystem.wiring = junction_rules
+    return _RootSystem
+
+
+@dataclass
+class RootSystem:
+    """A solved root system: its *scene* (metafspm's), the *parameters* it ran with, and its sections' layout."""
+    scene: object
+    parameters: dict
+    layout: pd.DataFrame
+
+    @property
+    def data_structure(self):
+        return self.scene.populations[0].data_structure
+
+    @property
+    def conductance(self) -> float:
+        """Krs, the root system's conductance (cm3 hPa-1 d-1): its uptake per hPa between the soil, uniform around
+        it, and the collar's xylem."""
+        return float(np.asarray(self.data_structure.get("root_system_conductance"))[0])
+
+    @property
+    def sections(self) -> pd.DataFrame:
+        """One row per section: its axis ("main", "lateral 1", ...), its rank on the axis from its base, its barrier,
+        its standard uptake fraction (SUF: its share of the uptake under a uniform soil), its uptake (cm³ d-1) and its
+        kr (cm hPa-1 d-1, the section alone)."""
+        ds = self.data_structure
+        return self.layout.assign(suf=np.asarray(ds.get("standard_uptake_fraction")),
+                                  uptake=np.asarray(ds.get("uptake")), kr=np.asarray(ds.get("kr")))
+
+    def update(self, parameters: dict) -> "RootSystem":
+        """The same root system with MECHA's *parameters* changed ({name: value}), solved again (its anatomy kept)."""
+        hydraulics = self.scene.populations[0].instance.hydraulics
+        for name, value in parameters.items():
+            setattr(hydraulics, name, value)
+        self.parameters = dict(self.parameters, **parameters)
+        self.scene.run()
+        return self
+
+
+def root_system(main=(3, 3, 1, 1), laterals=((1, (1, 1)),), segment_length: float = 5e-3,
+                main_radius: float = 0.5e-3, lateral_radius: float = 0.25e-3, parameters: dict = None,
+                anatomy: dict = None, soil_psi: float = -1000., collar_psi: float = -5000.,
+                experiment: str = "control") -> RootSystem:
+    """
+    A seedling's root system, every section a GRANAP anatomy and all of them one MECHA network joined by their xylem:
+    a main root of len(*main*) segments (their barriers, MECHA's maturity codes, from the collar to the tip) and its
+    *laterals*, ((bearer segment's index on the main root, their barriers from their base), ...); segments
+    *segment_length* m long, of *main_radius* or *lateral_radius* m; the soil at *soil_psi* around them, the collar's
+    xylem at *collar_psi* (hPa). *parameters*: MECHA's, changed from its defaults; *experiment*: one of EXPERIMENTS
+    ("inhibited": the aquaporins blocked).
+
+    Its conductance (Krs, cm3 hPa-1 d-1) and its sections' standard uptake fractions are MARSHAL's (the soil
+    uniform, the collar fixed), computed on the whole anatomical network.
+    """
+    if experiment not in EXPERIMENTS:
+        raise ValueError(f"root_system(experiment=...): one of {sorted(EXPERIMENTS)}, got {experiment!r}")
+    values = EXPERIMENTS[experiment](dict(parameters or {}))
+    n = len(main)
+    rows = [("main", rank, barrier, main_radius) for rank, barrier in enumerate(main)]
+    branched = []
+    for k, (bearer, barriers) in enumerate(laterals, start=1):
+        if not 0 <= bearer < n:
+            raise ValueError(f"root_system: lateral {k} on segment {bearer} of a main root of {n}")
+        m = len(barriers)
+        branched.append([bearer, [[lateral_radius, segment_length, (m - 1 - i) * segment_length] for i in range(m)]])
+        rows += [(f"lateral {k}", rank, barrier, lateral_radius) for rank, barrier in enumerate(barriers)]
+    scenario = dict(values, collar_condition=1., collar_psi=collar_psi, root_laterals=branched,
+                    root_segments=[[main_radius, segment_length, (n - 1 - i) * segment_length] for i in range(n)])
+    if anatomy is not None:
+        scenario["root_anatomy"] = dict(anatomy)
+    scene = Scene(planting([Planting()], _root_system_model(), scenario), recorder=SceneRecorder())
+    ds = scene.populations[0].data_structure
+    layout = pd.DataFrame(rows, columns=["axis", "rank", "barrier", "radius"])
+    if len(ds.entity_ids("SubOrgan")) != len(layout):
+        raise RuntimeError("root_system: the sections do not match the layout")
+    owner = np.asarray(ds.owner("SubOrgan"))
+    ds.set("barrier", layout["barrier"].to_numpy(dtype=float)[owner])
+    ds.set("soil_psi", np.full(ds.n_nodes(), float(soil_psi)))
+    scene.run()
+    return RootSystem(scene=scene, parameters=values, layout=layout.assign(radius=layout["radius"] * 1e3))
+
+
+@dataclass
+class Fit:
+    """A calibration's result: the fitted *values* ({name: value}), the observations *compared* with the model at
+    them, and the objective's *history* (every evaluation: its values, residuals and cost)."""
+    values: dict
+    compared: pd.DataFrame
+    history: list
+
+
+def fit_root_system(observations, parameters=("kaqp", "kmb"), start: dict = None, tolerance: float = 1e-8,
+                    **options) -> Fit:
+    """
+    Fit MECHA's *parameters* so that the root system (root_system(**options)) matches the *observations* (a table:
+    variable, e.g. root_system_conductance, its value and optionally its experiment, "control" or "inhibited", its
+    uncertainty, its unit; metafspm's read_observations), within their declared bounds, from *start* ({name: value};
+    MECHA's defaults by default), by scipy's least squares (*tolerance*: its ftol, xtol and gtol). Without an uncertainty, an observation's residual is its
+    relative difference (the uncertainty is its value). Each experiment's root system is built once, then solved
+    again for each trial.
+    """
+    from scipy.optimize import least_squares
+
+    from openalea.metafspm.scene.calibration import compare, objective, read_observations
+
+    observations = read_observations(observations)
+    observations["experiment"] = observations["experiment"].map(lambda e: "control" if e is None else e)
+    observations["uncertainty"] = [abs(value) if u is None else u for value, u in
+                                   zip(observations["value"], observations["uncertainty"])]
+    built = {}
+
+    def run(values, experiment):
+        if experiment not in built:
+            built[experiment] = root_system(parameters=values, experiment=experiment, **options)
+        else:
+            built[experiment].update(EXPERIMENTS[experiment](values))
+        return built[experiment].scene
+
+    start = {name: (start or {}).get(name, getattr(MechaHydraulics, name)) for name in parameters}
+    cost = objective(run, list(parameters), observations, declared=[MechaHydraulics],
+                     scale=[getattr(MechaHydraulics, name) for name in parameters])
+    fitted = least_squares(cost, x0=np.array([start[name] for name in parameters]) / cost.scale, bounds=cost.bounds,
+                           x_scale="jac", ftol=tolerance, xtol=tolerance, gtol=tolerance)
+    values = cost.values(fitted.x)
+    cost(fitted.x)                                       # the root systems left at the fitted values
+    return Fit(values=values, compared=compare({e: s.scene for e, s in built.items()}, observations),
+               history=cost.history)

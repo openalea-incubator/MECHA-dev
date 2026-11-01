@@ -1,0 +1,3 @@
+variable,experiment,value,unit
+root_system_conductance,control,1.85e-05,cm3 hPa-1 d-1
+root_system_conductance,inhibited,7.06e-06,cm3 hPa-1 d-1

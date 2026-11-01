@@ -46,6 +46,14 @@ def _p(unit, description, default):
     return parameter(**_doc(unit, description), by="MECHA", default=default)
 
 
+def _bounded(unit, description, default, low, high, comment):
+    """A parameter with bounds of its own (calibrations and variants read them), *comment* saying where they come
+    from."""
+    declared = _doc(unit, description)
+    declared.update(min_value=low, max_value=high, value_comment=comment)
+    return parameter(**declared, by="MECHA", default=default)
+
+
 def _edge(unit, description):
     return dict(**_doc(unit, description), by="Anatomy", scale=SCALES.Connection, location="edge",
                 kind="descriptor")
@@ -189,7 +197,8 @@ class MechaHydraulics(MechaSections):
                                                         by="Anatomy", default=float("nan"), scale=SCALES.Compartment,
                                                         location="node", kind="descriptor")
     # ── Parameters (per plant; MECHA's units: cm hPa-1 d-1 for kw, kmb, kaqp; cm3 hPa-1 d-1 for kpl, k_xyl) ──
-    kw: float = _p("cm2 hPa-1 d-1", "cell wall hydraulic conductivity", 0.00024)
+    kw: float = _bounded("cm2 hPa-1 d-1", "cell wall hydraulic conductivity", 0.00024, 2.4e-6, 2.4e-2,
+                         "bounds: two orders of magnitude around MECHA's default, for calibrations")
     kw_septa: float = _p("cm2 hPa-1 d-1", "conductivity of the septa between aerenchyma (intercellular) cells", 0.00012)
     kw_casparian: float = _p("cm2 hPa-1 d-1", "wall conductivity across a Casparian strip", 1.00E-16)
     kw_suberin_in: float = _p("cm2 hPa-1 d-1", "conductivity of suberized walls, inner face", 1.00E-16)
@@ -199,8 +208,10 @@ class MechaHydraulics(MechaSections):
                                      "wall's own (wall_thickness, GRANAP's; a junction's: the mean of its walls')", 2.)
     thickness: float = _p("µm", "cell wall thickness, every wall's (thickness_source 1, MECHA's)", 1.5)
     xylem_pieces: float = _p("", "1: the walls between two xylem cells are septa of near-zero conductance", 0.)
-    kmb: float = _p("cm hPa-1 d-1", "membrane hydraulic conductivity, without aquaporins", 3.0E-5)
-    kaqp: float = _p("cm hPa-1 d-1", "aquaporin contribution to the membrane conductivity", 0.000430)
+    kmb: float = _bounded("cm hPa-1 d-1", "membrane hydraulic conductivity, without aquaporins", 3.0E-5, 3e-7, 3e-3,
+                          "bounds: two orders of magnitude around MECHA's default, for calibrations")
+    kaqp: float = _bounded("cm hPa-1 d-1", "aquaporin contribution to the membrane conductivity", 0.000430, 0.,
+                           4.3e-2, "bounds: none to two orders of magnitude above MECHA's default, for calibrations")
     kaqp_stele_factor: float = _p("adim", "factor of kaqp in the stele", 1.0)
     kaqp_endo_factor: float = _p("adim", "factor of kaqp in the endodermis", 1.0)
     kaqp_exo_factor: float = _p("adim", "factor of kaqp in the exodermis", 1.0)
