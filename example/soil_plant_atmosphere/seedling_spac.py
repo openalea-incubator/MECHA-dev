@@ -57,8 +57,8 @@ def _doc(unit, description):
 
 
 def _segment_coordinate(name):
-    return state_variable(**_doc("m", f"the segment's {name}"), initialize=0., scale=SCALES.SubOrgan, location="node",
-                          mapping="broadcast", state_variable_type="descriptor")
+    return state_variable(**_doc("m", f"the segment's {name}"), default=0., scale=SCALES.SubOrgan, location="node",
+                          aggregation="broadcast", kind="descriptor")
 
 
 def build_architecture(g, plant, parameters):
@@ -231,8 +231,7 @@ class SeedlingHydraulics(CompositeModel):
             g.property("leaf_transpiration")[v] = (transpiration * MM3_PER_S_TO_CM3_PER_DAY / len(leaves)
                                                    if v in leaves else 0.)
         self.hydraulics = MechaHydraulics(data_structure=ds, time_step=time_step)
-        self.declare_data_and_couple_components(
-            translator_path=Translator(), components=(self.architecture, self.anatomy, self.osmotic, self.hydraulics))
+        self.couple(self.architecture, self.anatomy, self.osmotic, self.hydraulics)
         ds.define_mask("root_surface", {"soil_conductance": ">0"})       # the soil mapping maps it only
 
     def run(self):
@@ -268,7 +267,7 @@ def largest_change(tolerance=1e-4):
 
     def condition(scene):
         change = 0.
-        for key, ds in enumerate(scene._all_data_structures()):
+        for key, (ds, _, _) in scene.data_structures().items():
             if ds.has("psi"):
                 values = np.array(ds.get("psi"), dtype=float).reshape(-1) / MPA_TO_HPA
             elif ds.has("water_potential"):

@@ -27,7 +27,6 @@ import numpy as np
 import pandas as pd
 
 from openalea.metafspm.coupling.composite_wrapper import CompositeModel
-from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.scene.population import Planting, planting
 from openalea.metafspm.scene.recorder import SceneRecorder
 from openalea.metafspm.scene.scenarios import parameter_table
@@ -67,7 +66,7 @@ def parameters(values: dict = None, main_only: bool = False) -> pd.DataFrame:
     """MECHA's parameters, one row each: its name, its value (the default, or the one in *values*), its unit, its
     description, its declared bounds (min_value, max_value), its component, and whether it is one of the main
     parameters (those first)."""
-    table = parameter_table(MechaHydraulics, values=values, main=MAIN_PARAMETERS, kinds=("parameter",))
+    table = parameter_table(MechaHydraulics, values=values, main=MAIN_PARAMETERS, roles=("parameter",))
     table["value"] = pd.to_numeric(table["value"])                   # numbers, for display and arithmetic
     return table[table["main"]].reset_index(drop=True) if main_only else table
 
@@ -81,8 +80,7 @@ class _RootSection(CompositeModel):
 
         self.anatomy = GranapAnatomy(data_structure=data_structure, time_step=time_step)
         self.hydraulics = MechaHydraulics(data_structure=data_structure, time_step=time_step)
-        self.declare_data_and_couple_components(translator_path=Translator(),
-                                                components=(self.anatomy, self.hydraulics))
+        self.couple(self.anatomy, self.hydraulics)
 
     def run(self):
         self.anatomy()
@@ -101,8 +99,7 @@ class _OsmoticRootSection(CompositeModel):
         self.anatomy = GranapAnatomy(data_structure=data_structure, time_step=time_step)
         self.presets = MechaOsmoticPresets(data_structure=data_structure, time_step=time_step)
         self.hydraulics = MechaHydraulics(data_structure=data_structure, time_step=time_step)
-        self.declare_data_and_couple_components(translator_path=Translator(),
-                                                components=(self.anatomy, self.presets, self.hydraulics))
+        self.couple(self.anatomy, self.presets, self.hydraulics)
 
     def run(self):
         self.anatomy()

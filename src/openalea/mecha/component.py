@@ -39,7 +39,7 @@ def _doc(unit, description, **values):
 
 def _node(unit, description):
     return dict(**_doc(unit, description), by="Anatomy", scale=SCALES.Compartment, location="node",
-                state_variable_type="descriptor")
+                kind="descriptor")
 
 
 def _p(unit, description, default):
@@ -48,7 +48,7 @@ def _p(unit, description, default):
 
 def _edge(unit, description):
     return dict(**_doc(unit, description), by="Anatomy", scale=SCALES.Connection, location="edge",
-                state_variable_type="descriptor")
+                kind="descriptor")
 
 
 def _node_thickness(net, P_node):
@@ -95,18 +95,18 @@ class MechaSections(FunctionalComponent):
     edge_dist: float = input_variable(**_edge("mm", "the distance between the edge's nodes"))
     anatomy_template: float = input_variable(**_doc("", "the segment's anatomy template (-1: none): sections of the "
                                                         "same template share MECHA's geometry"),
-                                             by="Anatomy", scale=SCALES.SubOrgan, state_variable_type="descriptor")
+                                             by="Anatomy", scale=SCALES.SubOrgan, kind="descriptor")
 
     barrier: float = input_variable(**_doc("", "the segment's apoplastic barriers (MECHA's maturity code: 0 none, 1 "
                                                  "endodermal Casparian strip, 2 + suberin with passage cells, 3 "
                                                  "endodermis fully suberized, 4-9 exodermis variants, 10 exodermis "
                                                  "suberized with a Casparian strip, 11 endodermis and exodermis "
                                                  "suberized and the sclerenchyma's walls lignified)"),
-                                    by="Development", initialize=1., scale=SCALES.SubOrgan, location="node",
-                                    mapping="broadcast", state_variable_type="descriptor")
+                                    by="Development", default=1., scale=SCALES.SubOrgan, location="node",
+                                    aggregation="broadcast", kind="descriptor")
     length: float = input_variable(**_doc("m", "the segment's length (MECHA's section height)"),
                                    by="Architecture", scale=SCALES.SubOrgan, location="node",
-                                   state_variable_type="intensive")
+                                   kind="intensive")
 
     # ── Geometry, per distinct anatomy ──
     def section_geometries(self) -> dict:
@@ -142,7 +142,7 @@ class MechaSections(FunctionalComponent):
             ds = self.data_structure
             g = ds.structure
             segments = [int(v) for v in ds.entity_ids("SubOrgan")]
-            labels = ds.labels(of="SubOrgan", per_node=False).tolist()
+            labels = ds.labels(location="SubOrgan", per_node=False).tolist()
             return ({v for v in segments if g.parent(v) is None},
                     {v for v, label in zip(segments, labels) if label == "RootSegment"},
                     {v for v, label in zip(segments, labels) if label == "LeafElement"})
@@ -173,21 +173,21 @@ class MechaHydraulics(MechaSections):
     # ── Inputs: the osmotic potentials (role "Solutes": a metabolism model, or MECHA's presets, MechaOsmoticPresets) ──
     osmotic_potential: float = input_variable(**_doc("hPa", "osmotic potential of the protoplast or the wall's solution "
                                                             "(0: none)"),
-                                              by="Solutes", initialize=0., scale=SCALES.Compartment, location="node",
-                                              state_variable_type="NonInertialIntensive")
+                                              by="Solutes", default=0., scale=SCALES.Compartment, location="node",
+                                              kind="NonInertialIntensive")
     reflection_coefficient: float = input_variable(**_doc("", "the membrane's reflection coefficient (0: none)"),
-                                                   by="Solutes", initialize=0., scale=SCALES.Connection,
-                                                   location="edge", state_variable_type="NonInertialIntensive")
+                                                   by="Solutes", default=0., scale=SCALES.Connection,
+                                                   location="edge", kind="NonInertialIntensive")
     soil_contact_cell: float = input_variable(**_doc("", "1 on a protoplast whose border walls touch the soil, whatever "
                                                          "x_contact (MECHA's Contactrange: a root partly in contact)"),
-                                              by="Soil", initialize=0., scale=SCALES.Compartment, location="node",
-                                              state_variable_type="descriptor")
+                                              by="Soil", default=0., scale=SCALES.Compartment, location="node",
+                                              kind="descriptor")
     measured_axial_conductivity: float = input_variable(**_doc("cm4 hPa-1 d-1", "a xylem vessel's or phloem conduit's "
                                                                "measured specific axial conductance, its conductance "
                                                                "× its length (MECHA's Kax_source 2, its K_xyl and "
                                                                "K_sieve by cell; NaN: Poiseuille's)"),
-                                                        by="Anatomy", initialize=float("nan"), scale=SCALES.Compartment,
-                                                        location="node", state_variable_type="descriptor")
+                                                        by="Anatomy", default=float("nan"), scale=SCALES.Compartment,
+                                                        location="node", kind="descriptor")
     # ── Parameters (per plant; MECHA's units: cm hPa-1 d-1 for kw, kmb, kaqp; cm3 hPa-1 d-1 for kpl, k_xyl) ──
     kw: float = _p("cm2 hPa-1 d-1", "cell wall hydraulic conductivity", 0.00024)
     kw_septa: float = _p("cm2 hPa-1 d-1", "conductivity of the septa between aerenchyma (intercellular) cells", 0.00012)
@@ -343,211 +343,211 @@ class MechaHydraulics(MechaSections):
     # ── State variables: MECHA's geometry ──
     cell_rank: float = state_variable(**_doc("", "MECHA's cell rank: the cgroup, or the cortex (40-49) and stele "
                                                  "(50-61) layer (-1: apoplast)"),
-                                      initialize=-1., scale=SCALES.Compartment, location="node",
-                                      state_variable_type="descriptor")
+                                      default=-1., scale=SCALES.Compartment, location="node",
+                                      kind="descriptor")
     perimeter: float = state_variable(**_doc("cm", "the section's perimeter: 2π × the epidermis walls' mean distance "
                                                    "to the endodermis' centre"),
-                                      initialize=np.nan, scale=SCALES.SubOrgan, state_variable_type="descriptor")
+                                      default=np.nan, scale=SCALES.SubOrgan, kind="descriptor")
 
     # ── State variables: the conductances ──
     conductance: float = state_variable(**_doc("cm3 hPa-1 d-1", "the edge's hydraulic conductance (walls, membranes, "
                                                                 "plasmodesmata; 0 on the edges MECHA leaves out)"),
-                                        initialize=0., scale=SCALES.Connection, location="edge",
-                                        state_variable_type="NonInertialIntensive")
+                                        default=0., scale=SCALES.Connection, location="edge",
+                                        kind="NonInertialIntensive")
     soil_conductance: float = state_variable(**_doc("cm3 hPa-1 d-1", "conductance between a border wall or junction "
                                                                      "and the soil (0 elsewhere)"),
-                                             initialize=0., scale=SCALES.Compartment, location="node",
-                                             state_variable_type="NonInertialIntensive")
+                                             default=0., scale=SCALES.Compartment, location="node",
+                                             kind="NonInertialIntensive")
     axial_boundary_conductance: float = state_variable(**_doc("cm3 hPa-1 d-1", "conductance between a xylem vessel "
                                                               "(barrier > 0) or a protophloem cell (barrier 0) and "
                                                               "the axial boundary, on the matrix diagonal (0 elsewhere)"),
-                                                       initialize=0., scale=SCALES.Compartment, location="node",
-                                                       state_variable_type="NonInertialIntensive")
+                                                       default=0., scale=SCALES.Compartment, location="node",
+                                                       kind="NonInertialIntensive")
 
     standard_soil_psi: float = state_variable(**_doc("hPa", "the soil's potential at the border walls and junctions in "
                                                             "the standard problem (its plant's standard_psi_soil)"),
-                                              initialize=0., scale=SCALES.Compartment, location="node",
-                                              state_variable_type="NonInertialIntensive")
+                                              default=0., scale=SCALES.Compartment, location="node",
+                                              kind="NonInertialIntensive")
     standard_axial_psi: float = state_variable(**_doc("hPa", "the axial boundary's potential at the xylem vessels "
                                                              "(barrier > 0) or protophloem cells (barrier 0) in the "
                                                              "standard problem"),
-                                               initialize=0., scale=SCALES.Compartment, location="node",
-                                               state_variable_type="NonInertialIntensive")
+                                               default=0., scale=SCALES.Compartment, location="node",
+                                               kind="NonInertialIntensive")
     standard_axial_inflow: float = state_variable(**_doc("cm3 d-1", "the water entering a xylem vessel or a phloem "
                                                          "conduit from the axial boundary in the standard problem "
                                                          "(standard_axial_condition 2, standard_sieve_flow; negative: "
                                                          "its share of the flow into the xylem or the phloem)"),
-                                                  initialize=0., scale=SCALES.Compartment, location="node",
-                                                  state_variable_type="NonInertialIntensive")
+                                                  default=0., scale=SCALES.Compartment, location="node",
+                                                  kind="NonInertialIntensive")
     elongation_sink: float = state_variable(**_doc("cm3 d-1", "the water the elongating wall or protoplast withdraws "
                                                           "(barrier 0; plant problem)"),
-                                            initialize=0., scale=SCALES.Compartment, location="node",
-                                            state_variable_type="NonInertialExtensive")
+                                            default=0., scale=SCALES.Compartment, location="node",
+                                            kind="NonInertialExtensive")
     standard_elongation_sink: float = state_variable(**_doc("cm3 d-1", "the elongation sink in the standard problem "
                                                                        "(0 unless standard_elongation)"),
-                                                     initialize=0., scale=SCALES.Compartment, location="node",
-                                                     state_variable_type="NonInertialExtensive")
+                                                     default=0., scale=SCALES.Compartment, location="node",
+                                                     kind="NonInertialExtensive")
     in_standard_problem: float = state_variable(**_doc("", "1 on the Compartments of the plants solving the standard "
                                                            "problem (standard_solve)"),
-                                                initialize=0., scale=SCALES.Compartment, location="node",
-                                                state_variable_type="descriptor")
+                                                default=0., scale=SCALES.Compartment, location="node",
+                                                kind="descriptor")
 
     # ── State variables: the osmotic terms ──
     osmotic_drive: float = state_variable(**_doc("hPa", "σ × the osmotic potentials' difference along the edge (as its "
                                                         "potentials': tail − head); its flow is K (Δψ + this)"),
-                                          initialize=0., scale=SCALES.Connection, location="edge",
-                                          state_variable_type="NonInertialIntensive")
+                                          default=0., scale=SCALES.Connection, location="edge",
+                                          kind="NonInertialIntensive")
     standard_osmotic_drive: float = state_variable(**_doc("hPa", "the osmotic drive in the standard problem (0 unless "
                                                                  "standard_osmotic)"),
-                                                   initialize=0., scale=SCALES.Connection, location="edge",
-                                                   state_variable_type="NonInertialIntensive")
+                                                   default=0., scale=SCALES.Connection, location="edge",
+                                                   kind="NonInertialIntensive")
     water_potential: float = state_variable(**_doc("hPa", "water potential, plant problem: psi (the pressure "
                                                           "potential) + osmotic_potential"),
-                                            initialize=0., scale=SCALES.Compartment, location="node",
-                                            state_variable_type="NonInertialIntensive")
+                                            default=0., scale=SCALES.Compartment, location="node",
+                                            kind="NonInertialIntensive")
     standard_water_potential: float = state_variable(**_doc("hPa", "water potential, standard problem: standard_psi + "
                                                                    "osmotic_potential (with standard_osmotic)"),
-                                                     initialize=0., scale=SCALES.Compartment, location="node",
-                                                     state_variable_type="NonInertialIntensive")
+                                                     default=0., scale=SCALES.Compartment, location="node",
+                                                     kind="NonInertialIntensive")
 
     # ── State variables: the solutes' diffusion factors and the nodes' volumes (MechaSolutes) ──
     apoplastic_diffusion_factor: float = state_variable(**_doc("cm", "× the apoplastic diffusivity: the edge's "
                                                                "solute conductance (walls: their geometry × kw ratio; "
                                                                "mature vessels' membranes)"),
-                                                        initialize=0., scale=SCALES.Connection, location="edge",
-                                                        state_variable_type="NonInertialIntensive")
+                                                        default=0., scale=SCALES.Connection, location="edge",
+                                                        kind="NonInertialIntensive")
     symplastic_diffusion_factor: float = state_variable(**_doc("cm", "× the plasmodesmata's diffusivity (their open "
                                                                "cross-section × quantity / the crossed wall's "
                                                                "thickness)"),
-                                                        initialize=0., scale=SCALES.Connection, location="edge",
-                                                        state_variable_type="NonInertialIntensive")
+                                                        default=0., scale=SCALES.Connection, location="edge",
+                                                        kind="NonInertialIntensive")
     membrane_diffusion_factor: float = state_variable(**_doc("cm", "× the membranes' passive diffusivity (length × "
                                                              "height / distance)"),
-                                                      initialize=0., scale=SCALES.Connection, location="edge",
-                                                      state_variable_type="NonInertialIntensive")
+                                                      default=0., scale=SCALES.Connection, location="edge",
+                                                      kind="NonInertialIntensive")
     node_volume: float = state_variable(**_doc("cm3", "the node's volume: a wall's length × height × thickness, a "
                                                       "junction's half, a protoplast's area × height"),
-                                        initialize=0., scale=SCALES.Compartment, location="node",
-                                        state_variable_type="NonInertialExtensive")
+                                        default=0., scale=SCALES.Compartment, location="node",
+                                        kind="NonInertialExtensive")
     contact_distance: float = state_variable(**_doc("µm", "the node's distance to its section's soil contact along "
                                                           "its graph (with pd_spatial_profile > 0; NaN otherwise)"),
-                                             initialize=float("nan"), scale=SCALES.Compartment, location="node",
-                                             state_variable_type="NonInertialIntensive")
+                                             default=float("nan"), scale=SCALES.Compartment, location="node",
+                                             kind="NonInertialIntensive")
 
     # ── State variables: the leaves' vapour path, from their evaporating walls to their surface ──
     surface_inflow: float = state_variable(**_doc("cm3 d-1", "on a leaf organ's surface node: minus its "
                                                   "transpiration (the Neumann condition; 0 elsewhere)"),
-                                           initialize=0., scale=SCALES.Compartment, location="node",
-                                           state_variable_type="NonInertialIntensive")
+                                           default=0., scale=SCALES.Compartment, location="node",
+                                           kind="NonInertialIntensive")
     air_tail_conductance: float = state_variable(**_doc("cm3 hPa-1 d-1", "wall_air edges: the flow from tail to head "
                                                         "is air_tail_conductance ψ_tail − air_head_conductance ψ_head "
                                                         "+ air_offset (the linearised Kelvin exchange)"),
-                                                 initialize=0., scale=SCALES.Connection, location="edge",
-                                                 state_variable_type="NonInertialIntensive")
+                                                 default=0., scale=SCALES.Connection, location="edge",
+                                                 kind="NonInertialIntensive")
     air_head_conductance: float = state_variable(**_doc("cm3 hPa-1 d-1", "wall_air edges: see air_tail_conductance"),
-                                                 initialize=0., scale=SCALES.Connection, location="edge",
-                                                 state_variable_type="NonInertialIntensive")
+                                                 default=0., scale=SCALES.Connection, location="edge",
+                                                 kind="NonInertialIntensive")
     air_offset: float = state_variable(**_doc("cm3 d-1", "wall_air edges: see air_tail_conductance"),
-                                       initialize=0., scale=SCALES.Connection, location="edge",
-                                       state_variable_type="NonInertialIntensive")
+                                       default=0., scale=SCALES.Connection, location="edge",
+                                       kind="NonInertialIntensive")
     vapour_node: float = state_variable(**_doc("", "1 on the air nodes (the air spaces with wall_air edges, the "
                                                    "stomatal pores, the leaf surfaces): their ψ holds their vapour "
                                                    "pressure, relative to saturation"),
-                                        initialize=0., scale=SCALES.Compartment, location="node",
-                                        state_variable_type="descriptor")
+                                        default=0., scale=SCALES.Compartment, location="node",
+                                        kind="descriptor")
 
     # ── State variables: the axial junctions between sections ──
     axial_conduit: float = state_variable(**_doc("", "on the axial junctions: 1 between xylem vessels, 2 between "
                                                      "phloem cells (0 elsewhere)"),
-                                          initialize=0., scale=SCALES.Connection, location="edge",
-                                          state_variable_type="descriptor")
+                                          default=0., scale=SCALES.Connection, location="edge",
+                                          kind="descriptor")
     xylem_axial_conductance: float = state_variable(**_doc("cm3 hPa-1 d-1", "a xylem junction's conductance: "
                                                            "Poiseuille through its two vessels, each over half its "
                                                            "segment, in series (0 without mature xylem)"),
-                                                    initialize=0., scale=SCALES.Connection, location="edge",
-                                                    state_variable_type="NonInertialIntensive")
+                                                    default=0., scale=SCALES.Connection, location="edge",
+                                                    kind="NonInertialIntensive")
     phloem_axial_conductance: float = state_variable(**_doc("cm3 hPa-1 d-1", "a phloem junction's conductance "
                                                             "(Poiseuille, phloem sap); not in the water problem (Q-G1)"),
-                                                     initialize=0., scale=SCALES.Connection, location="edge",
-                                                     state_variable_type="NonInertialIntensive")
+                                                     default=0., scale=SCALES.Connection, location="edge",
+                                                     kind="NonInertialIntensive")
 
     # ── Inputs and state variables of the plant problem ──
     soil_psi: float = input_variable(**_doc("hPa", "the soil's water potential around the Compartment"), by="Soil",
-                                     initialize=0., scale=SCALES.Compartment, location="node",
-                                     state_variable_type="intensive")
+                                     default=0., scale=SCALES.Compartment, location="node",
+                                     kind="intensive")
     leaf_transpiration: float = input_variable(**_doc("cm3 d-1", "a leaf organ's transpiration, leaving at its surface "
                                                                  "node (role Transpiration: constant for now)"),
-                                               by="Transpiration", initialize=0., scale=SCALES.Organ, location="Organ",
-                                               state_variable_type="extensive")
+                                               by="Transpiration", default=0., scale=SCALES.Organ, location="Organ",
+                                               kind="extensive")
     stomatal_aperture: float = input_variable(**_doc("", "a stomatal pore's aperture fraction of its anatomical maximum "
                                                          "(role Stomata: 1 for now)"),
-                                              by="Stomata", initialize=1., scale=SCALES.Compartment, location="node",
-                                              state_variable_type="NonInertialIntensive")
+                                              by="Stomata", default=1., scale=SCALES.Compartment, location="node",
+                                              kind="NonInertialIntensive")
     root_uptake: float = state_variable(**_doc("cm3 d-1", "water entering a border wall or junction from the soil "
                                                           "(plant problem)"),
-                                        initialize=0., scale=SCALES.Compartment, location="node",
-                                        state_variable_type="extensive")
+                                        default=0., scale=SCALES.Compartment, location="node",
+                                        kind="extensive")
     evaporation: float = state_variable(**_doc("cm3 d-1", "water leaving a stomatal pore to the air (plant problem)"),
-                                        initialize=0., scale=SCALES.Compartment, location="node",
-                                        state_variable_type="extensive")
+                                        default=0., scale=SCALES.Compartment, location="node",
+                                        kind="extensive")
     collar_kind: float = state_variable(**_doc("", "the collar condition of the node: 1 potential, 2 flow (0: none)"),
-                                        initialize=0., scale=SCALES.Compartment, location="node",
-                                        state_variable_type="descriptor")
+                                        default=0., scale=SCALES.Compartment, location="node",
+                                        kind="descriptor")
     collar_value: float = state_variable(**_doc("hPa or cm3 d-1", "the collar's potential (kind 1), or the node's "
                                                 "inflow (kind 2, negative: water leaving the root)"),
-                                         initialize=0., scale=SCALES.Compartment, location="node",
-                                         state_variable_type="NonInertialIntensive")
+                                         default=0., scale=SCALES.Compartment, location="node",
+                                         kind="NonInertialIntensive")
 
     # ── State variables: the solutions, and the sections' results ──
     standard_psi: float = state_variable(**_doc("hPa", "water potential, in its section's standard problem (its "
                                                        "pressure potential with standard_osmotic 1)"),
-                                         initialize=0., scale=SCALES.Compartment, location="node",
-                                         state_variable_type="NonInertialIntensive")
+                                         default=0., scale=SCALES.Compartment, location="node",
+                                         kind="NonInertialIntensive")
     standard_flow: float = state_variable(**_doc("cm3 d-1", "flow along the edge, from its first node to its second, "
                                                             "in the standard problem"),
-                                          initialize=0., scale=SCALES.Connection, location="edge",
-                                          state_variable_type="NonInertialIntensive")
+                                          default=0., scale=SCALES.Connection, location="edge",
+                                          kind="NonInertialIntensive")
     psi: float = state_variable(**_doc("hPa", "water potential, in the plant problem"),
-                                initialize=0., scale=SCALES.Compartment, location="node",
-                                state_variable_type="NonInertialIntensive")
+                                default=0., scale=SCALES.Compartment, location="node",
+                                kind="NonInertialIntensive")
     flow: float = state_variable(**_doc("cm3 d-1", "flow along the edge, from its first node to its second, in the "
                                                    "plant problem"),
-                                 initialize=0., scale=SCALES.Connection, location="edge",
-                                 state_variable_type="NonInertialIntensive")
+                                 default=0., scale=SCALES.Connection, location="edge",
+                                 kind="NonInertialIntensive")
     standard_transmembrane_fraction: float = state_variable(**_doc("adim", "the membrane's share of the section's "
                                                                    "standard uptake: its standard flow from wall to "
                                                                    "cell / the uptake (MECHA's standard transmembrane "
                                                                    "fraction; 0 on the other edges and membranes_layer "
                                                                    "-1)"),
-                                                             initialize=0., scale=SCALES.Connection, location="edge",
-                                                             state_variable_type="NonInertialIntensive")
+                                                             default=0., scale=SCALES.Connection, location="edge",
+                                                             kind="NonInertialIntensive")
     membrane_layer: float = state_variable(**_doc("", "the membrane's layer row in its section (MECHA's radial "
                                                       "discretisation, from the stele, 0, to the epidermis; -1: not a "
                                                       "membrane, or one without transmembrane flow: an intercellular "
                                                       "space's, a mature xylem vessel's)"),
-                                           initialize=-1., scale=SCALES.Connection, location="edge",
-                                           state_variable_type="descriptor")
+                                           default=-1., scale=SCALES.Connection, location="edge",
+                                           kind="descriptor")
     standard_uptake: float = state_variable(**_doc("cm3 d-1", "the section's water uptake from the soil, standard "
                                                               "problem"),
-                                            initialize=np.nan, scale=SCALES.SubOrgan,
-                                            state_variable_type="NonInertialIntensive")
+                                            default=np.nan, scale=SCALES.SubOrgan,
+                                            kind="NonInertialIntensive")
     uptake: float = state_variable(**_doc("cm3 d-1", "the section's water uptake from the soil, plant problem"),
-                                   initialize=np.nan, scale=SCALES.SubOrgan, state_variable_type="NonInertialIntensive")
+                                   default=np.nan, scale=SCALES.SubOrgan, kind="NonInertialIntensive")
     kr: float = state_variable(**_doc("cm hPa-1 d-1", "the section's radial conductivity, MECHA's definition (standard "
                                                       "problem): uptake / (ψ soil − ψ xylem) / surface"),
-                               initialize=np.nan, scale=SCALES.SubOrgan, state_variable_type="NonInertialIntensive")
+                               default=np.nan, scale=SCALES.SubOrgan, kind="NonInertialIntensive")
     kr_effective: float = state_variable(**_doc("cm hPa-1 d-1", "the section's radial conductivity in the plant "
                                                                 "problem: uptake / (ψ soil − mean ψ of its xylem) / "
                                                                 "surface (NaN at barrier 0: no mature xylem)"),
-                                         initialize=np.nan, scale=SCALES.SubOrgan,
-                                         state_variable_type="NonInertialIntensive")
+                                         default=np.nan, scale=SCALES.SubOrgan,
+                                         kind="NonInertialIntensive")
     Kx: float = state_variable(**_doc("cm4 hPa-1 d-1", "the section's xylem axial conductance (Poiseuille; 0 without "
                                                        "mature xylem, barrier 0)"),
-                               initialize=np.nan, scale=SCALES.SubOrgan, state_variable_type="NonInertialIntensive")
+                               default=np.nan, scale=SCALES.SubOrgan, kind="NonInertialIntensive")
     Kx_phloem: float = state_variable(**_doc("cm4 hPa-1 d-1", "the section's phloem axial conductance (Poiseuille: "
                                                               "sieve tubes, or protophloem at barrier 0)"),
-                                      initialize=np.nan, scale=SCALES.SubOrgan,
-                                      state_variable_type="NonInertialIntensive")
+                                      default=np.nan, scale=SCALES.SubOrgan,
+                                      kind="NonInertialIntensive")
 
     @rate(include_inactive=True)
     def _cell_rank(self, kind, anatomy_template) -> tuple[np.ndarray, str, np.ndarray]:
@@ -827,7 +827,7 @@ class MechaHydraulics(MechaSections):
     # ── The standard problem: each section alone, MECHA's definition of kr (Q-M5) ──
     # tol (cm3 d-1): the pinned walls' penalty puts their residuals' round-off at ~1e-9; the systems are linear,
     # solved by the first Newton step
-    @graph_system(node_unknowns=["standard_psi"], solver="newton", max_iter=3, tol=1e-8, schedule_as="state",
+    @graph_system(node_unknowns=["standard_psi"], solver="newton", max_iterations=3, tolerance=1e-8, schedule_as="state",
                   filters={"in_standard_problem": ">0"})
     class _standard_problem:
         """
@@ -864,7 +864,7 @@ class MechaHydraulics(MechaSections):
                 _wall_air_flow(B, standard_psi, air_tail_conductance, air_head_conductance, air_offset)
 
     # ── The plant problem: the sections joined by their xylem junctions ──
-    @graph_system(node_unknowns=["psi"], solver="newton", max_iter=3, tol=1e-8, schedule_as="state")
+    @graph_system(node_unknowns=["psi"], solver="newton", max_iterations=3, tolerance=1e-8, schedule_as="state")
     class _plant_problem:
         """
         The whole plant: every section's edges and the xylem junctions between sections; the soil around the root

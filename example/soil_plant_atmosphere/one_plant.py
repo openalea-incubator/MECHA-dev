@@ -21,13 +21,13 @@ from seedling_spac import (CM3_PER_DAY_TO_MM3_PER_S, SCENE_TRANSLATOR, SEEDLING_
 import plots
 
 
-def scene(output_dirpath=None, tolerance=1e-4):
+def scene(folder=None, tolerance=1e-4):
     table = planting([Planting(x=0.1, y=0.1)], SeedlingHydraulics, SEEDLING_SCENARIO, xrange=0.2,
                      yrange=0.2)                                     # a 0.2 m x 0.2 m column of soil
     stop = largest_change(tolerance)
     built = Scene(table, environment=[Soil], environment_scenarios=[{}], translator=SCENE_TRANSLATOR, time_step=3600,
                   mappings=root_surface_mappings, stop_when=stop,
-                  recorder=SceneRecorder(output_dirpath) if output_dirpath else None)
+                  recorder=SceneRecorder(folder) if folder else None)
     return built, stop
 
 
@@ -49,7 +49,7 @@ if __name__ == "__main__":
     folder = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                                                 "outputs", "one_plant")
     start = time.perf_counter()
-    built, stop = scene(output_dirpath=folder)
+    built, stop = scene(folder=folder)
     print(f"built in {time.perf_counter() - start:.0f} s")
     start = time.perf_counter()
     built.simulate(30)

@@ -2,11 +2,9 @@
 The plants of the tests: a root of one or more segments (lengths in m, as metafspm's plant models), its GRANAP
 anatomies, and the DataStructure over their Compartments (anatomy mode).
 """
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import StructuralComponent
 from openalea.metafspm.data_structure.configs import PropsConfig
-from openalea.metafspm.data_structure.data_api import MPGDataStructure
-from openalea.metafspm.scene.population import Planting, build_population, planting
+from openalea.metafspm.scene.population import Planting, planting, population_data_structure
 
 from openalea.granap.metafspm.component import GranapAnatomy, junction_rules
 from openalea.granap.metafspm.library import AnatomyLibrary, preset_parameters
@@ -50,13 +48,22 @@ def anatomy_component(preset=None):
     return type(f"Anatomy_{preset}", (GranapAnatomy,), {"library": AnatomyLibrary(parameters=preset_parameters(preset))})
 
 
+def initiated(table, *initiators, time_step: float = 3600.):
+    """The plants of *table* built by *initiators* (an architecture, then GRANAP's anatomies), their Compartments
+    wired at the segments' junctions, in one MPGDataStructure: metafspm's population_data_structure with a model of no
+    component (the tests build theirs on population.data_structure)."""
+    def __init__(self, data_structure, time_step):
+        self.components = []
+
+    model = type("Initiated", (), dict(initiators=tuple(initiators), nodes="Compartment",
+                                       wiring=staticmethod(junction_rules), __init__=__init__, run=lambda self: None))
+    return population_data_structure(table, model, time_step=time_step)
+
+
 def anatomy_data_structure(architecture, anatomy_class=Anatomy):
     """The plant, its GRANAP anatomies, and the DataStructure over their Compartments: (g, ds, anatomy)."""
-    Choregrapher().add_simulation_time_step(3600.)
-    plants = planting([Planting()], None)
-    g, _ = build_population(plants, initiators=(architecture, anatomy_class))
-    g.convert_properties_to_arraydict()
-    ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiring=junction_rules(g))
+    ds = initiated(planting([Planting()], None), architecture, anatomy_class).data_structure
+    g = ds.structure
     anatomy = anatomy_class(data_structure=ds)
     anatomy()
     return g, ds, anatomy

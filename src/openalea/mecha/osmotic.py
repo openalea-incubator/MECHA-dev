@@ -395,16 +395,16 @@ class MechaOsmoticPresets(MechaSections):
 
     sucrose_osmotic_potential: float = input_variable(**_doc("hPa", "the solutes' osmotic potential on the cells "
                                                                     "(−R T c; MechaSolutes, 0 without)"),
-                                                      by="Solutes", initialize=0., scale=SCALES.Compartment,
-                                                      location="node", state_variable_type="NonInertialIntensive")
+                                                      by="Solutes", default=0., scale=SCALES.Compartment,
+                                                      location="node", kind="NonInertialIntensive")
     osmotic_potential: float = state_variable(**_doc("hPa", "osmotic potential of the protoplast or the wall's "
                                                             "solution (0: junctions, shoot sections)"),
-                                              initialize=0., scale=SCALES.Compartment, location="node",
-                                              state_variable_type="NonInertialIntensive")
+                                              default=0., scale=SCALES.Compartment, location="node",
+                                              kind="NonInertialIntensive")
     reflection_coefficient: float = state_variable(**_doc("", "the membrane's reflection coefficient (0: other "
                                                               "edges, shoot sections)"),
-                                                   initialize=0., scale=SCALES.Connection, location="edge",
-                                                   state_variable_type="NonInertialIntensive")
+                                                   default=0., scale=SCALES.Connection, location="edge",
+                                                   kind="NonInertialIntensive")
 
     @rate(include_inactive=True)
     def _osmotic_potential(self, kind, barrier, anatomy_template, sucrose_osmotic_potential) \

@@ -8,15 +8,13 @@ each section receives from its neighbour: the sections are not connected for the
 import numpy as np
 import pytest
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
-from openalea.metafspm.data_structure.data_api import MPGDataStructure
-from openalea.metafspm.scene.population import Planting, build_population, planting
+from openalea.metafspm.scene.population import Planting, planting
 
-from openalea.granap.metafspm.component import junction_rules
 from openalea.mecha.component import MechaHydraulics
 from openalea.mecha.geometry import WALL_AIR
 from openalea.mecha.solutes import MechaSolutes
 
+from plants import initiated
 from test_shoot import SOIL, TRANSPIRATION, Anatomy, Seedling
 
 DT = 3600.                                                 # s
@@ -26,11 +24,8 @@ C_SOIL = 2e-6                                              # mol cm-3, the soil 
 
 @pytest.fixture(scope="module")
 def stepped():
-    Choregrapher().add_simulation_time_step(DT)
-    table = planting([Planting()], None)
-    g, _ = build_population(table, initiators=(Seedling, Anatomy))
-    g.convert_properties_to_arraydict()
-    ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiring=junction_rules(g))
+    ds = initiated(planting([Planting()], None), Seedling, Anatomy, time_step=DT).data_structure
+    g = ds.structure
     Anatomy(data_structure=ds)()
     ds.register("barrier", np.ones(ds.n_nodes()), location="node")
     ds.register("soil_psi", np.full(ds.n_nodes(), SOIL), location="node")

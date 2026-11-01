@@ -7,17 +7,17 @@ evaporating walls through the air spaces and the stomata (GRANAP §60): what the
 import numpy as np
 import pytest
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import StructuralComponent
 from openalea.metafspm.data_structure.configs import PropsConfig
-from openalea.metafspm.data_structure.data_api import MPGDataStructure
-from openalea.metafspm.scene.population import Planting, build_population, planting
+from openalea.metafspm.scene.population import Planting, planting
 
 from openalea.granap.leaf_class import LeafAnatomy
 from openalea.granap.stem_class import StemAnatomy
-from openalea.granap.metafspm.component import GranapAnatomy, OrganAnatomy, junction_rules
+from openalea.granap.metafspm.component import GranapAnatomy, OrganAnatomy
 from openalea.granap.metafspm.library import AnatomyLibrary, preset_parameters
 from openalea.mecha.component import MechaHydraulics
+
+from plants import initiated
 
 SOIL = -1000.                                            # hPa
 TRANSPIRATION = 0.05                                     # cm3 d-1, the leaf organ's
@@ -58,11 +58,8 @@ class Anatomy(GranapAnatomy):
 
 @pytest.fixture(scope="module")
 def plant():
-    Choregrapher().add_simulation_time_step(3600.)
-    table = planting([Planting()], None)
-    g, _ = build_population(table, initiators=(Seedling, Anatomy))
-    g.convert_properties_to_arraydict()
-    ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiring=junction_rules(g))
+    ds = initiated(planting([Planting()], None), Seedling, Anatomy, time_step=3600.).data_structure
+    g = ds.structure
     Anatomy(data_structure=ds)()
     ds.register("barrier", np.ones(ds.n_nodes()), location="node")
     ds.register("soil_psi", np.full(ds.n_nodes(), SOIL), location="node")

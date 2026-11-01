@@ -77,7 +77,7 @@ def test_plant_problem_mass_balance_and_bounds(four):
     assert collar.any() and (owner[collar] == 0).all()
     np.testing.assert_allclose(psi[collar], mecha.collar_psi)
     assert psi.min() >= mecha.collar_psi - 1e-6 and psi.max() <= SOIL + 1e-6
-    outflow = np.asarray(ds.incidence_matrix() @ flow).reshape(-1)             # out of each node, along its edges
+    outflow = np.asarray(ds.to_graph_view().incidence @ flow).reshape(-1)             # out of each node, along its edges
     extracted = -outflow[collar].sum()                                         # what the collar takes
     uptake = ds.get("uptake")
     assert (uptake > 0).all() and extracted == pytest.approx(uptake.sum(), rel=1e-9)
