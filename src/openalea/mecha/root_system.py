@@ -22,7 +22,7 @@ from openalea.metafspm.solve.decorator import totalstate
 from openalea.metafspm.solve.network import equivalent_conductance
 from openalea.mecha.component import SCALES
 from openalea.mecha.geometry import SOIL, SOIL_NODE
-from openalea.mecha.memo import content_key
+from openalea.metafspm.solve.memo import content_key
 
 MARSHAL = "Couvreur et al. 2012, Plant Cell Environ.; Meunier et al. 2020, in silico Plants (MARSHAL)"
 NETWORK = ("kw", "kaqp", "kpl", "kmb", "kw_casparian", "kw_suberin_in", "kw_suberin_out", "xylem_axial_conductance")
@@ -89,7 +89,7 @@ class RootSystemConductance(FunctionalComponent):
         else:                                      # each surface node joined to the soil through its conductance
             sources, through = np.asarray(soil_conductance) > 0., soil_conductance
             network = np.where(np.asarray(network_path) == SOIL, 0., network)
-        reduction = getattr(ds.structure, "reduction", None)
+        reduction = ds.reduction
         terms = reduction.terms(self, "MechaHydraulics._plant_problem", ds, ds.entity_ids("node")) \
             if reduction is not None and not reduction.library else None
         total, inflow = equivalent_conductance(ds.to_graph_view(), network, sources=sources, sinks=collar,

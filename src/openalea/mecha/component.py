@@ -130,7 +130,7 @@ class MechaSections(FunctionalComponent):
         ds = self.data_structure
         templates = np.asarray(ds.get("anatomy_template"))
         reduced = self._reduced_nodes()
-        stamp = (ds._topology_stamp() if hasattr(ds, "_topology_stamp") else ds.topology_version, templates.tobytes(),
+        stamp = (ds.structure_stamp(), templates.tobytes(),
                  reduced.tobytes())
         kept = self.__dict__.get("_section_geometries")
         if kept is not None and kept[0] == stamp:                   # the same sections: the same dict (read only)
@@ -158,7 +158,7 @@ class MechaSections(FunctionalComponent):
         """bool per node: in a reduced group (the plant model's Reduction, solve.reduction: no cells here)."""
         ds = self.data_structure
         out = np.zeros(ds.n_nodes(), dtype=bool)
-        reduction = getattr(getattr(ds, "structure", None), "reduction", None)
+        reduction = ds.reduction
         if reduction is None:
             return out
         groups = reduction.reduced_groups(ds)
@@ -168,7 +168,7 @@ class MechaSections(FunctionalComponent):
 
     def _reduction(self):
         """The plant model's Reduction (solve.reduction) when it reduces this component's plant problem, else None."""
-        reduction = getattr(getattr(self.data_structure, "structure", None), "reduction", None)
+        reduction = self.data_structure.reduction
         return reduction if reduction is not None and f"{type(self).__name__}._plant_problem" in reduction.systems \
             else None
 
@@ -687,9 +687,10 @@ class MechaHydraulics(MechaSections):
                                                    float(height_by_node[v]))
         return a, b
 
-    @rate(include_inactive=True)
+    @rate(include_inactive=True, memo=True)
     def _conductance(self, network_path, barrier, length, anatomy_template, leaf_transpiration, stomatal_aperture,
-                     pore_width, pore_depth) \
+                     pore_width, pore_depth, kind, cell_area, wall_thickness, soil_contact_cell,
+                     measured_axial_conductivity) \
             -> tuple[np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,
                      str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str,
                      np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,
@@ -698,42 +699,10 @@ class MechaHydraulics(MechaSections):
         Every edge's conductance, and the boundary conductances of the nodes (soil, axial), from MECHA's geometry,
         the segments' barriers and heights (their lengths), and the plants' parameters; the standard problem's
         boundary potentials (the axial boundary only where its potential is given: not at barrier 0 by default).
-        Computed again only when one of these changed (_memo).
+        Computed again only when one of these, the parameters, the settings or the structure changed (memo=True).
         """
-        ds = self.data_structure
-        key = self._memo_key(network_path, barrier, length, anatomy_template, leaf_transpiration, stomatal_aperture,
-                             pore_width, pore_depth, *(ds.get(name) for name in ("kind", "cell_area", "wall_thickness",
-                                                                                 "soil_contact_cell",
-                                                                                 "measured_axial_conductivity")),
-                             self._reduced_nodes())
-        kept = self._memo("conductance", key)
-        if kept is not None:
-            return kept
-        return self._remember("conductance", key, self._conductance_values(
-            network_path, barrier, length, anatomy_template, leaf_transpiration, stomatal_aperture, pore_width,
-            pore_depth))
-
-    def _memo_key(self, *arrays) -> str:
-        """The key of a step's inputs: the topology, the settings, the parameters' versions on the DataStructure,
-        and the values of *arrays*."""
-        from openalea.mecha.memo import content_key
-        ds = self.data_structure
-        stamp = ds._topology_stamp() if hasattr(ds, "_topology_stamp") else ds.topology_version
-        versions = tuple(ds.write_count(name) if ds.has(name) else -1 for name in self.PARAMETERS)
-        settings = (self.soil_boundary, self.plant_solver)
-        return content_key(repr((stamp, versions, settings)), *(np.asarray(a) for a in arrays))
-
-    def _memo(self, name: str, key: str):
-        """A step's outputs kept for *key* (copies), or None."""
-        kept = self.__dict__.get("_memos", {}).get(name)
-        if kept is None or kept[0] != key:
-            return None
-        return tuple(x.copy() if isinstance(x, np.ndarray) else x for x in kept[1])
-
-    def _remember(self, name: str, key: str, outputs: tuple) -> tuple:
-        self.__dict__.setdefault("_memos", {})[name] = (key, tuple(np.array(x, copy=True) if isinstance(x, np.ndarray)
-                                                                   else x for x in outputs))
-        return outputs
+        return self._conductance_values(network_path, barrier, length, anatomy_template, leaf_transpiration,
+                                        stomatal_aperture, pore_width, pore_depth)
 
     def _conductance_values(self, network_path, barrier, length, anatomy_template, leaf_transpiration,
                             stomatal_aperture, pore_width, pore_depth) -> tuple:
@@ -782,7 +751,7 @@ class MechaHydraulics(MechaSections):
         vapour |= np.isfinite(pore_width) | (kind == LEAF_SURFACE)
         surface = kind == LEAF_SURFACE
         # each organ's transpiration onto its surface node, conserved (an organ transpiring without one raises)
-        reduction = getattr(getattr(ds, "structure", None), "reduction", None)
+        reduction = ds.reduction
         if reduction is not None and reduction.library:          # a reduction's library: no boundary data needed
             surface_inflow = np.zeros(ds.n_nodes())
         else:
@@ -1000,7 +969,7 @@ class MechaHydraulics(MechaSections):
         @node_balance(field="standard_psi")
         def _balance(self, standard_psi, conductance, standard_osmotic_drive, air_tail_conductance,
                      air_head_conductance, air_offset, standard_elongation_sink):
-            B = self._graph_view.incidence
+            B = self.graph_view.incidence
             drop = np.asarray(B.T @ standard_psi).reshape(-1) + standard_osmotic_drive
             q = _wall_air_flow(B, standard_psi, air_tail_conductance, air_head_conductance, air_offset)
             return np.asarray(B @ (conductance * drop + q)).reshape(-1) + standard_elongation_sink
@@ -1014,14 +983,14 @@ class MechaHydraulics(MechaSections):
 
         @graph_jacobian
         def _jacobian(self, conductance, air_tail_conductance, air_head_conductance):
-            B = self._graph_view.incidence
+            B = self.graph_view.incidence
             return (B @ diags(conductance) @ B.T
                     + _wall_air_jacobian(B, air_tail_conductance, air_head_conductance)).tocsr()
 
         @graph_output("standard_flow", location="edge")
         def _standard_flow(self, standard_psi, conductance, standard_osmotic_drive, air_tail_conductance,
                            air_head_conductance, air_offset):
-            B = self._graph_view.incidence
+            B = self.graph_view.incidence
             return conductance * (np.asarray(B.T @ standard_psi).reshape(-1) + standard_osmotic_drive) + \
                 _wall_air_flow(B, standard_psi, air_tail_conductance, air_head_conductance, air_offset)
 
@@ -1038,7 +1007,7 @@ class MechaHydraulics(MechaSections):
 
         @node_balance(field="psi")
         def _balance(self, psi, conductance, xylem_axial_conductance, osmotic_drive, elongation_sink):
-            B = self._graph_view.incidence
+            B = self.graph_view.incidence
             K = conductance + xylem_axial_conductance
             return np.asarray(B @ (K * (np.asarray(B.T @ psi).reshape(-1) + osmotic_drive))).reshape(-1) + \
                 elongation_sink
@@ -1046,17 +1015,17 @@ class MechaHydraulics(MechaSections):
         @explicit_term(field="psi", jacobian="_vapour_jacobian")
         def _vapour(self, psi, air_tail_conductance, air_head_conductance, air_offset):
             """The leaves' wall-air flows (nonlinear: kept explicit by a reduction, their nodes kept)."""
-            B = self._graph_view.incidence
+            B = self.graph_view.incidence
             return np.asarray(B @ _wall_air_flow(B, psi, air_tail_conductance, air_head_conductance,
                                                  air_offset)).reshape(-1)
 
         def _vapour_jacobian(self, air_tail_conductance, air_head_conductance):
-            return _wall_air_jacobian(self._graph_view.incidence, air_tail_conductance, air_head_conductance).tocsr()
+            return _wall_air_jacobian(self.graph_view.incidence, air_tail_conductance, air_head_conductance).tocsr()
 
         @input_jacobian("osmotic_potential")
         def _osmotic_jacobian(self, conductance, xylem_axial_conductance, reflection_coefficient):
             """The balance's derivative with respect to the osmotic potentials: B (K σ) Bᵀ (the drive σ Bᵀπ)."""
-            B = self._graph_view.incidence
+            B = self.graph_view.incidence
             return (B @ diags((conductance + xylem_axial_conductance) * reflection_coefficient) @ B.T).tocsr()
 
         soil = boundary_set(filters={"plant_soil_conductance": ">0"}, kind="robin", value="soil_psi",
@@ -1070,13 +1039,13 @@ class MechaHydraulics(MechaSections):
 
         @graph_jacobian
         def _jacobian(self, conductance, xylem_axial_conductance):
-            B = self._graph_view.incidence
+            B = self.graph_view.incidence
             return (B @ diags(conductance + xylem_axial_conductance) @ B.T).tocsr()
 
         @graph_output("flow", location="edge")
         def _flow(self, psi, conductance, xylem_axial_conductance, osmotic_drive, air_tail_conductance,
                   air_head_conductance, air_offset):
-            B = self._graph_view.incidence
+            B = self.graph_view.incidence
             return (conductance + xylem_axial_conductance) * (np.asarray(B.T @ psi).reshape(-1) + osmotic_drive) + \
                 _wall_air_flow(B, psi, air_tail_conductance, air_head_conductance, air_offset)
 
@@ -1084,7 +1053,7 @@ class MechaHydraulics(MechaSections):
         def _root_uptake(self, psi, plant_soil_conductance, soil_psi, conductance, kind):
             """The water entering from the soil: at each contact node (per_node), or at each soil node, its balance:
             the flow through its Connections into its section (and, in a reduced section, its interior's term)."""
-            B = self._graph_view.incidence
+            B = self.graph_view.incidence
             out = np.asarray(B @ (conductance * np.asarray(B.T @ psi).reshape(-1))).reshape(-1)
             reduction = self._reduction()
             if reduction is not None:
@@ -1095,7 +1064,7 @@ class MechaHydraulics(MechaSections):
         @graph_output("evaporation", location="node")
         def _evaporation(self, psi, conductance, network_path):
             """Each stomatal pore's flow to its leaf's surface (the stomatal Connections run from the pore)."""
-            B = self._graph_view.incidence
+            B = self.graph_view.incidence
             stomatal = np.asarray(network_path) == STOMATAL
             q = np.where(stomatal, conductance * np.asarray(B.T @ psi).reshape(-1), 0.)
             return np.asarray(B.maximum(0) @ q).reshape(-1)
@@ -1199,24 +1168,21 @@ class MechaHydraulics(MechaSections):
         return tuple(x for name in names for x in ((out[name],) if name == "kr" else (name, out[name]))) + (
             "standard_water_potential", water)
 
-    @totalstate(include_inactive=True)
-    def _standard_transmembrane_fraction(self, standard_flow, standard_uptake, barrier, network_path) \
+    @totalstate(include_inactive=True, memo=True)
+    def _standard_transmembrane_fraction(self, standard_flow, standard_uptake, barrier, network_path, kind) \
             -> tuple[np.ndarray, str, np.ndarray]:
         """
         Each membrane's standard transmembrane fraction (its standard flow from wall to cell / its section's standard
         uptake: ``Mecha.standard_transmembrane_fractions``) and its layer row (postprocess.transmembrane_layers sums
-        them by layer), on the root sections solving the standard problem.
+        them by layer), on the root sections solving the standard problem. Computed again only when one of these, the
+        parameters, the settings or the structure changed (memo=True).
         """
         from openalea.mecha.osmotic import membrane_rows             # osmotic imports this module
         ds = self.data_structure
         view = ds.to_graph_view()
         fraction, layer = np.zeros(ds.n_edges()), np.full(ds.n_edges(), -1.)
-        flow, path, kind = np.asarray(standard_flow, dtype=float), np.asarray(network_path), np.asarray(ds.get("kind"))
+        flow, path, kind = np.asarray(standard_flow, dtype=float), np.asarray(network_path), np.asarray(kind)
         uptake, barrier = np.asarray(standard_uptake, dtype=float), np.asarray(barrier)
-        key = self._memo_key(standard_flow, standard_uptake, barrier, network_path, kind)
-        kept = self._memo("transmembrane", key)
-        if kept is not None:
-            return kept
         where = {int(v): i for i, v in enumerate(ds.entity_ids("SubOrgan"))}
         standard = self.parameter_table("node")["standard_solve"] > 0
         roots = self.section_roles()[1]
@@ -1231,7 +1197,7 @@ class MechaHydraulics(MechaSections):
             into_cell = np.where(wall_is_tail, flow[membranes], -flow[membranes])
             fraction[membranes] = np.where(rows >= 0, into_cell / uptake[where[segment]], 0.)
             layer[membranes] = rows
-        return self._remember("transmembrane", key, (fraction, "membrane_layer", layer))
+        return fraction, "membrane_layer", layer
 
 
 MechaHydraulics.PARAMETERS = tuple(MechaHydraulics._plant_parameter_fields())

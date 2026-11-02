@@ -35,7 +35,7 @@ def section():
 def _call(function, ds, values):
     """*function* (a balance or the Jacobian of the coupled system) on the DataStructure's arrays, with *values*."""
     class View:
-        _graph_view = ds.to_graph_view()
+        graph_view = ds.to_graph_view()
     names = list(inspect.signature(function).parameters)[1:]
     return function(View(), *[values[name] if name in values else np.asarray(ds.get(name), dtype=float)
                               for name in names])

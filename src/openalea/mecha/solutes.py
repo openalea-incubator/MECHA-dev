@@ -450,7 +450,7 @@ class MechaSolutes(MechaSections):
         @node_balance(field="sucrose")
         def _sucrose(self, sucrose, starch, tail_weight, head_weight, storage_volume, synthesis_rate, degradation_rate,
                      decay_rate, sucrose_source, boundary_outflow, boundary_source, implicit_weight):
-            B = self._graph_view.incidence
+            B = self.graph_view.incidence
 
             def operator(c, s):
                 q = tail_weight * np.asarray(B.maximum(0).T @ c).reshape(-1) - \
@@ -476,7 +476,7 @@ class MechaSolutes(MechaSections):
         @graph_jacobian
         def _jacobian(self, tail_weight, head_weight, node_volume, storage_volume, synthesis_rate, degradation_rate,
                       decay_rate, boundary_outflow, implicit_weight):
-            B = self._graph_view.incidence
+            B = self.graph_view.incidence
             days = self.dt / SECONDS_PER_DAY
             theta = diags(implicit_weight)
             transport = B @ diags(tail_weight) @ B.maximum(0).T - B @ diags(head_weight) @ (-B).maximum(0).T
@@ -497,7 +497,7 @@ class MechaSolutes(MechaSections):
         @node_balance(field="sucrose")
         def _sucrose(self, sucrose, tail_weight, head_weight, decay_rate, sucrose_source, boundary_outflow,
                      boundary_source):
-            B = self._graph_view.incidence
+            B = self.graph_view.incidence
             q = tail_weight * np.asarray(B.maximum(0).T @ sucrose).reshape(-1) - \
                 head_weight * np.asarray((-B).maximum(0).T @ sucrose).reshape(-1)
             return (np.asarray(B @ q).reshape(-1) + (decay_rate + boundary_outflow) * sucrose
@@ -508,7 +508,7 @@ class MechaSolutes(MechaSections):
 
         @graph_jacobian
         def _jacobian(self, tail_weight, head_weight, decay_rate, boundary_outflow):
-            B = self._graph_view.incidence
+            B = self.graph_view.incidence
             transport = B @ diags(tail_weight) @ B.maximum(0).T - B @ diags(head_weight) @ (-B).maximum(0).T
             return (transport + diags(decay_rate + boundary_outflow)).tocsr()
 
@@ -533,7 +533,7 @@ class MechaSolutes(MechaSections):
                    diffusion_conductance, decay_rate):
             """The water's balance with its boundaries (the soil's and the axial boundary's Robin terms, the axial
             flow's Neumann term), over the node's total conductance (hPa)."""
-            B = self._graph_view.incidence
+            B = self.graph_view.incidence
             F = coupled_flow(B, coupled_psi, sucrose, conductance, reflection_coefficient, osmotic_baseline,
                              osmotic_slope, air_tail_conductance, air_head_conductance, air_offset)
             inflow = (soil_conductance * (standard_soil_psi - coupled_psi)
@@ -549,7 +549,7 @@ class MechaSolutes(MechaSections):
                      upwind_edge, water_edge, boundary_concentration, decay_rate, sucrose_source, solute_node,
                      soil_conductance, axial_boundary_conductance):
             """The sucrose's balance over the node's total diffusion conductance (µmol cm⁻³)."""
-            B = self._graph_view.incidence
+            B = self.graph_view.incidence
             F = coupled_flow(B, coupled_psi, sucrose, conductance, reflection_coefficient, osmotic_baseline,
                              osmotic_slope, air_tail_conductance, air_head_conductance, air_offset)
             a, b = edge_weights(diffusion_conductance, carried_fraction * F, upwind_edge > 0)
@@ -571,7 +571,7 @@ class MechaSolutes(MechaSections):
                       osmotic_slope, air_tail_conductance, air_head_conductance, air_offset, diffusion_conductance,
                       carried_fraction, upwind_edge, water_edge, boundary_concentration, decay_rate, solute_node,
                       soil_conductance, axial_boundary_conductance):
-            B = self._graph_view.incidence
+            B = self.graph_view.incidence
             water, scale = _row_scales(B, conductance, air_tail_conductance, air_head_conductance, soil_conductance,
                                        axial_boundary_conductance, diffusion_conductance, decay_rate)
             scale = np.where(solute_node > 0, scale, 1. / SUCROSE_RESIDUAL_SCALE)
@@ -611,6 +611,6 @@ class MechaSolutes(MechaSections):
         @graph_output("coupled_flow", location="edge")
         def _coupled_flow(self, coupled_psi, sucrose, conductance, reflection_coefficient, osmotic_baseline,
                           osmotic_slope, air_tail_conductance, air_head_conductance, air_offset):
-            return coupled_flow(self._graph_view.incidence, coupled_psi, sucrose, conductance, reflection_coefficient,
+            return coupled_flow(self.graph_view.incidence, coupled_psi, sucrose, conductance, reflection_coefficient,
                                 osmotic_baseline, osmotic_slope, air_tail_conductance, air_head_conductance,
                                 air_offset)
