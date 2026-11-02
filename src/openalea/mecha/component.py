@@ -25,7 +25,7 @@ from openalea.mecha.conductance import (Network, assemble, boundary_terms, corte
                                        elongation_sink, kelvin_alpha, set_edge_ends, set_wall_thickness,
                                        sieve_tube_terms, vapour_conductances)
 from openalea.mecha.geometry import (AXIAL_JUNCTION, LEAF_SURFACE, MEMBRANE, SOIL, SOIL_NODE, STOMATAL, XYLEM_CGROUPS,
-                                     local_index,
+                                     AIR_LINK, WALL_AIR, local_index,
                                      phi_thick_cells,
                                      section_geometry, section_of, section_parts)
 from openalea.mecha.postprocess import (VISCOSITY_PHLOEM, VISCOSITY_XYLEM, axial_conductances, conduit_axial_conductances,
@@ -768,6 +768,7 @@ class MechaHydraulics(MechaSections):
         kind = np.asarray(ds.get("kind"))
         pore_width, pore_depth = np.asarray(pore_width, dtype=float), np.asarray(pore_depth, dtype=float)
         view = ds.to_graph_view()
+        self._reduced_vapour_path(net, view)
         K_vapour, K_wall, K_air, offset, wall_end, air_end = vapour_conductances(
             net, P_edge, height_node[tail], pore_width, pore_depth, np.asarray(ds.get("cell_area"), dtype=float),
             np.asarray(stomatal_aperture, dtype=float), height_node[view.tail])
@@ -781,7 +782,11 @@ class MechaHydraulics(MechaSections):
         vapour |= np.isfinite(pore_width) | (kind == LEAF_SURFACE)
         surface = kind == LEAF_SURFACE
         # each organ's transpiration onto its surface node, conserved (an organ transpiring without one raises)
-        surface_inflow = -ds.map_to(leaf_transpiration, "Organ", "node", "split", weights=surface)
+        reduction = getattr(getattr(ds, "structure", None), "reduction", None)
+        if reduction is not None and reduction.library:          # a reduction's library: no boundary data needed
+            surface_inflow = np.zeros(ds.n_nodes())
+        else:
+            surface_inflow = -ds.map_to(leaf_transpiration, "Organ", "node", "split", weights=surface)
         standard = (P_node["standard_solve"] > 0) & root
         # the soil boundary: on each contact node (per_node), or on each root section's soil node through its
         # Connections, which carry the contact nodes' soil conductances
@@ -810,6 +815,23 @@ class MechaHydraulics(MechaSections):
                 "membrane_diffusion_factor", np.where(in_matrix, factors["membrane"], 0.),
                 "node_volume", self._node_volumes(net, P_node, height_node, kind),
                 "contact_distance", factors["contact_distance"])
+
+    def _reduced_vapour_path(self, net, view) -> None:
+        """The reduced sections' kept vapour path (their wall-air and air-link Connections, explicit terms) in *net*,
+        from their own values (GRANAP's, mm -> µm): its conductances are local, computed as a full section's."""
+        reduced = self._reduced_nodes()
+        if not reduced.any():
+            return
+        ds = self.data_structure
+        path = np.asarray(ds.get("network_path"))
+        edges = np.flatnonzero(reduced[view.tail] & reduced[view.head] & np.isin(path, (WALL_AIR, AIR_LINK)))
+        if edges.size == 0:
+            return
+        net.in_section[edges] = True
+        net.edge_length[edges] = np.asarray(ds.get("edge_length"), dtype=float)[edges] * 1.0E3
+        net.edge_dist[edges] = np.asarray(ds.get("edge_dist"), dtype=float)[edges] * 1.0E3
+        nodes = np.flatnonzero(reduced)
+        net.kind[nodes] = np.asarray(ds.get("kind"), dtype=float)[nodes].astype(np.int64)
 
     def relative_x(self, geometries: dict) -> np.ndarray:
         """Per node, its x relative to its section's cells' x range (0 left, 1 right; the legacy's x_rel, from the
@@ -1223,10 +1245,36 @@ def soil_nodes(template) -> np.ndarray:
     return out
 
 
+def vapour_path(template) -> np.ndarray:
+    """The vapour path's nodes of a SectionTemplate: the ends of its wall-air and air-link Connections (a leaf's
+    evaporating walls, air spaces and pores; none in a section without them): a reduction's keep rule (the nodes of
+    the explicit vapour terms)."""
+    out = np.zeros(template.size, dtype=bool)
+    edges = np.flatnonzero(vapour_edges(template))
+    for link in ("n_id_a", "n_id_b"):
+        where, ends = template.properties[link]
+        position = np.searchsorted(where, edges)
+        out[np.asarray(ends, dtype=np.int64)[position]] = True
+    return out
+
+
+def vapour_edges(template) -> np.ndarray:
+    """The vapour path's Connections of a SectionTemplate (wall-air and air-link): a reduction's explicit edges."""
+    out = np.zeros(template.size, dtype=bool)
+    rows, values = template.properties.get("network_path", (np.zeros(0, dtype=np.int64), np.zeros(0)))
+    out[rows] = np.isin(np.asarray(values, dtype=float), (WALL_AIR, AIR_LINK))
+    return out
+
+
+def _kept(template) -> np.ndarray:
+    return soil_nodes(template) | vapour_path(template)
+
+
 def plant_reduction(labels=("RootSegment",), length_classes="exact", osmotic: bool = False):
     """
     The Reduction (solve.reduction) of a plant model with GRANAP's anatomies and MechaHydraulics' plant problem: the
-    sections of *labels* reduced onto their conduits (GRANAP's ports) and soil node; a kind per (anatomy, barrier,
+    sections of *labels* reduced onto their conduits (GRANAP's ports), their soil node and, in a leaf, its vapour
+    path (vapour_path, its Connections kept explicit: vapour_edges); a kind per (anatomy, barrier,
     length or its class of relative width *length_classes*, parameters); with *osmotic*, the conduits' and the hidden
     tissues' osmotic potentials as per-section inputs (conduit_osmotic_potential, tissue_osmotic_potential); the
     sections' kr, standard uptake and perimeter from their kind.
@@ -1236,6 +1284,6 @@ def plant_reduction(labels=("RootSegment",), length_classes="exact", osmotic: bo
     kind = {"barrier": None, "length": None if length_classes == "exact" else Relative(float(length_classes))}
     inputs = {"osmotic_potential": dict(by="tissue", group="tissue_osmotic_potential",
                                         kept="conduit_osmotic_potential")} if osmotic else {}
-    return Reduction(location="SubOrgan", labels=tuple(labels), ports=GranapAnatomy.conduits, keep=soil_nodes,
-                     kind=kind, inputs=inputs, systems=("MechaHydraulics._plant_problem",),
+    return Reduction(location="SubOrgan", labels=tuple(labels), ports=GranapAnatomy.conduits, keep=_kept,
+                     explicit_edges=vapour_edges, kind=kind, inputs=inputs, systems=("MechaHydraulics._plant_problem",),
                      outputs=("kr", "standard_uptake", "perimeter"))
