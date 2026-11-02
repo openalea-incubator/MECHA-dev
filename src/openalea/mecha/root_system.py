@@ -20,6 +20,7 @@ from openalea.metafspm.coupling.component import FunctionalComponent, input_vari
 from openalea.metafspm.solve.decorator import totalstate
 from openalea.metafspm.solve.network import equivalent_conductance
 from openalea.mecha.component import SCALES
+from openalea.mecha.geometry import SOIL
 
 MARSHAL = "Couvreur et al. 2012, Plant Cell Environ.; Meunier et al. 2020, in silico Plants (MARSHAL)"
 NETWORK = ("kw", "kaqp", "kpl", "kmb", "kw_casparian", "kw_suberin_in", "kw_suberin_out", "xylem_axial_conductance")
@@ -43,6 +44,8 @@ class RootSystemConductance(FunctionalComponent):
                                                       "junction and the soil", "node", SCALES.Compartment))
     collar_kind: float = input_variable(**_input("", "the collar condition of the node: 1 potential", "node",
                                                  SCALES.Compartment))
+    network_path: float = input_variable(**_input("", "the Connection's kind of path (7: to a soil node, not part of "
+                                                  "the root's network)", "edge", SCALES.Connection))
 
     root_system_conductance: float = state_variable(
         unit="cm3 hPa-1 d-1", description="the root system's conductance, Krs", default=np.nan, location="Plant",
@@ -58,16 +61,20 @@ class RootSystemConductance(FunctionalComponent):
                             protocol="SUF_i = q_i / Q_collar under the protocol of root_system_conductance"))
 
     @totalstate(include_inactive=True)
-    def _root_system_conductance(self, conductance, xylem_axial_conductance, soil_conductance, collar_kind) -> dict:
+    def _root_system_conductance(self, conductance, xylem_axial_conductance, soil_conductance, collar_kind,
+                                 network_path) -> dict:
         """Krs and the SUF of each plant: one solve of its network at a unit potential difference, from its root
-        surface (each surface node joined to the soil through its soil conductance) to its collar's vessels."""
+        surface (each surface node joined to the soil through its soil conductance) to its collar's vessels. A soil
+        node's Connections (GRANAP's soil_node) are not part of the root: MARSHAL's protocol puts the soil at the
+        surface."""
         ds = self.data_structure
         collar = np.asarray(collar_kind) == 1.
         if not collar.any():
             raise ValueError("RootSystemConductance: no collar at a potential (collar_condition 1)")
         surface = np.asarray(soil_conductance) > 0.
-        total, inflow = equivalent_conductance(ds.to_graph_view(), np.asarray(conductance) +
-                                               np.asarray(xylem_axial_conductance), sources=surface, sinks=collar,
+        root = np.where(np.asarray(network_path) == SOIL, 0., np.asarray(conductance) +
+                        np.asarray(xylem_axial_conductance))
+        total, inflow = equivalent_conductance(ds.to_graph_view(), root, sources=surface, sinks=collar,
                                                source_conductance=soil_conductance)
         plant = np.asarray(ds.owner("Plant"))
         per_plant = np.bincount(plant, weights=inflow, minlength=len(ds.entity_ids("Plant")))

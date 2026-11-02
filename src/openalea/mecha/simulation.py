@@ -341,14 +341,19 @@ class RootSystem:
 def root_system(main=(3, 3, 1, 1), laterals=((1, (1, 1)),), segment_length: float = 5e-3,
                 main_radius: float = 0.5e-3, lateral_radius: float = 0.25e-3, parameters: dict = None,
                 anatomy: dict = None, soil_psi: float = -1000., collar_psi: float = -5000.,
-                experiment: str = "control") -> RootSystem:
+                experiment: str = "control", instanced: bool = False, plant_solver: str = "full",
+                soil_boundary: str = "per_node", soil_bulk_conductance: float = 0.) -> RootSystem:
     """
     A seedling's root system, every section a GRANAP anatomy and all of them one MECHA network joined by their xylem:
     a main root of len(*main*) segments (their barriers, MECHA's maturity codes, from the collar to the tip) and its
     *laterals*, ((bearer segment's index on the main root, their barriers from their base), ...); segments
     *segment_length* m long, of *main_radius* or *lateral_radius* m; the soil at *soil_psi* around them, the collar's
     xylem at *collar_psi* (hPa). *parameters*: MECHA's, changed from its defaults; *experiment*: one of EXPERIMENTS
-    ("inhibited": the aquaporins blocked).
+    ("inhibited": the aquaporins blocked); *instanced*: each segment's anatomy an instance of its class's template
+    (GRANAP's instanced_anatomy: no vertex of its own, the same results); *plant_solver*: MechaHydraulics'
+    ("condensed": each section's interior eliminated, one factorisation per kind of section); *soil_boundary*:
+    MechaHydraulics' ("node_dirichlet", "node_robin": one soil node per section, GRANAP's soil_node), with
+    *soil_bulk_conductance* (cm3 hPa-1 d-1) on each soil node (node_robin).
 
     Its conductance (Krs, cm3 hPa-1 d-1) and its sections' standard uptake fractions are MARSHAL's (the soil
     uniform, the collar fixed), computed on the whole anatomical network.
@@ -366,6 +371,8 @@ def root_system(main=(3, 3, 1, 1), laterals=((1, (1, 1)),), segment_length: floa
         branched.append([bearer, [[lateral_radius, segment_length, (m - 1 - i) * segment_length] for i in range(m)]])
         rows += [(f"lateral {k}", rank, barrier, lateral_radius) for rank, barrier in enumerate(barriers)]
     scenario = dict(values, collar_condition=1., collar_psi=collar_psi, root_laterals=branched,
+                    instanced_anatomy=bool(instanced), plant_solver=plant_solver, soil_boundary=soil_boundary,
+                    soil_node=soil_boundary != "per_node",
                     root_segments=[[main_radius, segment_length, (n - 1 - i) * segment_length] for i in range(n)])
     if anatomy is not None:
         scenario["root_anatomy"] = dict(anatomy)
@@ -377,6 +384,8 @@ def root_system(main=(3, 3, 1, 1), laterals=((1, (1, 1)),), segment_length: floa
     owner = np.asarray(ds.owner("SubOrgan"))
     ds.set("barrier", layout["barrier"].to_numpy(dtype=float)[owner])
     ds.set("soil_psi", np.full(ds.n_nodes(), float(soil_psi)))
+    if soil_boundary == "node_robin":
+        ds.set("soil_bulk_conductance", np.full(ds.n_nodes(), float(soil_bulk_conductance)))
     scene.run()
     return RootSystem(scene=scene, parameters=values, layout=layout.assign(radius=layout["radius"] * 1e3))
 

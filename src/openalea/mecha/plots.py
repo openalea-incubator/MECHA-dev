@@ -54,7 +54,7 @@ def port_frame(mecha, segment, psi="standard_psi", flow="standard_flow", librari
     e = edges[kept]
     polygons = []
     g = ds.mtg
-    template, row = g.property("template"), g.property("template_row")
+    template, row = g.view("template"), g.view("template_row")
     vids = ds.entity_ids("node")[nodes[geo.cells]]
     if vids.size and int(vids[0]) in template:                            # GRANAP's anatomies: their templates
         from shapely import affinity

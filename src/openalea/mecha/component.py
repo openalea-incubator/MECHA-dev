@@ -14,7 +14,8 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.sparse import diags
 
-from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, parameter, state_variable
+from openalea.metafspm.coupling.component import (FunctionalComponent, input_variable, parameter, setting,
+                                                   state_variable)
 from openalea.metafspm.data_structure.configs import ScalesConfig
 from openalea.metafspm.solve.decorator import (boundary_set, graph_jacobian, graph_output, graph_system,
                                                 node_balance, rate, totalstate)
@@ -22,7 +23,8 @@ from openalea.metafspm.solve.decorator import (boundary_set, graph_jacobian, gra
 from openalea.mecha.conductance import (Network, assemble, boundary_terms, cortex_parameters, edge_conductances,
                                        elongation_sink, kelvin_alpha, set_edge_ends, set_wall_thickness,
                                        sieve_tube_terms, vapour_conductances)
-from openalea.mecha.geometry import (AXIAL_JUNCTION, LEAF_SURFACE, MEMBRANE, STOMATAL, XYLEM_CGROUPS, phi_thick_cells,
+from openalea.mecha.geometry import (AXIAL_JUNCTION, LEAF_SURFACE, MEMBRANE, SOIL, SOIL_NODE, STOMATAL, XYLEM_CGROUPS,
+                                     phi_thick_cells,
                                      section_geometry, section_of, section_parts)
 from openalea.mecha.postprocess import (VISCOSITY_PHLOEM, VISCOSITY_XYLEM, axial_conductances, poiseuille,
                                         radial_conductivity, soil_uptake)
@@ -265,6 +267,19 @@ class MechaHydraulics(MechaSections):
                                    "definition), 0: skip it", 1.)
     standard_osmotic: float = _p("", "1: the standard problem with the membranes' osmotic terms (the legacy's scenarios "
                                      "≥ 1), 0: without (its scenario 0, MECHA's kr)", 0.)
+    plant_solver: str = setting(description="the plant problem's linear solves: \"full\", one sparse solve of the "
+                                            "whole network; \"condensed\", each section's interior eliminated, one "
+                                            "factorisation per kind of section (solve.network.condensed_solve; the "
+                                            "soil, collar and junction nodes kept): the same potentials to round-off",
+                                default="full", choices=("full", "condensed"))
+    soil_boundary: str = setting(description="the soil condition of the plant problem: \"per_node\", a Robin term on "
+                                             "each border wall and junction in contact (MECHA's); \"node_dirichlet\", "
+                                             "one per root section, its soil node held at the section's soil_psi, "
+                                             "joined to its contact nodes through their soil conductances (GRANAP's "
+                                             "soil_node; with a uniform soil around the section, the same as "
+                                             "per_node); \"node_robin\", its soil node joined to soil_psi through "
+                                             "the section's soil_bulk_conductance",
+                                 default="per_node", choices=("per_node", "node_dirichlet", "node_robin"))
     collar_condition: float = _p("", "at the first root section's xylem vessels: 1 the potential collar_psi, 2 the "
                                      "flow collar_flow, 0 none (e.g. a shoot above)", 1.)
     collar_psi: float = _p("hPa", "the collar's xylem potential (collar_condition 1)", -5.0E3)
@@ -369,6 +384,17 @@ class MechaHydraulics(MechaSections):
                                                                      "and the soil (0 elsewhere)"),
                                              default=0., scale=SCALES.Compartment, location="node",
                                              kind="NonInertialIntensive")
+    plant_soil_conductance: float = state_variable(**_doc("cm3 hPa-1 d-1", "the plant problem's soil term on a border "
+                                                          "wall or junction: soil_conductance (soil_boundary "
+                                                          "per_node), 0 with a soil node"),
+                                                   default=0., scale=SCALES.Compartment, location="node",
+                                                   kind="NonInertialIntensive")
+    soil_node_kind: float = state_variable(**_doc("", "on a root section's soil node (GRANAP's soil_node): its "
+                                                  "condition, 1 the potential soil_psi (soil_boundary node_dirichlet, "
+                                                  "and per_node: the node then unused), 3 joined to soil_psi through "
+                                                  "soil_bulk_conductance (node_robin); 0 elsewhere"),
+                                           default=0., scale=SCALES.Compartment, location="node",
+                                           kind="NonInertialIntensive")
     axial_boundary_conductance: float = state_variable(**_doc("cm3 hPa-1 d-1", "conductance between a xylem vessel "
                                                               "(barrier > 0) or a protophloem cell (barrier 0) and "
                                                               "the axial boundary, on the matrix diagonal (0 elsewhere)"),
@@ -486,6 +512,11 @@ class MechaHydraulics(MechaSections):
     soil_psi: float = input_variable(**_doc("hPa", "the soil's water potential around the Compartment"), by="Soil",
                                      default=0., scale=SCALES.Compartment, location="node",
                                      kind="intensive")
+    soil_bulk_conductance: float = input_variable(**_doc("cm3 hPa-1 d-1", "on a root section's soil node "
+                                                         "(soil_boundary node_robin): the conductance between it and "
+                                                         "the soil at soil_psi (e.g. the bulk soil's around the "
+                                                         "section)"), by="Soil", default=0.,
+                                                  scale=SCALES.Compartment, location="node", kind="intensive")
     leaf_transpiration: float = input_variable(**_doc("cm3 d-1", "a leaf organ's transpiration, leaving at its surface "
                                                                  "node (role Transpiration: constant for now)"),
                                                by="Transpiration", default=0., scale=SCALES.Organ, location="Organ",
@@ -617,7 +648,8 @@ class MechaHydraulics(MechaSections):
                      pore_width, pore_depth) \
             -> tuple[np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,
                      str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str,
-                     np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray]:
+                     np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,
+                     str, np.ndarray, str, np.ndarray]:
         """
         Every edge's conductance, and the boundary conductances of the nodes (soil, axial), from MECHA's geometry,
         the segments' barriers and heights (their lengths), and the plants' parameters; the standard problem's
@@ -669,7 +701,21 @@ class MechaHydraulics(MechaSections):
         # each organ's transpiration onto its surface node, conserved (an organ transpiring without one raises)
         surface_inflow = -ds.map_to(leaf_transpiration, "Organ", "node", "split", weights=surface)
         standard = (P_node["standard_solve"] > 0) & root
-        return (K, "soil_conductance", soil, "axial_boundary_conductance", axial,
+        # the soil boundary: on each contact node (per_node), or on each root section's soil node through its
+        # Connections, which carry the contact nodes' soil conductances
+        path_codes = np.asarray(network_path)
+        soil_links = path_codes == SOIL
+        node_mode = self.soil_boundary != "per_node"
+        if node_mode and root.any() and not (kind == SOIL_NODE).any():
+            raise ValueError(f"MechaHydraulics: soil_boundary {self.soil_boundary!r} needs a soil node per root "
+                             "section (GRANAP's scenario key soil_node)")
+        K = np.where(soil_links, soil[view.head] if node_mode else 0., K)
+        plant_soil = np.zeros_like(soil) if node_mode else soil
+        soil_node_kind = np.where(kind == SOIL_NODE, 3. if self.soil_boundary == "node_robin" else 1., 0.)
+        for name in ("apoplastic", "symplastic", "membrane"):
+            factors[name] = np.where(soil_links, 0., factors[name])
+        return (K, "soil_conductance", soil, "plant_soil_conductance", plant_soil, "soil_node_kind", soil_node_kind,
+                "axial_boundary_conductance", axial,
                 "standard_soil_psi", standard_soil.astype(float),
                 "standard_axial_psi", np.where(np.isnan(axial_psi), 0., axial_psi),
                 "in_standard_problem", standard.astype(float), "standard_axial_inflow", inflow,
@@ -875,7 +921,8 @@ class MechaHydraulics(MechaSections):
                 _wall_air_flow(B, standard_psi, air_tail_conductance, air_head_conductance, air_offset)
 
     # ── The plant problem: the sections joined by their xylem junctions ──
-    @graph_system(node_unknowns=["psi"], solver="newton", max_iterations=3, tolerance=1e-8, schedule_as="state")
+    @graph_system(node_unknowns=["psi"], solver="newton", max_iterations=3, tolerance=1e-8, schedule_as="state",
+                  condense=lambda self: "SubOrgan" if self.plant_solver == "condensed" else None)
     class _plant_problem:
         """
         The whole plant: every section's edges and the xylem junctions between sections; the soil around the root
@@ -893,8 +940,10 @@ class MechaHydraulics(MechaSections):
             return np.asarray(B @ (K * (np.asarray(B.T @ psi).reshape(-1) + osmotic_drive) + q)).reshape(-1) + \
                 elongation_sink
 
-        soil = boundary_set(filters={"soil_conductance": ">0"}, kind="robin", value="soil_psi",
-                            weight="soil_conductance", field="psi")
+        soil = boundary_set(filters={"plant_soil_conductance": ">0"}, kind="robin", value="soil_psi",
+                            weight="plant_soil_conductance", field="psi")
+        soil_nodes = boundary_set(filters={"soil_node_kind": ">0"}, kinds="soil_node_kind", value="soil_psi",
+                                  weight="soil_bulk_conductance", field="psi")
         collar = boundary_set(filters={"collar_kind": ">0"}, kinds="collar_kind", value="collar_value", weight=0.,
                               field="psi")
         leaf_surfaces = boundary_set(filters={"surface_inflow": "<0"}, kind="neumann", value="surface_inflow",
@@ -914,8 +963,13 @@ class MechaHydraulics(MechaSections):
                 _wall_air_flow(B, psi, air_tail_conductance, air_head_conductance, air_offset)
 
         @graph_output("root_uptake", location="node")
-        def _root_uptake(self, psi, soil_conductance, soil_psi):
-            return soil_conductance * (soil_psi - psi)
+        def _root_uptake(self, psi, plant_soil_conductance, soil_psi, conductance, network_path):
+            """The water entering from the soil: at each contact node (per_node), or at each soil node, the flow
+            through its Connections into its section."""
+            B = self._graph_view.incidence
+            links = np.asarray(network_path) == SOIL
+            through = np.where(links, conductance * np.asarray(B.T @ psi).reshape(-1), 0.)   # from the soil node
+            return plant_soil_conductance * (soil_psi - psi) + np.asarray(B.maximum(0) @ through).reshape(-1)
 
         @graph_output("evaporation", location="node")
         def _evaporation(self, psi, conductance, network_path):
@@ -953,6 +1007,14 @@ class MechaHydraulics(MechaSections):
         cgroup = np.asarray(ds.get("cgroup"))
         measured = np.asarray(ds.get("measured_axial_conductivity"), dtype=float)
         roots = self.section_roles()[1]
+        soil_side = soil_psi.copy()                    # the potential on the soil side of each contact node
+        if self.soil_boundary != "per_node":           # its section's soil node's
+            soil_nodes = np.flatnonzero(np.asarray(ds.get("kind")) == SOIL_NODE)
+            section = np.asarray(ds.owner("SubOrgan"))
+            at_section = np.full(segments.size, -1, dtype=np.int64)
+            at_section[section[soil_nodes]] = soil_nodes
+            here = at_section[section] >= 0
+            soil_side[here] = plant[at_section[section[here]]]
         for segment, (nodes, edges, geo) in self.section_geometries().items():
             i, v = where[segment], nodes[0]
             b, h = int(barrier[v]), float(height[v])
@@ -979,10 +1041,10 @@ class MechaHydraulics(MechaSections):
                 out["standard_uptake"][i] = soil_uptake(geo, soil[nodes], standard[nodes], standard_soil[nodes])
                 out["kr"][i] = radial_conductivity(out["standard_uptake"][i], psi_soil, psi_axial, geo.perimeter, h)
             contact = nodes[soil[nodes] > 0]
-            out["uptake"][i] = float(np.sum(soil[contact] * (soil_psi[contact] - plant[contact])))
+            out["uptake"][i] = float(np.sum(soil[contact] * (soil_side[contact] - plant[contact])))
             vessels = nodes[np.isin(cgroup[nodes], XYLEM_CGROUPS)]
             if contact.size and vessels.size and b > 0:                # no mature xylem at barrier 0 (D3)
-                out["kr_effective"][i] = radial_conductivity(out["uptake"][i], soil_psi[contact].mean(),
+                out["kr_effective"][i] = radial_conductivity(out["uptake"][i], soil_side[contact].mean(),
                                                              plant[vessels].mean(), geo.perimeter, h)
         with_osmotic = np.asarray(self.parameter_values("standard_osmotic", "node")) > 0
         water = standard + np.where(with_osmotic, np.asarray(osmotic_potential, dtype=float), 0.)

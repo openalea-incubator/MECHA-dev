@@ -20,6 +20,8 @@ PROTOPLAST, WALL, JUNCTION = 0, 1, 2                                     # GRANA
 MEMBRANE, WALL_AIR, WALL_PATH, PLASMODESMATA, AIR_LINK = 0, 1, 2, 3, 4   # GRANAP's network_path
 STOMATAL = 6                     # a pore to its leaf organ's surface node (GRANAP)
 LEAF_SURFACE = 3                 # GRANAP's kind of a leaf organ's surface node
+SOIL_NODE = 4                    # GRANAP's kind of a root section's soil node (its one soil boundary)
+SOIL = 7                         # GRANAP's path of a border wall or junction to its section's soil node
 
 MM = 1000.                                                               # mm -> µm
 N_LAYERS = 62
@@ -398,15 +400,17 @@ def section_parts(ds) -> dict:
     """
     {SubOrgan vid: (nodes, edges)}: each section's Compartments (DataStructure indices, in order) and its own
     Connections (edge indices, in order; the axial junctions to the neighbouring sections excluded). A leaf organ's
-    surface node (kind 3) and its stomatal Connections (path 6) belong to the organ, not to a section (GRANAP).
+    surface node (kind 3) and its stomatal Connections (path 6) belong to the organ, not to a section (GRANAP); a
+    root section's soil node (kind 4) and its Connections (path 7) are its soil boundary, not its anatomy.
     """
     owner = ds.owner("SubOrgan").copy()
     ids = ds.entity_ids("SubOrgan")
     view = ds.to_graph_view()
     path = np.asarray(ds.get("network_path"))
-    owner[np.asarray(ds.get("kind")) == LEAF_SURFACE] = -1
+    kind = np.asarray(ds.get("kind"))
+    owner[(kind == LEAF_SURFACE) | (kind == SOIL_NODE)] = -1
     inner = (owner[view.tail] == owner[view.head]) & (path != AXIAL_JUNCTION) & (path != STOMATAL) & \
-        (owner[view.tail] >= 0)
+        (path != SOIL) & (owner[view.tail] >= 0)
     node_order = np.argsort(owner, kind="stable")
     node_order = node_order[owner[node_order] >= 0]
     node_bounds = np.searchsorted(owner[node_order], np.arange(ids.size + 1))

@@ -61,3 +61,46 @@ def test_a_parameter_is_recovered_from_a_measured_krs():
     fit = fit_root_system(observations, parameters=("kaqp",), main=(1, 1), laterals=())
     assert fit.values["kaqp"] == pytest.approx(truth, rel=1e-5)
     assert abs(fit.compared.loc[0, "residual"]) < 1e-6
+
+
+def test_instanced_anatomies_give_the_same_root_system(seedling):
+    """Each segment's anatomy an instance of its class's template (GRANAP's instanced_anatomy): the same network,
+    potentials, Krs and SUF, bit for bit, without the anatomies' MTG vertices."""
+    instanced = root_system(main=(3, 1, 1), laterals=((1, (1,)),), soil_psi=SOIL, collar_psi=COLLAR, instanced=True)
+    a, b = seedling.data_structure, instanced.data_structure
+    assert instanced.conductance == seedling.conductance
+    assert a.entity_ids("edge").tolist() == b.entity_ids("edge").tolist()
+    for name in ("psi", "standard_uptake_fraction"):
+        np.testing.assert_array_equal(a.get(name), b.get(name))
+    assert len(b.structure) < len(a.structure) / 100
+
+
+def test_one_soil_node_per_section_held_at_the_soil_is_the_per_node_soil(seedling):
+    """soil_boundary node_dirichlet (GRANAP's soil_node: one soil node per root section, joined to its contact walls
+    and junctions through their soil conductances): on a uniform soil, the same potentials, uptakes and Krs as the
+    per-node soil terms."""
+    held = root_system(main=(3, 1, 1), laterals=((1, (1,)),), soil_psi=SOIL, collar_psi=COLLAR,
+                       soil_boundary="node_dirichlet")
+    a, b = seedling.data_structure, held.data_structure
+    anatomy = np.asarray(b.get("kind")) != 4
+    np.testing.assert_allclose(b.get("psi")[anatomy], a.get("psi"), rtol=1e-11)
+    assert held.conductance == seedling.conductance
+    uptake = [ds.map_to(np.asarray(ds.get("root_uptake")), "node", "SubOrgan", "sum") for ds in (a, b)]
+    np.testing.assert_allclose(uptake[1], uptake[0], rtol=1e-10)
+    np.testing.assert_allclose(held.sections["uptake"], seedling.sections["uptake"], rtol=1e-10)
+
+
+def test_a_soil_node_through_its_bulk_conductance_tends_to_the_held_soil():
+    """node_robin: the section's soil node joined to the soil through one bulk conductance; the uptake grows to the
+    held soil's as that conductance grows, and the condensed solve gives the same potentials."""
+    kwargs = dict(main=(3, 1, 1), laterals=((1, (1,)),), soil_psi=SOIL, collar_psi=COLLAR, instanced=True)
+    held = root_system(soil_boundary="node_dirichlet", **kwargs)
+    total = float(np.sum(held.data_structure.get("root_uptake")))
+    shares = []
+    for bulk in (1e-6, 1e-3, 1.):
+        robin = root_system(soil_boundary="node_robin", soil_bulk_conductance=bulk, **kwargs)
+        shares.append(float(np.sum(robin.data_structure.get("root_uptake"))) / total)
+    assert shares[0] < shares[1] < shares[2] < 1. and shares[2] > 0.999
+    condensed = root_system(soil_boundary="node_robin", soil_bulk_conductance=1e-3, plant_solver="condensed", **kwargs)
+    full = root_system(soil_boundary="node_robin", soil_bulk_conductance=1e-3, **kwargs)
+    np.testing.assert_allclose(condensed.data_structure.get("psi"), full.data_structure.get("psi"), rtol=1e-10)
