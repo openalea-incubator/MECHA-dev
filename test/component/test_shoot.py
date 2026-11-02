@@ -126,27 +126,48 @@ def test_root_quantities_on_roots_only(plant):
         assert np.isfinite(ds.get("Kx")[i])
 
 
-def _seedling(**scenario):
-    ds = initiated(planting([Planting()], None, scenario), Seedling, Anatomy, time_step=3600.).data_structure
-    g = ds.structure
-    Anatomy(data_structure=ds)()
-    ds.register("barrier", np.ones(ds.n_nodes()), location="node")
-    ds.register("soil_psi", np.full(ds.n_nodes(), SOIL), location="node")
-    for organ in ds.entity_ids("Organ"):
-        leaf = g.property("label").get(int(organ)) == g.labels.Organ.Leaf
-        g.property("leaf_transpiration")[int(organ)] = TRANSPIRATION if leaf else 0.
-    mecha = MechaHydraulics(data_structure=ds, soil_boundary="node_dirichlet")
-    mecha.collar_condition = 0.
-    mecha()
-    return ds, mecha
+def _seedling(reduced=False, **scenario):
+    """The seedling as a plant model (GRANAP's anatomies and MechaHydraulics, the leaf transpiring); *reduced*: its
+    stem and root sections reduced (plant_reduction: their conduits and the root's soil node kept), the leaf whole."""
+    from openalea.metafspm.coupling.composite_wrapper import CompositeModel
+    from openalea.metafspm.scene.population import population_data_structure
+    from openalea.granap.metafspm.component import junction_rules
+    from openalea.mecha.component import plant_reduction
+
+    class SeedlingModel(CompositeModel):
+        from_scale, nodes, initiators = "SubOrgan", "Compartment", (Seedling, Anatomy)
+        wiring = staticmethod(junction_rules)
+        reduction = plant_reduction(labels=("RootSegment", "StemElement")) if reduced else None
+
+        def __init__(self, data_structure, time_step):
+            g = data_structure.structure
+            for organ in data_structure.entity_ids("Organ"):         # the leaf organ's transpiration (MTG)
+                leaf = g.property("label").get(int(organ)) == g.labels.Organ.Leaf
+                g.property("leaf_transpiration")[int(organ)] = TRANSPIRATION if leaf else 0.
+            self.anatomy = Anatomy(data_structure=data_structure, time_step=time_step)
+            self.hydraulics = MechaHydraulics(data_structure=data_structure, time_step=time_step,
+                                              soil_boundary="node_dirichlet")
+            self.couple(self.anatomy, self.hydraulics)
+
+        def run(self):
+            self.anatomy()
+            self.hydraulics()
+
+    population = population_data_structure(planting([Planting()], SeedlingModel, dict(scenario, collar_condition=0.)),
+                                           SeedlingModel)
+    ds = population.data_structure
+    ds.set("barrier", np.ones(ds.n_nodes()))
+    ds.set("soil_psi", np.full(ds.n_nodes(), SOIL))
+    population.instance.run()
+    return ds, population.instance.hydraulics
 
 
 def test_a_condensed_stem_and_root_with_a_whole_leaf_are_the_full_seedling():
-    """condensed_anatomy on the shoot too: the stem element condensed onto its conduits, the root segment onto its
-    conduits and soil node, the transpiring leaf element whole (its vapour path): the potentials of every node they
-    share with the full seedling, the uptake (the transpiration), as the full one's."""
+    """A plant model's reduction on the shoot too: the stem element reduced onto its conduits, the root segment onto
+    its conduits and soil node, the transpiring leaf element whole (its vapour path, an explicit term): the
+    potentials of every node they share with the full seedling, the uptake (the transpiration), as the full one's."""
     full, _ = _seedling(instanced_anatomy=True, soil_node=True)
-    small, _ = _seedling(condensed_anatomy=True, soil_node=True)
+    small, _ = _seedling(reduced=True, soil_node=True)
     assert small.n_nodes() < full.n_nodes() / 3
 
     def places(ds):

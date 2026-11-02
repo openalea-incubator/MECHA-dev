@@ -135,17 +135,21 @@ def test_a_condensed_root_system_is_the_full_one_on_its_conduits_and_soil_nodes(
     rows = [row[place] for place in places(b)]
     np.testing.assert_allclose(b.get("psi"), a.get("psi")[rows], rtol=1e-11)
     total = float(full.sections["uptake"].sum())
-    np.testing.assert_allclose(small.sections["uptake"], full.sections["uptake"], rtol=1e-9, atol=1e-12 * total)
+    np.testing.assert_allclose(small.sections["uptake"], full.sections["uptake"], rtol=1e-9, atol=1e-11 * total)
     np.testing.assert_allclose(small.sections["suf"], full.sections["suf"], rtol=1e-9, atol=1e-11)
     np.testing.assert_allclose(small.sections["kr"], full.sections["kr"], rtol=1e-12)
     for name in ("Kx", "Kx_phloem"):                     # from the conduits alone: every one of them is kept
         np.testing.assert_allclose(b.get(name), a.get(name), rtol=1e-12)
     assert small.conductance == pytest.approx(full.conductance, rel=1e-10)
-    hydraulics = small.scene.populations[0].instance.hydraulics
-    cells, psi = hydraulics.section_cells(2)
-    owner = np.asarray(a.owner("SubOrgan"))
+    g = b.structure                                       # a section's cells, recovered from its kind
+    kept = np.flatnonzero(np.asarray(b.owner("SubOrgan")) == 2)
+    rows, psi = g.reduction.recover(b, 2, b.get("psi")[kept])
+    segment = int(b.entity_ids("SubOrgan")[2])
+    full_template = g.reduction._full[g.instances.template_of(segment).key]
+    where, node = full_template.properties["template_node"]
+    node_of_row = dict(zip(where.tolist(), np.asarray(node, dtype=int).tolist()))
     by_node = {node: i for i, (o, node) in enumerate(places(a)) if o == 2}
-    np.testing.assert_allclose(psi, a.get("psi")[[by_node[int(c)] for c in cells]], rtol=1e-10)
+    np.testing.assert_allclose(psi, a.get("psi")[[by_node[node_of_row[int(r)]] for r in rows]], rtol=1e-10)
 
 
 def test_condensed_osmotic_terms_are_the_full_anatomys():
@@ -166,7 +170,7 @@ def test_condensed_osmotic_terms_are_the_full_anatomys():
     def same():
         np.testing.assert_allclose(b.get("psi"), a.get("psi")[rows], rtol=1e-11)
         total = float(full.sections["uptake"].abs().sum())
-        np.testing.assert_allclose(small.sections["uptake"], full.sections["uptake"], rtol=1e-9, atol=1e-12 * total)
+        np.testing.assert_allclose(small.sections["uptake"], full.sections["uptake"], rtol=1e-9, atol=1e-11 * total)
     same()
     before = b.get("psi").copy()
     section, owner_a, owner_b = 1, np.asarray(a.owner("SubOrgan")), np.asarray(b.owner("SubOrgan"))

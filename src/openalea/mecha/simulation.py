@@ -299,11 +299,11 @@ class _RootSystem(CompositeModel):
         self.conductance()
 
 
-def _root_system_model(osmotic_presets=False):
+def _root_system_model(osmotic_presets=False, reduction=None):
     from openalea.granap.metafspm.architectures import RootAxis
     from openalea.granap.metafspm.component import GranapAnatomy, junction_rules
 
-    model = type("RootSystemModel", (_RootSystem,), dict(osmotic_presets=bool(osmotic_presets)))
+    model = type("RootSystemModel", (_RootSystem,), dict(osmotic_presets=bool(osmotic_presets), reduction=reduction))
     model.initiators = (RootAxis, GranapAnatomy)
     model.wiring = junction_rules
     return model
@@ -361,10 +361,10 @@ def root_system(main=(3, 3, 1, 1), laterals=((1, (1, 1)),), segment_length: floa
     (GRANAP's instanced_anatomy: no vertex of its own, the same results); *plant_solver*: MechaHydraulics'
     ("condensed": each section's interior eliminated, one factorisation per kind of section); *soil_boundary*:
     MechaHydraulics' ("node_dirichlet", "node_robin": one soil node per section, GRANAP's soil_node), with
-    *soil_bulk_conductance* (cm3 hPa-1 d-1) on each soil node (node_robin); *condensed*: each section condensed
-    onto its conduits and soil node (GRANAP's condensed_anatomy; a soil node boundary, node_dirichlet by default),
+    *soil_bulk_conductance* (cm3 hPa-1 d-1) on each soil node (node_robin); *condensed*: each section reduced onto
+    its conduits and soil node (plant_reduction, solve.reduction; a soil node boundary, node_dirichlet by default),
     its kind evaluated at its length or its class (*length_classes*); *osmotic*: MECHA's osmotic presets with these
-    parameters ({name: value}, MechaOsmoticPresets'; {}: its defaults), condensed sections through their kinds.
+    parameters ({name: value}, MechaOsmoticPresets'; {}: its defaults), reduced sections through their kinds.
 
     Its conductance (Krs, cm3 hPa-1 d-1) and its sections' standard uptake fractions are MARSHAL's (the soil
     uniform, the collar fixed), computed on the whole anatomical network.
@@ -385,13 +385,13 @@ def root_system(main=(3, 3, 1, 1), laterals=((1, (1, 1)),), segment_length: floa
         rows += [(f"lateral {k}", rank, barrier, lateral_radius) for rank, barrier in enumerate(barriers)]
     scenario = dict(values, collar_condition=1., collar_psi=collar_psi, root_laterals=branched,
                     instanced_anatomy=bool(instanced), plant_solver=plant_solver, soil_boundary=soil_boundary,
-                    soil_node=soil_boundary != "per_node" or condensed, condensed_anatomy=bool(condensed),
-                    length_classes=length_classes, **dict(osmotic or {}),
-                    **({"condensed_osmotic": "presets"} if osmotic is not None and condensed else {}),
+                    soil_node=soil_boundary != "per_node" or condensed, **dict(osmotic or {}),
                     root_segments=[[main_radius, segment_length, (n - 1 - i) * segment_length] for i in range(n)])
     if anatomy is not None:
         scenario["root_anatomy"] = dict(anatomy)
-    scene = Scene(planting([Planting()], _root_system_model(osmotic is not None), scenario),
+    from openalea.mecha.component import plant_reduction
+    reduction = plant_reduction(length_classes=length_classes, osmotic=osmotic is not None) if condensed else None
+    scene = Scene(planting([Planting()], _root_system_model(osmotic is not None, reduction), scenario),
                   recorder=SceneRecorder())
     ds = scene.populations[0].data_structure
     layout = pd.DataFrame(rows, columns=["axis", "rank", "barrier", "radius"])

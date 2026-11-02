@@ -85,14 +85,18 @@ class RootSystemConductance(FunctionalComponent):
         network = np.asarray(conductance) + np.asarray(xylem_axial_conductance)
         soil_nodes = np.asarray(ds.get("kind")) == SOIL_NODE
         if soil_nodes.any():                       # each section's soil node held at the soil (its contacts in the
-            sources, through = soil_nodes, None    # network, or its condensed equivalent)
+            sources, through = soil_nodes, None    # network, or in its reduced section's interior)
         else:                                      # each surface node joined to the soil through its conductance
             sources, through = np.asarray(soil_conductance) > 0., soil_conductance
             network = np.where(np.asarray(network_path) == SOIL, 0., network)
+        reduction = getattr(ds.structure, "reduction", None)
+        terms = reduction.terms(self, "MechaHydraulics._plant_problem", ds, ds.entity_ids("node")) \
+            if reduction is not None and not reduction.library else None
         total, inflow = equivalent_conductance(ds.to_graph_view(), network, sources=sources, sinks=collar,
                                                source_conductance=through,
                                                groups=ds.owner("SubOrgan") if self.plant_solver == "condensed" else None,
-                                               cache=self.__dict__.setdefault("_krs_condensation", {}))
+                                               cache=self.__dict__.setdefault("_krs_condensation", {}),
+                                               extra=terms[0] if terms is not None else None)
         plant = np.asarray(ds.owner("Plant"))
         per_plant = np.bincount(plant, weights=inflow, minlength=len(ds.entity_ids("Plant")))
         share = np.divide(inflow, per_plant[plant], out=np.zeros_like(inflow), where=per_plant[plant] > 0.)
