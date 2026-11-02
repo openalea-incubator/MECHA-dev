@@ -104,7 +104,10 @@ class SoluteTransport:
             'membrane'      : float  cm²/d  passive transmembrane diffusivity
                               (new; HydraulicMatrixBuilder does not build this)
             'sigma'         : dict {cgroup_int: float}
-                              membrane reflection coefficient (0–1; default 0)
+                              FALLBACK reflection coefficient (0–1) used only
+                              when the per-edge membrane/PD σ set by mecha
+                              (mb.sigma / pd.sigma, already baked into
+                              edge_flux_list) is unavailable; default 0
         }
     capacitance_params : dict, optional
         {
@@ -165,6 +168,34 @@ class SoluteTransport:
         self._D_cache: dict = {}   # (h, i_maturity) → csr_matrix
         self._T_cache: dict = {}   # (scheme, mode, h, i_mat, i_scen, fp) → csr_matrix
         self._A_cache: dict = {}   # (mode, i_mat, i_scen, fp) → csr_matrix
+
+    # ------------------------------------------------------------------
+    # Reflection coefficient σ
+    # ------------------------------------------------------------------
+    def _edge_sigma(self, i: int, j: int, is_mem: bool, is_pd: bool,
+                    cell_node: int) -> float:
+        """Per-edge reflection coefficient σ, consistent with mecha_class.
+
+        mecha.compute_edge_flows bakes the Kedem–Katchalsky osmotic term with
+        the per-edge membrane/PD σ (``mb.sigma`` / ``pd.sigma``) into
+        edge_flux_list.  The solute carry factor (1−σ) must use the SAME σ, so
+        read it from the same membrane/PD object.  Fall back to the per-cgroup
+        ``diffusion_params['sigma']`` dict only when the object is unavailable.
+        """
+        cm = self.network.cell_manager
+        if is_mem:
+            mb = cm.get_membrane_by_edge(i, j)
+            if mb is not None and mb.sigma is not None:
+                return float(mb.sigma)
+        elif is_pd:
+            pd = cm.get_plasmodesmata_by_edge(i, j)
+            if pd is not None and pd.sigma is not None:
+                return float(pd.sigma)
+        else:
+            return 0.0   # walls/junctions: no reflection
+        cg = _cgroup_canonical(
+            self.network.graph.nodes[cell_node].get('cgroup', 4))
+        return float(self.sigma.get(cg, 0.0))
 
     # ------------------------------------------------------------------
     # Diffusion operator D
@@ -306,6 +337,9 @@ class SoluteTransport:
         {'source': i, 'target': j, 'flux': F}  with F [cm³/d]:
           F > 0  flow from source to target (source = upstream)
           F < 0  flow from target to source (target = upstream)
+        F is the FULL Kedem–Katchalsky volume flux K(Δψ_p + σΔψ_os) already
+        assembled by mecha.compute_edge_flows, so the osmotic membrane term is
+        NOT re-added here.
 
         First-order upwind.  Stable only while the edge Peclet number
         Pe = |F·f| / D_edge stays ≲ 2; at high Pe the steady operator D + A 
@@ -358,9 +392,7 @@ class SoluteTransport:
 
             if is_mem:
                 cell_node = tgt if not tgt_apo else src
-                cg     = _cgroup_canonical(
-                    self.network.graph.nodes[cell_node].get('cgroup', 4))
-                factor = 1.0 - float(self.sigma.get(cg, 0.0))
+                factor = 1.0 - self._edge_sigma(src, tgt, is_mem, is_pd, cell_node)
             else: # need to check for pd
                 factor = 1.0
 
@@ -374,7 +406,6 @@ class SoluteTransport:
                     rows.append(r); cols.append(c); data.append(v)
 
         A = coo_matrix((data, (rows, cols)), shape=(n, n)).tocsr()
-        A = A + self._build_osmotic_advection(i_maturity)
 
         if self.mode == 'apo':
             A = A[:nwj, :nwj].tocsr()
@@ -484,16 +515,16 @@ class SoluteTransport:
 
         nwj = self.n_wall_junction
         n   = self.n_total
-        cm  = self.network.cell_manager
         graph = self.network.graph
 
         # Diffusion off-diagonals D_e per node pair (full network).  Each simple
         # graph edge is a single physical link, so D[i,j] is that edge's D_e.
         D_full = self._diffusion_full(h, i_maturity)
 
-        # ── Per-edge advective volume flux F_ij (i<j), pressure-driven ──────────
+        # ── Per-edge advective volume flux F_ij (i<j) ──────────────────────────
         # edge_flux_list holds one entry per active edge with a signed flux and a
         # source→target orientation; re-key to canonical (min,max) with a sign.
+        # F is the FULL Kedem–Katchalsky flux K(Δψ_p + σΔψ_os) from mecha.
         flux_ij: dict = {}
         for edge in self.mecha.edge_flux_list[i_maturity][i_scenario]:
             src, tgt, F = edge['source'], edge['target'], edge['flux']
@@ -502,10 +533,6 @@ class SoluteTransport:
             a, b = (src, tgt) if src < tgt else (tgt, src)
             s = 1.0 if src < tgt else -1.0
             flux_ij[(a, b)] = flux_ij.get((a, b), 0.0) + s * F
-
-        def _os(obj):
-            v = getattr(obj, 'psi_os', None)
-            return float(v) if (v is not None and not np.isnan(float(v))) else 0.0
 
         rows, cols, data = [], [], []
 
@@ -565,27 +592,13 @@ class SoluteTransport:
 
             De = float(D_full[i, j])
 
-            # Advective volume flux i→j = pressure flux + osmotic membrane flux,
-            # scaled by the membrane carry factor f = 1 − σ.
+            # Advective volume flux i→j is the FULL Kedem–Katchalsky flux
+            # K(Δψ_p + σΔψ_os) already in edge_flux_list; it is only scaled by
+            # the membrane carry factor f = 1 − σ.
             F = flux_ij.get((i, j), 0.0)
             if is_mem:
                 cell_node = v if not j_apo else u   # the cell end of the membrane
-                cg = _cgroup_canonical(graph.nodes[cell_node].get('cgroup', 4))
-                sig = float(self.sigma.get(cg, 0.0))
-                factor = 1.0 - sig
-                # Osmotic Kedem–Katchalsky flux F_os = K σ (ψ_os,wall − ψ_os,cell),
-                # oriented wall→cell.  Rewrite in the canonical i→j orientation.
-                if sig != 0.0:
-                    K = eattr.get('K', 0.0)
-                    if K:
-                        wall_id = i if i_apo else j
-                        cell_id = j if i_apo else i
-                        wall_obj = cm.get_wall_by_node_id(wall_id)
-                        cell_obj = cm.get_by_node_id(cell_id)
-                        if wall_obj is not None and cell_obj is not None:
-                            F_os_wc = K * sig * (_os(wall_obj) - _os(cell_obj))
-                            # F_os_wc is wall→cell; convert to i→j.
-                            F += F_os_wc if (wall_id == i) else -F_os_wc
+                factor = 1.0 - self._edge_sigma(i, j, is_mem, is_pd, cell_node)
             else: # need to check for pd
                 factor = 1.0
 
@@ -633,76 +646,6 @@ class SoluteTransport:
             self._D_cache.pop((h, i_maturity), None)   # clear the full-mode entry
         self._D_cache[cache_key] = D_full
         return D_full
-
-    def _build_osmotic_advection(self, i_maturity: int) -> sp.csr_matrix:
-        """
-        Osmotic contribution to advective solute transport at membrane edges.
-
-        edge_flux_list captures only the pressure-driven volume flux
-            F_p = K × (ψ_p,wall − ψ_p,cell).
-        The true Kedem-Katchalsky volume flux is
-            J_v = K × (Δψ_p + σ Δψ_os)
-        so the missing term is
-            F_os = K × σ × (ψ_os,wall − ψ_os,cell).
-        The advective solute flux couples with factor (1−σ), identical to the
-        pressure-driven path, giving an additional upwind contribution
-            ΔJ_s = (1−σ) × F_os × c_upstream.
-
-        osmotic potentials are read from wall_obj.psi_os / cell_obj.psi_os,
-        which are set by mecha.initialize_scenarios().  If both are zero (or
-        None) for every membrane edge the returned matrix is all-zero, so
-        calling this when no osmotic scenario has been set is safe.
-        """
-        nwj = self.n_wall_junction
-        n   = self.n_total
-        rows, cols, data = [], [], []
-        cm = self.network.cell_manager
-
-        def _os(obj):
-            v = getattr(obj, 'psi_os', None)
-            return float(v) if (v is not None and not np.isnan(float(v))) else 0.0
-
-        for node, edges in self.network.graph.adjacency():
-            i = self.indice[node]
-            if i >= nwj:
-                continue  # only start from wall nodes to avoid double-counting
-
-            for neighbor, eattr in edges.items():
-                j = self.indice[neighbor]
-                if j <= i or eattr.get('path') != 'membrane':
-                    continue
-
-                K = eattr.get('K', 0.0)
-                if not K:
-                    continue
-
-                cg  = _cgroup_canonical(
-                    self.network.graph.nodes[neighbor].get('cgroup', 4))
-                sig = float(self.sigma.get(cg, 0.0))
-                if sig == 0.0:
-                    continue
-
-                wall_obj = cm.get_wall_by_node_id(i)
-                cell_obj = cm.get_by_node_id(j)
-                if wall_obj is None or cell_obj is None:
-                    continue
-
-                F_os = K * sig * (_os(wall_obj) - _os(cell_obj))
-                if F_os == 0.0:
-                    continue
-
-                factor = 1.0 - sig   # Kedem-Katchalsky advection coupling
-
-                if F_os > 0.0:       # osmotic drive: wall → cell (wall is upstream)
-                    for r, c, v in ((i, i, -F_os * factor),
-                                    (j, i,  F_os * factor)):
-                        rows.append(r); cols.append(c); data.append(v)
-                else:                # osmotic drive: cell → wall (cell is upstream)
-                    for r, c, v in ((j, j,  F_os * factor),
-                                    (i, j, -F_os * factor)):
-                        rows.append(r); cols.append(c); data.append(v)
-
-        return coo_matrix((data, (rows, cols)), shape=(n, n)).tocsr()
 
     # ------------------------------------------------------------------
     # Capacitance  C  (diagonal)
