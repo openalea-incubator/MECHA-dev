@@ -342,7 +342,8 @@ def root_system(main=(3, 3, 1, 1), laterals=((1, (1, 1)),), segment_length: floa
                 main_radius: float = 0.5e-3, lateral_radius: float = 0.25e-3, parameters: dict = None,
                 anatomy: dict = None, soil_psi: float = -1000., collar_psi: float = -5000.,
                 experiment: str = "control", instanced: bool = False, plant_solver: str = "full",
-                soil_boundary: str = "per_node", soil_bulk_conductance: float = 0.) -> RootSystem:
+                soil_boundary: str = "per_node", soil_bulk_conductance: float = 0., condensed: bool = False,
+                length_classes="exact") -> RootSystem:
     """
     A seedling's root system, every section a GRANAP anatomy and all of them one MECHA network joined by their xylem:
     a main root of len(*main*) segments (their barriers, MECHA's maturity codes, from the collar to the tip) and its
@@ -353,13 +354,17 @@ def root_system(main=(3, 3, 1, 1), laterals=((1, (1, 1)),), segment_length: floa
     (GRANAP's instanced_anatomy: no vertex of its own, the same results); *plant_solver*: MechaHydraulics'
     ("condensed": each section's interior eliminated, one factorisation per kind of section); *soil_boundary*:
     MechaHydraulics' ("node_dirichlet", "node_robin": one soil node per section, GRANAP's soil_node), with
-    *soil_bulk_conductance* (cm3 hPa-1 d-1) on each soil node (node_robin).
+    *soil_bulk_conductance* (cm3 hPa-1 d-1) on each soil node (node_robin); *condensed*: each section condensed
+    onto its conduits and soil node (GRANAP's condensed_anatomy; a soil node boundary, node_dirichlet by default),
+    its kind evaluated at its length or its class (*length_classes*).
 
     Its conductance (Krs, cm3 hPa-1 d-1) and its sections' standard uptake fractions are MARSHAL's (the soil
     uniform, the collar fixed), computed on the whole anatomical network.
     """
     if experiment not in EXPERIMENTS:
         raise ValueError(f"root_system(experiment=...): one of {sorted(EXPERIMENTS)}, got {experiment!r}")
+    if condensed and soil_boundary == "per_node":
+        soil_boundary = "node_dirichlet"
     values = EXPERIMENTS[experiment](dict(parameters or {}))
     n = len(main)
     rows = [("main", rank, barrier, main_radius) for rank, barrier in enumerate(main)]
@@ -372,7 +377,8 @@ def root_system(main=(3, 3, 1, 1), laterals=((1, (1, 1)),), segment_length: floa
         rows += [(f"lateral {k}", rank, barrier, lateral_radius) for rank, barrier in enumerate(barriers)]
     scenario = dict(values, collar_condition=1., collar_psi=collar_psi, root_laterals=branched,
                     instanced_anatomy=bool(instanced), plant_solver=plant_solver, soil_boundary=soil_boundary,
-                    soil_node=soil_boundary != "per_node",
+                    soil_node=soil_boundary != "per_node" or condensed, condensed_anatomy=bool(condensed),
+                    length_classes=length_classes,
                     root_segments=[[main_radius, segment_length, (n - 1 - i) * segment_length] for i in range(n)])
     if anatomy is not None:
         scenario["root_anatomy"] = dict(anatomy)

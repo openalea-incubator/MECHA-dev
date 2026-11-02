@@ -118,6 +118,10 @@ class MechaSections(FunctionalComponent):
     length: float = input_variable(**_doc("m", "the segment's length (MECHA's section height)"),
                                    by="Architecture", scale=SCALES.SubOrgan, location="node",
                                    kind="intensive")
+    condensed_section: float = input_variable(**_doc("", "1: the segment's anatomy is condensed onto its conduits "
+                                                         "and soil node (GRANAP's condensed_anatomy)"),
+                                              by="Anatomy", default=0., scale=SCALES.SubOrgan, location="node",
+                                              aggregation="broadcast", kind="descriptor")
 
     # ── Geometry, per distinct anatomy ──
     def section_geometries(self) -> dict:
@@ -127,13 +131,15 @@ class MechaSections(FunctionalComponent):
         """
         ds = self.data_structure
         templates = np.asarray(ds.get("anatomy_template"))
-        stamp = (ds._topology_stamp() if hasattr(ds, "_topology_stamp") else ds.topology_version, templates.tobytes())
+        condensed = np.asarray(ds.get("condensed_section")) > 0
+        stamp = (ds._topology_stamp() if hasattr(ds, "_topology_stamp") else ds.topology_version, templates.tobytes(),
+                 condensed.tobytes())
         kept = self.__dict__.get("_section_geometries")
         if kept is not None and kept[0] == stamp:                   # the same sections: the same dict (read only)
             return kept[1]
         template = dict(zip(ds.entity_ids("SubOrgan").tolist(), templates.tolist()))
         out = {}
-        for segment, (nodes, edges) in section_parts(ds).items():
+        for segment, (nodes, edges) in section_parts(ds, exclude=condensed).items():
             if nodes.size == 0:
                 continue
             index = template.get(segment, -1.)
@@ -280,6 +286,10 @@ class MechaHydraulics(MechaSections):
                                             "(solve.network.condensed_solve; the soil, collar and junction nodes "
                                             "kept): the same potentials to round-off",
                                 default="full", choices=("full", "condensed"))
+    length_classes: object = setting(description="a condensed section's kind is evaluated at its length (\"exact\") or "
+                                                 "at its class of this relative width (e.g. 0.02: (1.02)^k, the "
+                                                 "nearest; its internal conductances within about half the width)",
+                                     default="exact")
     soil_boundary: str = setting(description="the soil condition of the plant problem: \"per_node\", a Robin term on "
                                              "each border wall and junction in contact (MECHA's); \"node_dirichlet\", "
                                              "one per root section, its soil node held at the section's soil_psi, "
@@ -397,6 +407,11 @@ class MechaHydraulics(MechaSections):
                                                           "per_node), 0 with a soil node"),
                                                    default=0., scale=SCALES.Compartment, location="node",
                                                    kind="NonInertialIntensive")
+    condensed_source: float = state_variable(**_doc("cm3 d-1", "on a condensed section's kept node: the plant "
+                                                    "problem's sources of its hidden cells (elongation, osmotic), "
+                                                    "carried to it (its kind's reduction); 0 elsewhere"),
+                                             default=0., scale=SCALES.Compartment, location="node",
+                                             kind="NonInertialExtensive")
     soil_node_kind: float = state_variable(**_doc("", "on a root section's soil node (GRANAP's soil_node): its "
                                                   "condition, 1 the potential soil_psi (soil_boundary node_dirichlet, "
                                                   "and per_node: the node then unused), 3 joined to soil_psi through "
@@ -615,6 +630,10 @@ class MechaHydraulics(MechaSections):
             rank[nodes] = geometry.cell_rank
             if segment in roots:                                       # a root quantity (E1)
                 perimeter[where[segment]] = geometry.perimeter
+        if self.condensed_sections():                                  # the condensed ones': their kind's
+            kinds = self.section_kinds(ds.get("barrier"), ds.get("length"))
+            for i in self.condensed_sections():
+                perimeter[i] = kinds[i].perimeter
         return rank, "perimeter", perimeter
 
     # ── Conductances ──
@@ -657,7 +676,7 @@ class MechaHydraulics(MechaSections):
             -> tuple[np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,
                      str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str,
                      np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,
-                     str, np.ndarray, str, np.ndarray]:
+                     str, np.ndarray, str, np.ndarray, str, np.ndarray]:
         """
         Every edge's conductance, and the boundary conductances of the nodes (soil, axial), from MECHA's geometry,
         the segments' barriers and heights (their lengths), and the plants' parameters; the standard problem's
@@ -668,7 +687,8 @@ class MechaHydraulics(MechaSections):
         key = self._memo_key(network_path, barrier, length, anatomy_template, leaf_transpiration, stomatal_aperture,
                              pore_width, pore_depth, *(ds.get(name) for name in ("kind", "cell_area", "wall_thickness",
                                                                                  "soil_contact_cell",
-                                                                                 "measured_axial_conductivity")))
+                                                                                 "measured_axial_conductivity",
+                                                                                 "condensed_section")))
         kept = self._memo("conductance", key)
         if kept is not None:
             return kept
@@ -683,7 +703,7 @@ class MechaHydraulics(MechaSections):
         ds = self.data_structure
         stamp = ds._topology_stamp() if hasattr(ds, "_topology_stamp") else ds.topology_version
         versions = tuple(ds.write_count(name) if ds.has(name) else -1 for name in self.PARAMETERS)
-        settings = (self.soil_boundary, self.plant_solver)
+        settings = (self.soil_boundary, self.plant_solver, str(self.length_classes))
         return content_key(repr((stamp, versions, settings)), *(np.asarray(a) for a in arrays))
 
     def _memo(self, name: str, key: str):
@@ -759,7 +779,9 @@ class MechaHydraulics(MechaSections):
         soil_node_kind = np.where(kind == SOIL_NODE, 3. if self.soil_boundary == "node_robin" else 1., 0.)
         for name in ("apoplastic", "symplastic", "membrane"):
             factors[name] = np.where(soil_links, 0., factors[name])
+        K, condensed_source = self._condensed_terms(K, path_codes, barrier, length)
         return (K, "soil_conductance", soil, "plant_soil_conductance", plant_soil, "soil_node_kind", soil_node_kind,
+                "condensed_source", condensed_source,
                 "axial_boundary_conductance", axial,
                 "standard_soil_psi", standard_soil.astype(float),
                 "standard_axial_psi", np.where(np.isnan(axial_psi), 0., axial_psi),
@@ -773,6 +795,80 @@ class MechaHydraulics(MechaSections):
                 "membrane_diffusion_factor", np.where(in_matrix, factors["membrane"], 0.),
                 "node_volume", self._node_volumes(net, P_node, height_node, kind),
                 "contact_distance", factors["contact_distance"])
+
+    # ── Condensed sections (GRANAP's condensed_anatomy): their kinds, evaluated once (condensed) ──
+
+    def condensed_sections(self) -> dict:
+        """{segment index: (its nodes, its equivalent Connections)} of the condensed sections, in DataStructure
+        order (the kind's kept nodes and pairs), cached per topology."""
+        ds = self.data_structure
+        stamp = ds._topology_stamp() if hasattr(ds, "_topology_stamp") else ds.topology_version
+        kept = self.__dict__.get("_condensed_sections")
+        if kept is not None and kept[0] == stamp:
+            return kept[1]
+        from openalea.mecha.condensed import EQUIVALENT
+        owner = np.asarray(ds.owner("SubOrgan"))
+        flag = np.asarray(ds.get("condensed_section")) > 0
+        view = ds.to_graph_view()
+        equivalent = np.flatnonzero(np.asarray(ds.get("network_path")) == EQUIVALENT)
+        out = {}
+        for i in np.unique(owner[flag]).tolist():
+            nodes = np.flatnonzero(owner == i)
+            out[int(i)] = (nodes, equivalent[owner[view.tail[equivalent]] == i])
+        self.__dict__["_condensed_sections"] = (stamp, out)
+        return out
+
+    def section_kinds(self, barrier, length) -> dict:
+        """{segment index: Kind} of the condensed sections: (template, barrier, length class, the plant's parameters),
+        evaluated once on a library of full sections (condensed.evaluate), the missing ones together."""
+        from openalea.mecha import condensed
+        from openalea.mecha.memo import content_key
+        sections = self.condensed_sections()
+        if not sections:
+            return {}
+        ds = self.data_structure
+        templates = np.asarray(ds.get("anatomy_template"))
+        P = self.parameter_table("node")
+        barrier, length = np.asarray(barrier), np.asarray(length, dtype=float)
+        library = self.__dict__.setdefault("_kinds", {})
+        keys, missing = {}, {}
+        for i, (nodes, _) in sections.items():
+            v = nodes[0]
+            parameters = {name: float(P[name][v]) for name in self.PARAMETERS}
+            request = (int(templates[i]), int(barrier[v]), condensed.length_class(length[v], self.length_classes))
+            key = (request, content_key(parameters))
+            keys[i] = key
+            if key not in library:
+                missing.setdefault(key[1], (parameters, []))[1].append(request)
+        for parameters, requests in missing.values():
+            requests = sorted(set(requests))
+            for request, kind in zip(requests, condensed.evaluate(requests, parameters, {}, MechaHydraulics)):
+                library[(request, content_key(parameters))] = kind
+        return {i: library[key] for i, key in keys.items()}
+
+    def _condensed_terms(self, K, path_codes, barrier, length) -> tuple:
+        """The conductances of the condensed sections' equivalent Connections and their kept nodes' sources, from
+        their kinds."""
+        source = np.zeros(self.data_structure.n_nodes())
+        kinds = self.section_kinds(barrier, length)
+        if not kinds:
+            return K, source
+        K = np.array(K, dtype=float, copy=True)
+        for i, (nodes, edges) in self.condensed_sections().items():
+            kind = kinds[i]
+            if edges.size != kind.pairs.size or nodes.size != kind.source.size:
+                raise RuntimeError(f"MechaHydraulics: condensed section {i} does not match its kind's reduction")
+            K[edges] = kind.pairs
+            source[nodes] = kind.source
+        return K, source
+
+    def section_cells(self, segment_index: int) -> tuple:
+        """A condensed section's cells, reconstructed: (their template nodes, their potentials psi), from its kind and
+        its kept nodes' potentials."""
+        nodes, _ = self.condensed_sections()[int(segment_index)]
+        ds = self.data_structure
+        kind = self.section_kinds(ds.get("barrier"), ds.get("length"))[int(segment_index)]
+        return kind.interior_nodes, kind.recover(np.asarray(ds.get("psi"), dtype=float)[nodes])
 
     def relative_x(self, geometries: dict) -> np.ndarray:
         """Per node, its x relative to its section's cells' x range (0 left, 1 right; the legacy's x_rel, from the
@@ -979,12 +1075,12 @@ class MechaHydraulics(MechaSections):
 
         @node_balance(field="psi")
         def _balance(self, psi, conductance, xylem_axial_conductance, osmotic_drive, air_tail_conductance,
-                     air_head_conductance, air_offset, elongation_sink):
+                     air_head_conductance, air_offset, elongation_sink, condensed_source):
             B = self._graph_view.incidence
             K = conductance + xylem_axial_conductance
             q = _wall_air_flow(B, psi, air_tail_conductance, air_head_conductance, air_offset)
             return np.asarray(B @ (K * (np.asarray(B.T @ psi).reshape(-1) + osmotic_drive) + q)).reshape(-1) + \
-                elongation_sink
+                elongation_sink + condensed_source
 
         soil = boundary_set(filters={"plant_soil_conductance": ">0"}, kind="robin", value="soil_psi",
                             weight="plant_soil_conductance", field="psi")
@@ -1009,13 +1105,13 @@ class MechaHydraulics(MechaSections):
                 _wall_air_flow(B, psi, air_tail_conductance, air_head_conductance, air_offset)
 
         @graph_output("root_uptake", location="node")
-        def _root_uptake(self, psi, plant_soil_conductance, soil_psi, conductance, network_path):
-            """The water entering from the soil: at each contact node (per_node), or at each soil node, the flow
-            through its Connections into its section."""
+        def _root_uptake(self, psi, plant_soil_conductance, soil_psi, conductance, kind, condensed_source):
+            """The water entering from the soil: at each contact node (per_node), or at each soil node, its balance:
+            the flow through its Connections into its section (and, condensed, its share of the hidden cells'
+            sources)."""
             B = self._graph_view.incidence
-            links = np.asarray(network_path) == SOIL
-            through = np.where(links, conductance * np.asarray(B.T @ psi).reshape(-1), 0.)   # from the soil node
-            return plant_soil_conductance * (soil_psi - psi) + np.asarray(B.maximum(0) @ through).reshape(-1)
+            out = np.asarray(B @ (conductance * np.asarray(B.T @ psi).reshape(-1))).reshape(-1) + condensed_source
+            return plant_soil_conductance * (soil_psi - psi) + np.where(np.asarray(kind) == SOIL_NODE, out, 0.)
 
         @graph_output("evaporation", location="node")
         def _evaporation(self, psi, conductance, network_path):
@@ -1033,7 +1129,7 @@ class MechaHydraulics(MechaSections):
     # ── The sections' results ──
     @totalstate(include_inactive=True)
     def _kr(self, standard_psi, psi, soil_conductance, soil_psi, barrier, length, osmotic_potential,
-            standard_soil_psi) \
+            standard_soil_psi, root_uptake) \
             -> tuple[np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,
                      str, np.ndarray]:
         """
@@ -1092,6 +1188,18 @@ class MechaHydraulics(MechaSections):
             if contact.size and vessels.size and b > 0:                # no mature xylem at barrier 0 (D3)
                 out["kr_effective"][i] = radial_conductivity(out["uptake"][i], soil_side[contact].mean(),
                                                              plant[vessels].mean(), geo.perimeter, h)
+        kinds = self.section_kinds(barrier, length)                  # the condensed sections: their kind's kr
+        node_kind, uptake_at = np.asarray(ds.get("kind")), np.asarray(root_uptake, dtype=float)
+        for i, (nodes, _) in self.condensed_sections().items():
+            kind = kinds[i]
+            out["kr"][i], out["standard_uptake"][i] = kind.kr, kind.standard_uptake
+            soil_node = nodes[node_kind[nodes] == SOIL_NODE]
+            out["uptake"][i] = float(uptake_at[soil_node].sum())
+            vessels = nodes[np.isin(cgroup[nodes], XYLEM_CGROUPS)]
+            b, h = int(barrier[nodes[0]]), float(height[nodes[0]])
+            if soil_node.size and vessels.size and b > 0:
+                out["kr_effective"][i] = radial_conductivity(out["uptake"][i], float(plant[soil_node].mean()),
+                                                             plant[vessels].mean(), kind.perimeter, h)
         with_osmotic = np.asarray(self.parameter_values("standard_osmotic", "node")) > 0
         water = standard + np.where(with_osmotic, np.asarray(osmotic_potential, dtype=float), 0.)
         vapour, kelvin = self._liquid_equivalent(standard, ds.get("vapour_node"))

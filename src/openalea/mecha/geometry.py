@@ -396,7 +396,7 @@ NODE_VARIABLES = ("kind", "cgroup", "tissue", "section_x", "section_y", "wall_le
 EDGE_VARIABLES = ("network_path", "edge_length", "edge_dist")
 
 
-def section_parts(ds) -> dict:
+def section_parts(ds, exclude=None) -> dict:
     """
     {SubOrgan vid: (nodes, edges)}: each section's Compartments (DataStructure indices, in order) and its own
     Connections (edge indices, in order; the axial junctions to the neighbouring sections excluded). A leaf organ's
@@ -409,6 +409,8 @@ def section_parts(ds) -> dict:
     path = np.asarray(ds.get("network_path"))
     kind = np.asarray(ds.get("kind"))
     owner[(kind == LEAF_SURFACE) | (kind == SOIL_NODE)] = -1
+    if exclude is not None:                                   # e.g. the condensed sections: no cells here
+        owner[np.asarray(exclude, dtype=bool)] = -1
     inner = (owner[view.tail] == owner[view.head]) & (path != AXIAL_JUNCTION) & (path != STOMATAL) & \
         (path != SOIL) & (owner[view.tail] >= 0)
     node_order = np.argsort(owner, kind="stable")

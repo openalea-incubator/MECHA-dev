@@ -84,7 +84,7 @@ def test_one_soil_node_per_section_held_at_the_soil_is_the_per_node_soil(seedlin
     a, b = seedling.data_structure, held.data_structure
     anatomy = np.asarray(b.get("kind")) != 4
     np.testing.assert_allclose(b.get("psi")[anatomy], a.get("psi"), rtol=1e-11)
-    assert held.conductance == seedling.conductance
+    assert held.conductance == pytest.approx(seedling.conductance, rel=1e-10)   # its soil nodes held: equivalent
     uptake = [ds.map_to(np.asarray(ds.get("root_uptake")), "node", "SubOrgan", "sum") for ds in (a, b)]
     np.testing.assert_allclose(uptake[1], uptake[0], rtol=1e-10)
     np.testing.assert_allclose(held.sections["uptake"], seedling.sections["uptake"], rtol=1e-10)
@@ -116,3 +116,31 @@ def test_the_condensed_solves_give_the_same_sections():
     for column in ("kr", "suf", "uptake"):
         np.testing.assert_allclose(condensed.sections[column], full.sections[column], rtol=1e-9)
     assert condensed.conductance == pytest.approx(full.conductance, rel=1e-10)
+
+
+def test_a_condensed_root_system_is_the_full_one_on_its_conduits_and_soil_nodes():
+    """condensed (GRANAP's condensed_anatomy): each section its conduits and soil node, joined by the exact reduction
+    of its full network, one per kind (template, barrier, length, parameters): the same potentials on those nodes,
+    uptakes, kr, SUF and Krs as the full anatomies'; a section's cells reconstructed on request as the full ones."""
+    kwargs = dict(main=(3, 3, 1, 1, 0), laterals=((1, (1, 0)),), soil_psi=SOIL, collar_psi=COLLAR,
+                  soil_boundary="node_dirichlet")
+    full, small = root_system(instanced=True, **kwargs), root_system(condensed=True, **kwargs)
+    a, b = full.data_structure, small.data_structure
+    assert b.n_nodes() < a.n_nodes() / 100
+
+    def places(ds):
+        node = ds.structure.values_of("template_node", ds.entity_ids("node"))
+        return [(int(o), int(node[int(v)])) for o, v in zip(ds.owner("SubOrgan"), ds.entity_ids("node"))]
+    row = {place: i for i, place in enumerate(places(a))}
+    rows = [row[place] for place in places(b)]
+    np.testing.assert_allclose(b.get("psi"), a.get("psi")[rows], rtol=1e-11)
+    total = float(full.sections["uptake"].sum())
+    np.testing.assert_allclose(small.sections["uptake"], full.sections["uptake"], rtol=1e-9, atol=1e-12 * total)
+    np.testing.assert_allclose(small.sections["suf"], full.sections["suf"], rtol=1e-9, atol=1e-11)
+    np.testing.assert_allclose(small.sections["kr"], full.sections["kr"], rtol=1e-12)
+    assert small.conductance == pytest.approx(full.conductance, rel=1e-10)
+    hydraulics = small.scene.populations[0].instance.hydraulics
+    cells, psi = hydraulics.section_cells(2)
+    owner = np.asarray(a.owner("SubOrgan"))
+    by_node = {node: i for i, (o, node) in enumerate(places(a)) if o == 2}
+    np.testing.assert_allclose(psi, a.get("psi")[[by_node[int(c)] for c in cells]], rtol=1e-10)

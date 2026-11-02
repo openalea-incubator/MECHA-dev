@@ -21,7 +21,7 @@ from openalea.metafspm.coupling.component import (FunctionalComponent, input_var
 from openalea.metafspm.solve.decorator import totalstate
 from openalea.metafspm.solve.network import equivalent_conductance
 from openalea.mecha.component import SCALES
-from openalea.mecha.geometry import SOIL
+from openalea.mecha.geometry import SOIL, SOIL_NODE
 from openalea.mecha.memo import content_key
 
 MARSHAL = "Couvreur et al. 2012, Plant Cell Environ.; Meunier et al. 2020, in silico Plants (MARSHAL)"
@@ -82,11 +82,15 @@ class RootSystemConductance(FunctionalComponent):
         collar = np.asarray(collar_kind) == 1.
         if not collar.any():
             raise ValueError("RootSystemConductance: no collar at a potential (collar_condition 1)")
-        surface = np.asarray(soil_conductance) > 0.
-        root = np.where(np.asarray(network_path) == SOIL, 0., np.asarray(conductance) +
-                        np.asarray(xylem_axial_conductance))
-        total, inflow = equivalent_conductance(ds.to_graph_view(), root, sources=surface, sinks=collar,
-                                               source_conductance=soil_conductance,
+        network = np.asarray(conductance) + np.asarray(xylem_axial_conductance)
+        soil_nodes = np.asarray(ds.get("kind")) == SOIL_NODE
+        if soil_nodes.any():                       # each section's soil node held at the soil (its contacts in the
+            sources, through = soil_nodes, None    # network, or its condensed equivalent)
+        else:                                      # each surface node joined to the soil through its conductance
+            sources, through = np.asarray(soil_conductance) > 0., soil_conductance
+            network = np.where(np.asarray(network_path) == SOIL, 0., network)
+        total, inflow = equivalent_conductance(ds.to_graph_view(), network, sources=sources, sinks=collar,
+                                               source_conductance=through,
                                                groups=ds.owner("SubOrgan") if self.plant_solver == "condensed" else None,
                                                cache=self.__dict__.setdefault("_krs_condensation", {}))
         plant = np.asarray(ds.owner("Plant"))
