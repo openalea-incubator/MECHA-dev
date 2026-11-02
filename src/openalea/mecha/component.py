@@ -27,7 +27,8 @@ from openalea.mecha.geometry import (AXIAL_JUNCTION, LEAF_SURFACE, MEMBRANE, SOI
                                      local_index,
                                      phi_thick_cells,
                                      section_geometry, section_of, section_parts)
-from openalea.mecha.postprocess import (VISCOSITY_PHLOEM, VISCOSITY_XYLEM, axial_conductances, poiseuille,
+from openalea.mecha.postprocess import (VISCOSITY_PHLOEM, VISCOSITY_XYLEM, axial_conductances, conduit_axial_conductances,
+                                       poiseuille,
                                         radial_conductivity, soil_uptake)
 
 PHLOEM_CGROUPS = (11, 23)
@@ -120,8 +121,7 @@ class MechaSections(FunctionalComponent):
                                    kind="intensive")
     condensed_section: float = input_variable(**_doc("", "1: the segment's anatomy is condensed onto its conduits "
                                                          "and soil node (GRANAP's condensed_anatomy)"),
-                                              by="Anatomy", default=0., scale=SCALES.SubOrgan, location="node",
-                                              aggregation="broadcast", kind="descriptor")
+                                              by="Anatomy", default=0., scale=SCALES.SubOrgan, kind="descriptor")
 
     # ── Geometry, per distinct anatomy ──
     def section_geometries(self) -> dict:
@@ -131,7 +131,7 @@ class MechaSections(FunctionalComponent):
         """
         ds = self.data_structure
         templates = np.asarray(ds.get("anatomy_template"))
-        condensed = np.asarray(ds.get("condensed_section")) > 0
+        condensed = self._condensed_nodes()
         stamp = (ds._topology_stamp() if hasattr(ds, "_topology_stamp") else ds.topology_version, templates.tobytes(),
                  condensed.tobytes())
         kept = self.__dict__.get("_section_geometries")
@@ -155,6 +155,15 @@ class MechaSections(FunctionalComponent):
             out[segment] = (nodes, edges, cached[1])
         self.__dict__["_section_geometries"] = (stamp, out)
         return out
+
+    def _condensed_nodes(self) -> np.ndarray:
+        """bool per node: in a condensed section (condensed_section of its segment)."""
+        ds = self.data_structure
+        flag = np.asarray(ds.get("condensed_section"), dtype=float)
+        if flag.size != ds.n_nodes():                          # per segment: to the nodes
+            owner = np.asarray(ds.owner("SubOrgan"))
+            flag = np.where(owner >= 0, flag[np.maximum(owner, 0)], 0.)
+        return flag > 0
 
     def section_roles(self) -> tuple:
         """
@@ -808,13 +817,14 @@ class MechaHydraulics(MechaSections):
             return kept[1]
         from openalea.mecha.condensed import EQUIVALENT
         owner = np.asarray(ds.owner("SubOrgan"))
-        flag = np.asarray(ds.get("condensed_section")) > 0
+        flag = self._condensed_nodes()
         view = ds.to_graph_view()
         equivalent = np.flatnonzero(np.asarray(ds.get("network_path")) == EQUIVALENT)
-        out = {}
-        for i in np.unique(owner[flag]).tolist():
-            nodes = np.flatnonzero(owner == i)
-            out[int(i)] = (nodes, equivalent[owner[view.tail[equivalent]] == i])
+        from openalea.mecha.conductance import _grouped
+        node_groups = _grouped(np.where(flag, owner, -1))
+        edge_groups = _grouped(np.where(flag[view.tail[equivalent]], owner[view.tail[equivalent]], -1))
+        out = {i: (nodes, equivalent[edge_groups.get(i, np.zeros(0, dtype=np.int64))])
+               for i, nodes in node_groups.items()}
         self.__dict__["_condensed_sections"] = (stamp, out)
         return out
 
@@ -831,12 +841,17 @@ class MechaHydraulics(MechaSections):
         P = self.parameter_table("node")
         barrier, length = np.asarray(barrier), np.asarray(length, dtype=float)
         library = self.__dict__.setdefault("_kinds", {})
+        plant = np.asarray(ds.owner("Plant"))
+        by_plant = {}                                              # each plant's parameters and their key, once
         keys, missing = {}, {}
         for i, (nodes, _) in sections.items():
             v = nodes[0]
-            parameters = {name: float(P[name][v]) for name in self.PARAMETERS}
+            if plant[v] not in by_plant:
+                values = {name: float(P[name][v]) for name in self.PARAMETERS}
+                by_plant[plant[v]] = (values, content_key(values))
+            parameters, signature = by_plant[plant[v]]
             request = (int(templates[i]), int(barrier[v]), condensed.length_class(length[v], self.length_classes))
-            key = (request, content_key(parameters))
+            key = (request, signature)
             keys[i] = key
             if key not in library:
                 missing.setdefault(key[1], (parameters, []))[1].append(request)
@@ -1190,9 +1205,12 @@ class MechaHydraulics(MechaSections):
                                                              plant[vessels].mean(), geo.perimeter, h)
         kinds = self.section_kinds(barrier, length)                  # the condensed sections: their kind's kr
         node_kind, uptake_at = np.asarray(ds.get("kind")), np.asarray(root_uptake, dtype=float)
+        tissue, cell_area = np.asarray(ds.get("tissue"), dtype=object), np.asarray(ds.get("cell_area"), dtype=float)
         for i, (nodes, _) in self.condensed_sections().items():
             kind = kinds[i]
             out["kr"][i], out["standard_uptake"][i] = kind.kr, kind.standard_uptake
+            out["Kx"][i], out["Kx_phloem"][i] = conduit_axial_conductances(
+                tissue[nodes], cell_area[nodes], float(height[nodes[0]]), int(barrier[nodes[0]]), measured[nodes])
             soil_node = nodes[node_kind[nodes] == SOIL_NODE]
             out["uptake"][i] = float(uptake_at[soil_node].sum())
             vessels = nodes[np.isin(cgroup[nodes], XYLEM_CGROUPS)]

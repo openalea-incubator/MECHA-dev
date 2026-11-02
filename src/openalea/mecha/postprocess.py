@@ -64,6 +64,25 @@ def axial_conductances(geo, height, barrier, measured=None) -> tuple:
     return 0., total(geo.typed["protosieve"], VISCOSITY_PHLOEM)
 
 
+def conduit_axial_conductances(tissue, cell_area, height, barrier, measured=None) -> tuple:
+    """axial_conductances from the conduits' own values (per node: *tissue*, *cell_area* in mm², *measured*), without
+    the section's geometry: a condensed section's (its conduits are its kept nodes)."""
+    from openalea.mecha.geometry import PROTOSIEVE_TYPES, SIEVE_TYPES, XYLEM_TYPES
+    tissue = np.asarray(tissue, dtype=object)
+    area = np.asarray(cell_area, dtype=float) * 1.0E6                       # mm2 -> µm2, as the geometry's
+    measured = np.full(area.size, np.nan) if measured is None else np.asarray(measured, dtype=float)
+    height = float(height)
+
+    def total(types, viscosity):
+        cells = np.flatnonzero(np.isin(tissue, types))
+        K = [measured[c] / (height / 1.0E04) if np.isfinite(measured[c]) else _poiseuille(area[c], height, viscosity)
+             for c in cells]
+        return float(np.sum(K)) * height / 1.0E04
+    if barrier > 0:
+        return total(XYLEM_TYPES, VISCOSITY_XYLEM), total(SIEVE_TYPES, VISCOSITY_PHLOEM)
+    return 0., total(PROTOSIEVE_TYPES, VISCOSITY_PHLOEM)
+
+
 def transmembrane_layers(ds, segment) -> "pd.DataFrame":
     """
     The section *segment*'s standard transmembrane flows by layer row (MECHA's ``uptake_layer_plus``, ``_minus``,

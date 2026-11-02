@@ -138,6 +138,8 @@ def test_a_condensed_root_system_is_the_full_one_on_its_conduits_and_soil_nodes(
     np.testing.assert_allclose(small.sections["uptake"], full.sections["uptake"], rtol=1e-9, atol=1e-12 * total)
     np.testing.assert_allclose(small.sections["suf"], full.sections["suf"], rtol=1e-9, atol=1e-11)
     np.testing.assert_allclose(small.sections["kr"], full.sections["kr"], rtol=1e-12)
+    for name in ("Kx", "Kx_phloem"):                     # from the conduits alone: every one of them is kept
+        np.testing.assert_allclose(b.get(name), a.get(name), rtol=1e-12)
     assert small.conductance == pytest.approx(full.conductance, rel=1e-10)
     hydraulics = small.scene.populations[0].instance.hydraulics
     cells, psi = hydraulics.section_cells(2)
