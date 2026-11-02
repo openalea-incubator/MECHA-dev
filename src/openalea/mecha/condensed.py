@@ -15,6 +15,9 @@ isolated), by MECHA's cell-level code:
                MECHA's standard problem on the full section (its kr: the kind's)
   reduction    the section's KronReduction, and its interior sources: the cells' potentials recovered on request
                (recover)
+  osmotic      the responses of the kept nodes' sources to the osmotic potentials (with the presets, condensed_osmotic
+               "presets"): to the kept nodes' own (osmotic_kept, n_kept × n_kept) and to each hidden tissue's
+               ({tissue: (response to a uniform potential, response to the kind's)}), and the kind's kept potentials
 """
 from dataclasses import dataclass
 
@@ -34,6 +37,25 @@ class Kind:
     interior_source: np.ndarray
     interior_nodes: np.ndarray        # the interior's template nodes (the full section's local indices)
     kept_nodes: np.ndarray            # the kept nodes' template nodes
+    osmotic_kept: np.ndarray = None   # the kept sources' response to the kept nodes' osmotic potentials
+    osmotic_tissues: dict = None      # {tissue: (response to a uniform potential, response to the kind's)}
+    base_kept_osmotic: np.ndarray = None
+
+    def osmotic_source(self, kept_potential=None, tissues=None) -> np.ndarray:
+        """The change of the kept nodes' sources for the conduits' *kept_potential* (NaN: the kind's) and the
+        hidden tissues' *tissues* ({tissue: π}), from the kind's osmotic potentials (0 without osmotic terms)."""
+        out = np.zeros(self.source.size)
+        if self.osmotic_kept is None:
+            return out
+        if kept_potential is not None:
+            given = np.asarray(kept_potential, dtype=float)
+            delta = np.where(np.isfinite(given), given - self.base_kept_osmotic, 0.)
+            out += self.osmotic_kept @ delta
+        for tissue, value in (tissues or {}).items():
+            response = self.osmotic_tissues.get(tissue)
+            if response is not None:
+                out += float(value) * response[0] - response[1]
+        return out
 
     def recover(self, kept_values) -> np.ndarray:
         """The interior cells' potentials (in interior_nodes' order) for the kept nodes' *kept_values*."""
@@ -75,11 +97,12 @@ def _library_model(templates):
                                            run=lambda self: None))
 
 
-def evaluate(requests: list, parameters: dict, settings: dict, model_class) -> list:
+def evaluate(requests: list, parameters: dict, settings: dict, model_class, presets: dict = None) -> list:
     """
     The kinds of *requests* [(template index, barrier, length)], for a plant of *parameters* ({name: value}) and
     the hydraulics model's *settings*: one library population, its sections evaluated by *model_class*
-    (MechaHydraulics) alone.
+    (MechaHydraulics); with *presets* ({name: value}), MECHA's osmotic presets first (MechaOsmoticPresets: the
+    cells' osmotic potentials and the membranes' reflection coefficients), and the kinds' osmotic responses.
     """
     from scipy.sparse import csr_matrix, diags
     from openalea.metafspm.scene.population import Planting, planting, population_data_structure
@@ -105,6 +128,12 @@ def evaluate(requests: list, parameters: dict, settings: dict, model_class) -> l
     for name, value in parameters.items():
         setattr(hydraulics, name, value)
     ds.set("barrier", barrier[owner])
+    if presets is not None:
+        from openalea.mecha.osmotic import MechaOsmoticPresets
+        osmotic = MechaOsmoticPresets(data_structure=ds, time_step=time_step)
+        for name, value in presets.items():
+            setattr(osmotic, name, value)
+        osmotic()
     hydraulics()
     view = ds.to_graph_view()
     K = np.asarray(ds.get("conductance"), dtype=float) + np.asarray(ds.get("xylem_axial_conductance"), dtype=float)
@@ -117,6 +146,9 @@ def evaluate(requests: list, parameters: dict, settings: dict, model_class) -> l
     kr = np.asarray(ds.get("kr"), dtype=float)
     standard_uptake = np.asarray(ds.get("standard_uptake"), dtype=float)
     perimeter = np.asarray(ds.get("perimeter"), dtype=float)
+    sigma = np.asarray(ds.get("reflection_coefficient"), dtype=float) if presets is not None else None
+    potential = np.asarray(ds.get("osmotic_potential"), dtype=float) if presets is not None else None
+    tissue_names = np.asarray(ds.get("tissue"), dtype=object)
     out = []
     for i in range(sections.size):
         nodes = np.flatnonzero(owner == i)
@@ -139,8 +171,21 @@ def evaluate(requests: list, parameters: dict, settings: dict, model_class) -> l
             raise RuntimeError("condensed.evaluate: a section's reduction has diagonal terms left (a Robin term "
                                "inside the section)")
         nodes_template = np.array([template_node[int(v)] for v in nodes_all[nodes].tolist()], dtype=np.int64)
-        out.append(Kind(pairs=reduction.pairs()[2], source=equivalent_source, kr=float(kr[i]),
-                        standard_uptake=float(standard_uptake[i]), perimeter=float(perimeter[i]),
-                        reduction=reduction, interior_source=source[I], interior_nodes=nodes_template[I],
-                        kept_nodes=nodes_template[Kn]))
+        kind = Kind(pairs=reduction.pairs()[2], source=equivalent_source, kr=float(kr[i]),
+                    standard_uptake=float(standard_uptake[i]), perimeter=float(perimeter[i]),
+                    reduction=reduction, interior_source=source[I], interior_nodes=nodes_template[I],
+                    kept_nodes=nodes_template[Kn])
+        if sigma is not None:                          # the kept sources as linear functions of the potentials
+            osmotic = (B @ diags(K[edges] * sigma[edges]) @ B.T).tocsr()      # B (K σ Bᵀ π): the sources' operator
+            carry = reduction.injection()                                     # n_kept × n_interior
+            response = np.asarray(osmotic[Kn].toarray()) + np.asarray((osmotic[I].T @ carry.T).T)   # n_kept × n
+            here = potential[nodes]
+            kind.osmotic_kept = response[:, Kn]
+            kind.base_kept_osmotic = here[Kn].copy()
+            names = tissue_names[nodes]
+            kind.osmotic_tissues = {}
+            for name in sorted({t for t in names[I].tolist() if t is not None}):
+                cells = I[names[I] == name]
+                kind.osmotic_tissues[name] = (response[:, cells].sum(axis=1), response[:, cells] @ here[cells])
+        out.append(kind)
     return out

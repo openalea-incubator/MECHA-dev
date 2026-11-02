@@ -146,3 +146,42 @@ def test_a_condensed_root_system_is_the_full_one_on_its_conduits_and_soil_nodes(
     owner = np.asarray(a.owner("SubOrgan"))
     by_node = {node: i for i, (o, node) in enumerate(places(a)) if o == 2}
     np.testing.assert_allclose(psi, a.get("psi")[[by_node[int(c)] for c in cells]], rtol=1e-10)
+
+
+def test_condensed_osmotic_terms_are_the_full_anatomys():
+    """condensed_osmotic presets: each kind's cells' osmotic potentials and reflection coefficients from MECHA's
+    presets, changed per segment by its conduits' potential (conduit_osmotic_potential) and its hidden tissues'
+    ({tissue: π}, tissue_osmotic_potential): the same potentials and uptakes as the full anatomy given the same."""
+    kwargs = dict(main=(3, 1, 1, 0), laterals=((1, (1, 0)),), soil_psi=SOIL, collar_psi=COLLAR,
+                  soil_boundary="node_dirichlet", osmotic={"os_hetero": 1.})
+    full, small = root_system(instanced=True, **kwargs), root_system(condensed=True, **kwargs)
+    a, b = full.data_structure, small.data_structure
+
+    def places(ds):
+        node = ds.structure.values_of("template_node", ds.entity_ids("node"))
+        return [(int(o), int(node[int(v)])) for o, v in zip(ds.owner("SubOrgan"), ds.entity_ids("node"))]
+    row = {place: i for i, place in enumerate(places(a))}
+    rows = np.array([row[place] for place in places(b)])
+
+    def same():
+        np.testing.assert_allclose(b.get("psi"), a.get("psi")[rows], rtol=1e-11)
+        total = float(full.sections["uptake"].abs().sum())
+        np.testing.assert_allclose(small.sections["uptake"], full.sections["uptake"], rtol=1e-9, atol=1e-12 * total)
+    same()
+    before = b.get("psi").copy()
+    section, owner_a, owner_b = 1, np.asarray(a.owner("SubOrgan")), np.asarray(b.owner("SubOrgan"))
+    pi = np.array(a.get("osmotic_potential"), dtype=float)                 # the full anatomy given them directly
+    conduits_b = np.flatnonzero((owner_b == section) & (np.asarray(b.get("kind")) != 4))
+    pi[rows[conduits_b]] = -9000.
+    pi[(owner_a == section) & (np.asarray(a.get("tissue"), dtype=object) == "cortex")] = -7000.
+    a.set("osmotic_potential", pi)
+    full.scene.populations[0].instance.hydraulics()
+    conduit = np.full(b.n_nodes(), np.nan)                                 # the condensed one through its inputs
+    conduit[conduits_b] = -9000.
+    b.set("conduit_osmotic_potential", conduit)
+    tissues = np.empty(len(b.entity_ids("SubOrgan")), dtype=object)
+    tissues[section] = {"cortex": -7000.}
+    b.set("tissue_osmotic_potential", tissues)
+    small.scene.populations[0].instance.hydraulics()
+    same()
+    assert np.abs(b.get("psi") - before).max() > 100.                     # the change matters

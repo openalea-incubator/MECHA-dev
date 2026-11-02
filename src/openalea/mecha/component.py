@@ -295,6 +295,12 @@ class MechaHydraulics(MechaSections):
                                             "(solve.network.condensed_solve; the soil, collar and junction nodes "
                                             "kept): the same potentials to round-off",
                                 default="full", choices=("full", "condensed"))
+    condensed_osmotic: str = setting(description="the osmotic terms of the condensed sections: \"none\" (none inside "
+                                                 "them); \"presets\", their kinds' cells' osmotic potentials and "
+                                                 "membranes' reflection coefficients from MECHA's presets (the "
+                                                 "plant's MechaOsmoticPresets parameters), changed per segment by "
+                                                 "conduit_osmotic_potential and tissue_osmotic_potential",
+                                     default="none", choices=("none", "presets"))
     length_classes: object = setting(description="a condensed section's kind is evaluated at its length (\"exact\") or "
                                                  "at its class of this relative width (e.g. 0.02: (1.02)^k, the "
                                                  "nearest; its internal conductances within about half the width)",
@@ -416,6 +422,11 @@ class MechaHydraulics(MechaSections):
                                                           "per_node), 0 with a soil node"),
                                                    default=0., scale=SCALES.Compartment, location="node",
                                                    kind="NonInertialIntensive")
+    condensed_osmotic_source: float = state_variable(**_doc("cm3 d-1", "on a condensed section's kept node: the "
+                                                            "change of its sources for the segment's own conduit "
+                                                            "and tissue osmotic potentials (0 elsewhere)"),
+                                                     default=0., scale=SCALES.Compartment, location="node",
+                                                     kind="NonInertialExtensive")
     condensed_source: float = state_variable(**_doc("cm3 d-1", "on a condensed section's kept node: the plant "
                                                     "problem's sources of its hidden cells (elongation, osmotic), "
                                                     "carried to it (its kind's reduction); 0 elsewhere"),
@@ -544,6 +555,16 @@ class MechaHydraulics(MechaSections):
     soil_psi: float = input_variable(**_doc("hPa", "the soil's water potential around the Compartment"), by="Soil",
                                      default=0., scale=SCALES.Compartment, location="node",
                                      kind="intensive")
+    conduit_osmotic_potential: float = input_variable(**_doc("hPa", "a condensed section's conduit's osmotic "
+                                                             "potential (condensed_osmotic presets; NaN: its "
+                                                             "kind's)"), by="Solutes", default=float("nan"),
+                                                      scale=SCALES.Compartment, location="node",
+                                                      kind="NonInertialIntensive")
+    tissue_osmotic_potential: object = input_variable(**_doc("hPa", "a condensed section's hidden tissues' osmotic "
+                                                             "potentials, {tissue: potential} (condensed_osmotic "
+                                                             "presets; a tissue not given: its kind's)"),
+                                                      by="Solutes", default=None, scale=SCALES.SubOrgan,
+                                                      kind="descriptor", dtype=object)
     soil_bulk_conductance: float = input_variable(**_doc("cm3 hPa-1 d-1", "on a root section's soil node "
                                                          "(soil_boundary node_robin): the conductance between it and "
                                                          "the soil at soil_psi (e.g. the bulk soil's around the "
@@ -712,7 +733,7 @@ class MechaHydraulics(MechaSections):
         ds = self.data_structure
         stamp = ds._topology_stamp() if hasattr(ds, "_topology_stamp") else ds.topology_version
         versions = tuple(ds.write_count(name) if ds.has(name) else -1 for name in self.PARAMETERS)
-        settings = (self.soil_boundary, self.plant_solver, str(self.length_classes))
+        settings = (self.soil_boundary, self.plant_solver, str(self.length_classes), self.condensed_osmotic)
         return content_key(repr((stamp, versions, settings)), *(np.asarray(a) for a in arrays))
 
     def _memo(self, name: str, key: str):
@@ -848,18 +869,51 @@ class MechaHydraulics(MechaSections):
             v = nodes[0]
             if plant[v] not in by_plant:
                 values = {name: float(P[name][v]) for name in self.PARAMETERS}
-                by_plant[plant[v]] = (values, content_key(values))
-            parameters, signature = by_plant[plant[v]]
+                presets = self._presets_parameters(v) if self.condensed_osmotic == "presets" else None
+                by_plant[plant[v]] = (values, presets, content_key(values, presets or {}))
+            parameters, presets, signature = by_plant[plant[v]]
             request = (int(templates[i]), int(barrier[v]), condensed.length_class(length[v], self.length_classes))
             key = (request, signature)
             keys[i] = key
             if key not in library:
-                missing.setdefault(key[1], (parameters, []))[1].append(request)
-        for parameters, requests in missing.values():
+                missing.setdefault(signature, (parameters, presets, []))[2].append(request)
+        for signature, (parameters, presets, requests) in missing.items():
             requests = sorted(set(requests))
-            for request, kind in zip(requests, condensed.evaluate(requests, parameters, {}, MechaHydraulics)):
-                library[(request, content_key(parameters))] = kind
+            for request, kind in zip(requests, condensed.evaluate(requests, parameters, {}, MechaHydraulics,
+                                                                  presets=presets)):
+                library[(request, signature)] = kind
         return {i: library[key] for i, key in keys.items()}
+
+    def _presets_parameters(self, node) -> dict:
+        """The plant's MechaOsmoticPresets parameters at *node* (their defaults where the DataStructure has none)."""
+        from openalea.mecha.osmotic import MechaOsmoticPresets
+        ds = self.data_structure
+        out = {}
+        for name, default in MechaOsmoticPresets._plant_parameter_fields().items():
+            if name in self.PARAMETERS:
+                continue
+            try:
+                out[name] = float(np.asarray(self.parameter_values(name, "node"))[node]) if ds.has(name) \
+                    else float(default)
+            except (KeyError, ValueError, AttributeError):
+                out[name] = float(default)
+        return out
+
+    @rate(include_inactive=True)
+    def _condensed_osmotic_source(self, conduit_osmotic_potential, tissue_osmotic_potential, barrier,
+                                  length) -> np.ndarray:
+        """The condensed sections' kept sources' change for their own conduit and tissue osmotic potentials (their
+        kinds' responses)."""
+        out = np.zeros(self.data_structure.n_nodes())
+        if self.condensed_osmotic == "none" or not self.condensed_sections():
+            return out
+        kinds = self.section_kinds(barrier, length)
+        conduits = np.asarray(conduit_osmotic_potential, dtype=float)
+        tissues = np.asarray(tissue_osmotic_potential, dtype=object).reshape(-1)
+        for i, (nodes, _) in self.condensed_sections().items():
+            given = tissues[i] if i < tissues.size else None
+            out[nodes] = kinds[i].osmotic_source(conduits[nodes], given if isinstance(given, dict) else None)
+        return out
 
     def _condensed_terms(self, K, path_codes, barrier, length) -> tuple:
         """The conductances of the condensed sections' equivalent Connections and their kept nodes' sources, from
@@ -1090,12 +1144,12 @@ class MechaHydraulics(MechaSections):
 
         @node_balance(field="psi")
         def _balance(self, psi, conductance, xylem_axial_conductance, osmotic_drive, air_tail_conductance,
-                     air_head_conductance, air_offset, elongation_sink, condensed_source):
+                     air_head_conductance, air_offset, elongation_sink, condensed_source, condensed_osmotic_source):
             B = self._graph_view.incidence
             K = conductance + xylem_axial_conductance
             q = _wall_air_flow(B, psi, air_tail_conductance, air_head_conductance, air_offset)
             return np.asarray(B @ (K * (np.asarray(B.T @ psi).reshape(-1) + osmotic_drive) + q)).reshape(-1) + \
-                elongation_sink + condensed_source
+                elongation_sink + condensed_source + condensed_osmotic_source
 
         soil = boundary_set(filters={"plant_soil_conductance": ">0"}, kind="robin", value="soil_psi",
                             weight="plant_soil_conductance", field="psi")
@@ -1120,12 +1174,14 @@ class MechaHydraulics(MechaSections):
                 _wall_air_flow(B, psi, air_tail_conductance, air_head_conductance, air_offset)
 
         @graph_output("root_uptake", location="node")
-        def _root_uptake(self, psi, plant_soil_conductance, soil_psi, conductance, kind, condensed_source):
+        def _root_uptake(self, psi, plant_soil_conductance, soil_psi, conductance, kind, condensed_source,
+                         condensed_osmotic_source):
             """The water entering from the soil: at each contact node (per_node), or at each soil node, its balance:
             the flow through its Connections into its section (and, condensed, its share of the hidden cells'
             sources)."""
             B = self._graph_view.incidence
-            out = np.asarray(B @ (conductance * np.asarray(B.T @ psi).reshape(-1))).reshape(-1) + condensed_source
+            out = np.asarray(B @ (conductance * np.asarray(B.T @ psi).reshape(-1))).reshape(-1) + condensed_source + \
+                condensed_osmotic_source
             return plant_soil_conductance * (soil_psi - psi) + np.where(np.asarray(kind) == SOIL_NODE, out, 0.)
 
         @graph_output("evaporation", location="node")
