@@ -863,6 +863,7 @@ class MechaHydraulics(MechaSections):
         barrier, length = np.asarray(barrier), np.asarray(length, dtype=float)
         library = self.__dict__.setdefault("_kinds", {})
         plant = np.asarray(ds.owner("Plant"))
+        labels = ds.labels(location="SubOrgan", per_node=False)
         by_plant = {}                                              # each plant's parameters and their key, once
         keys, missing = {}, {}
         for i, (nodes, _) in sections.items():
@@ -872,7 +873,8 @@ class MechaHydraulics(MechaSections):
                 presets = self._presets_parameters(v) if self.condensed_osmotic == "presets" else None
                 by_plant[plant[v]] = (values, presets, content_key(values, presets or {}))
             parameters, presets, signature = by_plant[plant[v]]
-            request = (int(templates[i]), int(barrier[v]), condensed.length_class(length[v], self.length_classes))
+            request = (int(templates[i]), int(barrier[v]), condensed.length_class(length[v], self.length_classes),
+                       str(labels[i]))
             key = (request, signature)
             keys[i] = key
             if key not in library:

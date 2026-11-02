@@ -124,3 +124,39 @@ def test_root_quantities_on_roots_only(plant):
         root = kinds[int(v)] == L.RootSegment
         assert np.isfinite(ds.get("perimeter")[i]) == root and np.isfinite(ds.get("kr")[i]) == root
         assert np.isfinite(ds.get("Kx")[i])
+
+
+def _seedling(**scenario):
+    ds = initiated(planting([Planting()], None, scenario), Seedling, Anatomy, time_step=3600.).data_structure
+    g = ds.structure
+    Anatomy(data_structure=ds)()
+    ds.register("barrier", np.ones(ds.n_nodes()), location="node")
+    ds.register("soil_psi", np.full(ds.n_nodes(), SOIL), location="node")
+    for organ in ds.entity_ids("Organ"):
+        leaf = g.property("label").get(int(organ)) == g.labels.Organ.Leaf
+        g.property("leaf_transpiration")[int(organ)] = TRANSPIRATION if leaf else 0.
+    mecha = MechaHydraulics(data_structure=ds, soil_boundary="node_dirichlet")
+    mecha.collar_condition = 0.
+    mecha()
+    return ds, mecha
+
+
+def test_a_condensed_stem_and_root_with_a_whole_leaf_are_the_full_seedling():
+    """condensed_anatomy on the shoot too: the stem element condensed onto its conduits, the root segment onto its
+    conduits and soil node, the transpiring leaf element whole (its vapour path): the potentials of every node they
+    share with the full seedling, the uptake (the transpiration), as the full one's."""
+    full, _ = _seedling(instanced_anatomy=True, soil_node=True)
+    small, _ = _seedling(condensed_anatomy=True, soil_node=True)
+    assert small.n_nodes() < full.n_nodes() / 3
+
+    def places(ds):
+        node = ds.structure.values_of("template_node", ds.entity_ids("node"))
+        return [(int(o), node.get(int(v), -int(v))) for o, v in zip(ds.owner("SubOrgan"), ds.entity_ids("node"))]
+    row = {place: i for i, place in enumerate(places(full))}
+    shared = [(i, row[place]) for i, place in enumerate(places(small)) if place in row]
+    b, a = np.array(shared).T
+    labels = full.labels(location="SubOrgan")
+    assert {"StemElement", "LeafElement", "RootSegment"} <= set(labels[a].tolist())
+    np.testing.assert_allclose(small.get("psi")[b], full.get("psi")[a], rtol=1e-9)
+    for ds in (full, small):
+        assert float(np.sum(ds.get("root_uptake"))) == pytest.approx(TRANSPIRATION, rel=1e-8)

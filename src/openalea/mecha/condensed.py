@@ -72,34 +72,51 @@ def length_class(length, classes) -> float:
     return float(np.exp(np.round(np.log(length) / base) * base))
 
 
-def _library_model(templates):
-    """The library's plant model: RootAxis (one segment per kind), each segment its template's full anatomy with its
-    soil node (an instance), no junctions."""
-    from openalea.granap.metafspm.architectures import RootAxis
+ORGANS = {"RootSegment": ("Root", "Root", "Root", "RootInternode"),
+          "StemElement": ("Shoot", "Shoot", "Shoot", "StemInternode")}      # a library section's organ, by label
+
+
+def _library_model(requests):
+    """The library's plant model: one organ and section per kind (*requests*, (template, barrier, length, label)),
+    isolated (no junctions), each its template's full anatomy (an instance), a root section's with its soil node."""
+    from openalea.granap.metafspm.architectures import _chain, _organ
     from openalea.granap.metafspm.component import GranapAnatomy
     from openalea.granap.metafspm.library import template_by_index
     from openalea.metafspm.coupling.component import StructuralComponent
 
+    class LibraryArchitecture(StructuralComponent):
+        @classmethod
+        def initiate_plant(cls, g, plant, parameters):
+            order = g.properties().setdefault("library_kind", {})
+            for k, (_, _, length, label) in enumerate(requests):
+                organ = _organ(g, plant, *ORGANS[label])
+                segment = _chain(g, organ, getattr(g.labels.SubOrgan, label), [(1e-4, float(length), 0.)])[0]
+                order[segment] = k
+
     class LibraryAnatomy(StructuralComponent):
         @classmethod
         def initiate_plant(cls, g, plant, parameters):
-            from openalea.granap.metafspm.component import _segments
             template_of = g.properties().setdefault("anatomy_template", {})
-            for segment, index in zip(_segments(g, plant), templates):
-                template_by_index(index).instance(g, segment, GranapAnatomy.add_soil_node, "soil")
+            for segment, k in g.properties()["library_kind"].items():
+                index, _, _, label = requests[int(k)]
+                template = template_by_index(index)
+                if label == "RootSegment":
+                    template.instance(g, segment, GranapAnatomy.add_soil_node, "soil")
+                else:
+                    template.instance(g, segment)
                 template_of[segment] = float(index)
 
     def __init__(self, data_structure, time_step):
         self.components = []
 
-    return type("SectionLibrary", (), dict(initiators=(RootAxis, LibraryAnatomy), nodes="Compartment",
+    return type("SectionLibrary", (), dict(initiators=(LibraryArchitecture, LibraryAnatomy), nodes="Compartment",
                                            from_scale="SubOrgan", wiring=(), __init__=__init__,
                                            run=lambda self: None))
 
 
 def evaluate(requests: list, parameters: dict, settings: dict, model_class, presets: dict = None) -> list:
     """
-    The kinds of *requests* [(template index, barrier, length)], for a plant of *parameters* ({name: value}) and
+    The kinds of *requests* [(template index, barrier, length, label)], for a plant of *parameters* ({name: value}) and
     the hydraulics model's *settings*: one library population, its sections evaluated by *model_class*
     (MechaHydraulics); with *presets* ({name: value}), MECHA's osmotic presets first (MechaOsmoticPresets: the
     cells' osmotic potentials and the membranes' reflection coefficients), and the kinds' osmotic responses.
@@ -109,18 +126,17 @@ def evaluate(requests: list, parameters: dict, settings: dict, model_class, pres
     from openalea.metafspm.solve.network import kron_reduction
     from openalea.mecha.geometry import SOIL_NODE
 
-    templates = [int(t) for t, _, _ in requests]
-    segments = [[1e-4, float(length), 0.] for _, _, length in requests]
-    model = _library_model(templates)
+    model = _library_model(requests)
     time_step = 3600.                          # the library's sections are steady: any step
-    population = population_data_structure(planting([Planting()], model, {"root_segments": segments}), model,
-                                           time_step=time_step)
+    population = population_data_structure(planting([Planting()], model, {}), model, time_step=time_step)
     ds = population.data_structure
     owner = np.asarray(ds.owner("SubOrgan"))
     sections = ds.entity_ids("SubOrgan")
     if sections.size != len(requests):
         raise RuntimeError("condensed.evaluate: the library does not hold one section per kind")
-    barrier = np.asarray([b for _, b, _ in requests], dtype=float)
+    kind_of = ds.structure.properties()["library_kind"]
+    order = np.array([int(kind_of[int(v)]) for v in sections.tolist()])   # each section's request
+    barrier = np.asarray([requests[k][1] for k in order], dtype=float)
     from openalea.granap.metafspm.component import GranapAnatomy
     GranapAnatomy(data_structure=ds, time_step=time_step)          # the anatomy's declarations (tissue: objects)
     hydraulics = model_class(data_structure=ds, time_step=time_step,
@@ -149,7 +165,7 @@ def evaluate(requests: list, parameters: dict, settings: dict, model_class, pres
     sigma = np.asarray(ds.get("reflection_coefficient"), dtype=float) if presets is not None else None
     potential = np.asarray(ds.get("osmotic_potential"), dtype=float) if presets is not None else None
     tissue_names = np.asarray(ds.get("tissue"), dtype=object)
-    out = []
+    out = [None] * len(requests)
     for i in range(sections.size):
         nodes = np.flatnonzero(owner == i)
         local = -np.ones(ds.n_nodes(), dtype=np.int64)
@@ -187,5 +203,5 @@ def evaluate(requests: list, parameters: dict, settings: dict, model_class, pres
             for name in sorted({t for t in names[I].tolist() if t is not None}):
                 cells = I[names[I] == name]
                 kind.osmotic_tissues[name] = (response[:, cells].sum(axis=1), response[:, cells] @ here[cells])
-        out.append(kind)
+        out[order[i]] = kind
     return out
