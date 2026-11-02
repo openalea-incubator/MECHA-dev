@@ -43,6 +43,7 @@ class Seedling(StructuralComponent):
                                          **PropsConfig(scale=s.SubOrgan, edge_type='+', label=L.SubOrgan.LeafElement))
         root = g.add_component_with_topo(organ("Root", "Root", "RootInternode"), stem,
                                          **PropsConfig(scale=s.SubOrgan, edge_type='+', label=L.SubOrgan.RootSegment))
+        g.property("stem_radius")[stem] = 1e-3                     # GRANAP's stems' class input
         for v, radius in ((stem, 1e-3), (leaf, 1e-3), (root, 0.55e-3)):
             g.property("radius")[v] = radius
             g.property("length")[v] = 5e-3

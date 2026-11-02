@@ -166,6 +166,8 @@ def build_architecture(g, plant, parameters):
         for name, value in (("length", length), ("radius", radius), ("x1", start[0]), ("x2", end[0]),
                             ("y1", start[1]), ("y2", end[1]), ("z1", start[2]), ("z2", end[2])):
             g.property(name)[vid] = float(value)
+        if g.property("label")[vid] == g.labels.SubOrgan.StemElement:     # GRANAP's stems' class input
+            g.property("stem_radius")[vid] = float(radius)
     for chain in chains:                                               # distance from each axis' tip
         lengths = [segments[v][0] for v in chain]
         for k, vid in enumerate(chain):
