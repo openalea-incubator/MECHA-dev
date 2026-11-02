@@ -104,3 +104,15 @@ def test_a_soil_node_through_its_bulk_conductance_tends_to_the_held_soil():
     condensed = root_system(soil_boundary="node_robin", soil_bulk_conductance=1e-3, plant_solver="condensed", **kwargs)
     full = root_system(soil_boundary="node_robin", soil_bulk_conductance=1e-3, **kwargs)
     np.testing.assert_allclose(condensed.data_structure.get("psi"), full.data_structure.get("psi"), rtol=1e-10)
+
+
+def test_the_condensed_solves_give_the_same_sections():
+    """plant_solver condensed (the plant problem, the standard problem and Krs, each section's interior eliminated):
+    MECHA's kr, the standard potentials, Krs and SUF as the full solves', to round-off."""
+    kwargs = dict(main=(3, 3, 1, 1), laterals=((1, (1, 1)),), soil_psi=SOIL, collar_psi=COLLAR, instanced=True)
+    full, condensed = root_system(**kwargs), root_system(plant_solver="condensed", **kwargs)
+    for name in ("standard_psi", "psi"):
+        np.testing.assert_allclose(condensed.data_structure.get(name), full.data_structure.get(name), rtol=1e-10)
+    for column in ("kr", "suf", "uptake"):
+        np.testing.assert_allclose(condensed.sections[column], full.sections[column], rtol=1e-9)
+    assert condensed.conductance == pytest.approx(full.conductance, rel=1e-10)

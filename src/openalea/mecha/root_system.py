@@ -16,11 +16,13 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, state_variable, upscaling
+from openalea.metafspm.coupling.component import (FunctionalComponent, input_variable, setting, state_variable,
+                                                   upscaling)
 from openalea.metafspm.solve.decorator import totalstate
 from openalea.metafspm.solve.network import equivalent_conductance
 from openalea.mecha.component import SCALES
 from openalea.mecha.geometry import SOIL
+from openalea.mecha.memo import content_key
 
 MARSHAL = "Couvreur et al. 2012, Plant Cell Environ.; Meunier et al. 2020, in silico Plants (MARSHAL)"
 NETWORK = ("kw", "kaqp", "kpl", "kmb", "kw_casparian", "kw_suberin_in", "kw_suberin_out", "xylem_axial_conductance")
@@ -44,6 +46,10 @@ class RootSystemConductance(FunctionalComponent):
                                                       "junction and the soil", "node", SCALES.Compartment))
     collar_kind: float = input_variable(**_input("", "the collar condition of the node: 1 potential", "node",
                                                  SCALES.Compartment))
+    plant_solver: str = setting(description="the solve of Krs' network (as MechaHydraulics' plant problem's): "
+                                            "\"full\", one sparse solve; \"condensed\", each section's interior "
+                                            "eliminated (solve.network.condensed_solve)",
+                                default="full", choices=("full", "condensed"))
     network_path: float = input_variable(**_input("", "the Connection's kind of path (7: to a soil node, not part of "
                                                   "the root's network)", "edge", SCALES.Connection))
 
@@ -68,6 +74,11 @@ class RootSystemConductance(FunctionalComponent):
         node's Connections (GRANAP's soil_node) are not part of the root: MARSHAL's protocol puts the soil at the
         surface."""
         ds = self.data_structure
+        key = content_key(ds.topology_version, conductance, xylem_axial_conductance, soil_conductance, collar_kind,
+                          network_path)
+        kept = self.__dict__.get("_krs")
+        if kept is not None and kept[0] == key:          # the same network: the same Krs and SUF
+            return {name: values.copy() for name, values in kept[1].items()}
         collar = np.asarray(collar_kind) == 1.
         if not collar.any():
             raise ValueError("RootSystemConductance: no collar at a potential (collar_condition 1)")
@@ -75,9 +86,13 @@ class RootSystemConductance(FunctionalComponent):
         root = np.where(np.asarray(network_path) == SOIL, 0., np.asarray(conductance) +
                         np.asarray(xylem_axial_conductance))
         total, inflow = equivalent_conductance(ds.to_graph_view(), root, sources=surface, sinks=collar,
-                                               source_conductance=soil_conductance)
+                                               source_conductance=soil_conductance,
+                                               groups=ds.owner("SubOrgan") if self.plant_solver == "condensed" else None,
+                                               cache=self.__dict__.setdefault("_krs_condensation", {}))
         plant = np.asarray(ds.owner("Plant"))
         per_plant = np.bincount(plant, weights=inflow, minlength=len(ds.entity_ids("Plant")))
         share = np.divide(inflow, per_plant[plant], out=np.zeros_like(inflow), where=per_plant[plant] > 0.)
-        return {"root_system_conductance": per_plant,
-                "standard_uptake_fraction": ds.map_to(share, "node", "SubOrgan", "sum")}
+        out = {"root_system_conductance": per_plant,
+               "standard_uptake_fraction": ds.map_to(share, "node", "SubOrgan", "sum")}
+        self.__dict__["_krs"] = (key, {name: np.array(values, copy=True) for name, values in out.items()})
+        return out

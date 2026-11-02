@@ -20,7 +20,7 @@ from openalea.metafspm.coupling.component import input_variable, state_variable
 from openalea.metafspm.solve.decorator import rate
 
 from openalea.mecha.component import SCALES, MechaSections, _doc, _p
-from openalea.mecha.geometry import MEMBRANE
+from openalea.mecha.geometry import MEMBRANE, local_index
 
 N_RANKS = 62
 
@@ -180,8 +180,11 @@ def relative_positions(geo, rank_to_row, distance):
 def wall_counts(geo):
     """
     Per local wall node, its membranes' cells by kind (``Mecha._count_surrounding_cells``, its elif chain):
-    {"interc", "xyl", "passage", "endo", "stele", "cortex", "exo", "epi"}.
+    {"interc", "xyl", "passage", "endo", "stele", "cortex", "exo", "epi"}. Computed once per geometry (kept on it).
     """
+    kept = geo.__dict__.get("_wall_counts")
+    if kept is not None:
+        return kept
     n = geo.kind.size
     interc = np.zeros(n, dtype=bool)
     interc[geo.typed["intercellular"]] = True
@@ -199,6 +202,7 @@ def wall_counts(geo):
                    "epi" if g == 2 else None)
             if key is not None:
                 counts[key][w] += 1
+    geo.__dict__["_wall_counts"] = counts
     return counts
 
 
@@ -209,8 +213,18 @@ def membrane_rows(geo, barrier, walls, cells, intercellular=True):
     previous layer's: ME-38), + 1 for an exodermis membrane facing the epidermis, + 3 (a passage cell at barrier 2:
     + 2) for an endodermis membrane facing the cortex, + 1 for a passage cell's facing the stele at barrier 2; -1 for
     the membranes that carry no transmembrane flow: an intercellular space's, a mature xylem vessel's (barrier > 0).
-    *intercellular* False keeps the intercellular spaces' (the legacy's, which never excludes them: ME-41).
+    *intercellular* False keeps the intercellular spaces' (the legacy's, which never excludes them: ME-41). Kept on
+    the geometry per (barrier, membranes, intercellular): every section of a template has the same.
     """
+    walls, cells = np.asarray(walls, dtype=np.int64), np.asarray(cells, dtype=np.int64)
+    key = (int(barrier), walls.tobytes(), cells.tobytes(), bool(intercellular))
+    kept = geo.__dict__.setdefault("_membrane_rows", {})
+    if key not in kept:
+        kept[key] = _membrane_rows(geo, barrier, walls, cells, intercellular)
+    return kept[key].copy()
+
+
+def _membrane_rows(geo, barrier, walls, cells, intercellular):
     rank_to_row, _, _ = legacy_rows(geo.n_layer, geo.layer_dist)
     counts = wall_counts(geo)
     walls, cells = np.asarray(walls, dtype=np.int64), np.asarray(cells, dtype=np.int64)
@@ -423,10 +437,8 @@ class MechaOsmoticPresets(MechaSections):
         for segment, (nodes, edges, geo) in self.section_geometries().items():
             if segment not in roots and not every[nodes[0]]:
                 continue
-            local = np.full(ds.n_nodes(), -1, dtype=np.int64)
-            local[nodes] = np.arange(nodes.size)
             e = edges[path[edges] == MEMBRANE]
-            a, b = local[view.tail[e]], local[view.head[e]]
+            a, b = local_index(nodes, view.tail[e]), local_index(nodes, view.head[e])
             wall_first = geo.kind[a] == 1
             membranes = np.c_[np.where(wall_first, a, b), np.where(wall_first, b, a)]
             v = nodes[0]

@@ -449,11 +449,11 @@ def contact_distances(net: Network, contact, sections) -> np.ndarray:
     distance = np.full(net.cgroup.size, np.nan)
     graph_edges = net.in_section & (net.junction_edge | np.isin(net.path, (MEMBRANE, PLASMODESMATA, WALL_AIR,
                                                                               AIR_LINK)))
+    node_groups, edge_groups = _grouped(net.section_of_node), _grouped(np.where(graph_edges, net.section_of_edge, -1))
     for section in sections:
-        nodes = np.flatnonzero(net.section_of_node == section)
-        local = np.full(net.cgroup.size, -1, dtype=np.int64)
-        local[nodes] = np.arange(nodes.size)
-        e = np.flatnonzero(graph_edges & (net.section_of_edge == section))
+        nodes = node_groups.get(int(section), np.zeros(0, dtype=np.int64))
+        e = edge_groups.get(int(section), np.zeros(0, dtype=np.int64))
+        local = _Local(nodes)
         weight = np.hypot(net.x[net.a[e]] - net.x[net.b[e]], net.y[net.a[e]] - net.y[net.b[e]])
         weight = np.where(weight > 0., weight, 1e-300)                   # a zero-length edge is still an edge
         graph = coo_matrix((weight, (local[net.a[e]], local[net.b[e]])), shape=(nodes.size, nodes.size)).tocsr()
@@ -613,14 +613,33 @@ def cortex_parameters(geo, kaqp_cortex: float, ratio_cortex: float, height: floa
         1 - ratio_cortex)
 
 
+def _grouped(owner) -> dict:
+    """{group: its indices, ascending} of an integer array (groups < 0 left out), in one sort."""
+    owner = np.asarray(owner, dtype=np.int64)
+    order = np.argsort(owner, kind="stable")
+    keys, starts = np.unique(owner[order], return_index=True)
+    ends = np.r_[starts[1:], order.size]
+    return {int(k): order[s:e] for k, s, e in zip(keys.tolist(), starts.tolist(), ends.tolist()) if k >= 0}
+
+
+class _Local:
+    """local[targets]: the positions of *targets* in a section's *nodes* (geometry.local_index), indexable."""
+
+    def __init__(self, nodes):
+        self.nodes = np.asarray(nodes, dtype=np.int64)
+
+    def __getitem__(self, targets):
+        from openalea.mecha.geometry import local_index
+        return local_index(self.nodes, targets)
+
+
 def section_matrix(net: Network, K, in_matrix, soil, axial, nodes, edges):
     """
     The legacy's Doussan matrix of one section (its nodes, in the given order): −ΣK on the diagonal, K off it, minus
     the soil and axial terms on the diagonal. Returns (W as CSR, its node order *nodes*).
     """
     from scipy.sparse import coo_matrix
-    local = np.full(net.cgroup.size, -1, dtype=np.int64)
-    local[nodes] = np.arange(nodes.size)
+    local = _Local(nodes)
     e = edges[in_matrix[edges]]
     i, j, k = local[net.a[e]], local[net.b[e]], K[e]
     rows = np.r_[i, i, j, j, np.arange(nodes.size), np.arange(nodes.size)]

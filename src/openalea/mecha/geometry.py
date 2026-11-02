@@ -422,17 +422,28 @@ def section_parts(ds) -> dict:
             for i, vid in enumerate(ids)}
 
 
+def local_index(nodes, targets) -> np.ndarray:
+    """The position of each of *targets* in *nodes* (-1 when absent), by a sorted search: O(size of the section)
+    instead of an index array over the whole graph per section."""
+    nodes, targets = np.asarray(nodes, dtype=np.int64), np.asarray(targets, dtype=np.int64)
+    if nodes.size == 0:
+        return np.full(targets.shape, -1, dtype=np.int64)
+    order = np.argsort(nodes, kind="stable")
+    sorted_nodes = nodes[order]
+    position = np.searchsorted(sorted_nodes, targets).clip(0, nodes.size - 1)
+    return np.where(sorted_nodes[position] == targets, order[position], -1)
+
+
 def section_of(ds, nodes, edges) -> Section:
     """The Section of the Compartments *nodes* and Connections *edges* of the DataStructure *ds*."""
     view = ds.to_graph_view()
-    local = np.full(ds.n_nodes(), -1, dtype=np.int64)
-    local[nodes] = np.arange(nodes.size)
     node = {name: np.asarray(ds.get(name))[nodes] for name in NODE_VARIABLES}
     edge = {name: np.asarray(ds.get(name))[edges] for name in EDGE_VARIABLES}
     return Section(kind=node["kind"].astype(np.int64), cgroup=node["cgroup"].astype(float), tissue=node["tissue"],
                    x=node["section_x"].astype(float), y=node["section_y"].astype(float),
                    wall_length=node["wall_length"].astype(float), cell_area=node["cell_area"].astype(float),
-                   a=local[view.tail[edges]], b=local[view.head[edges]], path=edge["network_path"].astype(np.int64),
+                   a=local_index(nodes, view.tail[edges]), b=local_index(nodes, view.head[edges]),
+                   path=edge["network_path"].astype(np.int64),
                    length=edge["edge_length"].astype(float), dist=edge["edge_dist"].astype(float))
 
 

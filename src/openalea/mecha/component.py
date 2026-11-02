@@ -24,6 +24,7 @@ from openalea.mecha.conductance import (Network, assemble, boundary_terms, corte
                                        elongation_sink, kelvin_alpha, set_edge_ends, set_wall_thickness,
                                        sieve_tube_terms, vapour_conductances)
 from openalea.mecha.geometry import (AXIAL_JUNCTION, LEAF_SURFACE, MEMBRANE, SOIL, SOIL_NODE, STOMATAL, XYLEM_CGROUPS,
+                                     local_index,
                                      phi_thick_cells,
                                      section_geometry, section_of, section_parts)
 from openalea.mecha.postprocess import (VISCOSITY_PHLOEM, VISCOSITY_XYLEM, axial_conductances, poiseuille,
@@ -125,7 +126,12 @@ class MechaSections(FunctionalComponent):
         Connections (DataStructure indices) and MECHA's geometry, computed once per anatomy template.
         """
         ds = self.data_structure
-        template = dict(zip(ds.entity_ids("SubOrgan").tolist(), np.asarray(ds.get("anatomy_template")).tolist()))
+        templates = np.asarray(ds.get("anatomy_template"))
+        stamp = (ds._topology_stamp() if hasattr(ds, "_topology_stamp") else ds.topology_version, templates.tobytes())
+        kept = self.__dict__.get("_section_geometries")
+        if kept is not None and kept[0] == stamp:                   # the same sections: the same dict (read only)
+            return kept[1]
+        template = dict(zip(ds.entity_ids("SubOrgan").tolist(), templates.tolist()))
         out = {}
         for segment, (nodes, edges) in section_parts(ds).items():
             if nodes.size == 0:
@@ -141,6 +147,7 @@ class MechaSections(FunctionalComponent):
                 cached = cache[key] = ((nodes.size, edges.size),
                                                   section_geometry(section_of(ds, nodes, edges)))
             out[segment] = (nodes, edges, cached[1])
+        self.__dict__["_section_geometries"] = (stamp, out)
         return out
 
     def section_roles(self) -> tuple:
@@ -267,10 +274,11 @@ class MechaHydraulics(MechaSections):
                                    "definition), 0: skip it", 1.)
     standard_osmotic: float = _p("", "1: the standard problem with the membranes' osmotic terms (the legacy's scenarios "
                                      "≥ 1), 0: without (its scenario 0, MECHA's kr)", 0.)
-    plant_solver: str = setting(description="the plant problem's linear solves: \"full\", one sparse solve of the "
-                                            "whole network; \"condensed\", each section's interior eliminated, one "
-                                            "factorisation per kind of section (solve.network.condensed_solve; the "
-                                            "soil, collar and junction nodes kept): the same potentials to round-off",
+    plant_solver: str = setting(description="the linear solves of the plant problem and of the standard problem: "
+                                            "\"full\", one sparse solve of the whole network; \"condensed\", each "
+                                            "section's interior eliminated, one factorisation per kind of section "
+                                            "(solve.network.condensed_solve; the soil, collar and junction nodes "
+                                            "kept): the same potentials to round-off",
                                 default="full", choices=("full", "condensed"))
     soil_boundary: str = setting(description="the soil condition of the plant problem: \"per_node\", a Robin term on "
                                              "each border wall and junction in contact (MECHA's); \"node_dirichlet\", "
@@ -654,7 +662,44 @@ class MechaHydraulics(MechaSections):
         Every edge's conductance, and the boundary conductances of the nodes (soil, axial), from MECHA's geometry,
         the segments' barriers and heights (their lengths), and the plants' parameters; the standard problem's
         boundary potentials (the axial boundary only where its potential is given: not at barrier 0 by default).
+        Computed again only when one of these changed (_memo).
         """
+        ds = self.data_structure
+        key = self._memo_key(network_path, barrier, length, anatomy_template, leaf_transpiration, stomatal_aperture,
+                             pore_width, pore_depth, *(ds.get(name) for name in ("kind", "cell_area", "wall_thickness",
+                                                                                 "soil_contact_cell",
+                                                                                 "measured_axial_conductivity")))
+        kept = self._memo("conductance", key)
+        if kept is not None:
+            return kept
+        return self._remember("conductance", key, self._conductance_values(
+            network_path, barrier, length, anatomy_template, leaf_transpiration, stomatal_aperture, pore_width,
+            pore_depth))
+
+    def _memo_key(self, *arrays) -> str:
+        """The key of a step's inputs: the topology, the settings, the parameters' versions on the DataStructure,
+        and the values of *arrays*."""
+        from openalea.mecha.memo import content_key
+        ds = self.data_structure
+        stamp = ds._topology_stamp() if hasattr(ds, "_topology_stamp") else ds.topology_version
+        versions = tuple(ds.write_count(name) if ds.has(name) else -1 for name in self.PARAMETERS)
+        settings = (self.soil_boundary, self.plant_solver)
+        return content_key(repr((stamp, versions, settings)), *(np.asarray(a) for a in arrays))
+
+    def _memo(self, name: str, key: str):
+        """A step's outputs kept for *key* (copies), or None."""
+        kept = self.__dict__.get("_memos", {}).get(name)
+        if kept is None or kept[0] != key:
+            return None
+        return tuple(x.copy() if isinstance(x, np.ndarray) else x for x in kept[1])
+
+    def _remember(self, name: str, key: str, outputs: tuple) -> tuple:
+        self.__dict__.setdefault("_memos", {})[name] = (key, tuple(np.array(x, copy=True) if isinstance(x, np.ndarray)
+                                                                   else x for x in outputs))
+        return outputs
+
+    def _conductance_values(self, network_path, barrier, length, anatomy_template, leaf_transpiration,
+                            stomatal_aperture, pore_width, pore_depth) -> tuple:
         geometries = self.section_geometries()
         net = self.network(geometries)
         height_node = np.asarray(length, dtype=float) * 1.0E6                     # m -> µm
@@ -885,7 +930,8 @@ class MechaHydraulics(MechaSections):
     # tol (cm3 d-1): the pinned walls' penalty puts their residuals' round-off at ~1e-9; the systems are linear,
     # solved by the first Newton step
     @graph_system(node_unknowns=["standard_psi"], solver="newton", max_iterations=3, tolerance=1e-8, schedule_as="state",
-                  filters={"in_standard_problem": ">0"})
+                  filters={"in_standard_problem": ">0"},
+                  condense=lambda self: "SubOrgan" if self.plant_solver == "condensed" else None)
     class _standard_problem:
         """
         Each section alone (the junctions have no conductance here): its border walls and junctions exchange with
@@ -1067,23 +1113,25 @@ class MechaHydraulics(MechaSections):
         fraction, layer = np.zeros(ds.n_edges()), np.full(ds.n_edges(), -1.)
         flow, path, kind = np.asarray(standard_flow, dtype=float), np.asarray(network_path), np.asarray(ds.get("kind"))
         uptake, barrier = np.asarray(standard_uptake, dtype=float), np.asarray(barrier)
+        key = self._memo_key(standard_flow, standard_uptake, barrier, network_path, kind)
+        kept = self._memo("transmembrane", key)
+        if kept is not None:
+            return kept
         where = {int(v): i for i, v in enumerate(ds.entity_ids("SubOrgan"))}
         standard = self.parameter_table("node")["standard_solve"] > 0
         roots = self.section_roles()[1]
         for segment, (nodes, edges, geo) in self.section_geometries().items():
             if segment not in roots or not standard[nodes[0]]:
                 continue
-            local = np.full(ds.n_nodes(), -1, dtype=np.int64)
-            local[nodes] = np.arange(nodes.size)
             membranes = edges[path[edges] == MEMBRANE]
             tail, head = view.tail[membranes], view.head[membranes]
             wall_is_tail = kind[tail] != 0
             walls, cells = np.where(wall_is_tail, tail, head), np.where(wall_is_tail, head, tail)
-            rows = membrane_rows(geo, int(barrier[nodes[0]]), local[walls], local[cells])
+            rows = membrane_rows(geo, int(barrier[nodes[0]]), local_index(nodes, walls), local_index(nodes, cells))
             into_cell = np.where(wall_is_tail, flow[membranes], -flow[membranes])
             fraction[membranes] = np.where(rows >= 0, into_cell / uptake[where[segment]], 0.)
             layer[membranes] = rows
-        return fraction, "membrane_layer", layer
+        return self._remember("transmembrane", key, (fraction, "membrane_layer", layer))
 
 
 MechaHydraulics.PARAMETERS = tuple(MechaHydraulics._plant_parameter_fields())
