@@ -169,6 +169,43 @@ class SoluteTransport:
         self._T_cache: dict = {}   # (scheme, mode, h, i_mat, i_scen, fp) → csr_matrix
         self._A_cache: dict = {}   # (mode, i_mat, i_scen, fp) → csr_matrix
 
+        # Mesophyll air-space / sub-stomatal chamber cells carry a VAPOUR DOF
+        # (coupled only by wall_air / air_link edges whose edge_flux_list fluxes
+        # are vapour volume fluxes). Dissolved solute must never enter them, so
+        # exclude any edge with an air-cell endpoint from D/A/T. Empty for roots.
+        self._air_nodes: frozenset = self._collect_air_nodes()
+
+    def _collect_air_nodes(self) -> frozenset:
+        """Full-network node ids of mesophyll air spaces (vapour-only cells).
+
+        Mirrors NetworkBuilder.is_wall_air_cell (cell_type == "air space" and
+        protect_topology); falls back to the node attributes directly when that
+        predicate is unavailable. Returns an empty set for anatomies without air
+        spaces (e.g. roots), making the air-cell exclusion a no-op there.
+        """
+        network = self.network
+        nwj     = self.n_wall_junction
+        graph   = network.graph
+        is_air  = getattr(network, 'is_wall_air_cell', None)
+        nodes   = set()
+        for cid in range(self.n_cells):
+            node_id = nwj + cid
+            if node_id not in graph:
+                continue
+            flagged = False
+            if callable(is_air):
+                try:
+                    flagged = bool(is_air(node_id))
+                except Exception:
+                    flagged = False
+            if not flagged:
+                nd = graph.nodes[node_id]
+                ct = str(nd.get('cell_type', '')).strip().lower()
+                flagged = ct == 'air space' and bool(nd.get('protect_topology', False))
+            if flagged:
+                nodes.add(self.indice[node_id])
+        return frozenset(nodes)
+
     # ------------------------------------------------------------------
     # Reflection coefficient σ
     # ------------------------------------------------------------------
@@ -312,6 +349,9 @@ class SoluteTransport:
 
                 if j <= i or eattr.get('path') != 'membrane':
                     continue
+                # No transmembrane solute diffusion into a vapour air space.
+                if j in self._air_nodes:
+                    continue
                 L  = eattr.get('length', 1.0)
                 d  = eattr.get('dist',   1.0)
                 DF = self.D_mem * L * height * 1e-4 / d
@@ -377,6 +417,12 @@ class SoluteTransport:
             tgt = edge['target']
             F   = edge['flux']
             if F == 0.0:
+                continue
+
+            # wall_air / air_link edges carry a VAPOUR volume flux; the dissolved
+            # solute must not be advected into the air space. Skip any edge with
+            # an air-cell endpoint.
+            if src in self._air_nodes or tgt in self._air_nodes:
                 continue
 
             src_apo = src < nwj
@@ -577,6 +623,11 @@ class SoluteTransport:
             if (i, j) in seen:
                 continue
             seen.add((i, j))
+
+            # Air spaces (sub-stomatal chambers) hold a vapour DOF; their
+            # wall_air / air_link edges carry vapour, not dissolved solute.
+            if i in self._air_nodes or j in self._air_nodes:
+                continue
 
             i_apo = i < nwj
             j_apo = j < nwj
