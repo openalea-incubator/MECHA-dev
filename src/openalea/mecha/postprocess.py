@@ -7,7 +7,8 @@ emulated here on arrays laid out as the legacy's.
 """
 import numpy as np
 
-VISCOSITY_XYLEM = 1.3076E-05          # hPa d ×3600×24: water at 10 °C (1.3076E-3 Pa s), the legacy's
+# The saps' viscosities (hPa s), the defaults of MechaHydraulics' xylem_viscosity and phloem_viscosity
+VISCOSITY_XYLEM = 1.3076E-05          # water at 10 °C (1.3076E-3 Pa s), the legacy's
 VISCOSITY_PHLOEM = 1.7E-05            # phloem sap (1.7E-3 Pa s, Ross-Elliott et al. 2017), the legacy's
 
 
@@ -40,12 +41,14 @@ def _poiseuille(area, height, viscosity) -> float:
     return float(area) ** 2 / (8 * 3.141592 * height * viscosity / 3600 / 24) * 1.0E-12
 
 
-def axial_conductances(geo, height, barrier, measured=None) -> tuple:
+def axial_conductances(geo, height, barrier, measured=None,
+                       viscosities=(VISCOSITY_XYLEM, VISCOSITY_PHLOEM)) -> tuple:
     """
     (Kx, Kx_phloem) (cm⁴ hPa⁻¹ d⁻¹): Σ of the conduits' Poiseuille conductances × height / 1e4, the xylem vessels'
     (barrier > 0) and the sieve tubes' (barrier > 0) or protosieve cells' (barrier 0), each in cell order; a conduit
     with a *measured* specific conductance (per local node, cm⁴ hPa⁻¹ d⁻¹, NaN: Poiseuille's) takes it (MECHA's
-    Kax_source 2). Kx is 0 at barrier 0 (no mature xylem: the legacy fails there, legacy e).
+    Kax_source 2). Kx is 0 at barrier 0 (no mature xylem: the legacy fails there, legacy e). *viscosities*: the
+    xylem sap's and the phloem sap's (hPa s).
     """
     height = float(height)
     position = np.empty(geo.legacy_order.size, dtype=np.int64)
@@ -59,12 +62,14 @@ def axial_conductances(geo, height, barrier, measured=None) -> tuple:
             K_axial[position[c]] = given / (height / 1.0E04) if np.isfinite(given) else \
                 _poiseuille(geo.cell_area[c], height, viscosity)
         return float(np.sum(K_axial)) * height / 1.0E04
+    xylem, phloem = (float(viscosity) for viscosity in viscosities)
     if barrier > 0:
-        return total(geo.typed["xylem"], VISCOSITY_XYLEM), total(geo.typed["sieve"], VISCOSITY_PHLOEM)
-    return 0., total(geo.typed["protosieve"], VISCOSITY_PHLOEM)
+        return total(geo.typed["xylem"], xylem), total(geo.typed["sieve"], phloem)
+    return 0., total(geo.typed["protosieve"], phloem)
 
 
-def conduit_axial_conductances(tissue, cell_area, height, barrier, measured=None) -> tuple:
+def conduit_axial_conductances(tissue, cell_area, height, barrier, measured=None,
+                               viscosities=(VISCOSITY_XYLEM, VISCOSITY_PHLOEM)) -> tuple:
     """axial_conductances from the conduits' own values (per node: *tissue*, *cell_area* in mm², *measured*), without
     the section's geometry: a condensed section's (its conduits are its kept nodes)."""
     from openalea.mecha.geometry import PROTOSIEVE_TYPES, SIEVE_TYPES, XYLEM_TYPES
@@ -78,9 +83,10 @@ def conduit_axial_conductances(tissue, cell_area, height, barrier, measured=None
         K = [measured[c] / (height / 1.0E04) if np.isfinite(measured[c]) else _poiseuille(area[c], height, viscosity)
              for c in cells]
         return float(np.sum(K)) * height / 1.0E04
+    xylem, phloem = (float(viscosity) for viscosity in viscosities)
     if barrier > 0:
-        return total(XYLEM_TYPES, VISCOSITY_XYLEM), total(SIEVE_TYPES, VISCOSITY_PHLOEM)
-    return 0., total(PROTOSIEVE_TYPES, VISCOSITY_PHLOEM)
+        return total(XYLEM_TYPES, xylem), total(SIEVE_TYPES, phloem)
+    return 0., total(PROTOSIEVE_TYPES, phloem)
 
 
 def transmembrane_layers(ds, segment) -> "pd.DataFrame":

@@ -13,6 +13,7 @@ from openalea.metafspm.scene.population import Planting, planting
 from openalea.mecha.component import MechaHydraulics
 from openalea.mecha.geometry import WALL_AIR
 from openalea.mecha.solutes import MechaSolutes
+from openalea.mecha.stand_ins import Transpiration
 
 from plants import initiated
 from test_shoot import SOIL, TRANSPIRATION, Anatomy, Seedling
@@ -29,9 +30,7 @@ def stepped():
     Anatomy(data_structure=ds)()
     ds.register("barrier", np.ones(ds.n_nodes()), location="node")
     ds.register("soil_psi", np.full(ds.n_nodes(), SOIL), location="node")
-    for organ in ds.entity_ids("Organ"):
-        leaf = g.property("label").get(int(organ)) == g.labels.Organ.Leaf
-        g.property("leaf_transpiration")[int(organ)] = TRANSPIRATION if leaf else 0.
+    Transpiration(data_structure=ds, transpiration=TRANSPIRATION)()       # its one leaf organ's
     mecha = MechaHydraulics(data_structure=ds)
     mecha.collar_condition = 0.
     mecha()

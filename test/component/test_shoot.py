@@ -16,6 +16,7 @@ from openalea.granap.stem_class import StemAnatomy
 from openalea.granap.metafspm.component import GranapAnatomy, OrganAnatomy
 from openalea.granap.metafspm.library import AnatomyLibrary, preset_parameters
 from openalea.mecha.component import MechaHydraulics
+from openalea.mecha.stand_ins import Transpiration, UniformSoil
 
 from plants import initiated
 
@@ -64,10 +65,8 @@ def plant():
     Anatomy(data_structure=ds)()
     ds.register("barrier", np.ones(ds.n_nodes()), location="node")
     ds.register("soil_psi", np.full(ds.n_nodes(), SOIL), location="node")
-    for organ in ds.entity_ids("Organ"):                      # the leaf organ's transpiration, an MTG property
-        leaf = g.property("label").get(int(organ)) == g.labels.Organ.Leaf
-        g.property("leaf_transpiration")[int(organ)] = TRANSPIRATION if leaf else 0.
-    mecha = MechaHydraulics(data_structure=ds)                # (read when its inputs are registered)
+    Transpiration(data_structure=ds, transpiration=TRANSPIRATION)()       # its one leaf organ's
+    mecha = MechaHydraulics(data_structure=ds)
     mecha.collar_condition = 0.
     mecha()
     labels = g.property("label")
@@ -118,6 +117,13 @@ def test_potentials_along_the_path(plant):
     assert water[surface][0] < psi[~vapour].min()
 
 
+def test_the_leaf_organ_transpires_its_plant_s_transpiration(plant):
+    """Transpiration's share: the plant's on its one leaf organ, none on the stem's and the root's."""
+    _, ds, _, _ = plant
+    leaf = ds.labels(location="Organ", per_node=False) == "Leaf"
+    np.testing.assert_array_equal(np.asarray(ds.get("leaf_transpiration")), np.where(leaf, TRANSPIRATION, 0.))
+
+
 def test_root_quantities_on_roots_only(plant):
     g, ds, mecha, kinds = plant
     L = g.labels.SubOrgan
@@ -141,24 +147,22 @@ def _seedling(reduced=False, labels=("RootSegment", "StemElement"), **scenario):
         reduction = plant_reduction(labels=labels) if reduced else None
 
         def __init__(self, data_structure, time_step):
-            g = data_structure.structure
-            for organ in data_structure.entity_ids("Organ"):         # the leaf organ's transpiration (MTG)
-                leaf = g.property("label").get(int(organ)) == g.labels.Organ.Leaf
-                g.property("leaf_transpiration")[int(organ)] = TRANSPIRATION if leaf else 0.
             self.anatomy = Anatomy(data_structure=data_structure, time_step=time_step)
+            self.soil = UniformSoil(data_structure=data_structure, time_step=time_step)
+            self.transpiration = Transpiration(data_structure=data_structure, time_step=time_step)
             self.hydraulics = MechaHydraulics(data_structure=data_structure, time_step=time_step,
                                               soil_boundary="node_dirichlet")
-            self.couple(self.anatomy, self.hydraulics)
+            self.couple(self.anatomy, self.soil, self.transpiration, self.hydraulics)
 
         def run(self):
+            self.soil()
+            self.transpiration()
             self.anatomy()
             self.hydraulics()
 
-    population = population_data_structure(planting([Planting()], SeedlingModel, dict(scenario, collar_condition=0.)),
-                                           SeedlingModel)
+    scenario = dict(scenario, collar_condition=0., uniform_soil_psi=SOIL, transpiration=TRANSPIRATION)
+    population = population_data_structure(planting([Planting()], SeedlingModel, scenario), SeedlingModel)
     ds = population.data_structure
-    ds.set("barrier", np.ones(ds.n_nodes()))
-    ds.set("soil_psi", np.full(ds.n_nodes(), SOIL))
     population.instance.run()
     return ds, population.instance.hydraulics
 

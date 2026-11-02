@@ -175,14 +175,13 @@ class MechaSections(FunctionalComponent):
     def section_roles(self) -> tuple:
         """
         (first, roots, leaves): the SubOrgan vids without a parent (a root system's first section), those labelled
-        RootSegment and those labelled LeafElement; read from the MPG once per topology.
+        RootSegment and those labelled LeafElement; read once per topology.
         """
         def build():
             ds = self.data_structure
-            g = ds.structure
             segments = [int(v) for v in ds.entity_ids("SubOrgan")]
             labels = ds.labels(location="SubOrgan", per_node=False).tolist()
-            return ({v for v in segments if g.parent(v) is None},
+            return ({segments[i] for i in ds.roots(location="SubOrgan").tolist()},
                     {v for v, label in zip(segments, labels) if label == "RootSegment"},
                     {v for v, label in zip(segments, labels) if label == "LeafElement"})
         return self.cached("section_roles", build)
@@ -289,6 +288,11 @@ class MechaHydraulics(MechaSections):
                                        "(standard_axial_source 2)", 1.0E-6)
     k_sieve: float = _p("cm3 hPa-1 d-1", "conductance between a protophloem cell and the phloem boundary "
                                          "(standard_axial_source 2)", 1.0E-6)
+    xylem_viscosity: float = _p("hPa s", "the xylem sap's viscosity (the vessels' Poiseuille conductances): water at "
+                                         "10 °C, 1.3076E-3 Pa s (the legacy's)", VISCOSITY_XYLEM)
+    phloem_viscosity: float = _p("hPa s", "the phloem sap's viscosity (the sieve tubes' and protosieve cells' "
+                                          "Poiseuille conductances): 1.7E-3 Pa s (Ross-Elliott et al. 2017, the "
+                                          "legacy's)", VISCOSITY_PHLOEM)
     n_phi_layers: float = _p("", "number of cortex layers with phi thickenings", 0.)
     phi_type: float = _p("", "phi thickenings: 1 inner cortex, 2 outer cortex, 3 mid cortex", 1.)
 
@@ -702,10 +706,10 @@ class MechaHydraulics(MechaSections):
         Computed again only when one of these, the parameters, the settings or the structure changed (memo=True).
         """
         return self._conductance_values(network_path, barrier, length, anatomy_template, leaf_transpiration,
-                                        stomatal_aperture, pore_width, pore_depth)
+                                        stomatal_aperture, pore_width, pore_depth, kind, cell_area)
 
     def _conductance_values(self, network_path, barrier, length, anatomy_template, leaf_transpiration,
-                            stomatal_aperture, pore_width, pore_depth) -> tuple:
+                            stomatal_aperture, pore_width, pore_depth, kind, cell_area) -> tuple:
         geometries = self.section_geometries()
         net = self.network(geometries)
         height_node = np.asarray(length, dtype=float) * 1.0E6                     # m -> µm
@@ -729,17 +733,17 @@ class MechaHydraulics(MechaSections):
         right = P_node["standard_psi_soil_right"]
         standard_soil = np.where(np.isnan(right), P_node["standard_psi_soil"],
                                  P_node["standard_psi_soil"] * (1 - relative_x) + right * relative_x)
-        inflow = self._standard_axial_inflow(geometries, P_node, flow_condition)
+        inflow = self._standard_axial_inflow(geometries, P_node, flow_condition, barrier_node)
         root = self._root_nodes(geometries)
         soil = np.where(root, soil, 0.)                               # stems and leaves: no soil (E1)
         K = np.where(in_matrix, K, 0.)
         ds = self.data_structure
-        kind = np.asarray(ds.get("kind"))
+        kind = np.asarray(kind)
         pore_width, pore_depth = np.asarray(pore_width, dtype=float), np.asarray(pore_depth, dtype=float)
         view = ds.to_graph_view()
         self._reduced_vapour_path(net, view)
         K_vapour, K_wall, K_air, offset, wall_end, air_end = vapour_conductances(
-            net, P_edge, height_node[tail], pore_width, pore_depth, np.asarray(ds.get("cell_area"), dtype=float),
+            net, P_edge, height_node[tail], pore_width, pore_depth, np.asarray(cell_area, dtype=float),
             np.asarray(stomatal_aperture, dtype=float), height_node[view.tail])
         K = K + K_vapour
         a_is_wall = (wall_end >= 0) & (wall_end == net.a)
@@ -831,16 +835,17 @@ class MechaHydraulics(MechaSections):
                                    net.cell_area * height * 1e-12))
         return np.where(net.section_of_node >= 0, np.maximum(volume, 1e-30), 0.)
 
-    def _liquid_equivalent(self, value, vapour_node, location="node"):
+    @staticmethod
+    def _liquid_equivalent(value, vapour_node, leaf_temperature):
         """The water potential (hPa) of the vapour nodes: Kelvin's liquid equivalent of their relative vapour
-        pressure x, ln(x) / α (α = V_w / (R T))."""
-        alpha = kelvin_alpha(np.asarray(self.parameter_values("leaf_temperature", location), dtype=float))
+        pressure x, ln(x) / α (α = V_w / (R T), T the leaves' temperature per node)."""
+        alpha = kelvin_alpha(np.asarray(leaf_temperature, dtype=float))
         vapour = np.asarray(vapour_node) > 0
         with np.errstate(divide="ignore", invalid="ignore"):
             kelvin = np.log(np.maximum(value, 1e-300)) / alpha
         return vapour, kelvin
 
-    def _standard_axial_inflow(self, geometries, P_node, flow_condition) -> np.ndarray:
+    def _standard_axial_inflow(self, geometries, P_node, flow_condition, barrier) -> np.ndarray:
         """
         The standard problem's flow conditions: the flow into the xylem (standard_axial_condition 2) split among the
         vessels (the network's, by cgroup) as their areas; the flow into the phloem (standard_sieve_flow, where its
@@ -850,7 +855,6 @@ class MechaHydraulics(MechaSections):
         fixed); its phloem's, the protosieve cells' areas, also by rank to the sieve tubes (ME-42: fixed).
         """
         out = np.zeros(self.data_structure.n_nodes())
-        barrier = np.asarray(self.data_structure.get("barrier"))
         for nodes, _, geo in geometries.values():
             v = nodes[0]
             if flow_condition[v]:
@@ -874,16 +878,17 @@ class MechaHydraulics(MechaSections):
         return out
 
     @rate(include_inactive=True)
-    def _osmotic_drive(self, osmotic_potential, reflection_coefficient) -> tuple[np.ndarray, str, np.ndarray]:
+    def _osmotic_drive(self, reflection_coefficient, osmotic_potential, standard_osmotic) \
+            -> tuple[np.ndarray, str, np.ndarray]:
         """
         Each edge's osmotic drive σ (π_tail − π_head) (the membranes': the legacy's ``rhs_o``, as a flow K σ Δπ added
-        to K Δψ), and the standard problem's (its plants with standard_osmotic).
+        to K Δψ), and the standard problem's (its plants with standard_osmotic; the parameter comes on the edges, the
+        location of the step's first argument).
         """
-        ds = self.data_structure
-        view = ds.to_graph_view()
+        view = self.data_structure.to_graph_view()
         pi = np.asarray(osmotic_potential, dtype=float)
         drive = np.asarray(reflection_coefficient, dtype=float) * (pi[view.tail] - pi[view.head])
-        standard = np.asarray(self.parameter_values("standard_osmotic", "edge")) > 0
+        standard = np.asarray(standard_osmotic) > 0
         return drive, "standard_osmotic_drive", np.where(standard, drive, 0.)
 
     @rate(include_inactive=True)
@@ -897,15 +902,17 @@ class MechaHydraulics(MechaSections):
         phloem = np.isin(a, PHLOEM_CGROUPS) & np.isin(b, PHLOEM_CGROUPS)
         return np.select([junction & xylem, junction & phloem], [1., 2.], 0.)
 
-    def _junction_conductance(self, conduit, cell_area, length, viscosity, barrier=None) -> np.ndarray:
-        """Poiseuille through each junction of *conduit* (its two cells, each over half its segment, in series)."""
-        ds = self.data_structure
-        view = ds.to_graph_view()
-        edges = np.flatnonzero(np.asarray(ds.get("axial_conduit")) == conduit)
+    def _junction_conductance(self, conduit, axial_conduit, cell_area, length, measured_axial_conductivity,
+                              viscosity, barrier=None) -> np.ndarray:
+        """Poiseuille through each junction of *conduit* (its two cells, each over half its segment, in series); 0 on
+        the other edges. *viscosity*: per edge."""
+        view = self.data_structure.to_graph_view()
+        edges = np.flatnonzero(np.asarray(axial_conduit) == conduit)
         a, b = view.tail[edges], view.head[edges]
         area = np.asarray(cell_area, dtype=float) * 1.0E6                          # mm2 -> µm2
         half = np.asarray(length, dtype=float) * 1.0E6 / 2                         # m -> µm
-        measured = np.asarray(ds.get("measured_axial_conductivity"), dtype=float)
+        measured = np.asarray(measured_axial_conductivity, dtype=float)
+        viscosity = np.asarray(viscosity, dtype=float)[edges]
         k_a, k_b = (np.where(np.isfinite(measured[n]), measured[n] / (half[n] / 1.0E04),
                              poiseuille(area[n], half[n], viscosity)) for n in (a, b))
         with np.errstate(divide="ignore"):
@@ -913,45 +920,42 @@ class MechaHydraulics(MechaSections):
         if barrier is not None:
             barrier = np.asarray(barrier)
             K = np.where((barrier[a] > 0) & (barrier[b] > 0), K, 0.)
-        return K
-
-    @rate(filters={"axial_conduit": 1}, include_inactive=True)
-    def _xylem_axial_conductance(self, axial_conduit, cell_area, length, barrier) -> np.ndarray:
-        """The xylem junctions' conductances (water); none where either section has no mature xylem (barrier 0)."""
-        return self._junction_conductance(1, cell_area, length, VISCOSITY_XYLEM, barrier)
-
-    @rate(filters={"axial_conduit": 2}, include_inactive=True)
-    def _phloem_axial_conductance(self, axial_conduit, cell_area, length) -> np.ndarray:
-        """The phloem junctions' conductances (phloem sap)."""
-        return self._junction_conductance(2, cell_area, length, VISCOSITY_PHLOEM)
+        out = np.zeros(np.asarray(axial_conduit).size)
+        out[edges] = K
+        return out
 
     @rate(include_inactive=True)
-    def _collar_kind(self, kind, cgroup, cell_area) -> tuple[np.ndarray, str, np.ndarray]:
+    def _xylem_axial_conductance(self, axial_conduit, cell_area, length, barrier, measured_axial_conductivity,
+                                 xylem_viscosity) -> np.ndarray:
+        """The xylem junctions' conductances (water); none where either section has no mature xylem (barrier 0)."""
+        return self._junction_conductance(1, axial_conduit, cell_area, length, measured_axial_conductivity,
+                                          xylem_viscosity, barrier)
+
+    @rate(include_inactive=True)
+    def _phloem_axial_conductance(self, axial_conduit, cell_area, length, measured_axial_conductivity,
+                                  phloem_viscosity) -> np.ndarray:
+        """The phloem junctions' conductances (phloem sap)."""
+        return self._junction_conductance(2, axial_conduit, cell_area, length, measured_axial_conductivity,
+                                          phloem_viscosity)
+
+    @rate(include_inactive=True)
+    def _collar_kind(self, kind, cgroup, cell_area, collar_condition, collar_psi, collar_flow) \
+            -> tuple[np.ndarray, str, np.ndarray]:
         """
         The collar condition (Q-G2) on the xylem vessels of each root system's first section (a segment without a
         parent): the collar's potential (collar_condition 1), or the flow collar_flow leaving the root, split among
         the vessels as their Poiseuille conductances (∝ area², collar_condition 2).
         """
         ds = self.data_structure
-        P = self.parameter_table("node")
-        kinds, values = np.zeros(ds.n_nodes()), np.zeros(ds.n_nodes())
-        segments = ds.entity_ids("SubOrgan")
-        owner = ds.owner("SubOrgan")
-        xylem = np.isin(np.asarray(cgroup), XYLEM_CGROUPS)
-        area = np.asarray(cell_area, dtype=float)
-        first = self.section_roles()[0]
-        for i, segment in enumerate(segments):
-            if int(segment) not in first:
-                continue
-            vessels = np.flatnonzero((owner == i) & xylem)
-            if vessels.size == 0:
-                continue
-            condition = int(P["collar_condition"][vessels[0]])
-            if condition == 1:
-                kinds[vessels], values[vessels] = 1., P["collar_psi"][vessels]
-            elif condition == 2:
-                share = area[vessels] ** 2 / (area[vessels] ** 2).sum()
-                kinds[vessels], values[vessels] = 2., -P["collar_flow"][vessels] * share
+        first = np.isin(ds.entity_ids("SubOrgan"), list(self.section_roles()[0]))
+        vessels = np.isin(np.asarray(cgroup), XYLEM_CGROUPS) & (ds.map_to(first, "SubOrgan", "node", "broadcast") > 0)
+        condition = np.where(vessels, np.asarray(collar_condition), 0.)
+        squared = np.where(vessels, np.asarray(cell_area, dtype=float) ** 2, 0.)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            share = squared / ds.map_to(ds.map_to(squared, "node", "SubOrgan", "sum"), "SubOrgan", "node", "broadcast")
+        kinds = np.where((condition == 1) | (condition == 2), condition, 0.)
+        values = np.select([condition == 1, condition == 2], [np.asarray(collar_psi, dtype=float),
+                                                              -np.asarray(collar_flow, dtype=float) * share], 0.)
         return kinds, "collar_value", values
 
     # ── The standard problem: each section alone, MECHA's definition of kr (Q-M5) ──
@@ -1070,14 +1074,16 @@ class MechaHydraulics(MechaSections):
             return np.asarray(B.maximum(0) @ q).reshape(-1)
 
         @graph_output("water_potential", location="node")
-        def _water_potential(self, psi, osmotic_potential, vapour_node):
-            vapour, kelvin = self._liquid_equivalent(psi, vapour_node)
+        def _water_potential(self, psi, osmotic_potential, vapour_node, leaf_temperature):
+            vapour, kelvin = self._liquid_equivalent(psi, vapour_node, leaf_temperature)
             return np.where(vapour, kelvin, psi + osmotic_potential)
 
     # ── The sections' results ──
     @totalstate(include_inactive=True)
     def _kr(self, standard_psi, psi, soil_conductance, soil_psi, barrier, length, osmotic_potential,
-            standard_soil_psi, root_uptake) \
+            standard_soil_psi, root_uptake, kind, cgroup, tissue, cell_area, measured_axial_conductivity, vapour_node,
+            standard_solve, standard_psi_soil, standard_psi_xylem, standard_psi_sieve, standard_axial_condition,
+            standard_sieve_flow, standard_osmotic, leaf_temperature, xylem_viscosity, phloem_viscosity) \
             -> tuple[np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,
                      str, np.ndarray]:
         """
@@ -1086,7 +1092,10 @@ class MechaHydraulics(MechaSections):
         potentials (with the osmotic potentials where it has their terms, standard_osmotic).
         """
         ds = self.data_structure
-        P = self.parameter_table("node")
+        P = {name: np.asarray(values) for name, values in (
+            ("standard_solve", standard_solve), ("standard_psi_soil", standard_psi_soil),
+            ("standard_psi_xylem", standard_psi_xylem), ("standard_psi_sieve", standard_psi_sieve),
+            ("standard_axial_condition", standard_axial_condition), ("standard_sieve_flow", standard_sieve_flow))}
         soil, standard, plant = (np.asarray(v, dtype=float) for v in (soil_conductance, standard_psi, psi))
         soil_psi = np.asarray(soil_psi, dtype=float)
         barrier, height = np.asarray(barrier), np.asarray(length, dtype=float) * 1.0E6
@@ -1094,12 +1103,13 @@ class MechaHydraulics(MechaSections):
         names = ("kr", "standard_uptake", "uptake", "kr_effective", "Kx", "Kx_phloem")
         out = {name: np.full(segments.size, np.nan) for name in names}
         where = {int(v): i for i, v in enumerate(segments)}
-        cgroup = np.asarray(ds.get("cgroup"))
-        measured = np.asarray(ds.get("measured_axial_conductivity"), dtype=float)
+        cgroup = np.asarray(cgroup)
+        measured = np.asarray(measured_axial_conductivity, dtype=float)
+        node_kind = np.asarray(kind)
         roots = self.section_roles()[1]
         soil_side = soil_psi.copy()                    # the potential on the soil side of each contact node
         if self.soil_boundary != "per_node":           # its section's soil node's
-            soil_nodes = np.flatnonzero(np.asarray(ds.get("kind")) == SOIL_NODE)
+            soil_nodes = np.flatnonzero(node_kind == SOIL_NODE)
             section = np.asarray(ds.owner("SubOrgan"))
             at_section = np.full(segments.size, -1, dtype=np.int64)
             at_section[section[soil_nodes]] = soil_nodes
@@ -1108,7 +1118,8 @@ class MechaHydraulics(MechaSections):
         for segment, (nodes, edges, geo) in self.section_geometries().items():
             i, v = where[segment], nodes[0]
             b, h = int(barrier[v]), float(height[v])
-            out["Kx"][i], out["Kx_phloem"][i] = axial_conductances(geo, h, b, measured[nodes])
+            out["Kx"][i], out["Kx_phloem"][i] = axial_conductances(geo, h, b, measured[nodes],
+                                                                   (xylem_viscosity[v], phloem_viscosity[v]))
             if segment not in roots:                                  # kr, uptake: root quantities (E1)
                 continue
             if P["standard_solve"][v] > 0:
@@ -1142,9 +1153,9 @@ class MechaHydraulics(MechaSections):
             from openalea.mecha.conductance import _grouped
             kind_kr, kind_uptake = reduction.outputs(ds, "kr"), reduction.outputs(ds, "standard_uptake")
             kind_perimeter = reduction.outputs(ds, "perimeter")
-            node_kind, uptake_at = np.asarray(ds.get("kind")), np.asarray(root_uptake, dtype=float)
-            tissue = np.asarray(ds.get("tissue"), dtype=object)
-            cell_area = np.asarray(ds.get("cell_area"), dtype=float)
+            uptake_at = np.asarray(root_uptake, dtype=float)
+            tissue = np.asarray(tissue, dtype=object)
+            cell_area = np.asarray(cell_area, dtype=float)
             members = _grouped(np.asarray(ds.owner("SubOrgan")))
             for i in groups:
                 nodes = members.get(i, np.zeros(0, dtype=np.int64))
@@ -1152,8 +1163,9 @@ class MechaHydraulics(MechaSections):
                     continue
                 out["kr"][i], out["standard_uptake"][i] = kind_kr[i], kind_uptake[i]
                 b, h = int(barrier[nodes[0]]), float(height[nodes[0]])
-                out["Kx"][i], out["Kx_phloem"][i] = conduit_axial_conductances(tissue[nodes], cell_area[nodes], h, b,
-                                                                             measured[nodes])
+                out["Kx"][i], out["Kx_phloem"][i] = conduit_axial_conductances(
+                    tissue[nodes], cell_area[nodes], h, b, measured[nodes],
+                    (xylem_viscosity[nodes[0]], phloem_viscosity[nodes[0]]))
                 soil_node = nodes[node_kind[nodes] == SOIL_NODE]
                 if soil_node.size:
                     out["uptake"][i] = float(uptake_at[soil_node].sum())
@@ -1161,15 +1173,16 @@ class MechaHydraulics(MechaSections):
                 if soil_node.size and vessels.size and b > 0:
                     out["kr_effective"][i] = radial_conductivity(out["uptake"][i], float(plant[soil_node].mean()),
                                                                  plant[vessels].mean(), kind_perimeter[i], h)
-        with_osmotic = np.asarray(self.parameter_values("standard_osmotic", "node")) > 0
+        with_osmotic = np.asarray(standard_osmotic) > 0
         water = standard + np.where(with_osmotic, np.asarray(osmotic_potential, dtype=float), 0.)
-        vapour, kelvin = self._liquid_equivalent(standard, ds.get("vapour_node"))
+        vapour, kelvin = self._liquid_equivalent(standard, vapour_node, leaf_temperature)
         water = np.where(vapour, kelvin, water)
         return tuple(x for name in names for x in ((out[name],) if name == "kr" else (name, out[name]))) + (
             "standard_water_potential", water)
 
     @totalstate(include_inactive=True, memo=True)
-    def _standard_transmembrane_fraction(self, standard_flow, standard_uptake, barrier, network_path, kind) \
+    def _standard_transmembrane_fraction(self, kind, standard_flow, standard_uptake, barrier, network_path,
+                                         standard_solve) \
             -> tuple[np.ndarray, str, np.ndarray]:
         """
         Each membrane's standard transmembrane fraction (its standard flow from wall to cell / its section's standard
@@ -1184,7 +1197,7 @@ class MechaHydraulics(MechaSections):
         flow, path, kind = np.asarray(standard_flow, dtype=float), np.asarray(network_path), np.asarray(kind)
         uptake, barrier = np.asarray(standard_uptake, dtype=float), np.asarray(barrier)
         where = {int(v): i for i, v in enumerate(ds.entity_ids("SubOrgan"))}
-        standard = self.parameter_table("node")["standard_solve"] > 0
+        standard = np.asarray(standard_solve) > 0                     # per node (the step's first argument's)
         roots = self.section_roles()[1]
         for segment, (nodes, edges, geo) in self.section_geometries().items():
             if segment not in roots or not standard[nodes[0]]:
@@ -1200,7 +1213,7 @@ class MechaHydraulics(MechaSections):
         return fraction, "membrane_layer", layer
 
 
-MechaHydraulics.PARAMETERS = tuple(MechaHydraulics._plant_parameter_fields())
+MechaHydraulics.PARAMETERS = MechaHydraulics.declared_parameters()
 
 
 def soil_nodes(template) -> np.ndarray:

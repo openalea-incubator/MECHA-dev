@@ -346,34 +346,41 @@ class MechaSolutes(MechaSections):
                                                       kind="NonInertialIntensive")
 
     @rate(include_inactive=True)
-    def _tail_weight(self, flow, standard_flow, reflection_coefficient, apoplastic_diffusion_factor,
-                           symplastic_diffusion_factor, membrane_diffusion_factor, node_volume, vapour_node, kind,
-                           cgroup, tissue, network_path, osmotic_potential, sucrose_osmotic_potential,
-                           in_standard_problem, standard_psi, coupled_psi, fixed_sucrose) \
+    def _tail_weight(self, kind, flow, standard_flow, reflection_coefficient, apoplastic_diffusion_factor,
+                     symplastic_diffusion_factor, membrane_diffusion_factor, node_volume, vapour_node, cgroup, tissue,
+                     network_path, osmotic_potential, sucrose_osmotic_potential, in_standard_problem, standard_psi,
+                     coupled_psi, fixed_sucrose, d_apoplast, d_plasmodesmata, d_membrane, k_starch_synthesis,
+                     k_starch_degradation, c_sink, solute_boundary_advection, c_boundary, storage_fraction_wall,
+                     storage_fraction_cell, k_decay, solute_pathway, solute_theta, solute_solve, solute_temperature,
+                     solute_sinks, solute_scheme, solute_flows) \
             -> tuple[np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,
                      str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str,
                      np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,
                      str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,
                      str, np.ndarray]:
         """Each liquid edge's Scharfetter–Gummel weights; the sinks; the cells' reaction rates; the storage and the
-        first-order loss; the liquid boundary's exchanges."""
+        first-order loss; the liquid boundary's exchanges. The parameters come at the nodes (the step's first argument's
+        location); an edge takes its tail's (its plant's)."""
         ds = self.data_structure
         view = ds.to_graph_view()
-        P_edge = {name: np.asarray(self.parameter_values(name, "edge"), dtype=float)
-                  for name in ("d_apoplast", "d_plasmodesmata", "d_membrane")}
-        P_node = {name: np.asarray(self.parameter_values(name, "node"), dtype=float)
-                  for name in ("k_starch_synthesis", "k_starch_degradation", "c_sink", "solute_boundary_advection",
-                               "c_boundary", "storage_fraction_wall", "storage_fraction_cell", "k_decay",
-                               "solute_pathway", "solute_theta", "solute_solve", "solute_temperature",
-                               "solute_sinks")}
-        edge_pathway = np.asarray(self.parameter_values("solute_pathway", "edge"))
-        upwind = np.asarray(self.parameter_values("solute_scheme", "edge")) == 2
+        tail = view.tail
+        P_edge = {name: np.asarray(values, dtype=float)[tail] for name, values in
+                  (("d_apoplast", d_apoplast), ("d_plasmodesmata", d_plasmodesmata), ("d_membrane", d_membrane))}
+        P_node = {name: np.asarray(values, dtype=float) for name, values in (
+            ("k_starch_synthesis", k_starch_synthesis), ("k_starch_degradation", k_starch_degradation),
+            ("c_sink", c_sink), ("solute_boundary_advection", solute_boundary_advection), ("c_boundary", c_boundary),
+            ("storage_fraction_wall", storage_fraction_wall), ("storage_fraction_cell", storage_fraction_cell),
+            ("k_decay", k_decay), ("solute_pathway", solute_pathway), ("solute_theta", solute_theta),
+            ("solute_solve", solute_solve), ("solute_temperature", solute_temperature),
+            ("solute_sinks", solute_sinks))}
+        edge_pathway = np.asarray(solute_pathway)[tail]
+        upwind = np.asarray(solute_scheme)[tail] == 2
         kind = np.asarray(kind)
         water = np.asarray(vapour_node) == 0                               # the water's liquid nodes
         pathway = P_node["solute_pathway"]
         liquid = water & ((pathway == 1) | ((pathway == 2) & (kind != 0)) | ((pathway == 3) & (kind == 0)))
         path = np.asarray(network_path)
-        standard = np.asarray(self.parameter_values("solute_flows", "edge")) == 2
+        standard = np.asarray(solute_flows)[tail] == 2
         flow = np.where(standard, np.asarray(standard_flow, dtype=float), np.asarray(flow, dtype=float))
         on_water = water[view.tail] & water[view.head] & np.isin(path, (WALL_PATH, MEMBRANE, PLASMODESMATA))
         along = np.select([edge_pathway == 2, edge_pathway == 3], [path == WALL_PATH, path == PLASMODESMATA],
@@ -432,10 +439,10 @@ class MechaSolutes(MechaSections):
         return out
 
     @totalstate(include_inactive=True)
-    def _sucrose_osmotic_potential(self, sucrose, kind, vapour_node) -> np.ndarray:
+    def _sucrose_osmotic_potential(self, sucrose, kind, vapour_node, solute_temperature) -> np.ndarray:
         """−R T c on the liquid cells (van't Hoff, the reactions' set_osmotic_from_concentration), after the transport
         step: the next water solve's."""
-        T = np.asarray(self.parameter_values("solute_temperature", "node"), dtype=float)
+        T = np.asarray(solute_temperature, dtype=float)
         cells = (np.asarray(kind) == 0) & (np.asarray(vapour_node) == 0)
         return np.where(cells, -GAS_CONSTANT * T * np.asarray(sucrose, dtype=float), 0.)
 

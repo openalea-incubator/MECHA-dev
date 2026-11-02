@@ -421,17 +421,16 @@ class MechaOsmoticPresets(MechaSections):
                                                    kind="NonInertialIntensive")
 
     @rate(include_inactive=True)
-    def _osmotic_potential(self, kind, barrier, anatomy_template, sucrose_osmotic_potential) \
+    def _osmotic_potential(self, kind, barrier, anatomy_template, sucrose_osmotic_potential, network_path) \
             -> tuple[np.ndarray, str, np.ndarray]:
         """The presets of every root section, each with its plant's parameters and its barrier, as the baseline; plus
         the solutes' −R T c on the cells (MechaSolutes: the reactions' baseline − R T c)."""
         ds = self.data_structure
         psi_os, sigma = np.zeros(ds.n_nodes()), np.zeros(ds.n_edges())
         view = ds.to_graph_view()
-        path = np.asarray(ds.get("network_path"))
+        path = np.asarray(network_path)
         barrier = np.asarray(barrier)
-        names = [f.name for f in self.__dataclass_fields__.values() if f.metadata.get("variable_type") == "parameter"]
-        table = {name: np.asarray(self.parameter_values(name, "node")) for name in names}
+        table = {name: np.asarray(self.parameter_values(name, "node")) for name in type(self).declared_parameters()}
         roots = self.section_roles()[1]
         every = np.asarray(table["presets_sections"]) == 2
         for segment, (nodes, edges, geo) in self.section_geometries().items():

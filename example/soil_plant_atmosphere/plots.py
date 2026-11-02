@@ -151,6 +151,11 @@ def root_kr(built, path):
 UPSCALING_SCALES = ("SubOrgan", "Organ", "Phytomer", "GrowthUnit", "Axis", "Plant")
 
 
+def _liquid(vapour_node):
+    """1 on the liquid nodes, 0 on the air nodes (MechaHydraulics' vapour_node)."""
+    return 1. - np.asarray(vapour_node, dtype=float)
+
+
 def upscale(ds, name="water_potential", scales=UPSCALING_SCALES) -> dict:
     """
     *name* derived at each of *scales* in turn, each the mean of the previous one (as metafspm's SPAC example's
@@ -159,12 +164,13 @@ def upscale(ds, name="water_potential", scales=UPSCALING_SCALES) -> dict:
     {scale: variable name}, "Compartment" the solved one.
     """
     names, source = {"Compartment": name}, name
-    ds.register("liquid_node", 1. - np.asarray(ds.get("vapour_node"), dtype=float), location="node")
+    if not ds.has("liquid_weight"):                  # 1 on the liquid nodes, 0 on the air nodes, kept up to date
+        ds.derive("liquid_weight", ["vapour_node"], formula=_liquid)
     for i, scale in enumerate(scales):
         target = f"{name}_{scale}"
         if not ds.has(target):
             if i == 0:
-                ds.derive(target, {source: 1.}, location=scale, aggregation="weighted_mean", weight="liquid_node")
+                ds.derive(target, {source: 1.}, location=scale, aggregation="weighted_mean", weight="liquid_weight")
             else:
                 ds.derive(target, {source: 1.}, location=scale, aggregation="mean")
         names[scale], source = target, target

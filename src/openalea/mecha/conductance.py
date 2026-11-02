@@ -76,6 +76,13 @@ KPL_FACTOR_INTERFACES = {(4, 4): "kpl_cortex_factor", (12, 12): "kpl_PCC_factor"
                          (12, 16): "kpl_PPP_factor", (5, 22): "kpl_cambium_stele_factor"}
 
 
+def barrier_wall_sources() -> dict:
+    """{barrier code: {wall key: the parameter its conductivity comes from}}: which walls each of MECHA's maturity
+    codes cuts (kw_casparian, kw_suberin_in, kw_suberin_out, kw_lignin) and which keep kw (the legacy's
+    HydraulicData.get_wall_conductivities; kw_septa always kw_septa)."""
+    return {code: dict(zip(_KW_KEYS, sources)) for code, sources in _KW_CONFIGS.items()}
+
+
 def fplxheight_name(interface) -> str:
     return "fplxheight_" + "_".join(CGROUP_NAMES[c] for c in interface)
 
@@ -531,11 +538,13 @@ def boundary_terms(net: Network, P: dict, barrier, height):
     with np.errstate(divide="ignore", invalid="ignore"):
         measured = getattr(net, "measured_axial_conductivity", np.full(n, np.nan)) / (height / 1.0E04)      # a conduit's own over the height
         k_xyl = np.where(np.asarray(P["standard_axial_source"]) == 1,
-                         np.where(np.isfinite(measured), measured, poiseuille(net.cell_area, height, VISCOSITY_XYLEM)),
+                         np.where(np.isfinite(measured), measured,
+                                  poiseuille(net.cell_area, height, P.get("xylem_viscosity", VISCOSITY_XYLEM))),
                          k_xyl)
         k_sieve = np.where(np.asarray(P["standard_axial_source"]) == 1,
                            np.where(np.isfinite(measured), measured,
-                                    poiseuille(net.cell_area, height, VISCOSITY_PHLOEM)), k_sieve)
+                                    poiseuille(net.cell_area, height, P.get("phloem_viscosity", VISCOSITY_PHLOEM))),
+                           k_sieve)
     axial = np.where(xylem, k_xyl, np.where(protosieve, k_sieve, 0.))
     return soil, axial, axial.copy()          # each protosieve cell once (the legacy adds k_sieve per duplicate, legacy f)
 
@@ -549,7 +558,8 @@ def sieve_tube_terms(net: Network, P: dict, barrier, height) -> np.ndarray:
     sieve = (np.asarray(barrier) > 0) & (net.sieve > 0)
     with np.errstate(divide="ignore", invalid="ignore"):
         k_sieve = np.where(np.asarray(P["standard_axial_source"]) == 1,
-                           poiseuille(net.cell_area, np.asarray(height, dtype=float), VISCOSITY_PHLOEM),
+                           poiseuille(net.cell_area, np.asarray(height, dtype=float),
+                                      P.get("phloem_viscosity", VISCOSITY_PHLOEM)),
                            np.asarray(P["k_sieve"], dtype=float))
     return np.where(sieve, k_sieve, 0.)
 

@@ -16,7 +16,8 @@ MECHA's main parameters, with their default values. MECHA works in centimetres, 
 | `kaqp_endo_factor`, `kaqp_exo_factor`, `kaqp_cortex_factor`, `kaqp_stele_factor` | a tissue's aquaporin activity relative to `kaqp` | 1 |
 | `ratio_cortex` | the cortex's aquaporin activity at its innermost walls over its outermost | 1 (uniform) |
 
-The barriers' stage is not a parameter but an input of each root segment, `barrier` (MECHA's maturity code): 1 an
+The barriers' stage is not one of MECHA's parameters but an input of each root segment, `barrier` (MECHA's
+maturity code), given by a development model (`Development`, its stand-in, from each segment's distance to its tip): 1 an
 endodermal Casparian strip, 2 the endodermis suberized with passage cells, 3 fully suberized, 4–9 the exodermis'
 strip and suberin in various combinations, 10 the exodermis suberized with its strip, 11 both endodermis and
 exodermis suberized and the sclerenchyma's (fibres') walls lignified, 0 none (a root tip whose xylem does not

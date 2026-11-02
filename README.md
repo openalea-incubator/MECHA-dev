@@ -191,6 +191,8 @@ MECHA-dev/
 │           ├── geometry.py            # MECHA's geometry of a section, from its DataStructure variables
 │           ├── osmotic.py             # MechaOsmoticPresets: the osmotic potentials and reflection coefficients
 │           ├── solutes.py             # MechaSolutes: sucrose and starch transport
+│           ├── root_system.py         # RootSystemConductance: a root system's Krs and SUF
+│           ├── stand_ins.py           # Development, UniformSoil, Transpiration: stand-ins for the models MECHA's inputs come from
 │           ├── plots.py               # section figures
 │           ├── simulation.py          # the users' entry point: simulate, simulate_root
 │           ├── legacy/                # the original MECHA, frozen

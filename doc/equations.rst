@@ -146,8 +146,9 @@ A conduit of cross-section :math:`A` over a length :math:`h` (``poiseuille``):
 
    K_P(A, h, \eta) = \frac{A^2}{8\pi\,h\,\eta}\,10^{-12},
 
-:math:`\eta` in hPa d: water at 10 °C (1.3076 × 10⁻³ Pa s) in the xylem, phloem sap (1.7 × 10⁻³ Pa s, Ross-Elliott et
-al. 2017) in the phloem; :math:`\pi` is written 3.141592, as in the legacy.
+:math:`\eta` in hPa d, the parameters ``xylem_viscosity`` and ``phloem_viscosity`` (given in hPa s): by default
+water at 10 °C (1.3076 × 10⁻³ Pa s) in the xylem, phloem sap (1.7 × 10⁻³ Pa s, Ross-Elliott et al. 2017) in the
+phloem; :math:`\pi` is written 3.141592, as in the legacy.
 
 **Axial conductances** of a section (``axial_conductances``), cm⁴ hPa⁻¹ d⁻¹:
 

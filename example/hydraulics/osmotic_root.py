@@ -29,6 +29,7 @@ from openalea.granap.metafspm.component import GranapAnatomy, junction_rules
 from openalea.mecha import plots
 from openalea.mecha.component import MechaHydraulics
 from openalea.mecha.osmotic import MechaOsmoticPresets
+from openalea.mecha.stand_ins import Development
 
 BARRIERS = (1, 3)
 NO_SOLUTES = dict(s_factor=0., os_cortex=0., osmotic_sieve=0., osmotic_left_soil=0., osmotic_right_soil=0.,
@@ -38,18 +39,21 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 class OsmoticRoot(CompositeModel):
-    """GRANAP's anatomies, MECHA's osmotic presets (the "Solutes" role) and hydraulics with the osmotic terms."""
+    """GRANAP's anatomies, their barriers (Development, a root development model's stand-in), MECHA's osmotic presets
+    (the "Solutes" role) and hydraulics with the osmotic terms."""
     initiators = (RootAxis, GranapAnatomy)
     from_scale, nodes, wiring = "SubOrgan", "Compartment", junction_rules
 
     def __init__(self, data_structure, time_step):
         ds = data_structure
         self.anatomy = GranapAnatomy(data_structure=ds, time_step=time_step)
+        self.development = Development(data_structure=ds, time_step=time_step)
         self.osmotic = MechaOsmoticPresets(data_structure=ds, time_step=time_step)
         self.hydraulics = MechaHydraulics(data_structure=ds, time_step=time_step)
-        self.couple(self.anatomy, self.osmotic, self.hydraulics)
+        self.couple(self.anatomy, self.development, self.osmotic, self.hydraulics)
 
     def run(self):
+        self.development()
         self.anatomy()
         self.osmotic()
         self.hydraulics()
@@ -61,12 +65,12 @@ def main():
                      plant_scenarios=list(CASES.values()))
     scene = Scene(table)
     ds = scene.populations[0].data_structure
-    mecha = scene.populations[0].instance.hydraulics
+    development, mecha = scene.populations[0].instance.development, scene.populations[0].instance.hydraulics
     segments = [int(s) for s in ds.entity_ids("SubOrgan")]            # one per plant, in the table's order
 
     results = {}
     for barrier in BARRIERS:
-        ds.set("barrier", np.full(ds.n_nodes(), float(barrier)))      # a development model's role
+        development.mature_barrier = float(barrier)                   # every plant's, every segment's
         scene.run()
         for i, case in enumerate(CASES):
             frames = {name: plots.port_frame(mecha, segments[i], psi=variable) for name, variable in

@@ -22,7 +22,6 @@ from openalea.metafspm.solve.decorator import totalstate
 from openalea.metafspm.solve.network import equivalent_conductance
 from openalea.mecha.component import SCALES
 from openalea.mecha.geometry import SOIL, SOIL_NODE
-from openalea.metafspm.solve.memo import content_key
 
 MARSHAL = "Couvreur et al. 2012, Plant Cell Environ.; Meunier et al. 2020, in silico Plants (MARSHAL)"
 NETWORK = ("kw", "kaqp", "kpl", "kmb", "kw_casparian", "kw_suberin_in", "kw_suberin_out", "xylem_axial_conductance")
@@ -52,6 +51,9 @@ class RootSystemConductance(FunctionalComponent):
                                 default="full", choices=("full", "condensed"))
     network_path: float = input_variable(**_input("", "the Connection's kind of path (7: to a soil node, not part of "
                                                   "the root's network)", "edge", SCALES.Connection))
+    kind: float = input_variable(**dict(_input("", "the Compartment's kind (4: a root section's soil node, GRANAP's "
+                                               "soil_node)", "node", SCALES.Compartment), by="Anatomy"),
+                                 kind="descriptor")
 
     root_system_conductance: float = state_variable(
         unit="cm3 hPa-1 d-1", description="the root system's conductance, Krs", default=np.nan, location="Plant",
@@ -66,24 +68,19 @@ class RootSystemConductance(FunctionalComponent):
         upscaling=upscaling(of=NETWORK, law="network", references=MARSHAL,
                             protocol="SUF_i = q_i / Q_collar under the protocol of root_system_conductance"))
 
-    @totalstate(include_inactive=True)
+    @totalstate(include_inactive=True, memo=True)
     def _root_system_conductance(self, conductance, xylem_axial_conductance, soil_conductance, collar_kind,
-                                 network_path) -> dict:
+                                 network_path, kind) -> dict:
         """Krs and the SUF of each plant: one solve of its network at a unit potential difference, from its root
         surface (each surface node joined to the soil through its soil conductance) to its collar's vessels. A soil
         node's Connections (GRANAP's soil_node) are not part of the root: MARSHAL's protocol puts the soil at the
-        surface."""
+        surface. Computed again only when its network changed (memo=True)."""
         ds = self.data_structure
-        key = content_key(ds.topology_version, conductance, xylem_axial_conductance, soil_conductance, collar_kind,
-                          network_path)
-        kept = self.__dict__.get("_krs")
-        if kept is not None and kept[0] == key:          # the same network: the same Krs and SUF
-            return {name: values.copy() for name, values in kept[1].items()}
         collar = np.asarray(collar_kind) == 1.
         if not collar.any():
             raise ValueError("RootSystemConductance: no collar at a potential (collar_condition 1)")
         network = np.asarray(conductance) + np.asarray(xylem_axial_conductance)
-        soil_nodes = np.asarray(ds.get("kind")) == SOIL_NODE
+        soil_nodes = np.asarray(kind) == SOIL_NODE
         if soil_nodes.any():                       # each section's soil node held at the soil (its contacts in the
             sources, through = soil_nodes, None    # network, or in its reduced section's interior)
         else:                                      # each surface node joined to the soil through its conductance
@@ -97,10 +94,8 @@ class RootSystemConductance(FunctionalComponent):
                                                groups=ds.owner("SubOrgan") if self.plant_solver == "condensed" else None,
                                                cache=self.__dict__.setdefault("_krs_condensation", {}),
                                                extra=terms[0] if terms is not None else None)
-        plant = np.asarray(ds.owner("Plant"))
-        per_plant = np.bincount(plant, weights=inflow, minlength=len(ds.entity_ids("Plant")))
-        share = np.divide(inflow, per_plant[plant], out=np.zeros_like(inflow), where=per_plant[plant] > 0.)
-        out = {"root_system_conductance": per_plant,
-               "standard_uptake_fraction": ds.map_to(share, "node", "SubOrgan", "sum")}
-        self.__dict__["_krs"] = (key, {name: np.array(values, copy=True) for name, values in out.items()})
-        return out
+        per_plant = ds.map_to(inflow, "node", "Plant", "sum")
+        plant_total = ds.map_to(per_plant, "Plant", "node", "broadcast")
+        share = np.divide(inflow, plant_total, out=np.zeros_like(inflow), where=plant_total > 0.)
+        return {"root_system_conductance": per_plant,
+                "standard_uptake_fraction": ds.map_to(share, "node", "SubOrgan", "sum")}

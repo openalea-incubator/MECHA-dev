@@ -20,6 +20,8 @@ from openalea.granap.metafspm.architectures import RootAxis
 from openalea.granap.metafspm.component import GranapAnatomy, junction_rules
 from openalea.mecha import plots
 from openalea.mecha.component import MechaHydraulics
+from openalea.mecha.geometry import XYLEM_CGROUPS
+from openalea.mecha.stand_ins import Development, UniformSoil, development_parameters
 
 N, SEGMENT, RADIUS = 6, 5e-3, 0.55e-3            # segments, m, m
 BARRIERS = (3, 3, 3, 1, 1, 0)                    # collar to tip
@@ -27,38 +29,45 @@ SOIL_PSI = -1000.                                # hPa
 
 
 class RootHydraulics(CompositeModel):
-    """GRANAP's anatomies and MECHA's hydraulics on a root's segments."""
+    """GRANAP's anatomies on a root's segments, their barriers by their distance from the tip (Development, a root
+    development model's stand-in), a uniform soil (UniformSoil, a soil model's) and MECHA's
+    hydraulics."""
     initiators = (RootAxis, GranapAnatomy)
     from_scale, nodes, wiring = "SubOrgan", "Compartment", junction_rules
 
     def __init__(self, data_structure, time_step):
         self.anatomy = GranapAnatomy(data_structure=data_structure, time_step=time_step)
+        self.development = Development(data_structure=data_structure, time_step=time_step)
+        self.soil = UniformSoil(data_structure=data_structure, time_step=time_step)
         self.hydraulics = MechaHydraulics(data_structure=data_structure, time_step=time_step)
-        self.couple(self.anatomy, self.hydraulics)
+        self.couple(self.anatomy, self.development, self.soil, self.hydraulics)
 
     def run(self):
+        self.development()
+        self.soil()
         self.anatomy()
         self.hydraulics()
 
 
 def main():
-    scenario = {"root_segments": [[RADIUS, SEGMENT, (N - 1 - i) * SEGMENT] for i in range(N)],
-                "collar_condition": 1., "collar_psi": -5000.}
+    distances = [(N - 1 - i) * SEGMENT for i in range(N)]               # from the tip, the collar's first
+    scenario = {"root_segments": [[RADIUS, SEGMENT, distance] for distance in distances],
+                "collar_condition": 1., "collar_psi": -5000., "uniform_soil_psi": SOIL_PSI,
+                **development_parameters(distances, BARRIERS)}               # the barriers by distance from the tip
     scene = Scene(planting([Planting()], RootHydraulics, scenario))
     ds = scene.populations[0].data_structure
     mecha = scene.populations[0].instance.hydraulics
-    owner = ds.owner("SubOrgan")                                      # sections in order, collar first
-    ds.set("barrier", np.array(BARRIERS, dtype=float)[owner])         # a development model's role
-    ds.set("soil_psi", np.full(ds.n_nodes(), SOIL_PSI))               # a soil model's
     scene.run()
 
-    psi = ds.get("psi")
-    xylem = np.isin(ds.get("cgroup"), (13, 19, 20))
+    # per section, from the collar to the tip
+    from_collar = np.argsort(-np.asarray(ds.get("distance_from_tip"), dtype=float), kind="stable")
+    xylem = np.isin(ds.get("cgroup"), XYLEM_CGROUPS).astype(float)
+    psi_xylem = ds.map_to(ds.get("psi"), "node", "SubOrgan", "weighted_mean", weights=xylem)[from_collar]
+    barriers = ds.map_to(ds.get("barrier"), "node", "SubOrgan", "max").astype(int)[from_collar]
     distance = (np.arange(N) + 0.5) * SEGMENT * 1e3                     # mm from the collar
-    psi_xylem = np.array([psi[(owner == i) & xylem].mean() for i in range(N)])
-    uptake, kr, kr_eff = ds.get("uptake"), ds.get("kr"), ds.get("kr_effective")
+    uptake, kr, kr_eff = (np.asarray(ds.get(name))[from_collar] for name in ("uptake", "kr", "kr_effective"))
     for i in range(N):
-        print(f"section {i}: barrier {BARRIERS[i]}, ψ xylem {psi_xylem[i]:8.1f} hPa, uptake {uptake[i]:.3e} cm3/d, "
+        print(f"section {i}: barrier {barriers[i]}, ψ xylem {psi_xylem[i]:8.1f} hPa, uptake {uptake[i]:.3e} cm3/d, "
               f"kr {kr[i]:.3e}, kr effective {kr_eff[i]:.3e} cm/hPa/d")
 
     fig = plt.figure(figsize=(15, 9.5), layout="constrained")
@@ -72,14 +81,14 @@ def main():
     top[2].set(xlabel="distance from the collar (mm)", ylabel="cm hPa⁻¹ d⁻¹", title="radial conductivity")
     top[2].legend()
     for ax in top:
-        for i, b in enumerate(BARRIERS):
+        for i, b in enumerate(barriers):
             ax.annotate(f"b{b}", (distance[i], 0.02), xycoords=("data", "axes fraction"), ha="center", fontsize=7)
-    segments = [int(s) for s in ds.entity_ids("SubOrgan")]
+    segments = ds.entity_ids("SubOrgan")[from_collar]
     bottom = [fig.add_subplot(2, 3, 4 + k) for k in range(3)]
     for ax, i in zip(bottom, (0, N // 2, N - 1)):
-        frame = plots.port_frame(mecha, segments[i], psi="psi", flow="flow")
+        frame = plots.port_frame(mecha, int(segments[i]), psi="psi", flow="flow")
         points = plots.psi_map(ax, frame, norm=plt.Normalize(-5000., SOIL_PSI),
-                               title=f"section {i} ({distance[i]:.1f} mm, barrier {BARRIERS[i]})")
+                               title=f"section {i} ({distance[i]:.1f} mm, barrier {barriers[i]})")
     fig.colorbar(points, ax=bottom, label="ψ (hPa)", shrink=0.7)
     folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
     os.makedirs(folder, exist_ok=True)

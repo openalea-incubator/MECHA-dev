@@ -35,8 +35,14 @@ from openalea.metafspm.scene.population import Planting, planting
 from openalea.metafspm.scene.recorder import SceneRecorder
 from openalea.metafspm.scene.scenarios import parameter_table
 from openalea.metafspm.scene.scene import Scene
+from openalea.granap.metafspm.architectures import RootAxis
+from openalea.granap.metafspm.component import GranapAnatomy, junction_rules
 from openalea.mecha import plots
-from openalea.mecha.component import MechaHydraulics
+from openalea.mecha.component import MechaHydraulics, plant_reduction
+from openalea.mecha.geometry import XYLEM_CGROUPS
+from openalea.mecha.osmotic import MechaOsmoticPresets
+from openalea.mecha.root_system import RootSystemConductance
+from openalea.mecha.stand_ins import Development, UniformSoil, development_parameters
 
 # MECHA's main parameters, by the pathway they act on
 MAIN_PARAMETERS = ("kw", "kmb", "kaqp", "kpl", "kw_casparian", "kw_suberin_in", "kw_suberin_out", "thickness",
@@ -76,49 +82,45 @@ def parameters(values: dict = None, main_only: bool = False) -> pd.DataFrame:
 
 
 class _RootSection(CompositeModel):
-    """One root segment: GRANAP's anatomy, MECHA's hydraulics (the plant model of developer tutorial 1)."""
-    from_scale, nodes = "SubOrgan", "Compartment"
+    """One root axis: GRANAP's anatomy on each segment, its barriers by their distance from the tip (Development), a
+    uniform soil around it (UniformSoil), MECHA's hydraulics (the plant model of developer tutorial 1)."""
+    initiators = (RootAxis, GranapAnatomy)
+    from_scale, nodes, wiring = "SubOrgan", "Compartment", junction_rules
 
     def __init__(self, data_structure, time_step):
-        from openalea.granap.metafspm.component import GranapAnatomy
-
         self.anatomy = GranapAnatomy(data_structure=data_structure, time_step=time_step)
+        self.development = Development(data_structure=data_structure, time_step=time_step)
+        self.soil = UniformSoil(data_structure=data_structure, time_step=time_step)
         self.hydraulics = MechaHydraulics(data_structure=data_structure, time_step=time_step)
-        self.couple(self.anatomy, self.hydraulics)
+        self.couple(self.anatomy, self.development, self.soil, self.hydraulics)
 
     def run(self):
+        self.development()
+        self.soil()
         self.anatomy()
         self.hydraulics()
 
 
 class _OsmoticRootSection(CompositeModel):
-    """One root segment: GRANAP's anatomy, MECHA's osmotic presets (the cells', walls' and soil's osmotic
-    potentials), MECHA's hydraulics."""
-    from_scale, nodes = "SubOrgan", "Compartment"
+    """One root axis as _RootSection, with MECHA's osmotic presets (the cells', walls' and soil's osmotic potentials)
+    before the hydraulics."""
+    initiators = (RootAxis, GranapAnatomy)
+    from_scale, nodes, wiring = "SubOrgan", "Compartment", junction_rules
 
     def __init__(self, data_structure, time_step):
-        from openalea.granap.metafspm.component import GranapAnatomy
-        from openalea.mecha.osmotic import MechaOsmoticPresets
-
         self.anatomy = GranapAnatomy(data_structure=data_structure, time_step=time_step)
+        self.development = Development(data_structure=data_structure, time_step=time_step)
+        self.soil = UniformSoil(data_structure=data_structure, time_step=time_step)
         self.presets = MechaOsmoticPresets(data_structure=data_structure, time_step=time_step)
         self.hydraulics = MechaHydraulics(data_structure=data_structure, time_step=time_step)
-        self.couple(self.anatomy, self.presets, self.hydraulics)
+        self.couple(self.anatomy, self.development, self.soil, self.presets, self.hydraulics)
 
     def run(self):
+        self.development()
+        self.soil()
         self.anatomy()
         self.presets()
         self.hydraulics()
-
-
-def _plant_model(osmotic=False):
-    from openalea.granap.metafspm.architectures import RootAxis
-    from openalea.granap.metafspm.component import GranapAnatomy, junction_rules
-
-    model = _OsmoticRootSection if osmotic else _RootSection
-    model.initiators = (RootAxis, GranapAnatomy)
-    model.wiring = junction_rules
-    return model
 
 
 @dataclass
@@ -219,15 +221,15 @@ def simulate(parameters: dict = None, anatomy: dict = None, barrier: float = 1.,
     The summary: kr, the radial conductivity (cm hPa-1 d-1; kr_SI in m s-1 MPa-1), the water uptake (cm³ d-1), the
     perimeter (cm), the number of cells, and the share of the radial flow carried across the cortex by the walls,
     the membranes and the plasmodesmata."""
-    scenario = dict(parameters or {}, standard_psi_soil=soil_psi, standard_psi_xylem=xylem_psi)
+    scenario = dict(parameters or {}, standard_psi_soil=soil_psi, standard_psi_xylem=xylem_psi,
+                    mature_barrier=float(barrier))
     if anatomy is not None:
         scenario["root_anatomy"] = dict(anatomy)
     if osmotic is not None:
         scenario.update(osmotic, standard_osmotic=1.)
     recorder = SceneRecorder(outputs, frame_period=1) if outputs is not None else None
-    scene = Scene(planting([Planting()], _plant_model(osmotic is not None), scenario), recorder=recorder)
-    ds = scene.populations[0].data_structure
-    ds.set("barrier", np.full(ds.n_nodes(), float(barrier)))
+    scene = Scene(planting([Planting()], _OsmoticRootSection if osmotic is not None else _RootSection, scenario),
+                  recorder=recorder)
     scene.simulate(1)                                         # one solve, its state recorded with outputs
     section = Section(scene=scene, summary=pd.Series(dtype=float), parameters=dict(parameters or {}))
     section.summary = _summary(section)
@@ -242,25 +244,28 @@ def simulate_root(barriers=(3, 3, 3, 1, 1, 0), segment_length: float = 5e-3, rad
     xylem vessels; the soil at *soil_psi* around them, the collar's xylem at *collar_psi* (hPa). Returns a table, one
     row per section: its distance from the collar (mm), barrier, mean xylem potential (hPa), uptake (cm³ d-1), kr
     (its standard problem's) and kr_effective (in the root), both in cm hPa-1 d-1; table.attrs["scene"] is the
-    metafspm scene. With *outputs* (a folder), the run is saved there as simulate saves it."""
+    metafspm scene. The barriers are Development's zones (at most three: tip, young, mature), by each section's
+    distance from the tip; the soil UniformSoil's. With *outputs* (a folder), the run is saved there as simulate saves it."""
     n = len(barriers)
-    scenario = dict(parameters or {}, collar_condition=1., collar_psi=collar_psi,
-                    root_segments=[[radius, segment_length, (n - 1 - i) * segment_length] for i in range(n)])
+    distances = [(n - 1 - i) * segment_length for i in range(n)]            # from the tip, the collar's first
+    scenario = dict(parameters or {}, collar_condition=1., collar_psi=collar_psi, uniform_soil_psi=soil_psi,
+                    **development_parameters(distances, barriers),
+                    root_segments=[[radius, segment_length, distance] for distance in distances])
     if anatomy is not None:
         scenario["root_anatomy"] = dict(anatomy)
     recorder = SceneRecorder(outputs, frame_period=1) if outputs is not None else None
-    scene = Scene(planting([Planting()], _plant_model(), scenario), recorder=recorder)
-    ds = scene.populations[0].data_structure
-    owner = np.asarray(ds.owner("SubOrgan"))                  # the sections in order, the collar's first
-    ds.set("barrier", np.asarray(barriers, dtype=float)[owner])
-    ds.set("soil_psi", np.full(ds.n_nodes(), float(soil_psi)))
+    scene = Scene(planting([Planting()], _RootSection, scenario), recorder=recorder)
     scene.simulate(1)                                         # one solve, its state recorded with outputs
-    psi, xylem = np.asarray(ds.get("psi")), np.isin(np.asarray(ds.get("cgroup")), (13, 19, 20))
+    ds = scene.populations[0].data_structure
+    from_collar = np.argsort(-np.asarray(ds.get("distance_from_tip"), dtype=float), kind="stable")
+    xylem = np.isin(np.asarray(ds.get("cgroup")), XYLEM_CGROUPS).astype(float)
+    xylem_potential = ds.map_to(ds.get("psi"), "node", "SubOrgan", "weighted_mean", weights=xylem)
     table = pd.DataFrame({
-        "distance": (np.arange(n) + 0.5) * segment_length * 1e3, "barrier": list(barriers),
-        "xylem_potential": [psi[(owner == i) & xylem].mean() for i in range(n)],
-        "uptake": np.asarray(ds.get("uptake")), "kr": np.asarray(ds.get("kr")),
-        "kr_effective": np.asarray(ds.get("kr_effective"))})
+        "distance": (np.arange(n) + 0.5) * segment_length * 1e3,
+        "barrier": ds.map_to(ds.get("barrier"), "node", "SubOrgan", "max")[from_collar].astype(int),
+        "xylem_potential": xylem_potential[from_collar],
+        "uptake": np.asarray(ds.get("uptake"))[from_collar], "kr": np.asarray(ds.get("kr"))[from_collar],
+        "kr_effective": np.asarray(ds.get("kr_effective"))[from_collar]})
     table.attrs["scene"] = scene
     return table
 
@@ -274,39 +279,63 @@ EXPERIMENTS = {"control": lambda values: dict(values),
 
 
 class _RootSystem(CompositeModel):
-    """A root system: GRANAP's anatomy on each segment, MECHA's hydraulics on the whole network, and its conductance
-    (RootSystemConductance); with osmotic_presets, MECHA's presets before the hydraulics."""
-    from_scale, nodes = "SubOrgan", "Compartment"
-    osmotic_presets = False
+    """A root system: GRANAP's anatomy on each segment, its barriers (Development), a uniform soil (UniformSoil),
+    MECHA's hydraulics on the whole network, and its conductance (RootSystemConductance)."""
+    initiators = (RootAxis, GranapAnatomy)
+    from_scale, nodes, wiring = "SubOrgan", "Compartment", junction_rules
 
     def __init__(self, data_structure, time_step):
-        from openalea.granap.metafspm.component import GranapAnatomy
-        from openalea.mecha.osmotic import MechaOsmoticPresets
-        from openalea.mecha.root_system import RootSystemConductance
-
         self.anatomy = GranapAnatomy(data_structure=data_structure, time_step=time_step)
-        self.presets = MechaOsmoticPresets(data_structure=data_structure, time_step=time_step) \
-            if self.osmotic_presets else None
+        self.development = Development(data_structure=data_structure, time_step=time_step)
+        self.soil = UniformSoil(data_structure=data_structure, time_step=time_step)
         self.hydraulics = MechaHydraulics(data_structure=data_structure, time_step=time_step)
         self.conductance = RootSystemConductance(data_structure=data_structure, time_step=time_step)
-        self.couple(*(c for c in (self.anatomy, self.presets, self.hydraulics, self.conductance) if c is not None))
+        self.couple(self.anatomy, self.development, self.soil, self.hydraulics, self.conductance)
 
     def run(self):
+        self.development()
+        self.soil()
         self.anatomy()
-        if self.presets is not None:
-            self.presets()
         self.hydraulics()
         self.conductance()
 
 
-def _root_system_model(osmotic_presets=False, reduction=None):
-    from openalea.granap.metafspm.architectures import RootAxis
-    from openalea.granap.metafspm.component import GranapAnatomy, junction_rules
+class _OsmoticRootSystem(CompositeModel):
+    """A root system as _RootSystem, with MECHA's osmotic presets before the hydraulics."""
+    initiators = (RootAxis, GranapAnatomy)
+    from_scale, nodes, wiring = "SubOrgan", "Compartment", junction_rules
 
-    model = type("RootSystemModel", (_RootSystem,), dict(osmotic_presets=bool(osmotic_presets), reduction=reduction))
-    model.initiators = (RootAxis, GranapAnatomy)
-    model.wiring = junction_rules
-    return model
+    def __init__(self, data_structure, time_step):
+        self.anatomy = GranapAnatomy(data_structure=data_structure, time_step=time_step)
+        self.development = Development(data_structure=data_structure, time_step=time_step)
+        self.soil = UniformSoil(data_structure=data_structure, time_step=time_step)
+        self.presets = MechaOsmoticPresets(data_structure=data_structure, time_step=time_step)
+        self.hydraulics = MechaHydraulics(data_structure=data_structure, time_step=time_step)
+        self.conductance = RootSystemConductance(data_structure=data_structure, time_step=time_step)
+        self.couple(self.anatomy, self.development, self.soil, self.presets, self.hydraulics, self.conductance)
+
+    def run(self):
+        self.development()
+        self.soil()
+        self.anatomy()
+        self.presets()
+        self.hydraulics()
+        self.conductance()
+
+
+def _root_system_model(osmotic_presets: bool, reduction=None):
+    """The root system's plant model; with *reduction* (its sections condensed, plant_reduction), a subclass holding
+    it: metafspm takes a plant model's Reduction from its class attribute, and this one depends on the call's
+    options (length_classes, osmotic)."""
+    model = _OsmoticRootSystem if osmotic_presets else _RootSystem
+    if reduction is None:
+        return model
+
+    class CondensedRootSystem(model):
+        pass
+
+    CondensedRootSystem.reduction = reduction
+    return CondensedRootSystem
 
 
 @dataclass
@@ -332,8 +361,9 @@ class RootSystem:
         its standard uptake fraction (SUF: its share of the uptake under a uniform soil), its uptake (cm³ d-1) and its
         kr (cm hPa-1 d-1, the section alone)."""
         ds = self.data_structure
-        return self.layout.assign(suf=np.asarray(ds.get("standard_uptake_fraction")),
-                                  uptake=np.asarray(ds.get("uptake")), kr=np.asarray(ds.get("kr")))
+        built = np.argsort(ds.entity_ids("SubOrgan"), kind="stable")    # the sections as RootAxis built them
+        return self.layout.assign(suf=np.asarray(ds.get("standard_uptake_fraction"))[built],
+                                  uptake=np.asarray(ds.get("uptake"))[built], kr=np.asarray(ds.get("kr"))[built])
 
     def update(self, parameters: dict) -> "RootSystem":
         """The same root system with MECHA's *parameters* changed ({name: value}), solved again (its anatomy kept)."""
@@ -356,9 +386,11 @@ def root_system(main=(3, 3, 1, 1), laterals=((1, (1, 1)),), segment_length: floa
     a main root of len(*main*) segments (their barriers, MECHA's maturity codes, from the collar to the tip) and its
     *laterals*, ((bearer segment's index on the main root, their barriers from their base), ...); segments
     *segment_length* m long, of *main_radius* or *lateral_radius* m; the soil at *soil_psi* around them, the collar's
-    xylem at *collar_psi* (hPa). *parameters*: MECHA's, changed from its defaults; *experiment*: one of EXPERIMENTS
-    ("inhibited": the aquaporins blocked); *instanced*: each segment's anatomy an instance of its class's template
-    (GRANAP's instanced_anatomy: no vertex of its own, the same results); *plant_solver*: MechaHydraulics'
+    xylem at *collar_psi* (hPa). A segment's barriers follow its distance from its tip (Development's three zones):
+    the main root's and the laterals' segments at one distance have the same. *parameters*: MECHA's, changed from
+    its defaults; *experiment*: one of EXPERIMENTS ("inhibited": the aquaporins blocked); *instanced*: each
+    segment's anatomy an instance of its class's template (GRANAP's instanced_anatomy: no vertex of its own, the
+    same results); *plant_solver*: MechaHydraulics'
     ("condensed": each section's interior eliminated, one factorisation per kind of section); *soil_boundary*:
     MechaHydraulics' ("node_dirichlet", "node_robin": one soil node per section, GRANAP's soil_node), with
     *soil_bulk_conductance* (cm3 hPa-1 d-1) on each soil node (node_robin); *condensed*: each section reduced onto
@@ -375,35 +407,35 @@ def root_system(main=(3, 3, 1, 1), laterals=((1, (1, 1)),), segment_length: floa
         soil_boundary = "node_dirichlet"
     values = EXPERIMENTS[experiment](dict(parameters or {}))
     n = len(main)
-    rows = [("main", rank, barrier, main_radius) for rank, barrier in enumerate(main)]
+    rows = [("main", rank, barrier, main_radius, (n - 1 - rank) * segment_length) for rank, barrier in enumerate(main)]
     branched = []
     for k, (bearer, barriers) in enumerate(laterals, start=1):
         if not 0 <= bearer < n:
             raise ValueError(f"root_system: lateral {k} on segment {bearer} of a main root of {n}")
         m = len(barriers)
         branched.append([bearer, [[lateral_radius, segment_length, (m - 1 - i) * segment_length] for i in range(m)]])
-        rows += [(f"lateral {k}", rank, barrier, lateral_radius) for rank, barrier in enumerate(barriers)]
+        rows += [(f"lateral {k}", rank, barrier, lateral_radius, (m - 1 - rank) * segment_length)
+                 for rank, barrier in enumerate(barriers)]
+    layout = pd.DataFrame(rows, columns=["axis", "rank", "barrier", "radius", "distance_from_tip"])
     scenario = dict(values, collar_condition=1., collar_psi=collar_psi, root_laterals=branched,
                     instanced_anatomy=bool(instanced), plant_solver=plant_solver, soil_boundary=soil_boundary,
                     soil_node=soil_boundary != "per_node" or condensed, **dict(osmotic or {}),
+                    uniform_soil_psi=soil_psi,
+                    **development_parameters(layout["distance_from_tip"], layout["barrier"]),
                     root_segments=[[main_radius, segment_length, (n - 1 - i) * segment_length] for i in range(n)])
+    if soil_boundary == "node_robin":
+        scenario["uniform_soil_bulk_conductance"] = soil_bulk_conductance
     if anatomy is not None:
         scenario["root_anatomy"] = dict(anatomy)
-    from openalea.mecha.component import plant_reduction
     reduction = plant_reduction(length_classes=length_classes, osmotic=osmotic is not None) if condensed else None
     scene = Scene(planting([Planting()], _root_system_model(osmotic is not None, reduction), scenario),
                   recorder=SceneRecorder())
     ds = scene.populations[0].data_structure
-    layout = pd.DataFrame(rows, columns=["axis", "rank", "barrier", "radius"])
     if len(ds.entity_ids("SubOrgan")) != len(layout):
         raise RuntimeError("root_system: the sections do not match the layout")
-    owner = np.asarray(ds.owner("SubOrgan"))
-    ds.set("barrier", layout["barrier"].to_numpy(dtype=float)[owner])
-    ds.set("soil_psi", np.full(ds.n_nodes(), float(soil_psi)))
-    if soil_boundary == "node_robin":
-        ds.set("soil_bulk_conductance", np.full(ds.n_nodes(), float(soil_bulk_conductance)))
     scene.run()
-    return RootSystem(scene=scene, parameters=values, layout=layout.assign(radius=layout["radius"] * 1e3))
+    return RootSystem(scene=scene, parameters=values,
+                      layout=layout.drop(columns="distance_from_tip").assign(radius=layout["radius"] * 1e3))
 
 
 @dataclass
