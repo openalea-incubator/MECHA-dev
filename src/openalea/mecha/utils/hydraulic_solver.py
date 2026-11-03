@@ -3,6 +3,7 @@ import numpy as np
 import math
 import networkx as nx
 from scipy.sparse import coo_matrix
+from openalea.mecha.utils.network_builder import poiseuille_conductance
 
 class HydraulicMatrixBuilder:
     """
@@ -702,6 +703,12 @@ class HydraulicMatrixBuilder:
         )
 
         K = kpl * temp_factor
+        if eattr.get('orientation') == 'axial' and {interface[0], interface[1]} <= {13, 19, 20}:
+            # 3D: two consecutive elements of one vessel file -- sap flows
+            # through the open perforation plate, Hagen-Poiseuille from one
+            # element's middle to the next one's.
+            g = self.network.graph
+            K = poiseuille_conductance(g.nodes[i]['area'], (g.nodes[i]['height'] + g.nodes[j]['height']) / 2)
         pd.n_pd = int(np.round(base_area * barrier_modifier))
 
         self._add_W(i, i, -K)
@@ -1140,7 +1147,15 @@ class HydraulicMatrixBuilder:
 
     def _apply_xylo_phloem_boundary(self, i_maturity, barrier, psi_xyl, psi_sieve, distributed_flow_xyl, distributed_flow_sieve, boundary, rhs_s, rhs_x, rhs_p, rhs):
         if barrier > 0:
-            if not np.isnan(psi_xyl[1][i_maturity][0]):
+            if not np.isnan(psi_xyl[1][i_maturity][0]) and getattr(self.network, 'xylem_bc', 'rows') == 'ends':
+                # 3D end faces: only the first / last row of each vessel file,
+                # each at its own pressure (distal at z_min, proximal at z_max).
+                rhs[:] = rhs_s * boundary.scenarios[0]['psi_soil_left']
+                for cid, K, psi in self.network.xylem_end_terms(psi_xyl[1][i_maturity][0], psi_xyl[0][i_maturity][0]):
+                    rhs_x[cid][0] -= K
+                    self._add_W(cid, cid, -K)
+                    rhs[cid][0] -= K * psi
+            elif not np.isnan(psi_xyl[1][i_maturity][0]):
                 for cid in self.network.xylem_cells:
                     if not isinstance(self.hydraulic.k_xyl, list):
                         k_xyl_value = self.hydraulic.k_xyl

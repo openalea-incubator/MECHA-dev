@@ -34,6 +34,16 @@ from openalea.mecha.utils.hydraulic_cell import HydraulicCellManager
 from openalea.granap.network_base import AbstractNetwork
 from shapely.geometry import Polygon
 
+# Xylem sap viscosity (hPa.d), water at 10°C, as in Mecha.calculate_axial_conductance.
+XYLEM_VISCOSITY = 1.3076E-05 / 3600 / 24
+
+
+def poiseuille_conductance(area: float, length: float, viscosity: float = XYLEM_VISCOSITY) -> float:
+    """Hagen-Poiseuille conductance (cm^3 hPa^-1 d^-1) of a vessel of
+    cross-section ``area`` (µm^2) over ``length`` (µm): area^2 / (8 pi viscosity
+    length), the form of Mecha.calculate_axial_conductance."""
+    return area**2 / (8 * 3.141592 * length * viscosity) * 1.0E-12
+
 class NetworkBuilder(AbstractNetwork):
     """Builds the hydraulic network graph from XML cell data"""
     def __init__(self, source_network: AbstractNetwork = None):
@@ -218,7 +228,7 @@ class NetworkBuilder(AbstractNetwork):
         self.scale_xml_geometry(geometry.im_scale)
         
     
-    def populate_from_network(self, type_mapper: Dict[str, int] = None) -> None:
+    def populate_from_network(self, type_mapper: Dict[str, int] = None, xylem_bc: str = "rows") -> None:
         """
         Populate this NetworkBuilder from the stored source AbstractNetwork.
 
@@ -230,9 +240,22 @@ class NetworkBuilder(AbstractNetwork):
         ----------
         type_mapper : Dict[str, int], optional
             Mapping from GRANAP cell type strings to MECHA cgroup integers.
+        xylem_bc : str, optional
+            Where the xylem pressure boundary condition is applied.
+            ``"rows"`` (default): on every xylem cell node, through ``k_xyl``
+            (2D, and 3D with the xylem equipotential along the segment).
+            ``"ends"`` (3D only): only on the first and last row of each vessel
+            file, through Hagen-Poiseuille over half that row; the bottom row
+            (z_min) takes the distal pressure ``pressure_xyl_dist``, the top row
+            (z_max) the proximal ``pressure_xyl_prox`` (also used at the bottom
+            when the distal one is not set).  Water then reaches the xylem
+            boundary by flowing axially through the vessel elements.
         """
         if self._is_populated:
             return  # Already populated — skip to avoid double unit-scaling
+        if xylem_bc not in ("rows", "ends"):
+            raise ValueError(f"xylem_bc must be 'rows' or 'ends', got {xylem_bc!r}")
+        self.xylem_bc = xylem_bc
 
         src = self._source_network
         if src is None:
@@ -625,7 +648,42 @@ class NetworkBuilder(AbstractNetwork):
         if not self.is_3d:
             self.build_wall_connections()
 
+        self.xylem_end_nodes = []
+        if self.xylem_bc == "ends":
+            if not self.is_3d:
+                raise ValueError("xylem_bc='ends' needs a 3D network")
+            self._find_xylem_end_nodes()
+
         self._is_populated = True
+
+    def _find_xylem_end_nodes(self) -> None:
+        """``self.xylem_end_nodes``: ``(cell node, K, end)`` for the bottom
+        (``end="dist"``) and top (``end="prox"``) row of every vessel file,
+        ``K`` the Hagen-Poiseuille conductance over half that row.  A file of
+        a single row gets both ends (no axial resolution then: split vessels
+        into elements with GRANAP's ``axial_heights`` to see the gradient)."""
+        files: Dict[int, List[int]] = {}
+        for node_id in self.xylem_cells:
+            files.setdefault(self.graph.nodes[node_id]['cell_2d'], []).append(node_id)
+        n_single = 0
+        for nodes in files.values():
+            nodes.sort(key=lambda n: self.graph.nodes[n]['z0'])
+            n_single += len(nodes) == 1
+            for node_id, end in ((nodes[0], "dist"), (nodes[-1], "prox")):
+                d = self.graph.nodes[node_id]
+                area = self.cell_areas[node_id - self.n_wall_junction]
+                self.xylem_end_nodes.append((node_id, poiseuille_conductance(area, d['height'] / 2), end))
+        if n_single:
+            print(f"xylem_bc='ends': {n_single} vessel file(s) are a single row; "
+                  "set an axial height for them to resolve the axial gradient.")
+
+    def xylem_end_terms(self, psi_prox: float, psi_dist: float) -> List[Tuple[int, float, float]]:
+        """``(cell node, K, psi)`` of the xylem end-face boundary for one
+        scenario: the top rows at ``psi_prox``, the bottom rows at ``psi_dist``
+        (``psi_prox`` when the distal pressure is not set)."""
+        if np.isnan(psi_dist):
+            psi_dist = psi_prox
+        return [(n, K, psi_prox if end == "prox" else psi_dist) for n, K, end in self.xylem_end_nodes]
 
     # ------------------------------------------------------------------
     # Cell manager construction

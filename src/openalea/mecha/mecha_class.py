@@ -1096,7 +1096,11 @@ class Mecha:
             psi_x = self.psi_xyl[1][i_maturity][i_scenario]
             flow_x = self.distributed_flow_xyl[1][0][i_scenario] if not np.isnan(self.distributed_flow_xyl[1][0][i_scenario]) else np.nan
             
-            if not np.isnan(psi_x):
+            ends = self._xylem_ends(i_maturity, i_scenario)
+            if not np.isnan(psi_x) and ends:
+                for cid, K, _psi in ends:
+                    rhs_x[cid][0] -= K
+            elif not np.isnan(psi_x):
                 for cid in [c.node_id for c in cm.xylem]:
                     if isinstance(self.hydraulic.k_xyl, list):
                         if len(self.hydraulic.k_xyl) == 1:
@@ -1217,8 +1221,13 @@ class Mecha:
                 psi_xyl_val = self.psi_xyl[1][i_maturity][i_scenario]
                 flow_xyl_val = self.distributed_flow_xyl[1][0][i_scenario]
 
+                ends = self._xylem_ends(i_maturity, i_scenario)
                 if barrier > 0:
-                    if not np.isnan(psi_xyl_val): # Pressure BC
+                    if not np.isnan(psi_xyl_val) and ends: # 3D end-face pressure BC
+                        for cid, K, psi in ends:
+                            matrix_W[cid, cid] -= K
+                            rhs[cid][0] -= K * psi
+                    elif not np.isnan(psi_xyl_val): # Pressure BC
                         for cid in [c.node_id for c in self.network.cell_manager.xylem]:
                             matrix_W[cid, cid] -= self.hydraulic.k_xyl
                         rhs += rhs_x * psi_xyl_val
@@ -1748,6 +1757,14 @@ class Mecha:
             return True
         return False
 
+    def _xylem_ends(self, i_maturity: int, i_scenario: int = 0) -> list:
+        """``(cell node, K, psi)`` of the 3D xylem end-face boundary
+        (``xylem_bc='ends'``) for this scenario; empty otherwise."""
+        if getattr(self.network, 'xylem_bc', 'rows') != 'ends':
+            return []
+        return self.network.xylem_end_terms(self.psi_xyl[1][i_maturity][i_scenario],
+                                            self.psi_xyl[0][i_maturity][i_scenario])
+
     def remove_xyl_phloem_BC(self, matrix_W, i_maturity: int, i_scenario: int = 0):
 
         barrier = int(self.geometry.maturity_stages[i_maturity].get("barrier"))
@@ -1757,7 +1774,11 @@ class Mecha:
                 for cid in [c.node_id for c in self.network.cell_manager.protosieve]:
                     matrix_W[cid, cid] += self.hydraulic.k_sieve
         else:
-            if not np.isnan(self.psi_xyl[1][i_maturity][i_scenario]): #Pressure xylem BC
+            ends = self._xylem_ends(i_maturity, i_scenario)
+            if not np.isnan(self.psi_xyl[1][i_maturity][i_scenario]) and ends:
+                for cid, K, _psi in ends:
+                    matrix_W[cid, cid] += K
+            elif not np.isnan(self.psi_xyl[1][i_maturity][i_scenario]): #Pressure xylem BC
                 for cid in [c.node_id for c in self.network.cell_manager.xylem]:
                     matrix_W[cid, cid] += self.hydraulic.k_xyl
             else:
@@ -1780,7 +1801,15 @@ class Mecha:
             q_soil.append(rhs_s[ind]*(solution[ind]-self.boundary.scenarios[i_scenario]['psi_soil_left'])) #(cm^3/d) Positive for water flowing into the root
 
         if barrier > 0:
-            if not np.isnan(self.psi_xyl[1][i_maturity][i_scenario]):
+            ends = self._xylem_ends(i_maturity, i_scenario)
+            if not np.isnan(self.psi_xyl[1][i_maturity][i_scenario]) and ends:
+                for cid, K, psi in ends:
+                    Q = -K * (solution[cid][0] - psi)
+                    q_xyl.append(Q)
+                    rank = int(self.network.cell_ranks[cid - self.network.n_wall_junction])
+                    row = int(self.network.rank_to_row[rank])
+                    self.flow_xyl_layer[row][i_maturity][i_scenario] += Q
+            elif not np.isnan(self.psi_xyl[1][i_maturity][i_scenario]):
                 for cid in [c.node_id for c in self.network.cell_manager.xylem]:
                     Q = rhs[cid][0] * (solution[cid][0] - self.psi_xyl[1][i_maturity][i_scenario])
                     q_xyl.append(Q)
@@ -1866,7 +1895,11 @@ class Mecha:
         length = self.network.segment_length if getattr(self.network, 'is_3d', False) else height
         if barrier>0:
             if not np.isnan(self.psi_xyl[1][i_maturity][0]):
-                self.kr_tot[i_maturity][0]=self.total_flow[i_maturity][0]/(self.boundary.scenarios[0]['psi_soil_left']-self.psi_xyl[1][i_maturity][0])/self.network.perimeter/length/1.0E-04
+                psi_x = self.psi_xyl[1][i_maturity][0]
+                ends = self._xylem_ends(i_maturity, 0)
+                if ends:  # 3D end faces: against the mean of the two end pressures
+                    psi_x = float(np.mean([p for _c, _K, p in ends]))
+                self.kr_tot[i_maturity][0]=self.total_flow[i_maturity][0]/(self.boundary.scenarios[0]['psi_soil_left']-psi_x)/self.network.perimeter/length/1.0E-04
             else:
                 print('Error: Scenario 0 should have xylem pressure boundary conditions, except for the elongation zone')
         elif barrier==0:
