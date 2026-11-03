@@ -46,12 +46,26 @@ def prepare_geometrical_properties(general, network, position, indice):
         arr[:] = np.nan
         return arr
 
+    # Column counts: 2 junctions per wall and 12 cells per junction in 2D; a
+    # 3D network has more (a side wall touches its vertical junction pieces
+    # and two rims), so take the largest the graph needs.
+    n_junc_per_wall, n_cell_per_junc = 2, 12
+    if getattr(network, 'is_3d', False):
+        nwj = network.n_wall_junction
+        for w in range(network.n_walls):
+            n_junc_per_wall = max(n_junc_per_wall, sum(
+                1 for j in network.graph.neighbors(w) if network.n_walls <= j < nwj))
+        for j in range(network.n_walls, nwj):
+            cells = {c for w in network.graph.neighbors(j) if w < network.n_walls
+                     for c in network.graph.neighbors(w) if c >= nwj}
+            n_cell_per_junc = max(n_cell_per_junc, len(cells))
+
     # Common arrays (used in both thick and thin cases)
     wall_to_cell = nan_array((network.n_walls, 2))
     n_wall_to_cell = zeros((network.n_walls, 1))
-    junction_wall_cell = nan_array((network.n_wall_junction - network.n_walls, 12))
+    junction_wall_cell = nan_array((network.n_wall_junction - network.n_walls, n_cell_per_junc))
     n_junction_wall_cell = zeros((network.n_wall_junction - network.n_walls, 1))
-    wall_to_junction = nan_array((network.n_walls, 2))
+    wall_to_junction = nan_array((network.n_walls, n_junc_per_wall))
     n_wall_to_junction = zeros((network.n_walls, 1))
 
     # Diffusion wall lengths (cm)

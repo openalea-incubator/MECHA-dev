@@ -491,7 +491,10 @@ class Mecha:
                                 square(wall_pos[0] - cell_pos[0]) +
                                 square(wall_pos[1] - cell_pos[1])
                             )
-                            surf = (height + dist_cell) * self.network.wall_lengths[neighbor] * 1.0E-08
+                            if 'area' in edge:  # 3D: the membrane's own area
+                                surf = edge['area'] * 1.0E-08
+                            else:
+                                surf = (height + dist_cell) * self.network.wall_lengths[neighbor] * 1.0E-08
                             tot_surf_cortex += surf
                             temp += surf * 1.0E-04 * (
                                 self.network.distance_center_grav[neighbor] +
@@ -557,10 +560,20 @@ class Mecha:
                     cellnumber=int(K_sieve.get("id"))
                     K_axial[cellnumber+network.n_wall_junction]=float(K_sieve.get("value"))
             else: #K_xyl_spec calculated from Poiseuille law (cm^3/hPa/d)
-                for c in [c for c in network.cell_manager.xylem]:
-                    # K_axial[c.node_id]=c.area**2/(8*3.141592*height*1.0E-05/3600/24)*1.0E-12 #(micron^4/micron)->(cm^3) & (1.0E-3 Pa.s)->(1.0E-05/3600/24 hPa.d)
-                    K_axial[c.node_id]=c.area**2/(8*3.141592*height*1.3076E-05/3600/24)*1.0E-12 #(micron^4/micron)->(cm^3) & (1.3076E-3 Pa.s)->(1.3076E-05/3600/24 hPa.d) water at 10°C
-                K_xyl_spec=sum(K_axial)*height/1.0E04
+                if getattr(network, 'is_3d', False):
+                    # 3D: each row is a vessel element of its own length; the
+                    # specific conductance (K x length) counts each 2D vessel once.
+                    K_xyl_spec = 0.0
+                    for c in network.cell_manager.xylem:
+                        node = network.graph.nodes[c.node_id]
+                        K_axial[c.node_id] = c.area**2/(8*3.141592*node['height']*1.3076E-05/3600/24)*1.0E-12
+                        if node.get('row', 0) == 0:
+                            K_xyl_spec += K_axial[c.node_id][0]*node['height']/1.0E04
+                else:
+                    for c in [c for c in network.cell_manager.xylem]:
+                        # K_axial[c.node_id]=c.area**2/(8*3.141592*height*1.0E-05/3600/24)*1.0E-12 #(micron^4/micron)->(cm^3) & (1.0E-3 Pa.s)->(1.0E-05/3600/24 hPa.d)
+                        K_axial[c.node_id]=c.area**2/(8*3.141592*height*1.3076E-05/3600/24)*1.0E-12 #(micron^4/micron)->(cm^3) & (1.3076E-3 Pa.s)->(1.3076E-05/3600/24 hPa.d) water at 10°C
+                    K_xyl_spec=sum(K_axial)*height/1.0E04
                 # Update hydraulic.k_xyl for the scenario
                 print(self.hydraulic.k_xyl)
                 for c in [c for c in network.cell_manager.sieve]:
@@ -1483,14 +1496,20 @@ class Mecha:
             A = 0.0
             if path == 'wall':
                 # Cross section area of the cell wall
-                A = (height * thickness) * 1.0e-8  # µm² → cm²
+                if 'orientation' in eattr:  # 3D: contact length x thickness
+                    A = (eattr['length'] * thickness) * 1.0e-8
+                else:
+                    A = (height * thickness) * 1.0e-8  # µm² → cm²
 
             elif path == 'membrane':
                     mb = cm.get_membrane_by_edge(u, v)
                     if mb is not None:
                         # suface area of the membrane against the cell wall
                         # height of section * length of the cell wall in contact with the membrane
-                        A = (height * mb.length) * 1.0e-8  # µm² → cm²
+                        if 'area' in eattr:  # 3D: the membrane's own area
+                            A = eattr['area'] * 1.0e-8
+                        else:
+                            A = (height * mb.length) * 1.0e-8  # µm² → cm²
 
             elif path == 'plasmodesmata':
                 pd = cm.get_plasmodesmata_by_edge(u, v)
@@ -1843,14 +1862,16 @@ class Mecha:
         q_soil, q_xyl, q_sieve = self._calculate_interface_flows(i_maturity, solution, rhs, rhs_s)
             
         self.total_flow[i_maturity][0]=sum(q_soil) #Total flow rate at root surface
+        # kr per unit root length: the section height in 2D, the segment length in 3D
+        length = self.network.segment_length if getattr(self.network, 'is_3d', False) else height
         if barrier>0:
             if not np.isnan(self.psi_xyl[1][i_maturity][0]):
-                self.kr_tot[i_maturity][0]=self.total_flow[i_maturity][0]/(self.boundary.scenarios[0]['psi_soil_left']-self.psi_xyl[1][i_maturity][0])/self.network.perimeter/height/1.0E-04
+                self.kr_tot[i_maturity][0]=self.total_flow[i_maturity][0]/(self.boundary.scenarios[0]['psi_soil_left']-self.psi_xyl[1][i_maturity][0])/self.network.perimeter/length/1.0E-04
             else:
                 print('Error: Scenario 0 should have xylem pressure boundary conditions, except for the elongation zone')
         elif barrier==0:
             if not np.isnan(self.psi_sieve[1][i_maturity][0]):
-                self.kr_tot[i_maturity][0]=self.total_flow[i_maturity][0]/(self.boundary.scenarios[0]['psi_soil_left']-self.psi_sieve[1][i_maturity][0])/self.network.perimeter/height/1.0E-04
+                self.kr_tot[i_maturity][0]=self.total_flow[i_maturity][0]/(self.boundary.scenarios[0]['psi_soil_left']-self.psi_sieve[1][i_maturity][0])/self.network.perimeter/length/1.0E-04
             else:
                 print('Error: Scenario 0 should have phloem pressure boundary conditions in the elongation zone')                
 

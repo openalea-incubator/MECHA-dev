@@ -241,16 +241,30 @@ class NetworkBuilder(AbstractNetwork):
         # ------------------------------------------------------------------
         # Step 1: Copy graph & counts
         # ------------------------------------------------------------------
+        # A 3D network (GRANAP Network3D) stacks rows of each 2D cell along z:
+        # its walls / junctions / edges carry their own height, area and
+        # orientation, which replace the single cross-section height below.
+        self.is_3d = getattr(src, 'dimension', 2) == 3
+
         self.graph = src.graph.copy()
         for _, data in self.graph.nodes(data=True):
             if 'position' in data:
-                data['position'] = (data['position'][0] * 1000, data['position'][1] * 1000)
+                if self.is_3d:
+                    data['position'] = tuple(c * 1000 for c in data['position'])
+                else:
+                    data['position'] = (data['position'][0] * 1000, data['position'][1] * 1000)
             if 'length' in data:
                 data['length'] = data['length'] * 1000
             if 'area' in data:
                 data['area'] = data['area'] * 1000**2
             if 'dist' in data:
                 data['dist'] = data['dist'] * 1000
+            if self.is_3d:
+                for key in ('height', 'z', 'z0', 'z1'):
+                    if key in data:
+                        data[key] = data[key] * 1000
+                if 'volume' in data:
+                    data['volume'] = data['volume'] * 1000**3
 
         for u, v, data in self.graph.edges(data=True):
             if 'length' in data:
@@ -261,6 +275,8 @@ class NetworkBuilder(AbstractNetwork):
                 data['lateral_distance'] = data['lateral_distance'] * 1000
             if 'distnode_wall_cell' in data:
                 data['distnode_wall_cell'] = data['distnode_wall_cell'] * 1000
+            if 'area' in data:
+                data['area'] = data['area'] * 1000**2
                 
         self.n_walls = src.n_walls
         self.n_junctions = src.n_junctions
@@ -333,6 +349,35 @@ class NetworkBuilder(AbstractNetwork):
                 self.outercortex_connec_rank = 1
                 break
 
+        if self.is_3d:
+            self._junctions_from_3d_edges()
+        else:
+            self._rebuild_junctions_2d()
+
+        self._populate_cells_and_borders(src)
+
+    def _junctions_from_3d_edges(self) -> None:
+        """Step 4 for a 3D network: keep its junctions (vertical pieces and
+        rims) and wall-junction edges as they are -- rebuilding them from (x, y)
+        would merge every piece above one 2D junction -- and read
+        ``junction_to_wall`` from those edges."""
+        self.junction_to_wall = {}
+        self.n_junction_to_wall = {}
+        self.junction_positions = {}
+        for j_id in range(self.n_walls, self.n_wall_junction):
+            walls = [w for w in self.graph.neighbors(j_id)
+                     if w < self.n_walls and self.graph.edges[j_id, w].get('path') == 'wall']
+            self.junction_to_wall[j_id] = walls
+            self.n_junction_to_wall[j_id] = len(walls)
+        for wall_id in range(self.n_walls):
+            juncs = [j for j in self.graph.neighbors(wall_id)
+                     if self.n_walls <= j < self.n_wall_junction]
+            if len(juncs) >= 2:
+                (x0, y0), (x1, y1) = (self.graph.nodes[j]['position'][:2] for j in juncs[:2])
+                self.junction_positions[wall_id] = [x0, y0, x1, y1]
+
+    def _rebuild_junctions_2d(self) -> None:
+        """Step 4 for a 2D network."""
         # Step 4: Rebuild junction_to_wall / n_junction_to_wall from edges mimicking create_wall_junction_nodes
         old_juncs = list(range(self.n_walls, self.n_wall_junction))
         wall_to_junc_coords = {}
@@ -391,13 +436,26 @@ class NetworkBuilder(AbstractNetwork):
         self.n_junctions = junction_ni
         self.n_wall_junction = self.n_walls + self.n_junctions
 
+    def _populate_cells_and_borders(self, src) -> None:
+        """Steps 5-13 of :meth:`populate_from_network`."""
         # Step 5: Compute cell_areas, cell_perimeters from source or graph
         self.cell_areas = np.zeros(self.n_cells)
         self.cell_perimeters = np.zeros(self.n_cells)
         self.cell_types = [''] * self.n_cells
 
+        if self.is_3d:
+            # Length of the segment along z (µm): kr is per unit of it.
+            cells = [self.graph.nodes[self.n_wall_junction + i] for i in range(self.n_cells)]
+            self.segment_length = max(c['z1'] for c in cells) - min(c['z0'] for c in cells)
+            # Each row keeps its 2D cell's area and perimeter (the membrane
+            # lengths also count the end walls, so they cannot give it).
+            for idx, row in src._cells_gdf.iterrows():
+                self.cell_areas[idx] = row['area'] * 1000**2
+                self.cell_perimeters[idx] = row['geometry'].length * 1000
+                self.cell_types[idx] = row['type']
+
         # Try to get areas from the source_network's all_cells if available
-        if hasattr(src, 'all_cells') and hasattr(src.all_cells, 'cells'):
+        elif hasattr(src, 'all_cells') and hasattr(src.all_cells, 'cells'):
             cells_list = src.all_cells.cells
             for idx, cell in enumerate(cells_list):
                 if idx < self.n_cells:
@@ -443,7 +501,14 @@ class NetworkBuilder(AbstractNetwork):
         self.border_aerenchyma = []
         self.border_link = 2 * np.ones((self.n_wall_junction, 1), dtype=int)
 
+        self.face_walls = []
         for i in range(self.n_walls):
+            if self.graph.nodes[i].get('boundary'):
+                # 3D segment-end face: one cell, but neither soil nor aerenchyma
+                # (closed unless a boundary condition is put on it).
+                self.face_walls.append(i)
+                self.border_link[i] = 0
+                continue
             membrane_cells = []
             for neighbor in self.graph.neighbors(i):
                 edge_data = self.graph.edges[i, neighbor]
@@ -475,6 +540,20 @@ class NetworkBuilder(AbstractNetwork):
                 self.wall_lengths[j_id] = length
             else:
                 self.border_link[j_id] = 0
+
+        if self.is_3d:
+            # Soil contact area (µm^2) per border node, used instead of
+            # length x height: a border side piece keeps half its area, the
+            # other half is shared by the border junctions around it, so the
+            # contact areas add up to the outer surface.
+            border_juncs = set(self.border_junction)
+            self.soil_area = {}
+            for wall_id in self.border_walls:
+                area = self.graph.nodes[wall_id]['area']
+                self.soil_area[wall_id] = area / 2.0
+                juncs = [j for j in self.graph.neighbors(wall_id) if j in border_juncs]
+                for j_id in juncs:
+                    self.soil_area[j_id] = self.soil_area.get(j_id, 0.0) + area / 2.0 / len(juncs)
 
         # Count membranes
         self.n_membrane = 0
@@ -542,8 +621,9 @@ class NetworkBuilder(AbstractNetwork):
         self._calculate_xylem_area()
         self._calculate_phloem_area()
         
-        # Build new wall connections to junctions
-        self.build_wall_connections()
+        # Build new wall connections to junctions (a 3D network keeps its own)
+        if not self.is_3d:
+            self.build_wall_connections()
 
         self._is_populated = True
 
@@ -656,6 +736,11 @@ class NetworkBuilder(AbstractNetwork):
         self.n_layer = np.zeros(62, dtype=int)
         self.xylem_distance = []
 
+        def counted(node_id):
+            """Layer statistics count each 2D cell once: in 3D only the first
+            row of a file (every row of a file gets the same rank)."""
+            return self.graph.nodes[node_id].get('row', 0) == 0
+
         # First pass: basic cell type assignment
         for cell_id in range(self.n_cells):
             node_id = self.n_wall_junction + cell_id
@@ -672,11 +757,12 @@ class NetworkBuilder(AbstractNetwork):
             self.cell_ranks[cell_id] = cgroup
             pos = position.get(node_id, (0, 0))
             dist = np.hypot(pos[0] - self.x_grav, pos[1] - self.y_grav)
-            self.layer_dist[cgroup] += dist
-            self.n_layer[cgroup] += 1
+            if counted(node_id):
+                self.layer_dist[cgroup] += dist
+                self.n_layer[cgroup] += 1
 
-            if cgroup == 13:
-                self.xylem_distance.append(dist)
+                if cgroup == 13:
+                    self.xylem_distance.append(dist)
 
         self.xylem_80_percentile_distance = (
             np.percentile(self.xylem_distance, 80) if self.xylem_distance else 0
@@ -704,20 +790,23 @@ class NetworkBuilder(AbstractNetwork):
                 if 3 in connected_ranks:
                     self.cell_ranks[cell_id] = 40
                     dist = np.hypot(pos[0] - self.x_grav, pos[1] - self.y_grav)
-                    self.layer_dist[40] += dist
-                    self.n_layer[40] += 1
+                    if counted(node_id):
+                        self.layer_dist[40] += dist
+                        self.n_layer[40] += 1
                 elif self.outercortex_connec_rank in connected_ranks:
                     self.cell_ranks[cell_id] = 49
                     dist = np.hypot(pos[0] - self.x_grav, pos[1] - self.y_grav)
-                    self.layer_dist[49] += dist
-                    self.n_layer[49] += 1
+                    if counted(node_id):
+                        self.layer_dist[49] += dist
+                        self.n_layer[49] += 1
 
             elif celltype in [5, 11, 12, 13, 23]:
                 if self.stele_connec_rank in connected_ranks:
                     self.cell_ranks[cell_id] = 50
                     dist = np.hypot(pos[0] - self.x_grav, pos[1] - self.y_grav)
-                    self.layer_dist[50] += dist
-                    self.n_layer[50] += 1
+                    if counted(node_id):
+                        self.layer_dist[50] += dist
+                        self.n_layer[50] += 1
                     cgroup = self.graph.nodes[node_id].get('cgroup', 0)
 
                     # Track protosieve cells
@@ -737,26 +826,30 @@ class NetworkBuilder(AbstractNetwork):
                     if (40 + iteration) in connected_ranks:
                         self.cell_ranks[cell_id] = 41 + iteration
                         dist = np.hypot(pos[0] - self.x_grav, pos[1] - self.y_grav)
-                        self.layer_dist[41 + iteration] += dist
-                        self.n_layer[41 + iteration] += 1
+                        if counted(node_id):
+                            self.layer_dist[41 + iteration] += dist
+                            self.n_layer[41 + iteration] += 1
                     elif (49 - iteration) in connected_ranks:
                         self.cell_ranks[cell_id] = 48 - iteration
                         dist = np.hypot(pos[0] - self.x_grav, pos[1] - self.y_grav)
-                        self.layer_dist[48 - iteration] += dist
-                        self.n_layer[48 - iteration] += 1
+                        if counted(node_id):
+                            self.layer_dist[48 - iteration] += dist
+                            self.n_layer[48 - iteration] += 1
 
                 elif celltype in [5, 11, 12, 13, 23]:
                     if iteration < 10:
                         if (50 + iteration) in connected_ranks:
                             self.cell_ranks[cell_id] = 51 + iteration
                             dist = np.hypot(pos[0] - self.x_grav, pos[1] - self.y_grav)
-                            self.layer_dist[51 + iteration] += dist
-                            self.n_layer[51 + iteration] += 1
+                            if counted(node_id):
+                                self.layer_dist[51 + iteration] += dist
+                                self.n_layer[51 + iteration] += 1
                     else:
                         self.cell_ranks[cell_id] = 61
                         dist = np.hypot(pos[0] - self.x_grav, pos[1] - self.y_grav)
-                        self.layer_dist[61] += dist
-                        self.n_layer[61] += 1
+                        if counted(node_id):
+                            self.layer_dist[61] += dist
+                            self.n_layer[61] += 1
 
         # Average distances
         for i in range(62):
@@ -781,6 +874,8 @@ class NetworkBuilder(AbstractNetwork):
             pos = position.get(i, (0, 0))
             d = np.sqrt((pos[0] - self.x_grav) ** 2 + (pos[1] - self.y_grav) ** 2)
             self.distance_center_grav[i] = d
+            if self.graph.nodes[i].get('orientation') == 'axial':
+                continue  # 3D end wall / face: sits at its cell's centre, not on its outline
 
             # Check which cells this wall is connected to via membrane
             for neighbor in self.graph.neighbors(i):
@@ -1354,7 +1449,9 @@ class NetworkBuilder(AbstractNetwork):
             for neighboor, eattr in edges.items():
                 if eattr['path'] != "plasmodesmata":
                     continue
-                    
+                if eattr.get('orientation') == 'axial':
+                    continue  # 3D: between rows of one file, not a tissue interface
+
                 j = indice[neighboor]
                 j_group = self.graph.nodes[j]['cgroup']
                 length = eattr['length']

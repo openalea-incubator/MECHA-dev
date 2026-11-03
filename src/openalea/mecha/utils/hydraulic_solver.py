@@ -29,6 +29,7 @@ class HydraulicMatrixBuilder:
         maturity_stages = self.geometry.maturity_stages
         barrier = int(maturity_stages[i_maturity].get("barrier"))
         height = float(maturity_stages[i_maturity].get("height"))
+        self._stage_height = height
         x_contact = float(self.hydraulic.get_xcontact(h))
         
         hyd_props = hydraulic_conductivities[h, i_maturity, barrier]
@@ -221,11 +222,16 @@ class HydraulicMatrixBuilder:
         xylem_pieces: bool = getattr(self.geometry, 'xylem_pieces', False)
 
         # Shared geometric conductance factor
-        temp: float = (
-            1.0E-04
-            * ((eattr['lateral_distance'] + height) * thickness - thickness ** 2)
-            / eattr['length']
-        )
+        if 'orientation' in eattr:
+            # 3D: the wall's cross-section along the contact line (contact
+            # length x thickness) over the path from the wall node to the junction.
+            temp: float = 1.0E-04 * eattr['length'] * thickness / eattr['dist']
+        else:
+            temp: float = (
+                1.0E-04
+                * ((eattr['lateral_distance'] + height) * thickness - thickness ** 2)
+                / eattr['length']
+            )
         temp_factor: float = 1.0
 
         # Get the flanking cells for this wall node via HydraulicCellManager
@@ -244,7 +250,8 @@ class HydraulicMatrixBuilder:
         # Both flanking cells are intercellular (aerenchyma) or both are xylem
         # when xylem_pieces is active.  These walls carry near-zero conductance
         # and trigger the ghost-junction book-keeping.
-        if (n_interc >= 2 and barrier > 0) or (n_xyl >= 2 and xylem_pieces):
+        axial_wall = self.network.graph.nodes[node].get('orientation') == 'axial'
+        if (n_interc >= 2 and barrier > 0) or (n_xyl >= 2 and xylem_pieces and not axial_wall):
             K: float = 1.0E-16
             temp_factor = 1.0E-16
             # Ghost-junction book-keeping (unchanged from original logic)
@@ -289,7 +296,8 @@ class HydraulicMatrixBuilder:
             interface = tuple(sorted((cells_i[0].cgroup, cells_i[1].cgroup)))
 
             # Check for phi_thick walls
-            if (tuple(sorted((cells_i[0].phi_thick, cells_i[1].phi_thick))) == (1,1) and cells_i[0].rank == cells_i[1].rank):
+            if (tuple(sorted((cells_i[0].phi_thick, cells_i[1].phi_thick))) == (1,1) and cells_i[0].rank == cells_i[1].rank
+                    and not axial_wall):
                 kw_val = kw_config.get('kw_phi_thick', kw)
                 K = kw_val * temp
                 if kw > 0:
@@ -357,7 +365,10 @@ class HydraulicMatrixBuilder:
                 if int(carrier.get("tissue")) == cgroup:
                     cid = j - n_wall_junction
                     if cid not in intercellular_ids and not (barrier > 0 and cgroup in [13, 19, 20]):
-                        temp_c = float(carrier.get("constant")) * (height + eattr['dist']) * eattr['length']
+                        if 'area' in eattr:  # 3D: the edge's own area
+                            temp_c = float(carrier.get("constant")) * eattr['area']
+                        else:
+                            temp_c = float(carrier.get("constant")) * (height + eattr['dist']) * eattr['length']
                         direction = int(carrier.get("direction"))
                         if direction == 1:
                             if cid not in self.hormones.sym_zombie0:
@@ -387,7 +398,10 @@ class HydraulicMatrixBuilder:
             if barrier > 0:
                 kaqp_curr = kaqp_config['kaqp_stele'] * 10000
                 if self.boundary.c_flag and self.general.c_flag:
-                    temp_c = 1.0E-04 * (self.network.wall_lengths[i] * height) / thickness
+                    if getattr(self.network, 'is_3d', False):  # 3D: the wall's own area
+                        temp_c = 1.0E-04 * self.network.graph.nodes[i]['area'] / thickness
+                    else:
+                        temp_c = 1.0E-04 * (self.network.wall_lengths[i] * height) / thickness
                     if i not in self.network.apo_wall_zombies0:
                         self._add_C(i, i, -temp_c * self.hormones.diff1_pw1)
                         self._add_C(i, j,  temp_c * self.hormones.diff1_pw1)
@@ -439,7 +453,10 @@ class HydraulicMatrixBuilder:
             if kw_val == 0.0:
                 K = 0.0
             else:
-                K = 1 / (1 / (kw_val / (thickness / 2 * 1.0E-04)) + 1 / (self.hydraulic.kmb + kaqp_curr)) * 1.0E-08 * (height + eattr['dist']) * eattr['length']
+                if 'area' in eattr:  # 3D: the edge's own area instead of (height + dist) x length
+                    K = 1 / (1 / (kw_val / (thickness / 2 * 1.0E-04)) + 1 / (self.hydraulic.kmb + kaqp_curr)) * 1.0E-08 * eattr['area']
+                else:
+                    K = 1 / (1 / (kw_val / (thickness / 2 * 1.0E-04)) + 1 / (self.hydraulic.kmb + kaqp_curr)) * 1.0E-08 * (height + eattr['dist']) * eattr['length']
 
         self._add_W(i, i, -K)
         self._add_W(i, j,  K)
@@ -623,6 +640,10 @@ class HydraulicMatrixBuilder:
         length = pd.length
         fplxheight = self.hydraulic.fplxheight_map.get(interface, 8.0E5)
         pd.fplxheight = fplxheight
+        if 'area' in eattr:
+            # 3D: fplxheight is a frequency for a wall of the stage height, so
+            # this edge's area counts as area / height of wall length.
+            length = eattr['area'] / self._stage_height
         base_area = fplxheight * 1.0E-04 * length
 
         # --- Per-interface conductance factor (replaces elif chain) --------
@@ -994,12 +1015,18 @@ class HydraulicMatrixBuilder:
         graph = self.network.graph
         for node_id in graph.nodes:
             graph.nodes[node_id]['has_contact'] = False
+        # 3D: each border node's share of the outer surface (µm^2) replaces
+        # the 2D length x height.
+        soil_area = getattr(self.network, 'soil_area', None) if getattr(self.network, 'is_3d', False) else None
 
         for wall_id in self.network.border_walls:
             wall_has_contact = wall_id in contact_nodes
             graph.nodes[wall_id]['has_contact'] = wall_has_contact
             if wall_has_contact:
-                temp = 1.0E-04 * (self.network.wall_lengths[wall_id] / 2 * height) / (thickness / 2)
+                if soil_area is not None:
+                    temp = 1.0E-04 * soil_area[wall_id] / (thickness / 2)
+                else:
+                    temp = 1.0E-04 * (self.network.wall_lengths[wall_id] / 2 * height) / (thickness / 2)
                 K = kw * temp
                 self._add_W(wall_id, wall_id, -K)
                 rhs_s[wall_id][0] = -K
@@ -1011,7 +1038,10 @@ class HydraulicMatrixBuilder:
             junction_has_contact = j_id in contact_nodes
             graph.nodes[j_id]['has_contact'] = junction_has_contact
             if junction_has_contact:
-                temp = 1.0E-04 * (self.network.wall_lengths[j_id] * height) / (thickness / 2)
+                if soil_area is not None:
+                    temp = 1.0E-04 * soil_area[j_id] / (thickness / 2)
+                else:
+                    temp = 1.0E-04 * (self.network.wall_lengths[j_id] * height) / (thickness / 2)
                 K = kw * temp
                 self._add_W(j_id, j_id, -K)
                 rhs_s[j_id][0] = -K
