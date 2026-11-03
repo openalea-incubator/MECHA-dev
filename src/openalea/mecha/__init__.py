@@ -11,6 +11,7 @@ from openalea.mecha.utils.solute_transport import SoluteTransport
 from openalea.mecha.utils.scenario_builder import ScenarioBuilder
 from openalea.mecha.utils.hydraulic_solver import HydraulicMatrixBuilder
 from openalea.mecha.utils.visu import visualize
+from openalea.mecha.utils.vtk_export import export_vtk
 
 __all__ = [
     "Mecha",
@@ -19,5 +20,6 @@ __all__ = [
     "SoluteTransport",
     "ScenarioBuilder",
     "HydraulicMatrixBuilder",
-    "visualize"
+    "visualize",
+    "export_vtk",
 ]
