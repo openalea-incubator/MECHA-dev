@@ -223,7 +223,15 @@ with ``soil_psi`` (an input); at the collar, on the vessels of each root system'
 the potential ``collar_psi`` (``collar_condition`` 1) or the flow ``collar_flow`` split as the vessels' Poiseuille
 conductances, :math:`q_v = -Q_\text{collar}\,A_v^2 / \sum A^2` (``collar_condition`` 2); each leaf organ's
 transpiration :math:`E` as a Neumann outflow at its leaf-surface node, :math:`q = -E` (a leaf organ: any organ
-its anatomy gave a leaf surface, whatever its label: GRANAP's leaves, Adel's blades and sheaths alike).
+its anatomy gave a leaf surface, whatever its label: GRANAP's leaves, Adel's blades and sheaths alike). The soil
+``soil_boundary`` ``"per_node"`` acts on the contact nodes, which a reduced root section eliminates (it keeps its
+conduits and its soil node): with reduced roots, the soil is on the soil nodes (``"node_dirichlet"``,
+``"node_robin"``), and ``"per_node"`` raises.
+
+**Section height.** A section's height :math:`h` is its segment's length: its walls' and membranes' conductances are
+∝ :math:`h`, its conduits' Poiseuille conductances ∝ :math:`1/h`. A section with an anatomy and no length raises
+(``_check_heights``): its nodes would be cut off from the network. GRANAP gives no anatomy to a segment without length
+(Adel's internodes and sheaths before they grow): a pass-through, the junctions spanning it, until it grows.
 
 **Transmembrane fractions** (``_standard_transmembrane_fraction``, MECHA's standard transmembrane fractions): per
 membrane, its standard flow from wall to cell over its section's standard uptake, :math:`f_m = Q_{w \to c} / Q_\text{std}`;
@@ -234,7 +242,9 @@ stele at :math:`b = 2`). ``postprocess.transmembrane_layers`` and ``transmembran
 the positive and the negative apart.
 
 **Water potential** (``_water_potential``): :math:`\psi_w = \psi + \pi` on the liquid nodes, and Kelvin's liquid
-equivalent :math:`\psi_w = \ln(x)/\alpha` on the air nodes (``_liquid_equivalent``).
+equivalent :math:`\psi_w = \ln(x)/\alpha` on the air nodes (``_liquid_equivalent``). A section's mean water potential
+(a leaf element's, read by a gas exchange's stomata) is the liquid's: weighted by ``liquid_volume``, each node's
+volume :math:`V`, 0 on the air nodes and the soil nodes.
 
 
 The leaves' vapour path (``conductance.vapour_conductances``)

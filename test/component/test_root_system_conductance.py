@@ -214,3 +214,27 @@ def test_condensed_osmotic_terms_are_the_full_anatomys():
     small.scene.populations[0].instance.hydraulics()
     same()
     assert np.abs(b.get("psi") - before).max() > 100.                     # the change matters
+
+
+def test_a_section_with_an_anatomy_and_no_length_is_refused():
+    """MECHA's section height is its length: at zero, its walls and membranes conduct nothing, its nodes cut off from
+    the network. A section with an anatomy and no length raises, naming it (GRANAP gives none to a section without
+    length: a pass-through until it grows)."""
+    system = root_system(main=(3, 1), laterals=(), soil_psi=SOIL, collar_psi=COLLAR)
+    ds = system.data_structure
+    lengths = np.asarray(ds.get("length"), dtype=float).copy()
+    section = int(np.asarray(ds.owner("SubOrgan"))[0])
+    flat = np.asarray(ds.owner("SubOrgan")) == section
+    lengths[flat] = 0.
+    ds.set("length", lengths)
+    with pytest.raises(ValueError, match=r"have an anatomy and no length"):
+        system.scene.run()
+
+
+def test_the_per_node_soil_boundary_with_reduced_roots_is_refused():
+    """A reduced root section keeps its conduits and its soil node, not the contact nodes the per_node boundary puts
+    the soil on: the combination raises, naming the cause, instead of a plant cut off from the soil."""
+    system = root_system(main=(3, 1), laterals=(), soil_psi=SOIL, collar_psi=COLLAR, condensed=True)
+    system.scene.populations[0].instance.hydraulics.soil_boundary = "per_node"
+    with pytest.raises(ValueError, match=r"soil_boundary 'per_node' with reduced root sections"):
+        system.scene.run()

@@ -496,6 +496,13 @@ class MechaHydraulics(MechaSections):
                                                       "junction's half, a protoplast's area × height"),
                                         default=0., scale=SCALES.Compartment, location="node",
                                         kind="NonInertialExtensive")
+    liquid_volume: float = state_variable(**_doc("cm3", "the node's liquid water volume: its node_volume, 0 on the "
+                                                        "vapour nodes (the air spaces, the stomatal pores, a leaf's "
+                                                        "surface) and the soil nodes; the weight of a section's mean "
+                                                        "water potential (e.g. a leaf element's, for a gas "
+                                                        "exchange's stomata)"),
+                                          default=0., scale=SCALES.Compartment, location="node",
+                                          kind="NonInertialExtensive")
     contact_distance: float = state_variable(**_doc("µm", "the node's distance to its section's soil contact along "
                                                           "its graph (with pd_spatial_profile > 0; NaN otherwise)"),
                                              default=float("nan"), scale=SCALES.Compartment, location="node",
@@ -695,7 +702,7 @@ class MechaHydraulics(MechaSections):
             -> tuple[np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,
                      str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str,
                      np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,
-                     str, np.ndarray, str, np.ndarray]:
+                     str, np.ndarray, str, np.ndarray, str, np.ndarray]:
         """
         Every edge's conductance, and the boundary conductances of the nodes (soil, axial), from MECHA's geometry,
         the segments' barriers and heights (their lengths), and the plants' parameters; the standard problem's
@@ -710,6 +717,8 @@ class MechaHydraulics(MechaSections):
         geometries = self.section_geometries()
         net = self.network(geometries)
         height_node = np.asarray(length, dtype=float) * 1.0E6                     # m -> µm
+        self._check_heights(height_node)
+        self._check_soil_boundary()
         P_node, P_edge = self.parameter_table("node"), self.parameter_table("edge")
         a_cortex, b_cortex = self.cortex_gradient(geometries, height_node, P_node)
         tail = np.maximum(net.a, 0)
@@ -771,6 +780,7 @@ class MechaHydraulics(MechaSections):
         soil_node_kind = np.where(kind == SOIL_NODE, 3. if self.soil_boundary == "node_robin" else 1., 0.)
         for name in ("apoplastic", "symplastic", "membrane"):
             factors[name] = np.where(soil_links, 0., factors[name])
+        volume = self._node_volumes(net, P_node, height_node, kind)
         return (K, "soil_conductance", soil, "plant_soil_conductance", plant_soil, "soil_node_kind", soil_node_kind,
                 "axial_boundary_conductance", axial,
                 "standard_soil_psi", standard_soil.astype(float),
@@ -783,8 +793,42 @@ class MechaHydraulics(MechaSections):
                 "apoplastic_diffusion_factor", np.where(in_matrix, factors["apoplastic"], 0.),
                 "symplastic_diffusion_factor", np.where(in_matrix, factors["symplastic"], 0.),
                 "membrane_diffusion_factor", np.where(in_matrix, factors["membrane"], 0.),
-                "node_volume", self._node_volumes(net, P_node, height_node, kind),
+                "node_volume", volume, "liquid_volume", np.where(vapour | surface | (kind == SOIL_NODE), 0., volume),
                 "contact_distance", factors["contact_distance"])
+
+    def _check_heights(self, height_node) -> None:
+        """A section's anatomy needs a length: at zero height, its walls and membranes conduct nothing (their
+        conductances ∝ the height), its nodes cut off from the network, and its conduits' Poiseuille conductances
+        (∝ 1 / the height) infinite. GRANAP gives no anatomy to a section without length (a pass-through until it
+        grows)."""
+        flat = ~(np.asarray(height_node) > 0)
+        if flat.any():
+            ds = self.data_structure
+            sections = np.unique(np.asarray(ds.owner("SubOrgan"))[flat])
+            ids = ds.entity_ids("SubOrgan")[sections[sections >= 0]]
+            raise ValueError(f"MechaHydraulics: the sections (SubOrgans) {ids.tolist()[:10]} have an anatomy and no "
+                             "length (0 or none given): MECHA's section height. Give their length, or no anatomy "
+                             "until they have one (GRANAP's, a pass-through)")
+
+    def _check_soil_boundary(self) -> None:
+        """The per_node soil boundary acts on each root section's contact nodes, which a reduced section eliminates
+        (it keeps its conduits and its soil node): its roots would be cut off from the soil."""
+        if self.soil_boundary != "per_node":
+            return
+        reduction = self._reduction()
+        groups = reduction.reduced_groups(self.data_structure) if reduction is not None else {}
+        if not groups:
+            return
+        ds = self.data_structure
+        ids = ds.entity_ids("SubOrgan")
+        roots = self.section_roles()[1]
+        reduced_roots = [int(ids[i]) for i in groups if int(ids[i]) in roots]
+        if reduced_roots:
+            raise ValueError(f"MechaHydraulics: soil_boundary 'per_node' with reduced root sections "
+                             f"({len(reduced_roots)}, e.g. {reduced_roots[:5]}): a reduced section keeps its conduits "
+                             "and its soil node, not its contact nodes, which per_node puts the soil on. Use "
+                             "soil_boundary 'node_dirichlet' or 'node_robin' (GRANAP's soil_node), or leave the "
+                             "roots unreduced (the scenario's reduced_labels without RootSegment)")
 
     def _reduced_vapour_path(self, net, view) -> None:
         """The reduced sections' kept vapour path (their wall-air and air-link Connections, explicit terms) in *net*,
@@ -1276,3 +1320,7 @@ def scenario_reduction(scenario):
     return plant_reduction(labels=scenario.get("reduced_labels", ("RootSegment",)),
                            length_classes=scenario.get("length_classes", "exact"),
                            osmotic=bool(scenario.get("osmotic_reduction", False)))
+
+
+# the scenario entries scenario_reduction owns, read or not (metafspm accepts them with "reduced" off)
+scenario_reduction.scenario_keys = ("reduced", "reduced_labels", "length_classes", "osmotic_reduction")

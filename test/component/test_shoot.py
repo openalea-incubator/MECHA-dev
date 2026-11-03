@@ -118,6 +118,19 @@ def test_potentials_along_the_path(plant):
     assert water[surface][0] < psi[~vapour].min()
 
 
+def test_the_liquid_volume_weighs_a_leaf_element_s_water_potential(plant):
+    """liquid_volume is the nodes' volume but on the vapour nodes (the air spaces, the pores, the surface): weighted by
+    it, a leaf element's mean water potential is its liquid's (walls and protoplasts), not the air's Kelvin values."""
+    g, ds, mecha, kinds = plant
+    leaf = _organ_nodes(g, ds, kinds, g.labels.SubOrgan.LeafElement)
+    liquid, volume = ds.get("liquid_volume"), ds.get("node_volume")
+    vapour = ds.get("vapour_node") > 0
+    assert (liquid[vapour] == 0).all() and np.array_equal(liquid[~vapour], volume[~vapour])
+    water = ds.get("water_potential")
+    mean = np.sum(water[leaf] * liquid[leaf]) / np.sum(liquid[leaf])
+    assert water[leaf & ~vapour].min() <= mean <= water[leaf & ~vapour].max()
+
+
 def test_the_leaf_organ_transpires_its_plant_s_transpiration(plant):
     """Transpiration's share: the plant's on its one leaf organ, none on the stem's and the root's."""
     _, ds, _, _ = plant
@@ -291,3 +304,12 @@ def test_a_blade_and_a_sheath_both_transpire():
         assert evaporation[organ == transpiring].sum() == pytest.approx(TRANSPIRATION / 2, rel=1e-8)
     assert float(np.sum(ds.get("root_uptake"))) == pytest.approx(TRANSPIRATION, rel=1e-8)
     assert evaporation.sum() == pytest.approx(TRANSPIRATION, rel=1e-8)
+
+
+def test_the_reduction_s_scenario_entries_are_accepted_with_the_reduction_off():
+    """scenario_reduction owns its scenario entries (scenario_keys): with "reduced" false, its labels and classes are
+    inactive entries of the plant model, not unknown ones; the seedling is whole."""
+    from openalea.mecha.component import scenario_reduction
+    assert set(scenario_reduction.scenario_keys) == {"reduced", "reduced_labels", "length_classes", "osmotic_reduction"}
+    ds, hydraulics = _seedling(reduced=False, soil_node=True, reduced_labels=["RootSegment"], length_classes="exact")
+    assert ds.reduction is None and hydraulics._reduction() is None
