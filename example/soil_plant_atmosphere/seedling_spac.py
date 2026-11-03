@@ -16,37 +16,30 @@ GRANAP and its hydraulics by MECHA (devplan_metafspm.md, §15):
                            membranes' reflection coefficients; ψ is then the pressure potential and water_potential =
                            ψ + π), and MECHA's hydraulics
     SEEDLING_SCENARIO      the seedling's scenario: its components' parameters (its barriers, its transpiration)
-    SCENE_TRANSLATOR       the plant–soil exchange with metafspm's soil model, in each model's units: the soil's
+    SOIL_SCENARIO          metafspm's test soil (Soil) at the example's 2.5 cm cells
+    SCENE_TRANSLATOR       the plant–soil exchange with metafspm's test soil, in each model's units: the soil's
                            potential (MPa) to MECHA's soil_psi (hPa), MECHA's root uptake (cm³ d⁻¹) to the soil's sink
                            (mm³ s⁻¹)
 """
-import importlib.util
-import os
-import sys
 from dataclasses import dataclass
 
 import numpy as np
 
-import openalea.metafspm
 from openalea.metafspm.coupling.component import StructuralComponent, planting_variable, state_variable
 from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.coupling.cross import CrossMapping
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.configs import PropsConfig, ScalesConfig
+from openalea.metafspm.testing.soil import Soil
 
 from openalea.granap.metafspm.component import GranapAnatomy, junction_rules
 from openalea.mecha.component import MechaHydraulics
 from openalea.mecha.osmotic import MechaOsmoticPresets
 from openalea.mecha.stand_ins import Development, Transpiration
 
-# metafspm's soil model, from its example (examples/soil_plant_atmosphere/models.py): metafspm packages no soil
-# model, so its example's module is loaded from metafspm's source tree
-SPAC = os.path.join(os.path.dirname(openalea.metafspm.__file__), "..", "..", "..", "examples", "soil_plant_atmosphere")
-sys.path.insert(0, os.path.abspath(SPAC))
-_spec = importlib.util.spec_from_file_location("spac_models", os.path.join(SPAC, "models.py"))
-spac_models = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(spac_models)
-Soil = spac_models.Soil
+# metafspm's test soil (openalea.metafspm.testing.soil, not an official soil model), with the 2.5 cm cells of
+# metafspm's soil–plant–atmosphere example: the Scene's environment_scenarios entry for Soil
+SOIL_SCENARIO = {"voxel": 0.025}
 
 SCALES = ScalesConfig()
 ROOT_RADIUS, LATERAL_RADIUS, STEM_RADIUS = 0.55e-3, 0.3e-3, 1.0e-3        # m

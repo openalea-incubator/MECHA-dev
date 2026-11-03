@@ -133,13 +133,11 @@ class Transpiration(FunctionalComponent):
 
     @rate(include_inactive=True)
     def _leaf_transpiration(self, transpiration) -> dict:
-        """Each leaf organ's share of its plant's transpiration (the leaves read once per topology: ds.labels)."""
+        """Each leaf organ's share of its plant's transpiration (the leaves read once per topology: ds.labels). The
+        parameter comes per Organ (the location of the step's output), each its plant's."""
         ds = self.data_structure
         leaf = ds.labels(location="Organ", per_node=False) == "Leaf"
-        # the parameter comes broadcast to the nodes: each plant's one value back (the steps' parameters reach them at
-        # the nodes, whatever the location of the outputs)
-        plant_transpiration = ds.map_to(transpiration, "node", "Plant", "max")
-        leaves = ds.map_to(leaf, "Organ", "Plant", "sum")
+        leaves = ds.map_to(ds.map_to(leaf, "Organ", "Plant", "sum"), "Plant", "Organ", "broadcast")
         with np.errstate(divide="ignore", invalid="ignore"):
-            share = ds.map_to(plant_transpiration / leaves, "Plant", "Organ", "broadcast")
+            share = np.asarray(transpiration, dtype=float) / leaves
         return {"leaf_transpiration": np.where(leaf, share, 0.)}
