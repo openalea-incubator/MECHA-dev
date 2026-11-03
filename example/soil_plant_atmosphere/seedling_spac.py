@@ -11,10 +11,10 @@ GRANAP and its hydraulics by MECHA (devplan_metafspm.md, §15):
                            SEEDLING_SCENARIO), MECHA's stand-ins for a root development model (Development: each root
                            segment's apoplastic barriers from its distance to the tip, none on the tip segment, a
                            Casparian strip up to 10 cm, suberin beyond; the shoot's mature xylem, 1) and for a
-                           transpiration model (Transpiration: the plant's, shared by its leaves), MECHA's osmotic
-                           presets standing for a solute model (the roots' cells and walls' osmotic potentials, the
-                           membranes' reflection coefficients; ψ is then the pressure potential and water_potential =
-                           ψ + π), and MECHA's hydraulics
+                           transpiration model (Transpiration: the plant's, shared by the organs with a leaf
+                           surface), MECHA's osmotic presets standing for a solute model (the roots' cells and walls'
+                           osmotic potentials, the membranes' reflection coefficients; ψ is then the pressure
+                           potential and water_potential = ψ + π), and MECHA's hydraulics
     SEEDLING_SCENARIO      the seedling's scenario: its components' parameters (its barriers, its transpiration)
     SOIL_SCENARIO          metafspm's test soil (Soil) at the example's 2.5 cm cells
     SCENE_TRANSLATOR       the plant–soil exchange with metafspm's test soil, in each model's units: the soil's
@@ -216,8 +216,8 @@ class SeedlingHydraulics(CompositeModel):
     """
     The plant population model: the seedlings' architecture and GRANAP's anatomies (the initiators; the Compartments
     are the graph's nodes, the vessels joined between sections by GRANAP's junction rules), the barriers'
-    (Development) and the leaves' transpiration (Transpiration: its plant's, shared by its leaf organs), MECHA's
-    osmotic presets and hydraulics, from the soil around the roots to the air at the leaves' stomata.
+    (Development) and the leaves' transpiration (Transpiration: its plant's, shared by the organs with a leaf
+    surface), MECHA's osmotic presets and hydraulics, from the soil around the roots to the air at the leaves' stomata.
     """
     initiators = (SeedlingArchitecture, GranapAnatomy)
     from_scale, nodes, wiring = "SubOrgan", "Compartment", junction_rules
@@ -237,8 +237,8 @@ class SeedlingHydraulics(CompositeModel):
 
     def run(self):
         self.development()
-        self.transpiration()
         self.anatomy()
+        self.transpiration()
         self.osmotic()
         self.hydraulics()
 

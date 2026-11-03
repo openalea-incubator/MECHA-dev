@@ -3,6 +3,7 @@ The shoot in MECHA's plant problem: a stem element bearing a leaf element and a
 root segment, GRANAP's anatomies (monocot stem and leaf presets, the root preset). Only the root exchanges with the
 soil. The leaf transpires its organ's flow (an Organ-scale input, §27), from its surface node; it reaches it from the
 evaporating walls through the air spaces and the stomata (GRANAP §60): what the leaf transpires, the root takes up.
+The transpiring organs are those GRANAP gave a leaf surface, not a label: Adel's blade and sheath transpire alike.
 """
 import numpy as np
 import pytest
@@ -157,8 +158,8 @@ def _seedling(reduced=False, labels=("RootSegment", "StemElement"), **scenario):
 
         def run(self):
             self.soil()
-            self.transpiration()
             self.anatomy()
+            self.transpiration()
             self.hydraulics()
 
     scenario = dict(scenario, collar_condition=0., uniform_soil_psi=SOIL, transpiration=TRANSPIRATION)
@@ -211,3 +212,82 @@ def test_a_reduced_leaf_keeps_its_vapour_path_and_gives_the_full_seedling():
     np.testing.assert_allclose(small.get("psi")[b], full.get("psi")[a], rtol=1e-8)
     for ds in (full, small):
         assert float(np.sum(ds.get("root_uptake"))) == pytest.approx(TRANSPIRATION, rel=1e-8)
+
+
+class BladeAndSheath(StructuralComponent):
+    """Adel's leaf: an internode's stem element bearing a sheath (an Organ Sheath, its element a StemElement, GRANAP's
+    sheath anatomy: a bent leaf) and the sheath its blade (an Organ Blade, a LeafElement), and a root segment."""
+
+    @classmethod
+    def initiate_plant(cls, g, plant, parameters):
+        s, L = g.scales, g.labels
+
+        def organ(axis_label, kind, organ_label):
+            axis = g.add_component(plant, **PropsConfig(scale=s.Axis, edge_type='/', label=getattr(L.Axis, axis_label)))
+            unit = g.add_component(axis, **PropsConfig(scale=s.GrowthUnit, edge_type='/',
+                                                       label=getattr(L.GrowthUnit, kind)))
+            phytomer = g.add_component(unit, **PropsConfig(scale=s.Phytomer, edge_type='/',
+                                                           label=getattr(L.Phytomer, kind)))
+            return g.add_component(phytomer, **PropsConfig(scale=s.Organ, edge_type='/',
+                                                           label=getattr(L.Organ, organ_label)))
+
+        stem = g.add_component(organ("Shoot", "Shoot", "StemInternode"),
+                               **PropsConfig(scale=s.SubOrgan, edge_type='/', label=L.SubOrgan.StemElement))
+        sheath = g.add_component_with_topo(organ("Shoot", "Shoot", "Sheath"), stem,
+                                           **PropsConfig(scale=s.SubOrgan, edge_type='+', label=L.SubOrgan.StemElement))
+        blade = g.add_component_with_topo(organ("Shoot", "Shoot", "Blade"), sheath,
+                                          **PropsConfig(scale=s.SubOrgan, edge_type='/', label=L.SubOrgan.LeafElement))
+        root = g.add_component_with_topo(organ("Root", "Root", "RootInternode"), stem,
+                                         **PropsConfig(scale=s.SubOrgan, edge_type='+', label=L.SubOrgan.RootSegment))
+        for v, radius in ((stem, 1e-3), (sheath, 1e-3), (blade, 1e-3), (root, 0.55e-3)):
+            g.property("stem_radius")[v] = 1e-3
+            g.property("radius")[v] = radius
+            g.property("length")[v] = 5e-3
+            g.property("distance_from_tip")[v] = 0.
+
+
+def test_a_blade_and_a_sheath_both_transpire():
+    """Adel's blade and sheath, each given a leaf surface by GRANAP (the sheath's kind Sheath, GRANAP's sheath
+    anatomy), are both transpiring organs: Transpiration shares the plant's between them, MechaHydraulics takes each
+    organ's as a Neumann outflow on its surface node, and each organ's pores evaporate it; the root takes up the sum."""
+    from openalea.metafspm.coupling.composite_wrapper import CompositeModel
+    from openalea.metafspm.scene.population import population_data_structure
+    from openalea.granap.metafspm.component import junction_rules
+
+    class AdelLeafModel(CompositeModel):
+        from_scale, nodes, initiators = "SubOrgan", "Compartment", (BladeAndSheath, GranapAnatomy)
+        wiring = staticmethod(junction_rules)
+
+        def __init__(self, data_structure, time_step):
+            self.anatomy = GranapAnatomy(data_structure=data_structure, time_step=time_step)
+            self.soil = UniformSoil(data_structure=data_structure, time_step=time_step)
+            self.transpiration = Transpiration(data_structure=data_structure, time_step=time_step)
+            self.hydraulics = MechaHydraulics(data_structure=data_structure, time_step=time_step)
+            self.couple(self.anatomy, self.soil, self.transpiration, self.hydraulics)
+
+        def run(self):
+            self.soil()
+            self.anatomy()
+            self.transpiration()
+            self.hydraulics()
+
+    scenario = {"stem_anatomy": {}, "leaf_anatomy": {}, "sheath_anatomy": {}, "collar_condition": 0.,
+                "uniform_soil_psi": SOIL, "transpiration": TRANSPIRATION}
+    population = population_data_structure(planting([Planting()], AdelLeafModel, scenario), AdelLeafModel)
+    ds = population.data_structure
+    population.instance.run()
+    organs = ds.labels(location="Organ", per_node=False)
+    blade, sheath = list(organs).index("Blade"), list(organs).index("Sheath")
+    expected = np.zeros(len(organs))
+    expected[[blade, sheath]] = TRANSPIRATION / 2
+    np.testing.assert_array_equal(np.asarray(ds.get("leaf_transpiration")), expected)
+    kind, organ = np.asarray(ds.get("kind")), np.asarray(ds.owner("Organ"))
+    surface = np.flatnonzero(kind == 3)
+    assert sorted(organ[surface].tolist()) == sorted([blade, sheath])
+    np.testing.assert_allclose(np.asarray(ds.get("surface_inflow"))[surface], -TRANSPIRATION / 2, rtol=1e-12)
+    assert (np.asarray(ds.get("surface_inflow"))[kind != 3] == 0).all()
+    evaporation = np.asarray(ds.get("evaporation"))
+    for transpiring in (blade, sheath):
+        assert evaporation[organ == transpiring].sum() == pytest.approx(TRANSPIRATION / 2, rel=1e-8)
+    assert float(np.sum(ds.get("root_uptake"))) == pytest.approx(TRANSPIRATION, rel=1e-8)
+    assert evaporation.sum() == pytest.approx(TRANSPIRATION, rel=1e-8)

@@ -178,25 +178,17 @@ class MechaSections(FunctionalComponent):
 
     def section_roles(self) -> tuple:
         """
-        (first, roots, leaves): the SubOrgan vids without a parent (a root system's first section), those labelled
-        RootSegment and those labelled LeafElement; read once per topology.
+        (first, roots): the SubOrgan vids without a parent (a root system's first section) and those labelled
+        RootSegment; read once per topology. The leaves are not labels: an organ transpires from the leaf surface
+        its anatomy gave it (GRANAP's Compartment of kind 3, LEAF_SURFACE: a leaf's, Adel's blade's or sheath's).
         """
         def build():
             ds = self.data_structure
             segments = [int(v) for v in ds.entity_ids("SubOrgan")]
             labels = ds.labels(location="SubOrgan", per_node=False).tolist()
             return ({segments[i] for i in ds.roots(location="SubOrgan").tolist()},
-                    {v for v, label in zip(segments, labels) if label == "RootSegment"},
-                    {v for v, label in zip(segments, labels) if label == "LeafElement"})
+                    {v for v, label in zip(segments, labels) if label == "RootSegment"})
         return self.cached("section_roles", build)
-
-    def _leaf_nodes(self, geometries) -> np.ndarray:
-        """bool per node: in a leaf section."""
-        leaves = self.section_roles()[2]
-        out = np.zeros(self.data_structure.n_nodes(), dtype=bool)
-        for segment, (nodes, _, _) in geometries.items():
-            out[nodes] = segment in leaves
-        return out
 
     def _root_nodes(self, geometries) -> np.ndarray:
         """bool per node: in a root section."""
@@ -565,8 +557,9 @@ class MechaHydraulics(MechaSections):
                                                          "the soil at soil_psi (e.g. the bulk soil's around the "
                                                          "section)"), by="Soil", default=0.,
                                                   scale=SCALES.Compartment, location="node", kind="intensive")
-    leaf_transpiration: float = input_variable(**_doc("cm3 d-1", "a leaf organ's transpiration, leaving at its surface "
-                                                                 "node (role Transpiration: constant for now)"),
+    leaf_transpiration: float = input_variable(**_doc("cm3 d-1", "an organ's transpiration, leaving at the leaf surface "
+                                                                 "node its anatomy gave it (GRANAP's leaves, Adel's "
+                                                                 "blades and sheaths; role Transpiration)"),
                                                by="Transpiration", default=0., scale=SCALES.Organ, location="Organ",
                                                kind="extensive")
     stomatal_aperture: float = input_variable(**_doc("", "a stomatal pore's aperture fraction of its anatomical maximum "

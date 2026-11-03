@@ -1,7 +1,7 @@
 """
 MECHA's stand-ins for the models its inputs come from (stand_ins): the barriers by distance from the tip
 (Development, its zones from a root's barrier codes), the leaves' transpiration (Transpiration, the plant's shared by
-its leaf organs).
+the organs with a leaf surface: test_shoot.py).
 """
 import numpy as np
 import pytest

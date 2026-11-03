@@ -8,7 +8,8 @@ scenario, or by a Scene forcing of the same name):
                      (young_barrier) and up to tip_zone (tip_barrier) from the tip
     UniformSoil      a soil uniform around the roots: its water potential (soil_psi) and the bulk soil's conductance
                      on each soil node (soil_bulk_conductance)
-    Transpiration    each leaf organ's transpiration (leaf_transpiration): the plant's, shared equally by its leaves
+    Transpiration    each transpiring organ's transpiration (leaf_transpiration): the plant's, shared equally by the
+                     organs the anatomy gave a leaf surface (GRANAP's leaves, Adel's blades and sheaths)
 
     class RootHydraulics(CompositeModel):
         initiators = (RootAxis, GranapAnatomy)
@@ -31,6 +32,7 @@ from openalea.metafspm.coupling.component import FunctionalComponent, input_vari
 from openalea.metafspm.solve.decorator import rate
 
 from openalea.mecha.component import SCALES, _doc
+from openalea.mecha.geometry import LEAF_SURFACE
 
 
 @dataclass
@@ -126,17 +128,31 @@ class UniformSoil(FunctionalComponent):
 @dataclass
 class Transpiration(FunctionalComponent):
     """A transpiration model's stand-in: the plant's transpiration (its scenario's, or a Scene forcing of the same
-    name, a time series), shared equally by its leaf organs."""
+    name, a time series), shared equally by its transpiring organs: those the anatomy gave a leaf surface (a
+    Compartment of kind 3, GRANAP's for its leaf kinds: a leaf's elements, Adel's blades' and sheaths'), the organs
+    whose transpiration MechaHydraulics takes as a Neumann flux on that surface."""
+    kind: float = input_variable(**_doc("", "the Compartment's kind (3: an organ's leaf surface, GRANAP's)"),
+                                 by="Anatomy", default=0., scale=SCALES.Compartment, location="node",
+                                 kind="descriptor")
     transpiration: float = parameter(**_doc("cm3 d-1", "the plant's transpiration"), by="Transpiration", default=0.)
-    leaf_transpiration: float = state_variable(**_doc("cm3 d-1", "the leaf organ's transpiration (0: not a leaf)"),
+    transpiring: float = state_variable(**_doc("", "1 on an organ the anatomy gave a leaf surface (it transpires), 0 "
+                                                   "elsewhere"),
+                                        default=0., scale=SCALES.Organ, location="Organ", kind="descriptor")
+    leaf_transpiration: float = state_variable(**_doc("cm3 d-1", "the organ's transpiration (0: no leaf surface)"),
                                                default=0., scale=SCALES.Organ, location="Organ", kind="extensive")
 
     @rate(include_inactive=True)
-    def _leaf_transpiration(self, transpiration) -> dict:
-        """Each leaf organ's share of its plant's transpiration (the leaves read once per topology: ds.labels). The
-        parameter comes per Organ (the location of the step's output), each its plant's."""
+    def _transpiring(self, kind) -> dict:
+        """The transpiring organs: those owning a leaf surface node (the anatomy's, so that it runs before)."""
+        surface = (np.asarray(kind) == LEAF_SURFACE).astype(float)
+        return {"transpiring": (self.data_structure.map_to(surface, "node", "Organ", "sum") > 0).astype(float)}
+
+    @rate(include_inactive=True)
+    def _leaf_transpiration(self, transpiring, transpiration) -> dict:
+        """Each transpiring organ's share of its plant's transpiration. The parameter comes per Organ (the location of
+        the step's output), each its plant's."""
         ds = self.data_structure
-        leaf = ds.labels(location="Organ", per_node=False) == "Leaf"
+        leaf = np.asarray(transpiring) > 0
         leaves = ds.map_to(ds.map_to(leaf, "Organ", "Plant", "sum"), "Plant", "Organ", "broadcast")
         with np.errstate(divide="ignore", invalid="ignore"):
             share = np.asarray(transpiration, dtype=float) / leaves
