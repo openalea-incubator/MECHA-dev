@@ -86,9 +86,10 @@ class RootSystemConductance(FunctionalComponent):
         else:                                      # each surface node joined to the soil through its conductance
             sources, through = np.asarray(soil_conductance) > 0., soil_conductance
             network = np.where(np.asarray(network_path) == SOIL, 0., network)
-        reduction = ds.reduction
-        terms = reduction.terms(self, "MechaHydraulics._plant_problem", ds, ds.entity_ids("node")) \
+        reduction = ds.reduction                   # its plant problem's system (MechaHydraulics' or a subclass's)
+        system = next((name for name in reduction.systems if name.endswith("._plant_problem")), None) \
             if reduction is not None and not reduction.library else None
+        terms = reduction.terms(self, system, ds, ds.entity_ids("node")) if system is not None else None
         total, inflow = equivalent_conductance(ds.to_graph_view(), network, sources=sources, sinks=collar,
                                                source_conductance=through,
                                                groups=ds.owner("SubOrgan") if self.plant_solver == "condensed" else None,

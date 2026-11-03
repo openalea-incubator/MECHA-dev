@@ -135,16 +135,17 @@ def test_root_quantities_on_roots_only(plant):
 
 def _seedling(reduced=False, labels=("RootSegment", "StemElement"), **scenario):
     """The seedling as a plant model (GRANAP's anatomies and MechaHydraulics, the leaf transpiring); *reduced*: its
-    stem and root sections reduced (plant_reduction: their conduits and the root's soil node kept), the leaf whole."""
+    stem and root sections reduced (plant_reduction: their conduits and the root's soil node kept), the leaf whole: the
+    scenario's entries "reduced" and "reduced_labels" (scenario_reduction), one model class for both."""
     from openalea.metafspm.coupling.composite_wrapper import CompositeModel
     from openalea.metafspm.scene.population import population_data_structure
     from openalea.granap.metafspm.component import junction_rules
-    from openalea.mecha.component import plant_reduction
+    from openalea.mecha.component import scenario_reduction
 
     class SeedlingModel(CompositeModel):
         from_scale, nodes, initiators = "SubOrgan", "Compartment", (Seedling, Anatomy)
         wiring = staticmethod(junction_rules)
-        reduction = plant_reduction(labels=labels) if reduced else None
+        reduction = staticmethod(scenario_reduction)
 
         def __init__(self, data_structure, time_step):
             self.anatomy = Anatomy(data_structure=data_structure, time_step=time_step)
@@ -161,6 +162,8 @@ def _seedling(reduced=False, labels=("RootSegment", "StemElement"), **scenario):
             self.hydraulics()
 
     scenario = dict(scenario, collar_condition=0., uniform_soil_psi=SOIL, transpiration=TRANSPIRATION)
+    if reduced:
+        scenario.update(reduced=True, reduced_labels=list(labels))
     population = population_data_structure(planting([Planting()], SeedlingModel, scenario), SeedlingModel)
     ds = population.data_structure
     population.instance.run()

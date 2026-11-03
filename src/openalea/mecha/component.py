@@ -17,8 +17,8 @@ from scipy.sparse import diags
 from openalea.metafspm.coupling.component import (FunctionalComponent, input_variable, parameter, setting,
                                                    state_variable)
 from openalea.metafspm.data_structure.configs import ScalesConfig
-from openalea.metafspm.solve.decorator import (boundary_set, explicit_term, graph_jacobian, graph_output, graph_system,
-                                               input_jacobian,
+from openalea.metafspm.solve.decorator import (boundary_set, declared_system, explicit_term, graph_jacobian,
+                                               graph_output, graph_system, input_jacobian,
                                                 node_balance, rate, totalstate)
 
 from openalea.mecha.conductance import (Network, assemble, boundary_terms, cortex_parameters, edge_conductances,
@@ -169,8 +169,12 @@ class MechaSections(FunctionalComponent):
     def _reduction(self):
         """The plant model's Reduction (solve.reduction) when it reduces this component's plant problem, else None."""
         reduction = self.data_structure.reduction
-        return reduction if reduction is not None and f"{type(self).__name__}._plant_problem" in reduction.systems \
-            else None
+        return reduction if reduction is not None and self._plant_problem_name(reduction) is not None else None
+
+    def _plant_problem_name(self, reduction) -> str:
+        """The name among *reduction*'s systems of this component's plant problem: its class's or a base class's (a
+        subclass of MechaHydraulics runs the same reduced system), or None."""
+        return declared_system(self, "_plant_problem", reduction.systems)
 
     def section_roles(self) -> tuple:
         """
@@ -1061,8 +1065,7 @@ class MechaHydraulics(MechaSections):
             out = np.asarray(B @ (conductance * np.asarray(B.T @ psi).reshape(-1))).reshape(-1)
             reduction = self._reduction()
             if reduction is not None:
-                out = out + reduction.term_values(self, f"{type(self).__name__}._plant_problem", self.data_structure,
-                                                  psi)
+                out = out + reduction.term_values(self, self._plant_problem_name(reduction), self.data_structure, psi)
             return plant_soil_conductance * (soil_psi - psi) + np.where(np.asarray(kind) == SOIL_NODE, out, 0.)
 
         @graph_output("evaporation", location="node")
@@ -1266,3 +1269,17 @@ def plant_reduction(labels=("RootSegment",), length_classes="exact", osmotic: bo
     return Reduction(location="SubOrgan", labels=tuple(labels), ports=GranapAnatomy.conduits, keep=_kept,
                      explicit_edges=vapour_edges, kind=kind, inputs=inputs, systems=("MechaHydraulics._plant_problem",),
                      outputs=("kr", "standard_uptake", "perimeter"))
+
+
+def scenario_reduction(scenario):
+    """
+    A plant model's reduction chosen by its scenario (``reduction = staticmethod(scenario_reduction)``, one model
+    class reduced or not): with "reduced" true, plant_reduction of the sections of "reduced_labels" (RootSegment by
+    default), their kinds by "length_classes" ("exact" by default), the osmotic inputs with "osmotic_reduction"
+    (false by default); None without it (the whole network).
+    """
+    if not scenario.get("reduced", False):
+        return None
+    return plant_reduction(labels=scenario.get("reduced_labels", ("RootSegment",)),
+                           length_classes=scenario.get("length_classes", "exact"),
+                           osmotic=bool(scenario.get("osmotic_reduction", False)))

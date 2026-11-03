@@ -152,6 +152,31 @@ def test_a_condensed_root_system_is_the_full_one_on_its_conduits_and_soil_nodes(
     np.testing.assert_allclose(psi, a.get("psi")[[by_node[node_of_row[int(r)]] for r in rows]], rtol=1e-10)
 
 
+
+def test_a_subclass_of_mecha_hydraulics_is_reduced_as_mecha_hydraulics(monkeypatch):
+    """The plant model's reduction (the scenario's "reduced", scenario_reduction) declares MechaHydraulics' plant
+    problem: a subclass of MechaHydraulics in its place runs the same reduced system, its sections' kr, uptakes, SUF
+    and Krs from their kinds as MechaHydraulics' own."""
+    from dataclasses import dataclass
+
+    from openalea.mecha import simulation
+    from openalea.mecha.component import MechaHydraulics
+
+    @dataclass
+    class OwnHydraulics(MechaHydraulics):
+        pass
+
+    kwargs = dict(main=(3, 1, 1, 0), laterals=((1, (1, 0)),), soil_psi=SOIL, collar_psi=COLLAR, condensed=True)
+    reference = root_system(**kwargs)
+    monkeypatch.setattr(simulation, "MechaHydraulics", OwnHydraulics)
+    own = root_system(**kwargs)
+    assert type(own.scene.populations[0].instance.hydraulics) is OwnHydraulics
+    assert own.data_structure.n_nodes() == reference.data_structure.n_nodes()
+    np.testing.assert_array_equal(own.data_structure.get("psi"), reference.data_structure.get("psi"))
+    for name in ("uptake", "suf", "kr"):
+        np.testing.assert_array_equal(own.sections[name], reference.sections[name])
+    assert own.conductance == reference.conductance
+
 def test_condensed_osmotic_terms_are_the_full_anatomys():
     """condensed_osmotic presets: each kind's cells' osmotic potentials and reflection coefficients from MECHA's
     presets, changed per segment by its conduits' potential (conduit_osmotic_potential) and its hidden tissues'

@@ -38,7 +38,7 @@ from openalea.metafspm.scene.scene import Scene
 from openalea.granap.metafspm.architectures import RootAxis
 from openalea.granap.metafspm.component import GranapAnatomy, junction_rules
 from openalea.mecha import plots
-from openalea.mecha.component import MechaHydraulics, plant_reduction
+from openalea.mecha.component import MechaHydraulics, scenario_reduction
 from openalea.mecha.geometry import XYLEM_CGROUPS
 from openalea.mecha.osmotic import MechaOsmoticPresets
 from openalea.mecha.root_system import RootSystemConductance
@@ -280,9 +280,11 @@ EXPERIMENTS = {"control": lambda values: dict(values),
 
 class _RootSystem(CompositeModel):
     """A root system: GRANAP's anatomy on each segment, its barriers (Development), a uniform soil (UniformSoil),
-    MECHA's hydraulics on the whole network, and its conductance (RootSystemConductance)."""
+    MECHA's hydraulics on the whole network, and its conductance (RootSystemConductance); its sections reduced by
+    its scenario's "reduced" (scenario_reduction: "length_classes", "osmotic_reduction")."""
     initiators = (RootAxis, GranapAnatomy)
     from_scale, nodes, wiring = "SubOrgan", "Compartment", junction_rules
+    reduction = staticmethod(scenario_reduction)
 
     def __init__(self, data_structure, time_step):
         self.anatomy = GranapAnatomy(data_structure=data_structure, time_step=time_step)
@@ -304,6 +306,7 @@ class _OsmoticRootSystem(CompositeModel):
     """A root system as _RootSystem, with MECHA's osmotic presets before the hydraulics."""
     initiators = (RootAxis, GranapAnatomy)
     from_scale, nodes, wiring = "SubOrgan", "Compartment", junction_rules
+    reduction = staticmethod(scenario_reduction)
 
     def __init__(self, data_structure, time_step):
         self.anatomy = GranapAnatomy(data_structure=data_structure, time_step=time_step)
@@ -321,21 +324,6 @@ class _OsmoticRootSystem(CompositeModel):
         self.presets()
         self.hydraulics()
         self.conductance()
-
-
-def _root_system_model(osmotic_presets: bool, reduction=None):
-    """The root system's plant model; with *reduction* (its sections condensed, plant_reduction), a subclass holding
-    it: metafspm takes a plant model's Reduction from its class attribute, and this one depends on the call's
-    options (length_classes, osmotic)."""
-    model = _OsmoticRootSystem if osmotic_presets else _RootSystem
-    if reduction is None:
-        return model
-
-    class CondensedRootSystem(model):
-        pass
-
-    CondensedRootSystem.reduction = reduction
-    return CondensedRootSystem
 
 
 @dataclass
@@ -395,8 +383,9 @@ def root_system(main=(3, 3, 1, 1), laterals=((1, (1, 1)),), segment_length: floa
     MechaHydraulics' ("node_dirichlet", "node_robin": one soil node per section, GRANAP's soil_node), with
     *soil_bulk_conductance* (cm3 hPa-1 d-1) on each soil node (node_robin); *condensed*: each section reduced onto
     its conduits and soil node (plant_reduction, solve.reduction; a soil node boundary, node_dirichlet by default),
-    its kind evaluated at its length or its class (*length_classes*); *osmotic*: MECHA's osmotic presets with these
-    parameters ({name: value}, MechaOsmoticPresets'; {}: its defaults), reduced sections through their kinds.
+    its kind evaluated at its length or its class (*length_classes*), the scenario's entries "reduced" and
+    "length_classes" (scenario_reduction); *osmotic*: MECHA's osmotic presets with these parameters ({name: value},
+    MechaOsmoticPresets'; {}: its defaults), reduced sections through their kinds.
 
     Its conductance (Krs, cm3 hPa-1 d-1) and its sections' standard uptake fractions are MARSHAL's (the soil
     uniform, the collar fixed), computed on the whole anatomical network.
@@ -427,8 +416,9 @@ def root_system(main=(3, 3, 1, 1), laterals=((1, (1, 1)),), segment_length: floa
         scenario["uniform_soil_bulk_conductance"] = soil_bulk_conductance
     if anatomy is not None:
         scenario["root_anatomy"] = dict(anatomy)
-    reduction = plant_reduction(length_classes=length_classes, osmotic=osmotic is not None) if condensed else None
-    scene = Scene(planting([Planting()], _root_system_model(osmotic is not None, reduction), scenario),
+    if condensed:                                  # the plant model's reduction (scenario_reduction)
+        scenario.update(reduced=True, length_classes=length_classes, osmotic_reduction=osmotic is not None)
+    scene = Scene(planting([Planting()], _OsmoticRootSystem if osmotic is not None else _RootSystem, scenario),
                   recorder=SceneRecorder())
     ds = scene.populations[0].data_structure
     if len(ds.entity_ids("SubOrgan")) != len(layout):
