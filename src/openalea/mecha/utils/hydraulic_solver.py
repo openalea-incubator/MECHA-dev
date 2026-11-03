@@ -957,7 +957,8 @@ class HydraulicMatrixBuilder:
         eattr['K'] = float(K)
         eattr['A'] = float(area)
 
-    def _apply_soil_boundary(self, x_contact, height, thickness, kw, barrier, boundary, rhs_s, rhs_C):
+    def _contact_nodes(self, x_contact):
+        """Border wall and junction nodes in contact with the soil."""
         wall_to_cell = self.geo_props['wall_to_cell']
         junction_wall_cell = self.geo_props['junction_wall_cell']
         contact_id_cell = self.hormones.contact
