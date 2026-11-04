@@ -14,7 +14,7 @@ flows, and the cells' polygons as a display mesh. Each frame is then checked wit
 A second, filtered export shows logging: the compartments and their connections only, with the water potential,
 the uptake and the flows, in ./outputs/log/frames (outputs only: such frames are not reimported).
 
-Open a frame in ParaView with encoding3d's reader plugin (encoding3d/paraview/encoding3d_reader.py), colour by
+Open a frame in ParaView with encoding3d's reader plugin (encoding3d/paraview/plugin_encoding3d.py), colour by
 Compartment.water_potential; import_frames.py reads the files back.
 """
 import argparse
