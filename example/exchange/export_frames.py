@@ -1,5 +1,5 @@
 """
-Exporting solved root cross-sections as fspm-TF files: one frame per apoplastic barrier (an endodermal Casparian
+Exporting solved root cross-sections as encoding3d files: one frame per apoplastic barrier (an endodermal Casparian
 strip, then a fully suberized endodermis), the format the other FSPM platforms (CPlantBox, GroIMP, VirtualPlantLab)
 and ParaView read.
 
@@ -9,19 +9,19 @@ Each section is the one openalea.mecha.simulation.simulate solves: GRANAP's mono
 the soil at 0 hPa and the xylem at -5000 hPa, with a barrier of maturity code B (1: an endodermal Casparian strip,
 3: a fully suberized endodermis; 2, suberin with passage cells, solves as 3 on this section). A frame holds the
 section's whole MPG, its compartments with their water potentials, its connections with their conductances and water
-flows, and the cells' polygons as a display mesh. Each frame is then checked with fspm-TF's validator.
+flows, and the cells' polygons as a display mesh. Each frame is then checked with encoding3d's validator.
 
 A second, filtered export shows logging: the compartments and their connections only, with the water potential,
 the uptake and the flows, in ./outputs/log/frames (outputs only: such frames are not reimported).
 
-Open a frame in ParaView with fspm-TF's reader plugin (fspm-TF/paraview/fspm_tf_reader.py), colour by
+Open a frame in ParaView with encoding3d's reader plugin (encoding3d/paraview/encoding3d_reader.py), colour by
 Compartment.water_potential; import_frames.py reads the files back.
 """
 import argparse
 import os
 
-from openalea.fspm_tf.validate import validate_file
-from openalea.metafspm.io.fspm_tf import export_scene
+from openalea.encoding3d.validate import validate_file
+from openalea.metafspm.io.encoding3d import export_scene
 
 from openalea.mecha.simulation import simulate
 
@@ -48,12 +48,12 @@ def export(barriers=BARRIERS, outputs: str = OUTPUTS, options: dict = None) -> l
 
 
 def main():
-    parser = argparse.ArgumentParser(description="MECHA's solved sections as fspm-TF frames, one per barrier")
+    parser = argparse.ArgumentParser(description="MECHA's solved sections as encoding3d frames, one per barrier")
     parser.add_argument("--barriers", nargs="+", type=int, default=list(BARRIERS))
     barriers = parser.parse_args().barriers
     for path in export(barriers):
         report = validate_file(path)
-        print(f"{path} ({os.path.getsize(path) / 1e6:.1f} MB): fspm-TF validator {len(report.errors)} error(s), "
+        print(f"{path} ({os.path.getsize(path) / 1e6:.1f} MB): encoding3d validator {len(report.errors)} error(s), "
               f"{len(report.warnings)} warning(s)")
     for path in export(barriers, os.path.join(OUTPUTS, "log"), options=LOG):
         report = validate_file(path)

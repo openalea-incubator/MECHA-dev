@@ -22,13 +22,13 @@ in one environment.
 ```bash
 mkdir fspm && cd fspm                       # any folder: the three repositories side by side
 git clone -b data_structure_api https://github.com/openalea/metafspm.git metafspm
-git clone https://github.com/openalea/fspm-TF.git fspm-TF
+git clone https://github.com/openalea/encoding3d.git encoding3d
 git clone -b to_metafspm https://github.com/openalea-incubator/GRANAP-dev.git GRANAP
 git clone -b to_metafspm https://github.com/openalea-incubator/MECHA-dev.git MECHA-dev
 
 mamba env create -f MECHA-dev/conda/environment.yaml     # the dependencies of the three, and MECHA itself
 mamba activate mecha
-pip install -e fspm-TF
+pip install -e encoding3d
 pip install -e metafspm
 pip install -e GRANAP
 pip install -e MECHA-dev
@@ -48,7 +48,7 @@ result = simulate()
 print(result.summary)                         # kr, the uptake, the pathways' shares in the cortex
 result.draw("potential")                      # the section coloured by water potential
 result = simulate({"kaqp": 8e-4}, barrier=3)  # more aquaporins, a suberized endodermis
-simulate(outputs="outputs")                   # the run saved: run.json, scenario.json, summaries, fspm-TF frames
+simulate(outputs="outputs")                   # the run saved: run.json, scenario.json, summaries, encoding3d frames
 ```
 
 ### User tutorials

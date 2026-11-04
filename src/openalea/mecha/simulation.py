@@ -16,7 +16,7 @@ MECHA for users: the water flow across one root cross section in a few lines, it
     simulate_root(barriers=(3, 3, 1, 1, 0))       a root axis: its sections from the collar to the tip, joined by
                                                   their xylem, in a soil at soil_psi; a table per section
     simulate(barrier=3, outputs="outputs")        the run saved in ./outputs: run.json (its status), scenario.json,
-                                                  Plant/<model>/summaries.csv and frames/ (the solved section, fspm-TF)
+                                                  Plant/<model>/summaries.csv and frames/ (the solved section, encoding3d)
     seedling = root_system()                      a seedling's root system, a main root and a lateral, one network:
     seedling.conductance, seedling.sections       its conductance (Krs) and its sections' uptake fractions (SUF)
     fit_root_system(observations)                 MECHA's membrane conductivities (kaqp, kmb) fitted to measured Krs,
@@ -216,7 +216,7 @@ def simulate(parameters: dict = None, anatomy: dict = None, barrier: float = 1.,
     coefficients); *soil_psi* and *xylem_psi* are then their pressure potentials. With *outputs* (a folder), the run is
     saved there: run.json (its status, timing and versions), scenario.json (the parameters it ran with),
     Plant/<model>/summaries.csv (the section's state variables) and frames/ (the section before and after its solve,
-    fspm-TF files, openalea.fspm_tf.read reads them).
+    encoding3d files, openalea.encoding3d.read reads them).
 
     The summary: kr, the radial conductivity (cm hPa-1 d-1; kr_SI in m s-1 MPa-1), the water uptake (cm³ d-1), the
     perimeter (cm), the number of cells, and the share of the radial flow carried across the cortex by the walls,

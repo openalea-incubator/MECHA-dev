@@ -36,7 +36,7 @@ dependencies:
   - numba
   - pyyaml
   - pytest
-  - jsonschema                    # openalea.fspm_tf's (metafspm's fspm-TF exchange)
+  - jsonschema                    # openalea.encoding3d's (metafspm's encoding3d exchange)
   # MECHA's documentation tools
   - pandoc                # the docs' notebooks (nbsphinx)
   - pyan3
