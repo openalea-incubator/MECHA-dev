@@ -935,7 +935,7 @@ class MechaHydraulics(MechaSections):
         entry = cache.get(entry_key)
         if entry is not None and entry[0] is kind:
             return entry[1], entry[2]
-        full = reduction._full[key]                  # the full template (metafspm: no public accessor yet)
+        full = reduction.full_template(key)
         unit = self._template_unit_volumes(full, plant)
         compartments = full.rows_at_scale(self.data_structure.structure.scales.Compartment)
         kept_positions = np.searchsorted(compartments, kind.kept_rows)
