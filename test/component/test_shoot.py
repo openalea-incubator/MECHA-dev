@@ -251,6 +251,32 @@ def test_a_reduced_section_s_kept_nodes_hold_its_volumes_and_its_liquid_mean():
     np.testing.assert_allclose(liquid_mean(small), liquid_mean(full), rtol=1e-8)
 
 
+def test_the_condensed_volumes_are_cached_by_kind_key_and_dropped_with_their_kinds():
+    """The kept nodes' condensed volumes are computed once per kind and cached by its key (metafspm's Kind.key and
+    system), not by the kind object: a kind evaluated again (released then needed back) finds its entry, and an entry of
+    a kind the reduced groups no longer have (a growing section's former length class) is dropped, so the cache holds
+    the current groups' kinds only and does not grow with a growing plant."""
+    small, hydraulics = _seedling(reduced=True, labels=("RootSegment", "StemElement", "LeafElement"), soil_node=True)
+    cache = hydraulics.kept("condensed_volumes")
+    reduction = hydraulics._reduction()
+    kinds = reduction.group_kinds(small, reduction.reduced_groups(small))
+    system = hydraulics._plant_problem_name(reduction)
+    current = {(kind[system].key, kind[system].system) for kind in kinds.values()}
+    assert len(cache) == len(current) and {entry_key[:2] for entry_key in cache} == current
+    volumes = np.array(small.get("node_volume"))
+    stale = next(iter(cache.values()))
+    cache[(("former", "length class"), system, (0., 0.), b"")] = stale
+    hydraulics.kept("template_volumes")[("former template", (0., 0.))] = np.zeros(1)
+    for kind in [k for kinds in reduction._kinds.values() for k in kinds.values()]:
+        kind.release()                                   # evaluated again: new kind objects, the same keys
+    reduction._kinds.clear()
+    hydraulics.__dict__.pop("_step_memos", None)         # the conductances computed again (a memoized step)
+    hydraulics()
+    assert {entry_key[:2] for entry_key in cache} == current
+    assert ("former template", (0., 0.)) not in hydraulics.kept("template_volumes")
+    np.testing.assert_array_equal(small.get("node_volume"), volumes)
+
+
 class BladeAndSheath(StructuralComponent):
     """Adel's leaf: an internode's stem element bearing a sheath (an Organ Sheath, its element a StemElement, GRANAP's
     sheath anatomy: a bent leaf) and the sheath its blade (an Organ Blade, a LeafElement), and a root segment."""

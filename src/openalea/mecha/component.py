@@ -907,16 +907,39 @@ class MechaHydraulics(MechaSections):
         system = self._plant_problem_name(reduction)
         kinds = reduction.group_kinds(ds, groups)
         compartment = g.scales.Compartment
+        used = set()
         for i, (owner, key) in groups.items():
             first, _ = g.instances.block(owner)
             kept = ds.index_of(first + g.instances.templates[key].rows_at_scale(compartment))
             plant = (float(P_node["thickness_source"][kept[0]]), float(P_node["thickness"][kept[0]]))
-            own, condensed = self._condensed_unit_volumes(reduction, key, kinds[i][system], plant,
-                                                          ~vapour[kept])
+            targets = ~vapour[kept]
+            kind = kinds[i][system]
+            own, condensed = self._condensed_unit_volumes(reduction, key, kind, plant, targets)
+            used.add(self._condensed_entry_key(kind, plant, targets))
             node_height = float(height[kept[0]])
             volume[kept] = (own + condensed) * node_height
             liquid[kept] = np.where(vapour[kept], 0., volume[kept])
+        self._drop_unused_condensed_volumes(used)
         return volume, liquid
+
+    @staticmethod
+    def _condensed_entry_key(kind, plant, targets) -> tuple:
+        """The condensed volumes' cache key of a kind *kind* (metafspm's Kind.key and system: the same when the kind
+        is evaluated again), the plant's thickness parameters *plant* and the kept nodes they go to *targets*."""
+        return kind.key, kind.system, plant, targets.tobytes()
+
+    def _drop_unused_condensed_volumes(self, used) -> None:
+        """Drops the condensed volumes of the kinds the reduced groups no longer have (*used*: the current groups'
+        entry keys; a growing section's former length classes, released by the reduction) and the full templates'
+        unit volumes none of the others needs: the caches bounded by the plant's current groups, not every group it
+        had."""
+        cache = self._unsaved_cache("condensed_volumes")
+        for entry_key in [k for k in cache if k not in used]:
+            del cache[entry_key]
+        used_templates = {entry[2] for entry in cache.values()}
+        templates = self._unsaved_cache("template_volumes")
+        for template_key in [k for k in templates if k not in used_templates]:
+            del templates[template_key]
 
     def _unsaved_cache(self, name: str) -> dict:
         """The component's cache *name* (a dict), rebuilt when missing: not checkpointed."""
@@ -929,12 +952,13 @@ class MechaHydraulics(MechaSections):
     def _condensed_unit_volumes(self, reduction, key, kind, plant, targets) -> tuple:
         """(own, condensed): per unit height (µm), the kept nodes' own volumes and the volumes they condense
         (_condensed_volumes), of the reduced template *key*'s kind *kind*, the plant's thickness parameters *plant*
-        (thickness_source, thickness) and the kept nodes they go to *targets*; computed once per kind."""
+        (thickness_source, thickness) and the kept nodes they go to *targets*; computed once per kind (by its key:
+        _condensed_entry_key), dropped when the groups no longer have it (_drop_unused_condensed_volumes)."""
         cache = self._unsaved_cache("condensed_volumes")
-        entry_key = (key, id(kind), plant, targets.tobytes())
+        entry_key = self._condensed_entry_key(kind, plant, targets)
         entry = cache.get(entry_key)
-        if entry is not None and entry[0] is kind:
-            return entry[1], entry[2]
+        if entry is not None:
+            return entry[0], entry[1]
         full = reduction.full_template(key)
         unit = self._template_unit_volumes(full, plant)
         compartments = full.rows_at_scale(self.data_structure.structure.scales.Compartment)
@@ -947,7 +971,7 @@ class MechaHydraulics(MechaSections):
             weights = np.where((total > 0)[:, None], weights / np.where(total > 0, total, 1.)[:, None],
                                1. / targets.sum())                 # a node bound to none: shared evenly
             condensed[targets] = weights.T @ unit[interior_positions]
-        cache[entry_key] = (kind, own, condensed)
+        cache[entry_key] = (own, condensed, (full.key, plant))
         return own, condensed
 
     def _template_unit_volumes(self, full, plant) -> np.ndarray:
