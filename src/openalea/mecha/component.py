@@ -27,7 +27,7 @@ from openalea.mecha.conductance import (Network, assemble, boundary_terms, corte
 from openalea.mecha.geometry import (AXIAL_JUNCTION, LEAF_SURFACE, MEMBRANE, SOIL, SOIL_NODE, STOMATAL, XYLEM_CGROUPS,
                                      AIR_LINK, WALL_AIR, local_index,
                                      phi_thick_cells,
-                                     section_geometry, section_of, section_parts)
+                                     section_geometry, section_of, section_parts, template_section, template_values)
 from openalea.mecha.postprocess import (VISCOSITY_PHLOEM, VISCOSITY_XYLEM, axial_conductances, conduit_axial_conductances,
                                        poiseuille,
                                         radial_conductivity, soil_uptake)
@@ -493,14 +493,17 @@ class MechaHydraulics(MechaSections):
                                                       default=0., scale=SCALES.Connection, location="edge",
                                                       kind="NonInertialIntensive")
     node_volume: float = state_variable(**_doc("cm3", "the node's volume: a wall's length × height × thickness, a "
-                                                      "junction's half, a protoplast's area × height"),
+                                                      "junction's half, a protoplast's area × height; on a reduced "
+                                                      "section's kept node, plus the eliminated nodes' it condenses"),
                                         default=0., scale=SCALES.Compartment, location="node",
                                         kind="NonInertialExtensive")
     liquid_volume: float = state_variable(**_doc("cm3", "the node's liquid water volume: its node_volume, 0 on the "
                                                         "vapour nodes (the air spaces, the stomatal pores, a leaf's "
                                                         "surface) and the soil nodes; the weight of a section's mean "
                                                         "water potential (e.g. a leaf element's, for a gas "
-                                                        "exchange's stomata)"),
+                                                        "exchange's stomata). A reduced section's kept nodes hold "
+                                                        "the eliminated nodes' they condense (a root's soil node "
+                                                        "too): its total the full anatomy's"),
                                           default=0., scale=SCALES.Compartment, location="node",
                                           kind="NonInertialExtensive")
     contact_distance: float = state_variable(**_doc("µm", "the node's distance to its section's soil contact along "
@@ -781,6 +784,8 @@ class MechaHydraulics(MechaSections):
         for name in ("apoplastic", "symplastic", "membrane"):
             factors[name] = np.where(soil_links, 0., factors[name])
         volume = self._node_volumes(net, P_node, height_node, kind)
+        volume, liquid = self._condensed_volumes(volume, np.where(vapour | surface | (kind == SOIL_NODE), 0., volume),
+                                                 P_node, height_node, vapour | surface)
         return (K, "soil_conductance", soil, "plant_soil_conductance", plant_soil, "soil_node_kind", soil_node_kind,
                 "axial_boundary_conductance", axial,
                 "standard_soil_psi", standard_soil.astype(float),
@@ -793,7 +798,7 @@ class MechaHydraulics(MechaSections):
                 "apoplastic_diffusion_factor", np.where(in_matrix, factors["apoplastic"], 0.),
                 "symplastic_diffusion_factor", np.where(in_matrix, factors["symplastic"], 0.),
                 "membrane_diffusion_factor", np.where(in_matrix, factors["membrane"], 0.),
-                "node_volume", volume, "liquid_volume", np.where(vapour | surface | (kind == SOIL_NODE), 0., volume),
+                "node_volume", volume, "liquid_volume", liquid,
                 "contact_distance", factors["contact_distance"])
 
     def _check_heights(self, height_node) -> None:
@@ -875,6 +880,93 @@ class MechaHydraulics(MechaSections):
                           np.where(kind == 2, height * thickness * net.wall_length / 2.0 * 1e-12,
                                    net.cell_area * height * 1e-12))
         return np.where(net.section_of_node >= 0, np.maximum(volume, 1e-30), 0.)
+
+    def _condensed_volumes(self, volume, liquid, P_node, height, vapour) -> tuple:
+        """
+        (node_volume, liquid_volume) with the reduced sections' (solve.reduction): a kept node stands for the
+        eliminated nodes condensed into it. Its volume is its own (its full section's, computed as a full section's
+        from the full template: template_section) plus the eliminated nodes' it condenses, each eliminated node's
+        volume shared among its section's kept nodes of a liquid potential (the conduits, the evaporating walls, a
+        root's soil node: its potential its contact walls'; not the vapour path's air, *vapour*) as its potential
+        depends on theirs: the Kron reduction's recovery weights (x_I = W x_K, its row of W over those kept nodes,
+        normalised to 1). So each section's volume and liquid volume are the full one's, and a liquid-weighted mean of
+        the kept nodes' potentials the full section's when its interior has no sources of its own (close to it
+        otherwise: a steady state's local gradients). The eliminated nodes are liquid (the vapour path is kept:
+        vapour_path); a reduced root's soil node, of no volume of its own, holds the liquid of the tissue bound to the
+        soil. Unchanged without a reduction and in a reduction's library.
+        """
+        reduction = self._reduction()
+        if reduction is None or reduction.library:
+            return volume, liquid
+        ds = self.data_structure
+        groups = reduction.reduced_groups(ds)
+        if not groups:
+            return volume, liquid
+        volume, liquid = volume.copy(), liquid.copy()
+        g = ds.structure
+        system = self._plant_problem_name(reduction)
+        kinds = reduction.group_kinds(ds, groups)
+        compartment = g.scales.Compartment
+        for i, (owner, key) in groups.items():
+            first, _ = g.instances.block(owner)
+            kept = ds.index_of(first + g.instances.templates[key].rows_at_scale(compartment))
+            plant = (float(P_node["thickness_source"][kept[0]]), float(P_node["thickness"][kept[0]]))
+            own, condensed = self._condensed_unit_volumes(reduction, key, kinds[i][system], plant,
+                                                          ~vapour[kept])
+            node_height = float(height[kept[0]])
+            volume[kept] = (own + condensed) * node_height
+            liquid[kept] = np.where(vapour[kept], 0., volume[kept])
+        return volume, liquid
+
+    def _unsaved_cache(self, name: str) -> dict:
+        """The component's cache *name* (a dict), rebuilt when missing: not checkpointed."""
+        cache = self.kept(name)
+        if cache is None:
+            cache = {}
+            self.keep(name, cache, saved=False)
+        return cache
+
+    def _condensed_unit_volumes(self, reduction, key, kind, plant, targets) -> tuple:
+        """(own, condensed): per unit height (µm), the kept nodes' own volumes and the volumes they condense
+        (_condensed_volumes), of the reduced template *key*'s kind *kind*, the plant's thickness parameters *plant*
+        (thickness_source, thickness) and the kept nodes they go to *targets*; computed once per kind."""
+        cache = self._unsaved_cache("condensed_volumes")
+        entry_key = (key, id(kind), plant, targets.tobytes())
+        entry = cache.get(entry_key)
+        if entry is not None and entry[0] is kind:
+            return entry[1], entry[2]
+        full = reduction._full[key]                  # the full template (metafspm: no public accessor yet)
+        unit = self._template_unit_volumes(full, plant)
+        compartments = full.rows_at_scale(self.data_structure.structure.scales.Compartment)
+        kept_positions = np.searchsorted(compartments, kind.kept_rows)
+        interior_positions = np.searchsorted(compartments, kind.interior_rows)
+        own, condensed = unit[kept_positions], np.zeros(kept_positions.size)
+        if interior_positions.size and targets.any():
+            weights = np.asarray(kind.reduction.recover(np.eye(kept_positions.size)))[:, targets]
+            total = weights.sum(axis=1)
+            weights = np.where((total > 0)[:, None], weights / np.where(total > 0, total, 1.)[:, None],
+                               1. / targets.sum())                 # a node bound to none: shared evenly
+            condensed[targets] = weights.T @ unit[interior_positions]
+        cache[entry_key] = (kind, own, condensed)
+        return own, condensed
+
+    def _template_unit_volumes(self, full, plant) -> np.ndarray:
+        """Per Compartment of the full template *full*, its volume per unit height (cm³ µm⁻¹, _node_volumes at a height
+        of 1 µm; 0 on the leaf surface and the soil node), with the plant's thickness parameters *plant*."""
+        cache = self._unsaved_cache("template_volumes")
+        if (full.key, plant) in cache:
+            return cache[(full.key, plant)]
+        scales = self.data_structure.structure.scales
+        section, nodes, edges, tail, head = template_section(full, scales.Compartment, scales.Connection)
+        compartments = full.rows_at_scale(scales.Compartment)
+        net = assemble(compartments.size, tail.size, [(nodes, edges, section_geometry(section))])
+        set_edge_ends(net, tail, head, net.path)
+        set_wall_thickness(net, template_values(full, "wall_thickness", compartments))
+        thickness_source, thickness = plant
+        parameters = {"thickness_source": np.full(compartments.size, thickness_source),
+                      "thickness": np.full(compartments.size, thickness)}
+        out = cache[(full.key, plant)] = self._node_volumes(net, parameters, 1., net.kind)
+        return out
 
     @staticmethod
     def _liquid_equivalent(value, vapour_node, leaf_temperature):

@@ -449,6 +449,52 @@ def section_of(ds, nodes, edges) -> Section:
                    length=edge["edge_length"].astype(float), dist=edge["edge_dist"].astype(float))
 
 
+def template_values(template, name: str, rows, fill=np.nan, dtype=float) -> np.ndarray:
+    """A SectionTemplate's property *name* on its local *rows* (*fill* where it has none)."""
+    out = np.full(template.size, fill, dtype=dtype)
+    where, given = template.properties.get(name, (np.zeros(0, dtype=np.int64), np.zeros(0)))
+    out[np.asarray(where, dtype=np.int64)] = given
+    return out[rows]
+
+
+def template_section(template, compartment: int, connection: int) -> tuple:
+    """
+    (Section, nodes, edges, tail, head) of a SectionTemplate *template* (a full section's, e.g. one a reduction
+    condensed), from its own properties (the DataStructure's columns, as section_of reads them): its section's
+    Compartments (*nodes*: positions among the template's Compartments, of scale *compartment*; section_parts' rule, the
+    leaf surface and the soil node out), its Connections (*edges*: positions among the template's Connections, of scale
+    *connection*; the axial junctions, stomatal and soil Connections out), and every Connection's ends (*tail*, *head*:
+    positions among the Compartments, -1 outside them).
+    """
+    compartments, connections = template.rows_at_scale(compartment), template.rows_at_scale(connection)
+
+    def values(name, rows, fill=np.nan, dtype=float):
+        return template_values(template, name, rows, fill, dtype)
+
+    position = np.full(template.size + 1, -1, dtype=np.int64)               # the last: a link outside the template
+    position[compartments] = np.arange(compartments.size)
+
+    def ends(link):
+        local = values(link, connections, -1.)
+        return position[np.where((local >= 0) & (local < template.size), local, template.size).astype(np.int64)]
+    tail, head = ends("n_id_a"), ends("n_id_b")
+    kind = values("kind", compartments, -1.)
+    inside = (kind != LEAF_SURFACE) & (kind != SOIL_NODE)
+    path = values("network_path", connections, -1.)
+    inner = (tail >= 0) & (head >= 0) & ~np.isin(path, (AXIAL_JUNCTION, STOMATAL, SOIL))
+    inner &= inside[np.maximum(tail, 0)] & inside[np.maximum(head, 0)]
+    nodes, edges = np.flatnonzero(inside), np.flatnonzero(inner)
+    rows = compartments[nodes]
+    section = Section(kind=kind[nodes].astype(np.int64), cgroup=values("cgroup", rows),
+                      tissue=values("tissue", rows, None, object),
+                      x=values("section_x", rows), y=values("section_y", rows),
+                      wall_length=values("wall_length", rows), cell_area=values("cell_area", rows),
+                      a=local_index(nodes, tail[edges]), b=local_index(nodes, head[edges]),
+                      path=path[edges].astype(np.int64), length=values("edge_length", connections[edges]),
+                      dist=values("edge_dist", connections[edges]))
+    return section, nodes, edges, tail, head
+
+
 CORTEX_TYPES = ("cortex", "outercortex", "innercortex")
 
 

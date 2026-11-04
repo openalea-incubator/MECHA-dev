@@ -227,6 +227,30 @@ def test_a_reduced_leaf_keeps_its_vapour_path_and_gives_the_full_seedling():
         assert float(np.sum(ds.get("root_uptake"))) == pytest.approx(TRANSPIRATION, rel=1e-8)
 
 
+def test_a_reduced_section_s_kept_nodes_hold_its_volumes_and_its_liquid_mean():
+    """Every section reduced (the root, the stem, the leaf): its kept nodes hold the volumes of the nodes they condense
+    (the Kron reduction's recovery weights), so each section's node_volume and liquid_volume are the full anatomy's,
+    and each section's liquid-weighted mean water potential the full one's (a leaf element's: its stomata's)."""
+    full, _ = _seedling(instanced_anatomy=True, soil_node=True)
+    small, _ = _seedling(reduced=True, labels=("RootSegment", "StemElement", "LeafElement"), soil_node=True)
+    assert small.n_nodes() < full.n_nodes() / 3
+    sections = range(len(full.entity_ids("SubOrgan")))
+
+    def per_section(ds, values):
+        owner = np.asarray(ds.owner("SubOrgan"))
+        return np.array([float(np.sum(np.asarray(values)[owner == i])) for i in sections])
+    for name in ("node_volume", "liquid_volume"):
+        assert (per_section(small, small.get(name)) > 0).all()
+        np.testing.assert_allclose(per_section(small, small.get(name)), per_section(full, full.get(name)), rtol=1e-12)
+    for ds in (full, small):
+        assert (ds.get("liquid_volume")[ds.get("vapour_node") > 0] == 0).all()
+
+    def liquid_mean(ds):
+        liquid = np.asarray(ds.get("liquid_volume"))
+        return per_section(ds, liquid * np.asarray(ds.get("water_potential"))) / per_section(ds, liquid)
+    np.testing.assert_allclose(liquid_mean(small), liquid_mean(full), rtol=1e-8)
+
+
 class BladeAndSheath(StructuralComponent):
     """Adel's leaf: an internode's stem element bearing a sheath (an Organ Sheath, its element a StemElement, GRANAP's
     sheath anatomy: a bent leaf) and the sheath its blade (an Organ Blade, a LeafElement), and a root segment."""

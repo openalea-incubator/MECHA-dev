@@ -246,6 +246,14 @@ equivalent :math:`\psi_w = \ln(x)/\alpha` on the air nodes (``_liquid_equivalent
 (a leaf element's, read by a gas exchange's stomata) is the liquid's: weighted by ``liquid_volume``, each node's
 volume :math:`V`, 0 on the air nodes and the soil nodes.
 
+A reduced section's kept node stands for the eliminated nodes condensed into it (``_condensed_volumes``): its
+``node_volume`` is its own plus a share of theirs, each eliminated node :math:`i` giving its volume to the kept nodes of
+a liquid potential :math:`k` (the conduits, the evaporating walls, a root's soil node, whose potential is its contact
+walls'; not the air nodes) by the Kron reduction's recovery weights :math:`x_I = W x_K`,
+:math:`V_k \mathrel{+}= \sum_i V_i W_{ik} / \sum_{k'} W_{ik'}`; its ``liquid_volume`` is that, 0 on the air nodes.
+Each section's volume and liquid volume are the full anatomy's, and a liquid mean on the kept nodes is the full
+section's when its eliminated nodes have no sources of their own (the steady state's local gradients aside).
+
 
 The leaves' vapour path (``conductance.vapour_conductances``)
 =============================================================
