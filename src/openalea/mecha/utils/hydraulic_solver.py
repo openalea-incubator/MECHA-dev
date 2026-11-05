@@ -233,6 +233,155 @@ class HydraulicMatrixBuilder:
                     cells.append(cell)
         return cells
 
+    # ── Suberin-lamella model (hydraulic.suberin_model == 'lamella') ──────────
+    def _lamella_on(self) -> bool:
+        return getattr(self.hydraulic, 'suberin_model', 'none') == 'lamella'
+
+    def _endo_face(self, cell, others):
+        """Face of a non-passage endodermal *cell* toward *others*: ``'out'`` (touching
+        cortex, resolved first), ``'in'`` (stele / pericycle, any other cgroup > 4),
+        ``'rad'`` (toward endodermis) or ``None`` (passage cell / no match)."""
+        if cell.cell_id in {c.cell_id for c in self.network.cell_manager.passage}:
+            return None
+        og = [o.cgroup for o in others]
+        if 4 in og:
+            return 'out'
+        if any(g > 4 for g in og):
+            return 'in'
+        if 3 in og:
+            return 'rad'
+        return None
+
+    def _side_layer_kw(self, cell, others, kw_config):
+        """kw of *cell*'s secondary layer on the face toward *others*, or ``None``.
+
+        Sclerenchyma: lignified secondary wall (``kw_scler``). Non-passage endodermis
+        (``kw_lam_endo_*``): toward cortex -> out, toward stele/pericycle -> in, toward
+        endodermis -> rad. Exodermis (``kw_lam_exo_*``): toward epidermis -> out, toward
+        cortex/sclerenchyma -> in, toward exodermis -> rad. Any other cell: ``None``.
+        """
+        if cell.cell_type == 'sclerenchyma':
+            return kw_config.get('kw_scler')
+        cg = cell.cgroup
+        og = [o.cgroup for o in others]
+        if cg == 3 and 'kw_lam_endo_out' in kw_config:
+            face = self._endo_face(cell, others)
+            return None if face is None else kw_config['kw_lam_endo_' + face]
+        elif cg == 1 and 'kw_lam_exo_out' in kw_config:
+            if 2 in og:
+                return kw_config['kw_lam_exo_out']
+            if 4 in og:
+                return kw_config['kw_lam_exo_in']
+            if 1 in og:
+                return kw_config['kw_lam_exo_rad']
+        return None
+
+    def _prim_thickness(self, t: float) -> float:
+        """Primary-wall thickness [um] (one cell pair): the local wall thickness *t*
+        (as for any ordinary wall) unless ``prim_wall_thickness`` overrides it."""
+        p = getattr(self.hydraulic, 'prim_wall_thickness', None)
+        return float(t) if p is None else float(p)
+
+    def _sec_thickness(self, cell, t: float) -> float:
+        """Secondary-layer thickness [um] (one side) of *cell*, ADDED to the primary wall;
+        an unset ``sec_wall_thickness`` defaults to t/3 of the local wall thickness."""
+        s = getattr(self.hydraulic, 'sec_wall_thickness', None)
+        if s is None:
+            return t / 3.0
+        if isinstance(s, dict):
+            return float(s.get(cell.cell_type, s.get('default', t / 3.0)))
+        return float(s)
+
+    def _tert_thickness(self, cell, others) -> float:
+        """Tertiary-layer thickness [um] of the endodermal *cell* on its face toward *others*.
+
+        U-shaped: only on the inner (``'in'``, toward pericycle / stele) and radial
+        (``'rad'``, toward endodermis) faces, never on the outer face toward the cortex
+        nor in passage cells. The layer lies behind the suberin lamella on the cell side;
+        it adds membrane resistance (kw) (PD length unchanged) and is drawn in the
+        wall geometry, but does not conduct along the wall. 0 = off."""
+        if cell.cgroup != 3:
+            return 0.0
+        if self._endo_face(cell, others) not in ('in', 'rad'):
+            return 0.0
+        return float(getattr(self.hydraulic, 'tert_wall_thickness', 0.0) or 0.0)
+
+    def _lamella_wall_kw(self, cells, kw_config, kw, t):
+        """Effective kw and thicknesses of a two-cell wall. The conducting layers are
+        secondary | primary (middle) | secondary, ADDED to the primary wall (p = local
+        thickness *t*); the tertiary layers (U-shaped, see :meth:`_tert_thickness`) are
+        excluded from the wall conductance altogether.
+
+        Returns ``(kw_eff, t_c, t_geo)``: ``kw_eff = (sa ka + p kmid + sb kb) / t_c`` over
+        the conducting thickness ``t_c = p + sa + sb`` (used for the wall K), and the
+        geometric total ``t_geo = t_c + ta + tb`` (stored as ``t_wall``, drawing only).
+        ``None`` if neither cell has a secondary layer."""
+        a, b = cells
+        ka = self._side_layer_kw(a, [b], kw_config)
+        kb = self._side_layer_kw(b, [a], kw_config)
+        if ka is None and kb is None:
+            return None
+        if a.cell_type == 'sclerenchyma' or b.cell_type == 'sclerenchyma':
+            kmid = kw_config.get('kw_scler', kw)
+        elif a.cgroup == b.cgroup == 3:
+            kmid = kw_config.get('kw_endo_endo', kw)
+        elif a.cgroup == b.cgroup == 1:
+            kmid = kw_config.get('kw_exo_exo', kw)
+        else:
+            kmid = kw
+        sa = self._sec_thickness(a, t) if ka is not None else 0.0
+        sb = self._sec_thickness(b, t) if kb is not None else 0.0
+        ta = self._tert_thickness(a, [b]) if ka is not None else 0.0
+        tb = self._tert_thickness(b, [a]) if kb is not None else 0.0
+        p = self._prim_thickness(t)
+        t_c = p + sa + sb
+        if t_c <= 0.0:
+            return None
+        num = ((sa * ka if ka is not None else 0.0) + p * kmid
+               + (sb * kb if kb is not None else 0.0))
+        return num / t_c, t_c, t_c + ta + tb
+
+    # Walls are modified by these interface keys only (Casparian-type bands and cortex);
+    # suberin (kw_endo_cortex / kw_endo_peri / kw_exo_epi / kw_exo_cortex / kw_passage)
+    # acts on the membrane of the owning endodermal / exodermal cell, see
+    # _membrane_series_kw. kw_meso_hypo is the needle hypodermis-mesophyll wall.
+    _WALL_KW_KEYS = frozenset(('kw_endo_endo', 'kw_exo_exo', 'kw_cortex_cortex', 'kw_meso_hypo'))
+
+    def _membrane_series_kw(self, cgroup, cells_i, kw_config, kw):
+        """kw of the wall half in series with the membrane of a cell of tissue *cgroup*.
+
+        Original MECHA semantics: suberin sits in the membrane path of the cell that
+        owns it. *cells_i* are all the cells flanking the wall / junction node.
+        Endodermis: wall to stele -> kw_endo_peri; endo-endo wall -> min(kw_endo_endo,
+        kw_endo_peri); wall to cortex -> kw_endo_cortex (kw_passage with a passage cell,
+        except on endo-endo walls). Exodermis: wall to epidermis -> kw_exo_epi; exo-exo
+        -> min(kw_exo_exo, kw_exo_epi); otherwise (cortex, sclerenchyma) -> kw_exo_cortex.
+        Junction nodes use the same neighbour counts as mid-wall nodes (as the original
+        code did). Any other cell: the wall's own kw
+        (kw_cortex_cortex band, needle kw_meso_hypo), else kw.
+        """
+        if cgroup == 3:
+            passage_cids = {c.cell_id for c in self.network.cell_manager.passage}
+            has_passage = any(c.cell_id in passage_cids for c in cells_i)
+            if any(c.cgroup > 4 for c in cells_i):
+                return kw_config.get('kw_passage', kw) if has_passage else kw_config.get('kw_endo_peri', kw)
+            if sum(1 for c in cells_i if c.cgroup == 3) >= 2:
+                return min(kw_config.get('kw_endo_endo', kw), kw_config.get('kw_endo_peri', kw))
+            return kw_config.get('kw_passage', kw) if has_passage else kw_config.get('kw_endo_cortex', kw)
+        if cgroup == 1:
+            if any(c.cgroup == 2 for c in cells_i):
+                return kw_config.get('kw_exo_epi', kw)
+            if sum(1 for c in cells_i if c.cgroup == 1) >= 2:
+                return min(kw_config.get('kw_exo_exo', kw), kw_config.get('kw_exo_epi', kw))
+            return kw_config.get('kw_exo_cortex', kw)
+        if len(cells_i) == 2:
+            # other cells: the wall's own kw (cortex-cortex band, needle hypo-meso)
+            kw_key = self.hydraulic.interface_kw_key_map.get(
+                tuple(sorted((cells_i[0].cgroup, cells_i[1].cgroup))))
+            if kw_key in self._WALL_KW_KEYS:
+                return kw_config.get(kw_key, kw)
+        return kw
+
     def _fill_wall(
         self,
         i: int,
@@ -260,7 +409,9 @@ class HydraulicMatrixBuilder:
         3. The interface is resolved against
            :attr:`HydraulicData.interface_kw_key_map` to select the correct
            ``kw_config`` key string, eliminating the previous long
-           ``if/elif`` chain.
+           ``if/elif`` chain. Only the keys in :attr:`_WALL_KW_KEYS` (Casparian-type
+           bands, cortex) modify the wall; suberin keys act on the membrane of the
+           owning cell (:meth:`_membrane_series_kw`) and leave the wall at ``kw``.
         4. Named special-case guards (ghost walls, passage cells) are evaluated
            *before* the map lookup and short-circuit the generic path.
         5. ``wall.kw`` is stored on the :class:`HydraulicWall` object for
@@ -291,11 +442,10 @@ class HydraulicMatrixBuilder:
         thickness = self._local_thickness(thickness, i, j)
 
         # Shared geometric conductance factor
-        temp: float = (
-            1.0E-04
-            * ((eattr['lateral_distance'] + height) * thickness - thickness ** 2)
-            / eattr['length']
-        )
+        def _geom(t_w: float) -> float:
+            return (1.0E-04 * ((eattr['lateral_distance'] + height) * t_w - t_w ** 2)
+                    / eattr['length'])
+        temp: float = _geom(thickness)
         temp_factor: float = 1.0
         kw_val: float = kw
 
@@ -305,11 +455,21 @@ class HydraulicMatrixBuilder:
         # --- Classify flanking cells ----------------------------------------
         intercellular_cids = {c.cell_id for c in cm.intercellular}
         xylem_cgroups = {13, 19, 20}
-        passage_cids = {c.cell_id for c in cm.passage}
 
         n_interc = sum(1 for c in cells_i if c.cell_id in intercellular_cids)
         n_xyl = sum(1 for c in cells_i if c.cgroup in xylem_cgroups)
-        has_passage = any(c.cell_id in passage_cids for c in cells_i)
+
+        # Suberin-lamella model (default off): effective kw of a two-cell wall carrying
+        # at least one secondary layer; used below after the ghost / passage guards.
+        # The secondary layers are added to the primary wall, so the conducting wall is
+        # thicker than ``thickness`` (t_cond, used in the geometric factor); the tertiary
+        # layers do not conduct and only enter the geometric total t_wall (drawing).
+        lamella_kw = None
+        t_cond = t_wall = thickness
+        if self._lamella_on() and len(cells_i) == 2:
+            res = self._lamella_wall_kw(cells_i, kw_config, kw, thickness)
+            if res is not None:
+                lamella_kw, t_cond, t_wall = res
 
         # ── Guard 1: Ghost wall (aerenchyma septa or xylem-piece septa) ──────
         # Both flanking cells are intercellular (aerenchyma) or both are xylem
@@ -337,13 +497,14 @@ class HydraulicMatrixBuilder:
                     if kw > 0:
                         temp_factor = kw_config.get('kw_septa', kw) / kw
 
-        # ── Guard 2: Passage-cell wall ────────────────────────────────────────
-        # At least one flanking cell is a passage cell → always use kw_passage.
-        elif has_passage:
-            kw_val = kw_config.get('kw_passage', kw)
+        # ── Suberin-lamella model: secondary layer | middle layer | secondary layer
+        # (a passage-cell wall no longer gets kw_passage: suberin is on the membrane)
+        elif lamella_kw is not None:
+            kw_val = lamella_kw
+            temp = _geom(t_cond)
             K = kw_val * temp
             if kw > 0:
-                temp_factor = kw_val / kw 
+                temp_factor = kw_val / kw
 
         # ── Guard 3: Lignified sclerenchyma wall ──────────────────────────────
         # Any wall of a sclerenchyma cell (scl–scl, scl–exo, scl–cortex, and
@@ -367,14 +528,14 @@ class HydraulicMatrixBuilder:
                     temp_factor = kw_val / kw
             else: 
                 kw_key = self.hydraulic.interface_kw_key_map.get(interface)
-                if kw_key is not None:
+                if kw_key in self._WALL_KW_KEYS:
                     kw_val = kw_config.get(kw_key, kw)
                     K = kw_val * temp
                     if kw > 0:
                         temp_factor = kw_val / kw
                 else:
-                    # Interface not in map → plain kw (e.g. stele–stele,
-                    # pericycle–stele, or any unlisted same-tissue interface)
+                    # Interface not in map or a suberin key (acts on the membrane)
+                    # → plain kw (e.g. endo–cortex, endo–stele, stele–stele)
                     K = kw * temp
 
         # ── Fallback: border/exterior wall or junction with >2 cells ─────────
@@ -396,6 +557,12 @@ class HydraulicMatrixBuilder:
             K = kw_val * temp
             if kw > 0:
                 temp_factor = kw_val / kw
+
+        # Wall thickness actually used (lamella: primary + added layers), for plotting
+        if self._lamella_on():
+            eattr['t_wall'] = float(t_wall if lamella_kw is not None else thickness)
+        else:
+            eattr.pop('t_wall', None)
 
         # Store K on the HydraulicWall object for post-solve inspection
         wall = cm.get_wall_by_node_id(i)
@@ -495,24 +662,29 @@ class HydraulicMatrixBuilder:
 
         # ── Flanking cells information ────────────────────────────────────────
         cells_i = self._get_cells_for_wall_node(i)
-        passage_cids = {c.cell_id for c in cm.passage}
 
         n_endo = sum(1 for c in cells_i if c.cgroup == 3)
         n_exo = sum(1 for c in cells_i if c.cgroup == 1)
         n_stele = sum(1 for c in cells_i if c.cgroup > 4)
-        n_passage = sum(1 for c in cells_i if c.cell_id in passage_cids)
 
-        # ── Select kw_key via interface map ──────────────────────────────────
-        kw_key = None
-        if len(cells_i) == 2:
-            interface = tuple(sorted((cells_i[0].cgroup, cells_i[1].cgroup)))
-            kw_key = self.hydraulic.interface_kw_key_map.get(interface, None)
+        # ── Series kw: suberin of the cell owning the membrane ───────────────
+        kw_val = self._membrane_series_kw(cgroup, cells_i, kw_config, kw)
 
-        # Passage-cell override (only if endodermis is present)
-        if n_endo > 0 and n_passage > 0:
-            kw_key = 'kw_passage'
-
-        kw_val = kw_config.get(kw_key, kw) if kw_key is not None else kw
+        # Suberin-lamella model: the wall term is the plain wall (local thickness); a
+        # suberized cell (endodermis / exodermis, not sclerenchyma) crosses its primary
+        # wall half (p/2) and adds its secondary (+ tertiary on the inner / radial faces of the endodermis) layer in series.
+        p_half = thickness / 2
+        s_lam, t_lam, kw_lam = 0.0, 0.0, None
+        if self._lamella_on():
+            kw_val = kw
+            cell_c = cm.get_by_node_id(neighboor)
+            if cell_c is not None and cell_c.cell_type != 'sclerenchyma':
+                others = [c for c in cells_i if c.cell_id != cell_c.cell_id]
+                kw_lam = self._side_layer_kw(cell_c, others, kw_config)
+                if kw_lam is not None:
+                    p_half = self._prim_thickness(thickness) / 2
+                    s_lam = self._sec_thickness(cell_c, thickness)
+                    t_lam = self._tert_thickness(cell_c, others)
 
         # ── Membrane conductance calculation ──────────────────────────────────
         is_barrier_interface = (n_endo >= 2) or (n_exo >= 2) or (n_stele > 0 and n_endo > 0)
@@ -533,10 +705,17 @@ class HydraulicMatrixBuilder:
         ):
             K = 1.00E-16
         else:
-            if kw_val == 0.0:
+            if kw_val == 0.0 or kw_lam == 0.0:
                 K = 0.0
+            elif kw_lam is not None:
+                # primary half + secondary lamella + tertiary (kw) + membrane in series;
+                # effective wall+layers kw (thickness-weighted harmonic mean) -> mb.km
+                K = 1 / ((p_half * 1.0E-04) / kw_val + (s_lam * 1.0E-04) / kw_lam
+                         + (t_lam * 1.0E-04) / kw_val
+                         + 1 / (self.hydraulic.kmb + kaqp_curr)) * 1.0E-08 * (height + eattr['dist']) * eattr['length']
+                kw_val = (p_half + s_lam + t_lam) / (p_half / kw_val + s_lam / kw_lam + t_lam / kw_val)
             else:
-                K = 1 / (1 / (kw_val / (thickness / 2 * 1.0E-04)) + 1 / (self.hydraulic.kmb + kaqp_curr)) * 1.0E-08 * (height + eattr['dist']) * eattr['length']
+                K = 1 / (1 / (kw_val / (p_half * 1.0E-04)) + 1 / (self.hydraulic.kmb + kaqp_curr)) * 1.0E-08 * (height + eattr['dist']) * eattr['length']
 
         self._add_W(i, i, -K)
         self._add_W(i, j,  K)
@@ -610,21 +789,14 @@ class HydraulicMatrixBuilder:
             if kaqp_curr < 0:
                 print('Error, negative kaqp in cortical cell, adjust Paqp_cortex')
 
-        # ── Select kw_key via interface map (mirrors _fill_membrane) ──────────
+        # ── Series kw of the owning cell (mirrors _fill_membrane) ────────────
         cells_i = self._get_cells_for_wall_node(wall_idx)
-        passage_cids = {c.cell_id for c in cm.passage}
         n_endo = sum(1 for c in cells_i if c.cgroup == 3)
         n_exo = sum(1 for c in cells_i if c.cgroup == 1)
         n_stele = sum(1 for c in cells_i if c.cgroup > 4)
-        n_passage = sum(1 for c in cells_i if c.cell_id in passage_cids)
 
-        kw_key = None
-        if len(cells_i) == 2:
-            interface = tuple(sorted((cells_i[0].cgroup, cells_i[1].cgroup)))
-            kw_key = self.hydraulic.interface_kw_key_map.get(interface, None)
-        if n_endo > 0 and n_passage > 0:
-            kw_key = 'kw_passage'
-        kw_val = kw_config.get(kw_key, kw) if kw_key is not None else kw
+        # Suberin of the owning cell in series (same rule as _fill_membrane)
+        kw_val = self._membrane_series_kw(cgroup, cells_i, kw_config, kw)
 
         # ── Membrane conductance calculation (identical to _fill_membrane) ────
         # Cut only when there is no background membrane conductance either 
@@ -680,7 +852,7 @@ class HydraulicMatrixBuilder:
 
     def _fill_plasmodesmata(
         self, i: int, j: int, eattr: dict,
-        kpl_config: dict, thickness: float, barrier: int
+        kpl_config: dict, thickness: float, barrier: int,
     ) -> None:
         """Fill matrix entries for a plasmodesmata connection.
 
@@ -704,6 +876,13 @@ class HydraulicMatrixBuilder:
             Cross-section thickness (µm).
         barrier : int
             Maturity barrier level (0 = no strip).
+
+        Lamella model: PD length is NOT changed by the secondary / tertiary layers
+        (length factor = 1). Clarkson, Robards & Sanderson 1971 (Planta 96:292,
+        doi 10.1007/BF00386944): endodermal PDs sit in pits where the tertiary wall is
+        only 0.05 um thick; measured PD length 0.5 um, shorter than the model primary
+        wall (1.5 um). ``kpl`` is a per-PD conductance not scaled by wall thickness.
+        Any suberin effect on PDs belongs in the aperture factors, not in length.
         """
         cm = self.network.cell_manager
         pd = cm.get_plasmodesmata_by_edge(i, j)
@@ -792,7 +971,7 @@ class HydraulicMatrixBuilder:
         temp_factor *= scl_factor
 
         K = kpl * temp_factor
-        pd.n_pd = int(np.round(base_area * barrier_modifier * scl_factor))
+        pd.n_pd = int(np.round(base_area * barrier_modifier * scl_factor))   # count: length-independent
 
         self._add_W(i, i, -K)
         self._add_W(i, j,  K)

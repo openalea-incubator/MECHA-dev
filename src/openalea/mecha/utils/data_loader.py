@@ -1032,6 +1032,22 @@ class HydraulicData:
     # anatomies set this to a near-zero value (e.g. 1e-16) via
     # ``needle_defaults`` to lignify/block the hypodermis–mesophyll wall.
     kw_meso_hypo: Optional[float] = None
+    # Optional suberin-lamella wall model (roots). 'none': the interface map decides
+    # wall and membrane conductivities (default; suberin acts on the membrane of the
+    # owning endodermal / exodermal cell only). 'lamella': a wall is an additive sandwich
+    # tertiary | secondary | primary walls + middle lamella | secondary | tertiary
+    # (see HydraulicMatrixBuilder._fill_wall / _fill_membrane).
+    suberin_model: str = 'none'
+    # Thickness [um] of the middle layer (primary walls + middle lamella); None -> the
+    # local wall thickness t (GRANAP per-wall or global), as for any ordinary wall.
+    prim_wall_thickness: Optional[float] = None
+    # Thickness [um] per side of the secondary layer (suberin lamella / lignified
+    # secondary wall), ADDED to the primary wall: float, or dict keyed by cell_type with
+    # a 'default' entry; None -> t/3 of the local wall thickness t.
+    sec_wall_thickness: Optional[Union[float, Dict[str, float]]] = None
+    # Thickness [um] per side of the endodermal tertiary layer (kw = kw, on the cell side
+    # of the suberin; only where endodermal lamella keys exist). 0 = off.
+    tert_wall_thickness: float = 0.0
     kaqp: List[Dict[str, float]] = field(default_factory=lambda: [{'value': 0.000430, 'cortex_factor': 1.0, 'endo_factor': 1.0, 'epi_factor': 1.0, 'exo_factor': 1.0, 'stele_factor': 1.0}])
     kpl: List[Dict[str, float]] = field(default_factory=lambda: [{'value': 5.3E-12, 'phloem_companion_cell_factor': 0.0, 'pericycle_phloem_pole_factor': 0.0, 'phloem_sieve_tube_factor': 0.0, 'cortex_factor': 1.0}])
 
@@ -1067,6 +1083,25 @@ class HydraulicData:
         # φ-thickening configuration
         phi_elem = root.xpath('phi_thick')
         self.kw_phi_thick = [float(kw.get("value")) for kw in phi_elem] if phi_elem else [1E-16]
+
+        # Optional suberin-lamella model: <suberin_model value="lamella"/>,
+        # <prim_wall_thickness value="0.5"/>, <sec_wall_thickness value="0.5"
+        # sclerenchyma="2.75"/>, <tert_wall_thickness value="1.0"/> (value = 'default', other attributes = cell types)
+        sm = root.xpath('suberin_model')
+        if sm:
+            self.suberin_model = str(sm[0].get("value", "none"))
+        pw = root.xpath('prim_wall_thickness')
+        if pw:
+            self.prim_wall_thickness = float(pw[0].get("value"))
+        tw = root.xpath('tert_wall_thickness')
+        if tw:
+            self.tert_wall_thickness = float(tw[0].get("value"))
+        sw = root.xpath('sec_wall_thickness')
+        if sw:
+            sec = {str(k): float(v) for k, v in sw[0].attrib.items() if k != 'value'}
+            if sw[0].get("value") is not None:
+                sec['default'] = float(sw[0].get("value"))
+            self.sec_wall_thickness = sec if len(sec) > 1 or 'default' not in sec                 else sec['default']
 
         # Extract single-value parameters
         self.kmb = float(root.xpath('km')[0].get("value"))
@@ -1290,6 +1325,17 @@ class HydraulicData:
         lig_scl = kw_barrier_lignin if lig_scl is None else float(lig_scl)
         return casp_exo, sub_exo, lig_scl
 
+    def get_kw_sub_generic(self, h: int, default: float) -> float:
+        """Generic ``Sub`` barrier value (endodermal suberin, radial walls), else *default*."""
+        if self.n_kw_barrier == self.n_hydraulics and h < len(self.kw_barrier_elems):
+            elem = self.kw_barrier_elems[h]
+        elif self.n_kw_barrier <= 1:
+            elem = self.kw_barrier_elems[0] if self.kw_barrier_elems else {}
+        else:
+            elem = self.kw_barrier_elems[int(h/(self.n_kaqp*self.n_kpl*self.n_kw)) % self.n_kw_barrier]
+        sub = elem.get("Sub")
+        return default if sub is None else float(sub)
+
     def get_wall_conductivities(self, barrier: int, h: int) -> Dict[str, float]:
         """Get wall conductivities based on barrier type."""
         kw =  self.get_kw_value(h)
@@ -1451,6 +1497,17 @@ class HydraulicData:
 
         # Hypodermis/epidermis–mesophyll (2, 4) wall
         config['kw_meso_hypo'] = self.kw_meso_hypo if self.kw_meso_hypo is not None else kw
+
+        # Suberin-lamella values, only where the stage has that suberin (used only by
+        # suberin_model == 'lamella'; extra keys do not affect the 'none' model).
+        if barrier in (2, 3, 4, 8, 11):                            # stages with endodermal suberin
+            config['kw_lam_endo_out'] = kw_barrier_suberin[1]      # Sub_out, cortex side
+            config['kw_lam_endo_in'] = kw_barrier_suberin[0]       # Sub_in, stele side
+            config['kw_lam_endo_rad'] = self.get_kw_sub_generic(h, kw_barrier_suberin[1])
+        if barrier in (6, 8, 10, 11):                              # stages with exodermal suberin
+            config['kw_lam_exo_out'] = sub_exo[1]                  # epidermis side
+            config['kw_lam_exo_in'] = sub_exo[0]                   # cortex / inner side
+            config['kw_lam_exo_rad'] = sub_exo[0]                  # generic Sub_exo
         return config
 
     def get_plasmodesmatal_conductance(self, h: int) -> Dict[str, float]:
