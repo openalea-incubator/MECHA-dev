@@ -233,6 +233,14 @@ conduits and its soil node): with reduced roots, the soil is on the soil nodes (
 (``_check_heights``): its nodes would be cut off from the network. GRANAP gives no anatomy to a segment without length
 (Adel's internodes and sheaths before they grow): a pass-through, the junctions spanning it, until it grows.
 
+**Root apices.** An axis' tip (label ``RootApex``, ArchiSimple's: the part of the root beyond its last segment) is a
+root section as a segment is (``ROOT_LABELS``: its soil contact, :math:`k_r`, uptake and perimeter): GRANAP gives it
+the root's anatomy (its kind ``root_apex_anatomy``, by default the segments') once it has a length, ``Development``
+its barriers by its distance from the tip (none with a tip zone of barrier 0), and a reduction reduces it when its
+labels list ``RootApex``. Its meristem is not represented; its maturity is its barrier code's: at barrier 0 (a tip
+zone reaching it) its xylem is immature, without xylem junction (D3), and the apex takes up almost nothing (its only
+axial path the protophloem's); at barrier 1 it conducts as a young segment of its length.
+
 **Transmembrane fractions** (``_standard_transmembrane_fraction``, MECHA's standard transmembrane fractions): per
 membrane, its standard flow from wall to cell over its section's standard uptake, :math:`f_m = Q_{w \to c} / Q_\text{std}`;
 none (0) on the membranes of the intercellular spaces and of the mature vessels (:math:`b > 0`). Each membrane's layer

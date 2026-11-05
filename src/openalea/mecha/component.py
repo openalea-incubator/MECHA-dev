@@ -33,6 +33,9 @@ from openalea.mecha.postprocess import (VISCOSITY_PHLOEM, VISCOSITY_XYLEM, axial
                                         radial_conductivity, soil_uptake)
 
 PHLOEM_CGROUPS = (11, 23)
+# The root sections' SubOrgan labels: the root segments and the root apices (an axis' tip, ArchiSimple's, with an
+# anatomy of its own: GRANAP's root apex kind), the sections with a soil contact, a kr and an uptake
+ROOT_LABELS = ("RootSegment", "RootApex")
 
 SCALES = ScalesConfig()
 
@@ -178,8 +181,9 @@ class MechaSections(FunctionalComponent):
 
     def section_roles(self) -> tuple:
         """
-        (first, roots): the SubOrgan vids without a parent (a root system's first section) and those labelled
-        RootSegment; read once per topology. The leaves are not labels: an organ transpires from the leaf surface
+        (first, roots): the SubOrgan vids without a parent (a root system's first section) and the root sections,
+        labelled RootSegment or RootApex (an axis' tip with an anatomy, GRANAP's root apex kind); read once per
+        topology. The leaves are not labels: an organ transpires from the leaf surface
         its anatomy gave it (GRANAP's Compartment of kind 3, LEAF_SURFACE: a leaf's, Adel's blade's or sheath's).
         """
         def build():
@@ -187,7 +191,7 @@ class MechaSections(FunctionalComponent):
             segments = [int(v) for v in ds.entity_ids("SubOrgan")]
             labels = ds.labels(location="SubOrgan", per_node=False).tolist()
             return ({segments[i] for i in ds.roots(location="SubOrgan").tolist()},
-                    {v for v, label in zip(segments, labels) if label == "RootSegment"})
+                    {v for v, label in zip(segments, labels) if label in ROOT_LABELS})
         return self.cached("section_roles", build)
 
     def _root_nodes(self, geometries) -> np.ndarray:
@@ -833,7 +837,7 @@ class MechaHydraulics(MechaSections):
                              f"({len(reduced_roots)}, e.g. {reduced_roots[:5]}): a reduced section keeps its conduits "
                              "and its soil node, not its contact nodes, which per_node puts the soil on. Use "
                              "soil_boundary 'node_dirichlet' or 'node_robin' (GRANAP's soil_node), or leave the "
-                             "roots unreduced (the scenario's reduced_labels without RootSegment)")
+                             "roots unreduced (the scenario's reduced_labels without RootSegment and RootApex)")
 
     def _reduced_vapour_path(self, net, view) -> None:
         """The reduced sections' kept vapour path (their wall-air and air-link Connections, explicit terms) in *net*,
@@ -1408,7 +1412,9 @@ def _kept(template) -> np.ndarray:
 def plant_reduction(labels=("RootSegment",), length_classes="exact", osmotic: bool = False):
     """
     The Reduction (solve.reduction) of a plant model with GRANAP's anatomies and MechaHydraulics' plant problem: the
-    sections of *labels* reduced onto their conduits (GRANAP's ports), their soil node and, in a leaf, its vapour
+    sections of *labels* (GRANAP's anatomy kinds, its ANATOMY_KEYS: RootSegment, RootApex, StemElement, LeafElement,
+    Sheath, Seed; a sheath's elements, labelled StemElement, are the kind "Sheath": list both to reduce the stems and
+    the sheaths; GRANAP warns of a label that is no kind) reduced onto their conduits (GRANAP's ports), their soil node and, in a leaf, its vapour
     path (vapour_path, its Connections kept explicit: vapour_edges); a kind per (anatomy, barrier,
     length or its class of relative width *length_classes*, parameters); with *osmotic*, the conduits' and the hidden
     tissues' osmotic potentials as per-section inputs (conduit_osmotic_potential, tissue_osmotic_potential); the
@@ -1427,7 +1433,8 @@ def plant_reduction(labels=("RootSegment",), length_classes="exact", osmotic: bo
 def scenario_reduction(scenario):
     """
     A plant model's reduction chosen by its scenario (``reduction = staticmethod(scenario_reduction)``, one model
-    class reduced or not): with "reduced" true, plant_reduction of the sections of "reduced_labels" (RootSegment by
+    class reduced or not): with "reduced" true, plant_reduction of the sections of "reduced_labels" (GRANAP's anatomy
+    kinds, e.g. ("RootSegment", "RootApex", "StemElement", "Sheath", "LeafElement", "Seed"); RootSegment by
     default), their kinds by "length_classes" ("exact" by default), the osmotic inputs with "osmotic_reduction"
     (false by default); None without it (the whole network).
     """

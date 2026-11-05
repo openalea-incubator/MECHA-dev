@@ -3,7 +3,7 @@ Stand-ins for the models MECHA's inputs come from, until a plant model couples t
 component declaring, as its own state, an input of MechaHydraulics, computed from its parameters (set by the plant's
 scenario, or by a Scene forcing of the same name):
 
-    Development      the root segments' apoplastic barriers (barrier, MECHA's maturity code) by their distance from
+    Development      the root sections' (segments and apices) apoplastic barriers (barrier, MECHA's maturity code) by their distance from
                      their axis' tip, in up to three zones: mature_barrier everywhere, but up to young_zone
                      (young_barrier) and up to tip_zone (tip_barrier) from the tip
     UniformSoil      a soil uniform around the roots: its water potential (soil_psi) and the bulk soil's conductance
@@ -31,19 +31,19 @@ import numpy as np
 from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, parameter, state_variable
 from openalea.metafspm.solve.decorator import rate
 
-from openalea.mecha.component import SCALES, _doc
+from openalea.mecha.component import ROOT_LABELS, SCALES, _doc
 from openalea.mecha.geometry import LEAF_SURFACE
 
 
 @dataclass
 class Development(FunctionalComponent):
     """
-    A root development model's stand-in: each root segment's apoplastic barriers (MECHA's maturity code) from its
-    distance to its axis' tip, in three zones of its plant's parameters: the tip's (up to tip_zone), the young
-    root's (up to young_zone), the mature root's beyond (without zones, mature_barrier on every root segment). The
-    shoot's segments keep the default, 1 (their mature xylem).
+    A root development model's stand-in: each root section's (a root segment's or apex's, ROOT_LABELS) apoplastic
+    barriers (MECHA's maturity code) from its distance to its axis' tip, in three zones of its plant's parameters:
+    the tip's (up to tip_zone), the young root's (up to young_zone), the mature root's beyond (without zones,
+    mature_barrier on every root section). The shoot's segments keep the default, 1 (their mature xylem).
     """
-    label: int = input_variable(**_doc("", "the segment's MTG label (the root segments: RootSegment)"),
+    label: int = input_variable(**_doc("", "the segment's MTG label (the root sections: RootSegment, RootApex)"),
                                 by="Architecture", default=0, scale=SCALES.SubOrgan, dtype="int", kind="descriptor")
     distance_from_tip: float = input_variable(**_doc("m", "the segment's distance from its axis' tip"),
                                               by="Architecture", default=0., scale=SCALES.SubOrgan, location="node",
@@ -68,9 +68,9 @@ class Development(FunctionalComponent):
                                     default=1., scale=SCALES.SubOrgan, location="node", aggregation="broadcast",
                                     kind="descriptor")
 
-    @rate(filters={"label": "RootSegment"}, include_inactive=True)
+    @rate(filters={"label": ROOT_LABELS}, include_inactive=True)
     def _barrier(self, distance_from_tip, tip_zone, tip_barrier, young_zone, young_barrier, mature_barrier):
-        """Each root segment's code, by the zone its distance from the tip is in."""
+        """Each root section's code, by the zone its distance from the tip is in (an apex's: the tip's)."""
         distance = np.asarray(distance_from_tip, dtype=float)
         return np.where(distance <= tip_zone, tip_barrier, np.where(distance <= young_zone, young_barrier,
                                                                     mature_barrier))
