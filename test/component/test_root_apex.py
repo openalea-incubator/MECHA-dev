@@ -136,3 +136,17 @@ def test_a_reduced_apex_takes_up_the_full_one_s_water(plants):
         return np.bincount(np.asarray(ds.owner("SubOrgan")), weights=np.asarray(ds.get("root_uptake"), dtype=float),
                            minlength=len(ds.entity_ids("SubOrgan")))
     np.testing.assert_allclose(by_section(small), by_section(full), rtol=1e-7, atol=1e-12)
+
+
+def test_an_apex_in_the_tip_zone_has_kr_against_its_protophloem():
+    """At barrier 0, MECHA's kr is against the protophloem (the sieve tubes of GRANAP's roots, at standard_psi_sieve):
+    defined, positive, its standard uptake negative (the phloem's pressure above the soil's); a reduced apex takes it
+    from its kind (kr, standard_uptake, perimeter), the full one's. kr_effective stays NaN there: the plant problem
+    gives the tip zone no stele boundary (no xylem junction, the protophloem's potential not imposed)."""
+    full, small = _seedling(barriers=TIP_ZONE_ON_THE_APEX), _seedling(reduced=True, barriers=TIP_ZONE_ON_THE_APEX)
+    apex = _section(full, "RootApex")
+    assert apex in small.reduction.reduced_groups(small)
+    assert np.isfinite(full.get("kr")[apex]) and full.get("kr")[apex] > 0 and full.get("standard_uptake")[apex] < 0
+    for name in ("kr", "standard_uptake", "perimeter"):
+        assert small.get(name)[apex] == pytest.approx(full.get(name)[apex], rel=1e-9)
+    assert np.isnan(full.get("kr_effective")[apex]) and np.isnan(small.get("kr_effective")[apex])

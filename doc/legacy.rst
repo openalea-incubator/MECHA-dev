@@ -725,8 +725,9 @@ Inputs, outputs and scenarios
        sieve tube gets a protophloem cell's share, or NaN (GRANAP's roots have no protophloem cells: every right-hand
        side NaN)
      - ported (2026-10-28) and fixed: ``standard_sieve_flow``, split among the conduits as their own areas (the
-       protosieve cells, each once, at barrier 0; the sieve tubes at barrier > 0), where the phloem's potential is NaN
-       (both given: an error, as the legacy's); kr at barrier 0 through the protophloem's mean potential. Against
+       protophloem's cells, each once, at barrier 0, in place of ``standard_psi_sieve``; the sieve tubes at barrier >
+       0, where their potential is NaN, both given an error, as the legacy's); kr at barrier 0 through the
+       protophloem's mean potential (ME-45). Against
        the legacy's scenario 1 given the sieve tubes' shares, to 10⁻¹² (``test_scenario_boundaries.py``)
    * - ME-43
      - ``Kax_source`` 2: the conduits' axial conductances given by cell (the hydraulics file's ``K_xyl`` and
@@ -743,6 +744,17 @@ Inputs, outputs and scenarios
      - fixed (scalars, ``conductance.cortex_parameters``); the comparison gives the legacy its value as a float:
        every conductance bit for bit, with the φ-thickenings, the tissues' aquaporin factors, the xylem pieces and
        other conductivities (``test_hydraulic_options.py``)
+   * - ME-45
+     - kr at barrier 0 (the tip zone): scenario 0 imposes the phloem's pressure (``BCs.xml``'s ``BC_sieve``,
+       1.1 × 10⁴ hPa, barley's, Pritchard 1996) on the protosieve cells (cgroup 23, tissue protosieve or
+       protophloem) and ``kr_tot`` is the uptake against it; GRANAP's roots tag none (their phloem poles are phloem or
+       sieve element cells, cgroup 11): no stele boundary, no flow, ``kr_tot`` left at 0 with an error printed;
+       without ``BCs.xml`` its default pressure is NaN, the same
+     - fixed (2026-11-05): the protophloem is the protosieve cells, or the sieve tubes of an anatomy typing none
+       (``SectionGeometry.protophloem_cells``: the first conduits to mature in the root tip), at
+       ``standard_psi_sieve`` 1.1 × 10⁴ hPa by default (``BCs.xml``'s; NaN: none, kr NaN), ``standard_sieve_flow``
+       in its place when given; kr is defined at every barrier (``test_standard_problem.py``,
+       ``test_root_apex.py``). The comparisons give the port the legacy's default, NaN
    * - ME-27
      - its own GRANAR cellset XML builder: cell areas as polygons through the wall midpoints and junctions (0.77 % less
        area than the true outlines), wall positions moving the mean epidermis distance by 0.05 %. On GRANAR's

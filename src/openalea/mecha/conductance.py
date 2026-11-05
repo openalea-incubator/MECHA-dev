@@ -132,6 +132,7 @@ class Network:
     measured_axial_conductivity: np.ndarray  # per node: a conduit's specific axial conductance (cm4 hPa-1 d-1; NaN)
     xylem: np.ndarray             # int per node: occurrences in the network's xylem list (cgroup)
     protosieve: np.ndarray        # int per node: occurrences in the legacy's protosieve list (duplicates, legacy f)
+    protophloem: np.ndarray       # bool per node: the protophloem's cells (SectionGeometry.protophloem_cells)
     sieve: np.ndarray             # int per node: occurrences in the sieve tubes' list (by tissue)
     outercortex_connec_rank: np.ndarray   # per section
     concentrated: np.ndarray              # (sections, 3): outer–cortex, cortex–cortex, cortex–endodermis
@@ -160,7 +161,8 @@ def assemble(n_nodes: int, n_edges: int, geometries: list, phi_thick=None) -> Ne
         distance_center_grav=nodes_full(np.nan), x=nodes_full(np.nan), y=nodes_full(np.nan), cell_area=nodes_full(0.), wall_thickness=nodes_full(np.nan), wall_length=nodes_full(0.),
         border_wall=nodes_full(False, bool), border_junction=nodes_full(False, bool),
         soil_contact_cell=nodes_full(False, bool), measured_axial_conductivity=nodes_full(np.nan), xylem=nodes_full(0, np.int64),
-        protosieve=nodes_full(0, np.int64), sieve=nodes_full(0, np.int64), outercortex_connec_rank=np.zeros(len(geometries), dtype=np.int64),
+        protosieve=nodes_full(0, np.int64), protophloem=nodes_full(False, bool), sieve=nodes_full(0, np.int64),
+        outercortex_connec_rank=np.zeros(len(geometries), dtype=np.int64),
         concentrated=np.zeros((len(geometries), 3)))
     for i, (nodes, edges, geo) in enumerate(geometries):
         net.section_of_node[nodes] = i
@@ -185,6 +187,7 @@ def assemble(n_nodes: int, n_edges: int, geometries: list, phi_thick=None) -> Ne
         net.border_junction[nodes] = geo.border_junction
         np.add.at(net.xylem, nodes[geo.xylem_cells], 1)
         np.add.at(net.protosieve, nodes[geo.protosieve_cells], 1)
+        net.protophloem[nodes[geo.protophloem_cells]] = True
         np.add.at(net.sieve, nodes[geo.sieve_cells], 1)
         net.outercortex_connec_rank[i] = geo.outercortex_connec_rank
         net.concentrated[i] = (geo.concentrated_outer_cortex, geo.concentrated_cortex_cortex,
@@ -515,7 +518,8 @@ def plasmodesmata_spatial_coefficients(net: Network, P: dict, e):
 def boundary_terms(net: Network, P: dict, barrier, height):
     """
     Per node (cm³ hPa⁻¹ d⁻¹): the soil term of the border walls and junctions in contact (``_apply_soil_boundary``),
-    and the axial term of the xylem cells (barrier > 0) or protosieve cells (barrier 0): (soil, axial on the matrix
+    and the axial term of the xylem cells (barrier > 0) or protophloem cells (barrier 0: the protosieve cells, or the
+    sieve tubes of an anatomy typing none, SectionGeometry.protophloem_cells): (soil, axial on the matrix
     diagonal, axial in the right-hand side). P, barrier, height per node. The axial term (``standard_axial_source``):
     1 each conduit's Poiseuille conductance over the height (water in the xylem, phloem sap in the protosieve: the
     original MECHA's ``Kax_source`` 1), 2 the prescribed ``k_xyl`` and ``k_sieve`` (the legacy's, whatever its source).
@@ -534,7 +538,7 @@ def boundary_terms(net: Network, P: dict, barrier, height):
     barrier = np.asarray(barrier).astype(np.int64)
     k_xyl, k_sieve = np.asarray(P["k_xyl"], dtype=float), np.asarray(P["k_sieve"], dtype=float)
     xylem = (barrier > 0) & (net.xylem > 0)
-    protosieve = (barrier == 0) & (net.protosieve > 0)
+    protosieve = (barrier == 0) & net.protophloem
     with np.errstate(divide="ignore", invalid="ignore"):
         measured = getattr(net, "measured_axial_conductivity", np.full(n, np.nan)) / (height / 1.0E04)      # a conduit's own over the height
         k_xyl = np.where(np.asarray(P["standard_axial_source"]) == 1,

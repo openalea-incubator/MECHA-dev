@@ -21,7 +21,8 @@ from openalea.mecha.legacy import InData, Mecha, NetworkBuilder
 # its plasmodesmata rules and its aperture factors' defaults, its prescribed xylem boundary, its one wall thickness,
 # its membrane floor (ME-33), its axial penalty conductances (ME-32: develop's 1.0)
 LEGACY_OPTIONS = dict(plasmodesmata_rules=2., kpl_PCC_factor=0., kpl_PST_factor=0., standard_axial_source=2.,
-                      thickness_source=1., membrane_floor=2., k_xyl=1.0, k_sieve=1.0)
+                      thickness_source=1., membrane_floor=2., k_xyl=1.0, k_sieve=1.0,
+                      standard_psi_sieve=float("nan"))    # the legacy's default without BCs.xml: no phloem boundary
 
 
 def legacy_input(kpl=None):

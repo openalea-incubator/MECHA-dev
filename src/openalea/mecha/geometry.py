@@ -105,6 +105,14 @@ class SectionGeometry:
     wall_cells: np.ndarray = None # (n, 2) per wall: its membranes' cells (local nodes, in cell order), -1 if none
     junction_order: np.ndarray = None  # the junctions (local nodes) in the legacy's rebuilt order (its junction ids)
 
+    @property
+    def protophloem_cells(self) -> np.ndarray:
+        """The protophloem's cells, the stele's boundary at barrier 0 (local nodes, each once): the protosieve cells
+        (cgroup 23, tissue protosieve or protophloem); in an anatomy typing none (GRANAP's: its phloem poles' cells
+        are phloem or sieve elements), its sieve tubes, the first to conduct in the root tip."""
+        protosieve = np.unique(self.protosieve_cells)
+        return protosieve if protosieve.size else np.asarray(self.sieve_cells, dtype=np.int64)
+
 
 def _sequential_sum(values) -> float:
     """Σ in the given order, one addition after another (the legacy's Python loops)."""

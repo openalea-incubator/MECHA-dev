@@ -210,6 +210,12 @@ junctions without conductance; Robin terms with the soil (:math:`K_s`, ``standar
 ``standard_psi_soil_right``, :math:`\psi_s = \psi_\text{left}(1 - x) + \psi_\text{right}\,x` at the node's relative
 x, the legacy's scenarios' left and right potentials) and with the axial boundary (:math:`K_{ax}`,
 ``standard_psi_xylem`` at :math:`b > 0`, ``standard_psi_sieve`` at :math:`b = 0`, none where that potential is NaN);
+at :math:`b = 0` (the tip zone, its xylem immature) the stele's boundary is the protophloem, as in the original MECHA:
+its protosieve cells (cgroup 23, tissue ``protosieve`` or ``protophloem``), or, in an anatomy typing none (GRANAP's,
+whose phloem poles are ``phloem`` or ``sieve element`` cells), its sieve tubes, the first conduits to mature in the
+root tip (``SectionGeometry.protophloem_cells``), at ``standard_psi_sieve`` = 1.1 × 10⁴ hPa by default (the original's
+``BCs.xml``: barley's phloem pressure, Pritchard 1996; NaN, the legacy's default without that file, leaves the
+section without an axial boundary, its :math:`k_r` undefined), or with ``standard_sieve_flow`` in its place;
 at :math:`b > 0`, with ``standard_psi_sieve_tube``, a Robin term between the sieve tubes and the phloem
 (``conductance.sieve_tube_terms``: :math:`K_P(A_c, h, \eta_\text{phloem})` or ``k_sieve``, as
 ``standard_axial_source``). The elongation sink enters with ``standard_elongation`` 1 (the legacy's scenarios ≥ 1; its
@@ -314,10 +320,14 @@ problem:
    U = \sum_{\text{border walls, junctions}} K_s\,(\psi_\text{soil} - \psi), \qquad
    k_r = \frac{U}{(\psi_\text{soil} - \psi_\text{axial})\,P\,h\,10^{-4}},
 
-:math:`\psi_\text{axial}` the imposed potential, or the vessels' mean potential with the flow condition. From the plant
-problem, the effective one:
+:math:`\psi_\text{axial}` the imposed potential (the xylem's at :math:`b > 0`, the protophloem's at :math:`b = 0`:
+there the protophloem's pressure exceeds the soil's, the water leaves the section, :math:`U < 0` and :math:`k_r > 0`,
+the original MECHA's ``kr_tot`` of its elongation zone), or the conduits' mean potential with a flow condition (the
+vessels', the protophloem's cells'). From the plant problem, the effective one:
 :math:`k_{r,\text{effective}} = U / \big((\bar\psi_\text{soil} - \bar\psi_\text{xylem})\,P\,h\,10^{-4}\big)`, the means
-over the section's soil-contact nodes and vessels (NaN at :math:`b = 0`). :math:`k_r`, the uptake and :math:`P` are root
+over the section's soil-contact nodes and vessels (NaN at :math:`b = 0`: the plant problem gives the tip zone no
+stele boundary, its xylem immature and its protophloem's potential not imposed, so that it takes up almost nothing,
+:math:`U \approx 0` with :math:`\bar\psi_\text{soil} - \bar\psi \approx 0`). :math:`k_r`, the uptake and :math:`P` are root
 quantities (NaN on stems and leaves).
 
 **Pathways** (``plots.pathway_breakdown``): each edge's radial component of :math:`|Q|` assigned to the nearest mean

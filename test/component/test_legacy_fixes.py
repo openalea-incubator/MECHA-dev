@@ -16,7 +16,8 @@ def test_a1_protosieve_cell_counted_once():
     net = SimpleNamespace(cgroup=np.full(n, 23), x=np.zeros(n), border_wall=np.zeros(n, bool),
                           border_junction=np.zeros(n, bool), wall_length=np.zeros(n), cell_area=np.ones(n),
                           wall_thickness=np.full(n, np.nan),
-                          xylem=np.zeros(n, np.int64), protosieve=np.array([0, 1, 2]))
+                          xylem=np.zeros(n, np.int64), protosieve=np.array([0, 1, 2]),
+                          protophloem=np.array([0, 1, 2]) > 0)
     P = {name: np.full(n, value) for name, value in
          (("kw", 2.4e-4), ("thickness", 1.5), ("x_contact", 0.), ("k_xyl", 1e-6), ("k_sieve", 3e-6),
           ("standard_axial_source", 2.), ("thickness_source", 1.))}

@@ -154,7 +154,7 @@ def axial_layers(mecha, segment) -> "pd.DataFrame":
     n = int(np.nanmax(rank_to_row)) + 1
     barrier = int(np.asarray(ds.get("barrier"))[nodes[0]])
     xylem = geo.xylem_cells if barrier > 0 else np.zeros(0, dtype=np.int64)
-    phloem = geo.sieve_cells if barrier > 0 else np.unique(geo.protosieve_cells)
+    phloem = geo.sieve_cells if barrier > 0 else geo.protophloem_cells
 
     def by_row(cells):
         rows = rank_to_row[geo.cell_rank[cells]].astype(np.int64)

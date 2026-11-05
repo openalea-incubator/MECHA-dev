@@ -1,4 +1,5 @@
-"""MECHA's standard problem on each section: ψ, flows, uptake, kr, Kx, by barrier stage; optional."""
+"""MECHA's standard problem on each section: ψ, flows, uptake, kr, Kx, by barrier stage (at barrier 0 against the
+protophloem, MECHA's stele boundary in the tip zone); optional."""
 import numpy as np
 import pytest
 
@@ -23,7 +24,8 @@ def test_potentials_between_soil_and_xylem(solved):
     assert np.isfinite(psi).all()
     for i in (1, 2):                                   # barriers: between the xylem's -5000 hPa and the soil's 0
         assert psi[owner == i].min() >= -5000. - 1e-6 and psi[owner == i].max() <= 1e-6
-    np.testing.assert_allclose(psi[owner == 0], 0., atol=1e-9)    # barrier 0, no phloem boundary: the soil's
+    tip = psi[owner == 0]                              # barrier 0: between the soil's and the protophloem's 1.1e4 hPa
+    assert tip.min() >= -1e-6 and tip.max() <= mecha.standard_psi_sieve + 1e-6 and tip.max() > 1e3
 
 
 def test_mass_balance(solved):
@@ -37,12 +39,15 @@ def test_mass_balance(solved):
         into_xylem = (axial * (psi - mecha.standard_psi_xylem))[owner == i].sum()
         scale = (axial * abs(mecha.standard_psi_xylem))[owner == i].sum()
         assert uptake[i] > 0 and abs(into_xylem - uptake[i]) <= 64 * np.finfo(float).eps * scale
+    into_phloem = (axial * (psi - mecha.standard_psi_sieve))[owner == 0].sum()   # barrier 0: out of the protophloem
+    scale = (axial * abs(mecha.standard_psi_sieve))[owner == 0].sum()
+    assert uptake[0] < 0 and abs(into_phloem - uptake[0]) <= 64 * np.finfo(float).eps * scale
 
 
 def test_kr_kx(solved):
     g, ds, mecha = solved
     kr, Kx, Kx_phloem = ds.get("kr"), ds.get("Kx"), ds.get("Kx_phloem")
-    assert np.isnan(kr[0]) and kr[1] > kr[2] > 0                     # suberin (3) lowers kr below the strip's (1)
+    assert kr[0] > kr[1] > kr[2] > 0          # no barrier (0) above the strip's (1), suberin (3) lowers kr below it
     assert Kx[0] == 0. and Kx[1] == Kx[2] > 0                        # same anatomy, same height
     assert (Kx_phloem >= 0).all()
 
@@ -76,4 +81,38 @@ def test_flow_condition_at_the_xylem(solved):
         assert np.isfinite(ds.get("kr")[1:]).all()
     finally:
         mecha.standard_axial_condition, mecha.standard_axial_flow = 1., 0.
+        mecha()
+
+
+def test_kr_at_barrier_0_against_the_protophloem(solved):
+    """At barrier 0 (the tip zone, the xylem immature), MECHA's kr is the section's against the protophloem, its stele
+    boundary: its protosieve cells, or, GRANAP's anatomies typing none, its sieve tubes, at standard_psi_sieve (1.1e4
+    hPa, MECHA's BCs.xml). NaN, it has no axial boundary: the soil's potential everywhere, kr undefined. A phloem flow
+    (standard_sieve_flow) replaces the potential, split among the protophloem's cells, kr against their mean."""
+    g, ds, mecha = solved
+    nodes, _, geo = mecha.section_geometries()[int(ds.entity_ids("SubOrgan")[0])]
+    assert geo.protosieve_cells.size == 0 and geo.sieve_cells.size > 0
+    np.testing.assert_array_equal(geo.protophloem_cells, geo.sieve_cells)
+    axial = ds.get("axial_boundary_conductance")[nodes]
+    assert (axial[geo.sieve_cells] > 0).all() and np.count_nonzero(axial) == geo.sieve_cells.size
+    assert mecha.standard_psi_sieve == 1.1E4
+    uptake, height = ds.get("standard_uptake")[0], ds.get("length")[0] * 1e6                    # µm
+    assert ds.get("kr")[0] == pytest.approx(uptake / ((0. - 1.1E4) * ds.get("perimeter")[0] * height * 1e-4),
+                                            rel=1e-12)
+    try:
+        mecha.standard_psi_sieve = float("nan")
+        mecha()
+        assert np.isnan(ds.get("kr")[0]) and np.isfinite(ds.get("kr")[1:]).all()
+        np.testing.assert_allclose(ds.get("standard_psi")[nodes], 0., atol=1e-9)
+        mecha.standard_psi_sieve, mecha.standard_sieve_flow = 1.1E4, -1e-3         # the phloem unloading 1e-3 cm3 d-1
+        mecha()
+        inflow = ds.get("standard_axial_inflow")[nodes]
+        assert inflow[geo.sieve_cells].sum() == pytest.approx(1e-3, rel=1e-12) and ds.get("axial_boundary_conductance")[
+            nodes].sum() == 0.
+        assert ds.get("standard_uptake")[0] == pytest.approx(-1e-3, rel=1e-9)
+        protophloem = ds.get("standard_psi")[nodes[geo.sieve_cells]].mean()
+        assert ds.get("kr")[0] == pytest.approx(-1e-3 / ((0. - protophloem) * ds.get("perimeter")[0] * height * 1e-4),
+                                                rel=1e-9)
+    finally:
+        mecha.standard_psi_sieve, mecha.standard_sieve_flow = 1.1E4, float("nan")
         mecha()
