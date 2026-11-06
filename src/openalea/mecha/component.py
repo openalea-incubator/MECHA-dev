@@ -446,7 +446,7 @@ class MechaHydraulics(MechaSections):
                                                              "(barrier > 0) or protophloem cells (barrier 0) in the "
                                                              "standard problem"),
                                                default=0., scale=SCALES.Compartment, location="node",
-                                               kind="NonInertialIntensive")
+                                               kind="NonInertialIntensive", weight="liquid_volume")
     standard_axial_inflow: float = state_variable(**_doc("cm3 d-1", "the water entering a xylem vessel or a phloem "
                                                          "conduit from the axial boundary in the standard problem "
                                                          "(standard_axial_condition 2, standard_sieve_flow; negative: "
@@ -478,11 +478,11 @@ class MechaHydraulics(MechaSections):
     water_potential: float = state_variable(**_doc("hPa", "water potential, plant problem: psi (the pressure "
                                                           "potential) + osmotic_potential"),
                                             default=0., scale=SCALES.Compartment, location="node",
-                                            kind="NonInertialIntensive")
+                                            kind="NonInertialIntensive", weight="liquid_volume")
     standard_water_potential: float = state_variable(**_doc("hPa", "water potential, standard problem: standard_psi + "
                                                                    "osmotic_potential (with standard_osmotic)"),
                                                      default=0., scale=SCALES.Compartment, location="node",
-                                                     kind="NonInertialIntensive")
+                                                     kind="NonInertialIntensive", weight="liquid_volume")
 
     # ── State variables: the solutes' diffusion factors and the nodes' volumes (MechaSolutes) ──
     apoplastic_diffusion_factor: float = state_variable(**_doc("cm", "× the apoplastic diffusivity: the edge's "
@@ -602,14 +602,14 @@ class MechaHydraulics(MechaSections):
     standard_psi: float = state_variable(**_doc("hPa", "water potential, in its section's standard problem (its "
                                                        "pressure potential with standard_osmotic 1)"),
                                          default=0., scale=SCALES.Compartment, location="node",
-                                         kind="NonInertialIntensive")
+                                         kind="NonInertialIntensive", weight="liquid_volume")
     standard_flow: float = state_variable(**_doc("cm3 d-1", "flow along the edge, from its first node to its second, "
                                                             "in the standard problem"),
                                           default=0., scale=SCALES.Connection, location="edge",
                                           kind="NonInertialIntensive")
     psi: float = state_variable(**_doc("hPa", "water potential, in the plant problem"),
                                 default=0., scale=SCALES.Compartment, location="node",
-                                kind="NonInertialIntensive")
+                                kind="NonInertialIntensive", weight="liquid_volume")
     flow: float = state_variable(**_doc("cm3 d-1", "flow along the edge, from its first node to its second, in the "
                                                    "plant problem"),
                                  default=0., scale=SCALES.Connection, location="edge",
@@ -630,9 +630,9 @@ class MechaHydraulics(MechaSections):
     standard_uptake: float = state_variable(**_doc("cm3 d-1", "the section's water uptake from the soil, standard "
                                                               "problem"),
                                             default=np.nan, scale=SCALES.SubOrgan,
-                                            kind="NonInertialIntensive")
+                                            kind="NonInertialExtensive")
     uptake: float = state_variable(**_doc("cm3 d-1", "the section's water uptake from the soil, plant problem"),
-                                   default=np.nan, scale=SCALES.SubOrgan, kind="NonInertialIntensive")
+                                   default=np.nan, scale=SCALES.SubOrgan, kind="NonInertialExtensive")
     kr: float = state_variable(**_doc("cm hPa-1 d-1", "the section's radial conductivity, MECHA's definition (standard "
                                                       "problem): uptake / (ψ soil − ψ xylem) / surface"),
                                default=np.nan, scale=SCALES.SubOrgan, kind="NonInertialIntensive")

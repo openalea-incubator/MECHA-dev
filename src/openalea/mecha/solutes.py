@@ -249,10 +249,10 @@ class MechaSolutes(MechaSections):
 
     # ── State variables ──
     sucrose: float = state_variable(**_doc("mol cm-3", "sucrose concentration (liquid nodes)"), default=0.,
-                                    scale=SCALES.Compartment, location="node", kind="intensive")
+                                    scale=SCALES.Compartment, location="node", kind="intensive", weight="liquid_volume")
     starch: float = state_variable(**_doc("mol cm-3", "starch concentration (sucrose equivalents; cells)"),
                                    default=0., scale=SCALES.Compartment, location="node",
-                                   kind="intensive")
+                                   kind="intensive", weight="liquid_volume")
     sucrose_sink: float = state_variable(**_doc("", "1 on the nodes held at a concentration: the sinks (the "
                                                     "phloem-loading cells, Strasburger, else phloem, and the xylem: "
                                                     "solute_sinks 1) and the nodes of fixed_sucrose"),
@@ -277,7 +277,7 @@ class MechaSolutes(MechaSections):
     coupled_psi: float = state_variable(**_doc("hPa", "the water potential of the coupled steady state (the standard "
                                                       "problem's, with the sucrose's osmotic potentials)"),
                                         default=0., scale=SCALES.Compartment, location="node",
-                                        kind="NonInertialIntensive")
+                                        kind="NonInertialIntensive", weight="liquid_volume")
     coupled_flow: float = state_variable(**_doc("cm3 d-1", "the water's flow along the edge in the coupled steady "
                                                            "state"),
                                          default=0., scale=SCALES.Connection, location="edge",
@@ -285,7 +285,7 @@ class MechaSolutes(MechaSections):
     osmotic_baseline: float = state_variable(**_doc("hPa", "the osmotic potential without the sucrose's (its −R T c "
                                                            "removed from the cells')"),
                                              default=0., scale=SCALES.Compartment, location="node",
-                                             kind="NonInertialIntensive")
+                                             kind="NonInertialIntensive", weight="liquid_volume")
     osmotic_slope: float = state_variable(**_doc("hPa cm3 mol-1", "R T on the liquid cells (π = baseline − R T c), 0 "
                                                                   "elsewhere"),
                                           default=0., scale=SCALES.Compartment, location="node",
@@ -343,7 +343,7 @@ class MechaSolutes(MechaSections):
                                              kind="NonInertialExtensive")
     sucrose_osmotic_potential: float = state_variable(**_doc("hPa", "−R T c on the cells (van't Hoff; 0 elsewhere)"),
                                                       default=0., scale=SCALES.Compartment, location="node",
-                                                      kind="NonInertialIntensive")
+                                                      kind="NonInertialIntensive", weight="liquid_volume")
 
     @rate(include_inactive=True)
     def _tail_weight(self, kind, flow, standard_flow, reflection_coefficient, apoplastic_diffusion_factor,

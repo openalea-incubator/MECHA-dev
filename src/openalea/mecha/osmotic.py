@@ -414,7 +414,7 @@ class MechaOsmoticPresets(MechaSections):
     osmotic_potential: float = state_variable(**_doc("hPa", "osmotic potential of the protoplast or the wall's "
                                                             "solution (0: junctions, shoot sections)"),
                                               default=0., scale=SCALES.Compartment, location="node",
-                                              kind="NonInertialIntensive")
+                                              kind="NonInertialIntensive", weight="liquid_volume")
     reflection_coefficient: float = state_variable(**_doc("", "the membrane's reflection coefficient (0: other "
                                                               "edges, shoot sections)"),
                                                    default=0., scale=SCALES.Connection, location="edge",
