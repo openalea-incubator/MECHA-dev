@@ -266,7 +266,11 @@ a liquid potential :math:`k` (the conduits, the evaporating walls, a root's soil
 walls'; not the air nodes) by the Kron reduction's recovery weights :math:`x_I = W x_K`,
 :math:`V_k \mathrel{+}= \sum_i V_i W_{ik} / \sum_{k'} W_{ik'}`; its ``liquid_volume`` is that, 0 on the air nodes.
 Each section's volume and liquid volume are the full anatomy's, and a liquid mean on the kept nodes is the full
-section's when its eliminated nodes have no sources of their own (the steady state's local gradients aside).
+section's when its eliminated nodes have no sources of their own (the steady state's local gradients aside). The
+volumes per unit height are computed once per kind of section (``_condensed_unit_volume``, metafspm's
+``@kind_derived``), on the reduction's library while the kind's factorisation is live: the shares
+:math:`\sum_i V_i W_{ik} / \sum_{k'} W_{ik'}` from two single solves (``KronReduction.shares``), no dense
+:math:`W`.
 
 
 The leaves' vapour path (``conductance.vapour_conductances``)

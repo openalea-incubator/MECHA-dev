@@ -18,8 +18,8 @@ from openalea.metafspm.coupling.component import (FunctionalComponent, input_var
                                                    state_variable)
 from openalea.metafspm.data_structure.configs import ScalesConfig
 from openalea.metafspm.solve.decorator import (boundary_set, declared_system, explicit_term, graph_jacobian,
-                                               graph_output, graph_system, input_jacobian,
-                                                node_balance, rate, totalstate)
+                                               graph_output, graph_system, input_jacobian, kind_derived,
+                                               node_balance, rate, totalstate)
 
 from openalea.mecha.conductance import (Network, assemble, boundary_terms, cortex_parameters, edge_conductances,
                                        elongation_sink, kelvin_alpha, set_edge_ends, set_wall_thickness,
@@ -902,7 +902,8 @@ class MechaHydraulics(MechaSections):
         the kept nodes' potentials the full section's when its interior has no sources of its own (close to it
         otherwise: a steady state's local gradients). The eliminated nodes are liquid (the vapour path is kept:
         vapour_path); a reduced root's soil node, of no volume of its own, holds the liquid of the tissue bound to the
-        soil. Unchanged without a reduction and in a reduction's library.
+        soil. The volumes per unit height are each kind's (_condensed_unit_volume, computed once per kind on its
+        library), times the section's height. Unchanged without a reduction and in a reduction's library.
         """
         reduction = self._reduction()
         if reduction is None or reduction.library:
@@ -916,79 +917,32 @@ class MechaHydraulics(MechaSections):
         system = self._plant_problem_name(reduction)
         kinds = reduction.group_kinds(ds, groups)
         compartment = g.scales.Compartment
-        used = set()
         for i, (owner, key) in groups.items():
             first, _ = g.instances.block(owner)
             kept = ds.index_of(first + g.instances.templates[key].rows_at_scale(compartment))
-            plant = (float(P_node["thickness_source"][kept[0]]), float(P_node["thickness"][kept[0]]))
-            targets = ~vapour[kept]
-            kind = kinds[i][system]
-            own, condensed = self._condensed_unit_volumes(reduction, key, kind, plant, targets)
-            used.add(self._condensed_entry_key(kind, plant, targets))
-            node_height = float(height[kept[0]])
-            volume[kept] = (own + condensed) * node_height
+            volume[kept] = kinds[i][system].outputs["condensed_unit_volume"] * float(height[kept[0]])
             liquid[kept] = np.where(vapour[kept], 0., volume[kept])
-        self._drop_unused_condensed_volumes(used)
         return volume, liquid
 
-    @staticmethod
-    def _condensed_entry_key(kind, plant, targets) -> tuple:
-        """The condensed volumes' cache key of a kind *kind* (metafspm's Kind.key and system: the same when the kind
-        is evaluated again), the plant's thickness parameters *plant* and the kept nodes they go to *targets*."""
-        return kind.key, kind.system, plant, targets.tobytes()
-
-    def _drop_unused_condensed_volumes(self, used) -> None:
-        """Drops the condensed volumes of the kinds the reduced groups no longer have (*used*: the current groups'
-        entry keys; a growing section's former length classes, released by the reduction) and the full templates'
-        unit volumes none of the others needs: the caches bounded by the plant's current groups, not every group it
-        had."""
-        cache = self._unsaved_cache("condensed_volumes")
-        for entry_key in [k for k in cache if k not in used]:
-            del cache[entry_key]
-        used_templates = {entry[2] for entry in cache.values()}
-        templates = self._unsaved_cache("template_volumes")
-        for template_key in [k for k in templates if k not in used_templates]:
-            del templates[template_key]
-
-    def _unsaved_cache(self, name: str) -> dict:
-        """The component's cache *name* (a dict), rebuilt when missing: not checkpointed."""
-        cache = self.kept(name)
-        if cache is None:
-            cache = {}
-            self.keep(name, cache, saved=False)
-        return cache
-
-    def _condensed_unit_volumes(self, reduction, key, kind, plant, targets) -> tuple:
-        """(own, condensed): per unit height (µm), the kept nodes' own volumes and the volumes they condense
-        (_condensed_volumes), of the reduced template *key*'s kind *kind*, the plant's thickness parameters *plant*
-        (thickness_source, thickness) and the kept nodes they go to *targets*; computed once per kind (by its key:
-        _condensed_entry_key), dropped when the groups no longer have it (_drop_unused_condensed_volumes)."""
-        cache = self._unsaved_cache("condensed_volumes")
-        entry_key = self._condensed_entry_key(kind, plant, targets)
-        entry = cache.get(entry_key)
-        if entry is not None:
-            return entry[0], entry[1]
-        full = reduction.full_template(key)
-        unit = self._template_unit_volumes(full, plant)
-        compartments = full.rows_at_scale(self.data_structure.structure.scales.Compartment)
-        kept_positions = np.searchsorted(compartments, kind.kept_rows)
-        interior_positions = np.searchsorted(compartments, kind.interior_rows)
-        own, condensed = unit[kept_positions], np.zeros(kept_positions.size)
-        if interior_positions.size and targets.any():
-            weights = np.asarray(kind.reduction.recover(np.eye(kept_positions.size)))[:, targets]
-            total = weights.sum(axis=1)
-            weights = np.where((total > 0)[:, None], weights / np.where(total > 0, total, 1.)[:, None],
-                               1. / targets.sum())                 # a node bound to none: shared evenly
-            condensed[targets] = weights.T @ unit[interior_positions]
-        cache[entry_key] = (own, condensed, (full.key, plant))
-        return own, condensed
+    @kind_derived("condensed_unit_volume")
+    def _condensed_unit_volume(self, kind, full_template, kron, nodes) -> np.ndarray:
+        """Per unit height (µm), each kept node's volume of a kind of the plant problem (_condensed_volumes): its own
+        (its full template's) plus its share of the eliminated nodes' (kron.shares over the kept nodes of a liquid
+        potential: two single solves while the kind's factorisation is live, no dense recovery). Run on the
+        reduction's library, once per kind (metafspm's kind_derived): its nodes the full group's there, their
+        vapour path and the plant's thickness parameters the library's."""
+        ds = self.data_structure
+        P_node = self.parameter_table("node")
+        kept_nodes = nodes[kron.kept_nodes]
+        reference = kept_nodes[0] if kept_nodes.size else nodes[0]
+        plant = (float(P_node["thickness_source"][reference]), float(P_node["thickness"][reference]))
+        unit = self._template_unit_volumes(full_template, plant)
+        vapour = (np.asarray(ds.get("vapour_node")) > 0) | (np.asarray(ds.get("kind")) == LEAF_SURFACE)
+        return unit[kron.kept_nodes] + kron.shares(~vapour[kept_nodes], unit[kron.interior_nodes])
 
     def _template_unit_volumes(self, full, plant) -> np.ndarray:
         """Per Compartment of the full template *full*, its volume per unit height (cm³ µm⁻¹, _node_volumes at a height
         of 1 µm; 0 on the leaf surface and the soil node), with the plant's thickness parameters *plant*."""
-        cache = self._unsaved_cache("template_volumes")
-        if (full.key, plant) in cache:
-            return cache[(full.key, plant)]
         scales = self.data_structure.structure.scales
         section, nodes, edges, tail, head = template_section(full, scales.Compartment, scales.Connection)
         compartments = full.rows_at_scale(scales.Compartment)
@@ -998,8 +952,7 @@ class MechaHydraulics(MechaSections):
         thickness_source, thickness = plant
         parameters = {"thickness_source": np.full(compartments.size, thickness_source),
                       "thickness": np.full(compartments.size, thickness)}
-        out = cache[(full.key, plant)] = self._node_volumes(net, parameters, 1., net.kind)
-        return out
+        return self._node_volumes(net, parameters, 1., net.kind)
 
     @staticmethod
     def _liquid_equivalent(value, vapour_node, leaf_temperature):

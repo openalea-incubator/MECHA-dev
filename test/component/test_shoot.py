@@ -251,30 +251,45 @@ def test_a_reduced_section_s_kept_nodes_hold_its_volumes_and_its_liquid_mean():
     np.testing.assert_allclose(liquid_mean(small), liquid_mean(full), rtol=1e-8)
 
 
-def test_the_condensed_volumes_are_cached_by_kind_key_and_dropped_with_their_kinds():
-    """The kept nodes' condensed volumes are computed once per kind and cached by its key (metafspm's Kind.key and
-    system), not by the kind object: a kind evaluated again (released then needed back) finds its entry, and an entry of
-    a kind the reduced groups no longer have (a growing section's former length class) is dropped, so the cache holds
-    the current groups' kinds only and does not grow with a growing plant."""
+def test_the_condensed_volumes_are_each_kinds_derived_values():
+    """The kept nodes' condensed volumes per unit height are computed once per kind, on its library while its
+    factorisation is live (metafspm's kind_derived, kron.shares: two single solves), and kept in the kind's outputs:
+    the same as the dense recovery weights (the interior recovered for each kept node's unit potential, its rows over
+    the liquid kept nodes normalised), and a kind evaluated again gives them again."""
     small, hydraulics = _seedling(reduced=True, labels=("RootSegment", "StemElement", "LeafElement"), soil_node=True)
-    cache = hydraulics.kept("condensed_volumes")
     reduction = hydraulics._reduction()
-    kinds = reduction.group_kinds(small, reduction.reduced_groups(small))
     system = hydraulics._plant_problem_name(reduction)
-    current = {(kind[system].key, kind[system].system) for kind in kinds.values()}
-    assert len(cache) == len(current) and {entry_key[:2] for entry_key in cache} == current
+    groups = reduction.reduced_groups(small)
+    kinds = reduction.group_kinds(small, groups)
+    g = small.structure
+    vapour = np.asarray(small.get("vapour_node")) > 0
+    P_node = hydraulics.parameter_table("node")
+    for i, (owner, key) in groups.items():
+        kind = kinds[i][system]
+        first, _ = g.instances.block(owner)
+        kept = small.index_of(first + g.instances.templates[key].rows_at_scale(g.scales.Compartment))
+        full = reduction.full_template(key)
+        unit = hydraulics._template_unit_volumes(full, (float(P_node["thickness_source"][kept[0]]),
+                                                         float(P_node["thickness"][kept[0]])))
+        compartments = full.rows_at_scale(g.scales.Compartment)
+        kept_positions = np.searchsorted(compartments, kind.kept_rows)
+        interior_positions = np.searchsorted(compartments, kind.interior_rows)
+        targets = ~vapour[kept]
+        expected = unit[kept_positions].copy()
+        if interior_positions.size and targets.any():
+            weights = np.asarray(kind.reduction.recover(np.eye(kept_positions.size)))[:, targets]
+            total = weights.sum(axis=1)
+            weights = np.where((total > 0)[:, None], weights / np.where(total > 0, total, 1.)[:, None],
+                               1. / targets.sum())
+            expected[targets] += weights.T @ unit[interior_positions]
+        np.testing.assert_allclose(kind.outputs["condensed_unit_volume"], expected, rtol=1e-10, atol=1e-30)
     volumes = np.array(small.get("node_volume"))
-    stale = next(iter(cache.values()))
-    cache[(("former", "length class"), system, (0., 0.), b"")] = stale
-    hydraulics.kept("template_volumes")[("former template", (0., 0.))] = np.zeros(1)
-    for kind in [k for kinds in reduction._kinds.values() for k in kinds.values()]:
-        kind.release()                                   # evaluated again: new kind objects, the same keys
+    for kind in [k for by_system in reduction._kinds.values() for k in by_system.values()]:
+        kind.release()                                   # evaluated again: new kind objects, the same values
     reduction._kinds.clear()
     hydraulics.__dict__.pop("_step_memos", None)         # the conductances computed again (a memoized step)
     hydraulics()
-    assert {entry_key[:2] for entry_key in cache} == current
-    assert ("former template", (0., 0.)) not in hydraulics.kept("template_volumes")
-    np.testing.assert_array_equal(small.get("node_volume"), volumes)
+    np.testing.assert_allclose(small.get("node_volume"), volumes, rtol=1e-12)
 
 
 class BladeAndSheath(StructuralComponent):
