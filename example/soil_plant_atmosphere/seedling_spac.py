@@ -27,7 +27,6 @@ import numpy as np
 
 from openalea.metafspm.coupling.component import StructuralComponent, planting_variable, state_variable
 from openalea.metafspm.coupling.composite_wrapper import CompositeModel
-from openalea.metafspm.coupling.cross import CrossMapping
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.configs import PropsConfig, ScalesConfig
 from openalea.metafspm.testing.soil import Soil
@@ -233,7 +232,8 @@ class SeedlingHydraulics(CompositeModel):
         self.hydraulics = MechaHydraulics(data_structure=ds, time_step=time_step)
         self.couple(self.architecture, self.anatomy, self.development, self.transpiration, self.osmotic,
                     self.hydraulics)
-        ds.define_mask("root_surface", {"soil_conductance": ">0"})       # the soil mapping maps it only
+        # the roots' soil contacts (MECHA's entity set): the soil links' mapping maps them only
+        ds.define_mask("root_surface", entities="MechaHydraulics.soil_contacts")
 
     def run(self):
         self.development()
@@ -243,18 +243,15 @@ class SeedlingHydraulics(CompositeModel):
         self.hydraulics()
 
 
+# the plants and the soil exchange through the roots' surface only (the mask root_surface, by the overlap of its
+# sections with the cells): the Scene's mapping of these links
+ROOT_SURFACE = {"mask": "root_surface", "method": "overlap"}
 SCENE_TRANSLATOR = (
     Translator()
-    .link("MechaHydraulics", "soil_psi", "SoilWaterTransport", {"water_potential": MPA_TO_HPA})
-    .link("SoilWaterTransport", "plant_uptake", "MechaHydraulics", {"root_uptake": CM3_PER_DAY_TO_MM3_PER_S})
+    .link("MechaHydraulics", "soil_psi", "SoilWaterTransport", {"water_potential": MPA_TO_HPA}, mapping=ROOT_SURFACE)
+    .link("SoilWaterTransport", "plant_uptake", "MechaHydraulics", {"root_uptake": CM3_PER_DAY_TO_MM3_PER_S},
+          mapping=ROOT_SURFACE)
 )
-
-
-def root_surface_mappings(scene):
-    """The roots' surface (MECHA's soil-contact walls and junctions) onto the soil grid."""
-    soil = next(model for model in scene.environment if isinstance(model, Soil))
-    return [CrossMapping(population.data_structure, soil.grid, method="overlap", mask="root_surface")
-            for population in scene.populations]
 
 
 def largest_change(tolerance=1e-4):

@@ -207,7 +207,12 @@ class MechaSections(FunctionalComponent):
 class MechaHydraulics(MechaSections):
     """
     MECHA's cross-section hydraulics on every section of the DataStructure (its sections: MechaSections).
+
+    Its named entity set (entity_sets): soil_contacts, the border walls and junctions in contact with the soil
+    (soil_conductance > 0, soil_boundary "per_node"), e.g. the soil links' mapping's mask
+    (define_mask("root_surface", entities="MechaHydraulics.soil_contacts")).
     """
+    entity_sets = {"soil_contacts": {"soil_conductance": ">0"}}
     # ── Inputs: the osmotic potentials (role "Solutes": a metabolism model, or MECHA's presets, MechaOsmoticPresets) ──
     osmotic_potential: float = input_variable(**_doc("hPa", "osmotic potential of the protoplast or the wall's solution "
                                                             "(0: none)"),
@@ -842,7 +847,7 @@ class MechaHydraulics(MechaSections):
                              f"({len(reduced_roots)}, e.g. {reduced_roots[:5]}): a reduced section keeps its conduits "
                              "and its soil node, not its contact nodes, which per_node puts the soil on. Use "
                              "soil_boundary 'node_dirichlet' or 'node_robin' (GRANAP's soil_node), or leave the "
-                             "roots unreduced (the scenario's reduced_labels without RootSegment and RootApex)")
+                             "roots unreduced (the scenario's reduced_where without RootSegment and RootApex)")
 
     def _reduced_vapour_path(self, net, view) -> None:
         """The reduced sections' kept vapour path (their wall-air and air-link Connections, explicit terms) in *net*,
@@ -1341,14 +1346,6 @@ class MechaHydraulics(MechaSections):
 MechaHydraulics.PARAMETERS = MechaHydraulics.declared_parameters()
 
 
-def soil_nodes(template) -> np.ndarray:
-    """The soil node of a SectionTemplate (GRANAP's kind 4): a reduction's keep rule (its boundary node)."""
-    out = np.zeros(template.size, dtype=bool)
-    rows, values = template.properties.get("kind", (np.zeros(0, dtype=np.int64), np.zeros(0)))
-    out[rows] = np.asarray(values, dtype=float) == SOIL_NODE
-    return out
-
-
 def vapour_path(template) -> np.ndarray:
     """The vapour path's nodes of a SectionTemplate: the ends of its wall-air and air-link Connections (a leaf's
     evaporating walls, air spaces and pores; none in a section without them): a reduction's keep rule (the nodes of
@@ -1370,29 +1367,27 @@ def vapour_edges(template) -> np.ndarray:
     return out
 
 
-def _kept(template) -> np.ndarray:
-    return soil_nodes(template) | vapour_path(template)
-
-
-def plant_reduction(labels=("RootSegment",), length_classes=0.1, osmotic: bool = False):
+def plant_reduction(where=None, length_classes=0.1, osmotic: bool = False):
     """
     The Reduction (solve.reduction) of a plant model with GRANAP's anatomies and MechaHydraulics' plant problem: the
-    sections of *labels* (GRANAP's anatomy kinds, its ANATOMY_KEYS: RootSegment, RootApex, StemElement, LeafElement,
-    Sheath, Seed; a sheath's elements, labelled StemElement, are the kind "Sheath": list both to reduce the stems and
-    the sheaths; GRANAP warns of a label that is no kind) reduced onto their conduits (GRANAP's ports), their soil node and, in a leaf, its vapour
-    path (vapour_path, its Connections kept explicit: vapour_edges); a kind per (anatomy, barrier, length class,
+    sections *where* selects (a filter of the SubOrgans, metafspm's Reduction(where=): {"label": ...} their labels,
+    "Organ.label" their organ's, e.g. {"label": "StemElement", "Organ.label": "StemInternode"} the internodes' and not
+    the sheaths'; the root segments by default; GRANAP warns of a label it gives no anatomy) reduced onto their
+    conduits (GRANAP's entity set conduits), their soil node (soil_nodes) and, in a leaf, its vapour path
+    (vapour_path, its Connections kept explicit: vapour_edges); a kind per (anatomy, barrier, length class,
     parameters): the classes of relative width *length_classes* (0.1 by default: about 60 from 1 mm to 30 cm, each
     evaluated once), a section between two classes their kinds' blend (metafspm's Relative, interpolated), or
     "exact" (a kind per length: the exactness's reference); with *osmotic*, the conduits' and the hidden tissues'
     osmotic potentials as per-section inputs (conduit_osmotic_potential, tissue_osmotic_potential); the sections' kr,
     standard uptake and perimeter from their kind.
     """
-    from openalea.granap.metafspm.component import GranapAnatomy
+    import openalea.granap.metafspm.component                   # noqa: F401  (GranapAnatomy's entity sets)
     from openalea.metafspm.solve.reduction import Reduction, Relative
     kind = {"barrier": None, "length": None if length_classes == "exact" else Relative(float(length_classes))}
     inputs = {"osmotic_potential": dict(by="tissue", group="tissue_osmotic_potential",
                                         kept="conduit_osmotic_potential")} if osmotic else {}
-    return Reduction(location="SubOrgan", labels=tuple(labels), ports=GranapAnatomy.conduits, keep=_kept,
+    return Reduction(location="SubOrgan", where={"label": "RootSegment"} if where is None else where,
+                     ports="GranapAnatomy.conduits", keep=("GranapAnatomy.soil_nodes", vapour_path),
                      explicit_edges=vapour_edges, kind=kind, inputs=inputs, systems=("MechaHydraulics._plant_problem",),
                      outputs=("kr", "standard_uptake", "perimeter"))
 
@@ -1400,17 +1395,16 @@ def plant_reduction(labels=("RootSegment",), length_classes=0.1, osmotic: bool =
 def scenario_reduction(scenario):
     """
     A plant model's reduction chosen by its scenario (``reduction = staticmethod(scenario_reduction)``, one model
-    class reduced or not): with "reduced" true, plant_reduction of the sections of "reduced_labels" (GRANAP's anatomy
-    kinds, e.g. ("RootSegment", "RootApex", "StemElement", "Sheath", "LeafElement", "Seed"); RootSegment by
-    default), their kinds by "length_classes" (0.1 by default, plant_reduction's), the osmotic inputs with
-    "osmotic_reduction" (false by default); None without it (the whole network).
+    class reduced or not): with "reduced" true, plant_reduction of the sections "reduced_where" selects (a filter of
+    the SubOrgans, e.g. {"label": ("RootSegment", "RootApex", "StemElement", "LeafElement", "Seed")}: every section;
+    the root segments by default), their kinds by "length_classes" (0.1 by default, plant_reduction's), the osmotic
+    inputs with "osmotic_reduction" (false by default); None without it (the whole network).
     """
     if not scenario.get("reduced", False):
         return None
-    return plant_reduction(labels=scenario.get("reduced_labels", ("RootSegment",)),
-                           length_classes=scenario.get("length_classes", 0.1),
+    return plant_reduction(where=scenario.get("reduced_where"), length_classes=scenario.get("length_classes", 0.1),
                            osmotic=bool(scenario.get("osmotic_reduction", False)))
 
 
 # the scenario entries scenario_reduction owns, read or not (metafspm accepts them with "reduced" off)
-scenario_reduction.scenario_keys = ("reduced", "reduced_labels", "length_classes", "osmotic_reduction")
+scenario_reduction.scenario_keys = ("reduced", "reduced_where", "length_classes", "osmotic_reduction")

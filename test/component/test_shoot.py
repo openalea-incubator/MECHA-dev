@@ -150,7 +150,7 @@ def test_root_quantities_on_roots_only(plant):
 def _seedling(reduced=False, labels=("RootSegment", "StemElement"), **scenario):
     """The seedling as a plant model (GRANAP's anatomies and MechaHydraulics, the leaf transpiring); *reduced*: its
     stem and root sections reduced (plant_reduction: their conduits and the root's soil node kept), the leaf whole: the
-    scenario's entries "reduced" and "reduced_labels" (scenario_reduction), one model class for both."""
+    scenario's entries "reduced" and "reduced_where" (scenario_reduction), one model class for both."""
     from openalea.metafspm.coupling.composite_wrapper import CompositeModel
     from openalea.metafspm.scene.population import population_data_structure
     from openalea.granap.metafspm.component import junction_rules
@@ -177,7 +177,7 @@ def _seedling(reduced=False, labels=("RootSegment", "StemElement"), **scenario):
 
     scenario = dict(scenario, collar_condition=0., uniform_soil_psi=SOIL, transpiration=TRANSPIRATION)
     if reduced:                                  # the exactness's reference: a kind per length (no classes)
-        scenario.update(reduced=True, reduced_labels=list(labels),
+        scenario.update(reduced=True, reduced_where={"label": list(labels)},
                         length_classes=scenario.get("length_classes", "exact"))
     population = population_data_structure(planting([Planting()], SeedlingModel, scenario), SeedlingModel)
     ds = population.data_structure
@@ -376,6 +376,7 @@ def test_the_reduction_s_scenario_entries_are_accepted_with_the_reduction_off():
     """scenario_reduction owns its scenario entries (scenario_keys): with "reduced" false, its labels and classes are
     inactive entries of the plant model, not unknown ones; the seedling is whole."""
     from openalea.mecha.component import scenario_reduction
-    assert set(scenario_reduction.scenario_keys) == {"reduced", "reduced_labels", "length_classes", "osmotic_reduction"}
-    ds, hydraulics = _seedling(reduced=False, soil_node=True, reduced_labels=["RootSegment"], length_classes="exact")
+    assert set(scenario_reduction.scenario_keys) == {"reduced", "reduced_where", "length_classes", "osmotic_reduction"}
+    ds, hydraulics = _seedling(reduced=False, soil_node=True, reduced_where={"label": "RootSegment"},
+                               length_classes="exact")
     assert ds.reduction is None and hydraulics._reduction() is None

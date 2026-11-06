@@ -17,7 +17,7 @@ from openalea.metafspm.scene.recorder import SceneRecorder
 from openalea.metafspm.scene.scene import Scene
 
 from seedling_spac import (CM3_PER_DAY_TO_MM3_PER_S, SCENE_TRANSLATOR, SEEDLING_SCENARIO, SOIL_SCENARIO,
-                           SeedlingHydraulics, Soil, largest_change, root_surface_mappings)
+                           SeedlingHydraulics, Soil, largest_change)
 import plots
 
 
@@ -26,7 +26,7 @@ def scene(folder=None, tolerance=1e-4):
                      yrange=0.2)                                     # a 0.2 m x 0.2 m column of soil
     stop = largest_change(tolerance)
     built = Scene(table, environment=[Soil], environment_scenarios=[SOIL_SCENARIO], translator=SCENE_TRANSLATOR,
-                  time_step=3600, mappings=root_surface_mappings, stop_when=stop,
+                  time_step=3600, stop_when=stop,
                   recorder=SceneRecorder(folder) if folder else None)
     return built, stop
 

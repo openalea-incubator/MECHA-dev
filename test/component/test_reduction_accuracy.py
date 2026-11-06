@@ -24,7 +24,7 @@ from openalea.mecha.stand_ins import Transpiration, UniformSoil
 
 SOIL = -1000.                                            # hPa
 TRANSPIRATION = 0.05                                     # cm3 d-1
-LABELS = ("RootSegment", "StemElement", "Sheath", "LeafElement")
+LABELS = ("RootSegment", "StemElement", "LeafElement")       # the sheaths' elements are StemElements
 ROOT_LENGTHS = (11e-3, 6.1e-3, 4.4e-3, 2.7e-3)          # m, from the collar to the tip
 LATERAL_LENGTHS = (3.6e-3,)                              # m, on the main root's first segment
 SHOOT_LENGTHS = {"stem": 4.2e-3, "sheath": 17e-3, "blade": 33e-3}
@@ -107,7 +107,7 @@ class SeedlingModel(CompositeModel):
 def _seedling(length_classes):
     scenario = {"stem_anatomy": {}, "leaf_anatomy": {}, "sheath_anatomy": {}, "soil_node": True,
                 "instanced_anatomy": True, "collar_condition": 0., "uniform_soil_psi": SOIL,
-                "transpiration": TRANSPIRATION, "reduced": True, "reduced_labels": list(LABELS),
+                "transpiration": TRANSPIRATION, "reduced": True, "reduced_where": {"label": list(LABELS)},
                 "length_classes": length_classes}
     return population_data_structure(planting([Planting()], SeedlingModel, scenario), SeedlingModel, time_step=STEP)
 

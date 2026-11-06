@@ -83,7 +83,7 @@ def _seedling(reduced=False, barriers=BARRIERS):
     scenario = dict(barriers, collar_condition=0., uniform_soil_psi=SOIL, transpiration=TRANSPIRATION,
                     soil_node=True, instanced_anatomy=True)
     if reduced:
-        scenario.update(reduced=True, reduced_labels=["RootSegment", "RootApex", "StemElement"],
+        scenario.update(reduced=True, reduced_where={"label": ["RootSegment", "RootApex", "StemElement"]},
                         length_classes="exact")                 # the exactness's reference: a kind per length
     population = population_data_structure(planting([Planting()], SeedlingModel, scenario), SeedlingModel)
     population.instance.run()
