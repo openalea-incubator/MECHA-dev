@@ -1367,16 +1367,18 @@ def _kept(template) -> np.ndarray:
     return soil_nodes(template) | vapour_path(template)
 
 
-def plant_reduction(labels=("RootSegment",), length_classes="exact", osmotic: bool = False):
+def plant_reduction(labels=("RootSegment",), length_classes=0.1, osmotic: bool = False):
     """
     The Reduction (solve.reduction) of a plant model with GRANAP's anatomies and MechaHydraulics' plant problem: the
     sections of *labels* (GRANAP's anatomy kinds, its ANATOMY_KEYS: RootSegment, RootApex, StemElement, LeafElement,
     Sheath, Seed; a sheath's elements, labelled StemElement, are the kind "Sheath": list both to reduce the stems and
     the sheaths; GRANAP warns of a label that is no kind) reduced onto their conduits (GRANAP's ports), their soil node and, in a leaf, its vapour
-    path (vapour_path, its Connections kept explicit: vapour_edges); a kind per (anatomy, barrier,
-    length or its class of relative width *length_classes*, parameters); with *osmotic*, the conduits' and the hidden
-    tissues' osmotic potentials as per-section inputs (conduit_osmotic_potential, tissue_osmotic_potential); the
-    sections' kr, standard uptake and perimeter from their kind.
+    path (vapour_path, its Connections kept explicit: vapour_edges); a kind per (anatomy, barrier, length class,
+    parameters): the classes of relative width *length_classes* (0.1 by default: about 60 from 1 mm to 30 cm, each
+    evaluated once), a section between two classes their kinds' blend (metafspm's Relative, interpolated), or
+    "exact" (a kind per length: the exactness's reference); with *osmotic*, the conduits' and the hidden tissues'
+    osmotic potentials as per-section inputs (conduit_osmotic_potential, tissue_osmotic_potential); the sections' kr,
+    standard uptake and perimeter from their kind.
     """
     from openalea.granap.metafspm.component import GranapAnatomy
     from openalea.metafspm.solve.reduction import Reduction, Relative
@@ -1393,13 +1395,13 @@ def scenario_reduction(scenario):
     A plant model's reduction chosen by its scenario (``reduction = staticmethod(scenario_reduction)``, one model
     class reduced or not): with "reduced" true, plant_reduction of the sections of "reduced_labels" (GRANAP's anatomy
     kinds, e.g. ("RootSegment", "RootApex", "StemElement", "Sheath", "LeafElement", "Seed"); RootSegment by
-    default), their kinds by "length_classes" ("exact" by default), the osmotic inputs with "osmotic_reduction"
-    (false by default); None without it (the whole network).
+    default), their kinds by "length_classes" (0.1 by default, plant_reduction's), the osmotic inputs with
+    "osmotic_reduction" (false by default); None without it (the whole network).
     """
     if not scenario.get("reduced", False):
         return None
     return plant_reduction(labels=scenario.get("reduced_labels", ("RootSegment",)),
-                           length_classes=scenario.get("length_classes", "exact"),
+                           length_classes=scenario.get("length_classes", 0.1),
                            osmotic=bool(scenario.get("osmotic_reduction", False)))
 
 

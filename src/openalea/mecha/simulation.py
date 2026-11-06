@@ -370,7 +370,7 @@ def root_system(main=(3, 3, 1, 1), laterals=((1, (1, 1)),), segment_length: floa
                 anatomy: dict = None, soil_psi: float = -1000., collar_psi: float = -5000.,
                 experiment: str = "control", instanced: bool = False, plant_solver: str = "full",
                 soil_boundary: str = "per_node", soil_bulk_conductance: float = 0., condensed: bool = False,
-                length_classes="exact", osmotic: dict = None, compute=None) -> RootSystem:
+                length_classes=0.1, osmotic: dict = None, compute=None) -> RootSystem:
     """
     A seedling's root system, every section a GRANAP anatomy and all of them one MECHA network joined by their xylem:
     a main root of len(*main*) segments (their barriers, MECHA's maturity codes, from the collar to the tip) and its
@@ -385,8 +385,8 @@ def root_system(main=(3, 3, 1, 1), laterals=((1, (1, 1)),), segment_length: floa
     MechaHydraulics' ("node_dirichlet", "node_robin": one soil node per section, GRANAP's soil_node), with
     *soil_bulk_conductance* (cm3 hPa-1 d-1) on each soil node (node_robin); *condensed*: each section reduced onto
     its conduits and soil node (plant_reduction, solve.reduction; a soil node boundary, node_dirichlet by default),
-    its kind evaluated at its length or its class (*length_classes*), the scenario's entries "reduced" and
-    "length_classes" (scenario_reduction); *osmotic*: MECHA's osmotic presets with these parameters ({name: value},
+    its kind evaluated at its length class (*length_classes*, plant_reduction's: 0.1, or "exact"), the scenario's
+    entries "reduced" and "length_classes" (scenario_reduction); *osmotic*: MECHA's osmotic presets with these parameters ({name: value},
     MechaOsmoticPresets'; {}: its defaults), reduced sections through their kinds.
 
     Its conductance (Krs, cm3 hPa-1 d-1) and its sections' standard uptake fractions are MARSHAL's (the soil

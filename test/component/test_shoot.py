@@ -176,8 +176,9 @@ def _seedling(reduced=False, labels=("RootSegment", "StemElement"), **scenario):
             self.hydraulics()
 
     scenario = dict(scenario, collar_condition=0., uniform_soil_psi=SOIL, transpiration=TRANSPIRATION)
-    if reduced:
-        scenario.update(reduced=True, reduced_labels=list(labels))
+    if reduced:                                  # the exactness's reference: a kind per length (no classes)
+        scenario.update(reduced=True, reduced_labels=list(labels),
+                        length_classes=scenario.get("length_classes", "exact"))
     population = population_data_structure(planting([Planting()], SeedlingModel, scenario), SeedlingModel)
     ds = population.data_structure
     population.instance.run()

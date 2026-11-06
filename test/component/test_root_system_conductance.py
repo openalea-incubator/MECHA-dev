@@ -124,7 +124,8 @@ def test_a_condensed_root_system_is_the_full_one_on_its_conduits_and_soil_nodes(
     uptakes, kr, SUF and Krs as the full anatomies'; a section's cells reconstructed on request as the full ones."""
     kwargs = dict(main=(3, 3, 1, 1, 0), laterals=((1, (1, 0)),), soil_psi=SOIL, collar_psi=COLLAR,
                   soil_boundary="node_dirichlet")
-    full, small = root_system(instanced=True, **kwargs), root_system(condensed=True, **kwargs)
+    full = root_system(instanced=True, **kwargs)
+    small = root_system(condensed=True, length_classes="exact", **kwargs)     # the reference: a kind per length
     a, b = full.data_structure, small.data_structure
     assert b.n_nodes() < a.n_nodes() / 100
 
@@ -183,7 +184,8 @@ def test_condensed_osmotic_terms_are_the_full_anatomys():
     ({tissue: π}, tissue_osmotic_potential): the same potentials and uptakes as the full anatomy given the same."""
     kwargs = dict(main=(3, 1, 1, 0), laterals=((1, (1, 0)),), soil_psi=SOIL, collar_psi=COLLAR,
                   soil_boundary="node_dirichlet", osmotic={"os_hetero": 1.})
-    full, small = root_system(instanced=True, **kwargs), root_system(condensed=True, **kwargs)
+    full = root_system(instanced=True, **kwargs)
+    small = root_system(condensed=True, length_classes="exact", **kwargs)     # the reference: a kind per length
     a, b = full.data_structure, small.data_structure
 
     def places(ds):

@@ -272,6 +272,17 @@ volumes per unit height are computed once per kind of section (``_condensed_unit
 :math:`\sum_i V_i W_{ik} / \sum_{k'} W_{ik'}` from two single solves (``KronReduction.shares``), no dense
 :math:`W`.
 
+A reduced section's kind (``plant_reduction``) is its anatomy, its barrier and its length class: the classes
+:math:`(1 + w)^k` of relative width ``length_classes`` (:math:`w = 0.1` by default, about 60 from 1 mm to 30 cm, each
+evaluated once and shared by the plants), a section of length :math:`h` between the classes :math:`h_k \le h <
+h_{k+1}` given their kinds' blend, :math:`D = (1 - t) D_k + t D_{k+1}`, :math:`t = (h - h_k) / (h_{k+1} - h_k)`, and
+so its source terms, kr, standard uptake, condensed volumes and recovered interior (metafspm's
+``Relative(w, interpolate=True)``). A section's walls' and membranes' conductances are :math:`\propto h`, its
+conduits' :math:`\propto 1/h` and its vapour path's not: the reduced term is nearly affine in :math:`h` and the blend
+within :math:`w^2/8` of its curvature (a root's uptake and a blade's water potential within :math:`10^{-6}` of the
+exact kinds' on a growing seedling, ``test_reduction_accuracy.py``). ``length_classes="exact"`` gives a kind per
+length (the exactness tests' reference).
+
 
 The leaves' vapour path (``conductance.vapour_conductances``)
 =============================================================
