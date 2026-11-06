@@ -909,18 +909,13 @@ class MechaHydraulics(MechaSections):
         if reduction is None or reduction.library:
             return volume, liquid
         ds = self.data_structure
-        groups = reduction.reduced_groups(ds)
-        if not groups:
+        blocks = reduction.kept_outputs(ds, "condensed_unit_volume", self._plant_problem_name(reduction))
+        if not blocks:
             return volume, liquid
         volume, liquid = volume.copy(), liquid.copy()
-        g = ds.structure
-        system = self._plant_problem_name(reduction)
-        kinds = reduction.group_kinds(ds, groups)
-        compartment = g.scales.Compartment
-        for i, (owner, key) in groups.items():
-            first, _ = g.instances.block(owner)
-            kept = ds.index_of(first + g.instances.templates[key].rows_at_scale(compartment))
-            volume[kept] = kinds[i][system].outputs["condensed_unit_volume"] * float(height[kept[0]])
+        height = np.asarray(height, dtype=float)
+        for kept, unit in blocks:                        # per template: its groups × their kept nodes at once
+            volume[kept] = unit * height[kept[:, :1]]
             liquid[kept] = np.where(vapour[kept], 0., volume[kept])
         return volume, liquid
 
@@ -1266,31 +1261,43 @@ class MechaHydraulics(MechaSections):
                 out["kr_effective"][i] = radial_conductivity(out["uptake"][i], soil_side[contact].mean(),
                                                              plant[vessels].mean(), geo.perimeter, h)
         reduction = self._reduction()                                 # the reduced sections: their kind's kr
-        groups = reduction.reduced_groups(ds) if reduction is not None else {}
-        if groups:
-            from openalea.mecha.conductance import _grouped
-            kind_kr, kind_uptake = reduction.outputs(ds, "kr"), reduction.outputs(ds, "standard_uptake")
-            kind_perimeter = reduction.outputs(ds, "perimeter")
-            uptake_at = np.asarray(root_uptake, dtype=float)
-            tissue = np.asarray(tissue, dtype=object)
-            cell_area = np.asarray(cell_area, dtype=float)
-            members = _grouped(np.asarray(ds.owner("SubOrgan")))
-            for i in groups:
-                nodes = members.get(i, np.zeros(0, dtype=np.int64))
-                if nodes.size == 0:
-                    continue
-                out["kr"][i], out["standard_uptake"][i] = kind_kr[i], kind_uptake[i]
-                b, h = int(barrier[nodes[0]]), float(height[nodes[0]])
-                out["Kx"][i], out["Kx_phloem"][i] = conduit_axial_conductances(
-                    tissue[nodes], cell_area[nodes], h, b, measured[nodes],
-                    (xylem_viscosity[nodes[0]], phloem_viscosity[nodes[0]]))
-                soil_node = nodes[node_kind[nodes] == SOIL_NODE]
-                if soil_node.size:
-                    out["uptake"][i] = float(uptake_at[soil_node].sum())
-                vessels = nodes[np.isin(cgroup[nodes], XYLEM_CGROUPS)]
-                if soil_node.size and vessels.size and b > 0:
-                    out["kr_effective"][i] = radial_conductivity(out["uptake"][i], float(plant[soil_node].mean()),
-                                                                 plant[vessels].mean(), kind_perimeter[i], h)
+        groups = np.asarray(sorted(reduction.reduced_groups(ds)), dtype=np.int64) if reduction is not None else ()
+        if len(groups):                                               # every reduced section at once
+            section = np.asarray(ds.owner("SubOrgan"))
+            position = np.full(segments.size, -1, dtype=np.int64)
+            position[groups] = np.arange(groups.size)
+            member = np.where(section >= 0, position[np.maximum(section, 0)], -1)      # each node's reduced section
+            nodes = np.flatnonzero(member >= 0)
+            first = np.full(groups.size, -1, dtype=np.int64)
+            first[member[nodes][::-1]] = nodes[::-1]                    # each reduced section's first node
+            has = first >= 0
+            groups, first = groups[has], first[has]
+            position[:] = -1
+            position[groups] = np.arange(groups.size)
+            member = np.where(section >= 0, position[np.maximum(section, 0)], -1)
+            out["kr"][groups] = reduction.outputs(ds, "kr")[groups]
+            out["standard_uptake"][groups] = reduction.outputs(ds, "standard_uptake")[groups]
+            kind_perimeter = reduction.outputs(ds, "perimeter")[groups]
+            b, h = barrier[first].astype(int), height[first].astype(float)
+            out["Kx"][groups], out["Kx_phloem"][groups] = conduit_axial_conductances(
+                member, groups.size, tissue, cell_area, h, b, measured,
+                (np.asarray(xylem_viscosity, dtype=float)[first], np.asarray(phloem_viscosity, dtype=float)[first]))
+            at = member >= 0
+
+            def per_section(mask, values):
+                chosen = at & mask
+                return (np.bincount(member[chosen], weights=values[chosen], minlength=groups.size),
+                        np.bincount(member[chosen], minlength=groups.size))
+            uptake, soil_count = per_section(node_kind == SOIL_NODE, np.asarray(root_uptake, dtype=float))
+            with_soil = soil_count > 0
+            out["uptake"][groups[with_soil]] = uptake[with_soil]
+            soil_psi_sum, _ = per_section(node_kind == SOIL_NODE, plant)
+            vessel_psi_sum, vessel_count = per_section(np.isin(cgroup, XYLEM_CGROUPS), plant)
+            effective = with_soil & (vessel_count > 0) & (b > 0)
+            if effective.any():
+                out["kr_effective"][groups[effective]] = radial_conductivity(
+                    uptake[effective], soil_psi_sum[effective] / soil_count[effective],
+                    vessel_psi_sum[effective] / vessel_count[effective], kind_perimeter[effective], h[effective])
         with_osmotic = np.asarray(standard_osmotic) > 0
         water = standard + np.where(with_osmotic, np.asarray(osmotic_potential, dtype=float), 0.)
         vapour, kelvin = self._liquid_equivalent(standard, vapour_node, leaf_temperature)

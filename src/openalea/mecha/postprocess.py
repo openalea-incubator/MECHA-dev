@@ -68,25 +68,37 @@ def axial_conductances(geo, height, barrier, measured=None,
     return 0., total(geo.typed["protosieve"], phloem)
 
 
-def conduit_axial_conductances(tissue, cell_area, height, barrier, measured=None,
+def conduit_axial_conductances(group, sections: int, tissue, cell_area, height, barrier, measured=None,
                                viscosities=(VISCOSITY_XYLEM, VISCOSITY_PHLOEM)) -> tuple:
-    """axial_conductances from the conduits' own values (per node: *tissue*, *cell_area* in mm², *measured*), without
-    the section's geometry: a condensed section's (its conduits are its kept nodes)."""
+    """
+    axial_conductances of condensed *sections* at once (their conduits are their kept nodes), from the conduits' own
+    values, without the sections' geometry: per node its section (*group*: a position below *sections*, -1 for
+    none), *tissue*, *cell_area* (mm²) and *measured*; per section its *height* (µm), *barrier* and *viscosities*
+    (xylem, phloem: numbers or per section). (Kx, Kx_phloem) per section: the xylem vessels' and the sieve tubes'
+    at barrier > 0, (0, the protosieve cells') at barrier 0.
+    """
     from openalea.mecha.geometry import PROTOSIEVE_TYPES, SIEVE_TYPES, XYLEM_TYPES
+    group = np.asarray(group, dtype=np.int64)
     tissue = np.asarray(tissue, dtype=object)
     area = np.asarray(cell_area, dtype=float) * 1.0E6                       # mm2 -> µm2, as the geometry's
     measured = np.full(area.size, np.nan) if measured is None else np.asarray(measured, dtype=float)
-    height = float(height)
+    height = np.broadcast_to(np.asarray(height, dtype=float), (sections,))
+    barrier = np.broadcast_to(np.asarray(barrier), (sections,))
+    xylem, phloem = (np.broadcast_to(np.asarray(viscosity, dtype=float), (sections,)) for viscosity in viscosities)
+    on = group >= 0
+    at = np.where(on, group, 0)
 
-    def total(types, viscosity):
-        cells = np.flatnonzero(np.isin(tissue, types))
-        K = [measured[c] / (height / 1.0E04) if np.isfinite(measured[c]) else _poiseuille(area[c], height, viscosity)
-             for c in cells]
-        return float(np.sum(K)) * height / 1.0E04
-    xylem, phloem = (float(viscosity) for viscosity in viscosities)
-    if barrier > 0:
-        return total(XYLEM_TYPES, xylem), total(SIEVE_TYPES, phloem)
-    return 0., total(PROTOSIEVE_TYPES, phloem)
+    def total(cells, viscosity):
+        h = height[at]
+        K = np.where(np.isfinite(measured), measured / (h / 1.0E04),
+                     area ** 2 / (8 * 3.141592 * h * viscosity[at] / 3600 / 24) * 1.0E-12)
+        summed = np.bincount(at[cells & on], weights=K[cells & on], minlength=sections)
+        return summed * height / 1.0E04
+    mature = barrier > 0
+    Kx = np.where(mature, total(np.isin(tissue, XYLEM_TYPES), xylem), 0.)
+    Kx_phloem = np.where(mature, total(np.isin(tissue, SIEVE_TYPES), phloem),
+                         total(np.isin(tissue, PROTOSIEVE_TYPES), phloem))
+    return Kx, Kx_phloem
 
 
 def transmembrane_layers(ds, segment) -> "pd.DataFrame":
