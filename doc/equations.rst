@@ -283,6 +283,34 @@ within :math:`w^2/8` of its curvature (a root's uptake and a blade's water poten
 exact kinds' on a growing seedling, ``test_reduction_accuracy.py``). ``length_classes="exact"`` gives a kind per
 length (the exactness tests' reference).
 
+**The shoot's lumped kept nodes** (``plant_reduction(leaf_ports=, vapour_path=)``, scenario keys ``leaf_ports``,
+``vapour_path``). A reduced section's dense block has a row per kept node: a blade keeps its conduits and its vapour
+path (446 nodes on use case 1's day 8: 118 conduits, 282 evaporating walls, 26 air spaces, 20 pores), a stem its
+conduits (198). Two options lump kept nodes into one (metafspm's ``Reduction(merge=)``): a merged group is one node,
+its members held at one potential :math:`\psi_G`. With :math:`P` the matrix summing a group's members (a column per
+node, a 1 in each member's row), the kind's full matrix and sources are contracted, :math:`A \to P^\top A P`,
+:math:`c \to P^\top c`, then Kron-reduced as before; the group's live terms are its representative's (its first
+member's) and those of the members' explicit edges, joined to it. It is exact when the members' potentials are equal
+in the full section and an approximation otherwise: the potential differences across a group (the lateral gradients
+between the vessels of a bundle, or the walls lining an air space) are dropped.
+
+- ``leaf_ports="bundles"`` (default ``"conduits"``): a shoot section's conduits per vascular bundle and family
+  (GRANAP's ``pole_id`` and ``family``: its xylem vessels one node, its sieve tubes another; a root section, which has
+  a soil node, keeps each conduit). The junctions between two sections then join bundles; the merged conduit's area is
+  its members' root sum of squares, :math:`a_G = (\sum_i a_i^2)^{1/2}`, so that its Poiseuille conductance
+  (:math:`\propto a^2`) is theirs summed: between two sections of one anatomy, a bundle's junction conducts as its
+  vessels' junctions together; where two anatomies meet, the bundles are paired by position as the vessels are.
+- ``vapour_path="air_spaces"`` (default ``"cells"``): a leaf's evaporating walls per air space they face (each wall
+  faces one, ``air_space_of_wall``): one node, its wall-air exchanges summed on it
+  (:math:`Q_{G \to a} = \sum_{w \in G} G_w e_\text{ref} \alpha\,\psi_G - G_w x_a + G_w e_\text{ref}(1 -
+  \alpha\psi_\text{ref})`, the walls' linearised Kelvin terms at their common potential). The air spaces and the
+  pores stay nodes.
+
+On the growing seedling of ``test_reduction_accuracy.py`` (3 days), the two together keep 107 nodes in its stem and
+sheath (447 each conduit and wall a node) and 107 in its blade (434), the roots' 26 unchanged; the roots' uptake
+within 0.03 % of the transpiration and the blade's water potential within 0.2 % of its drop below the soil
+(``leaf_ports`` alone 0.19 %, ``vapour_path`` alone 0.17 %).
+
 
 The leaves' vapour path (``conductance.vapour_conductances``)
 =============================================================
