@@ -30,13 +30,13 @@ def main():
 
     mecha()                                                       # case 1: the xylem's potential
     potential = dict(uptake=float(ds.get("standard_uptake")[0]), kr=float(ds.get("kr")[0]), Kx=float(ds.get("Kx")[0]),
-                     psi_xylem=mecha.standard_psi_xylem, frame=plots.port_frame(mecha, segment, libraries=(library,)))
+                     psi_xylem=mecha.standard_psi_xylem, frame=plots.port_frame(mecha, segment))
 
     mecha.standard_axial_condition, mecha.standard_axial_flow = 2., potential["uptake"]
     mecha()                                                       # case 2: the uptake, as a flow into the xylem
     flow = dict(uptake=float(ds.get("standard_uptake")[0]), kr=float(ds.get("kr")[0]), Kx=float(ds.get("Kx")[0]),
                 psi_xylem=float(np.asarray(ds.get("standard_psi"))[xylem].mean()),
-                frame=plots.port_frame(mecha, segment, libraries=(library,)))
+                frame=plots.port_frame(mecha, segment))
 
     print(f"{'':16s} {'potential':>12s} {'flow':>12s} {'Δ (%)':>8s}")
     for name, unit in (("psi_xylem", "hPa"), ("uptake", "cm3/d"), ("kr", "cm/hPa/d"), ("Kx", "cm4/hPa/d")):

@@ -18,6 +18,7 @@ sys.path[:0] = [os.path.join(HERE, "..", "tutorials"), os.path.join(HERE, "..", 
 
 from legacy_run import legacy_neumann, legacy_options, legacy_section           # noqa: E402
 from tutorial_01_input import section                                             # noqa: E402
+from openalea.granap.metafspm.library import template_by_index                    # noqa: E402
 
 BARRIER = 3
 
@@ -25,7 +26,7 @@ BARRIER = 3
 def main():
     ds, mecha, library = section("granap")
     legacy_options(mecha)
-    organ = library.by_index(int(ds.get("anatomy_template")[0])).organ
+    organ = template_by_index(ds, int(ds.get("anatomy_template")[0])).organ
     height = float(np.asarray(ds.get("length"))[0]) * 1.0E6
     ds.set("barrier", np.full(ds.n_nodes(), float(BARRIER)))
     mecha()

@@ -18,13 +18,14 @@ from legacy_run import legacy_frame, legacy_options, legacy_section             
 from tutorial_01_input import BARRIERS, FILES, section                                 # noqa: E402
 
 from openalea.mecha import plots                                                # noqa: E402
+from openalea.granap.metafspm.library import template_by_index                  # noqa: E402
 
 
 def main(source="granap"):
-    ds, mecha, library = section(source)
+    ds, mecha, _ = section(source)
     legacy_options(mecha)
     segment = int(ds.entity_ids("SubOrgan")[0])
-    organ = library.by_index(int(ds.get("anatomy_template")[0])).organ
+    organ = template_by_index(ds, int(ds.get("anatomy_template")[0])).organ
     height = float(np.asarray(ds.get("length"))[0]) * 1.0E6
     run = legacy_section(organ, barriers=BARRIERS, height=height)
     port, legacy = {}, {}
@@ -32,7 +33,7 @@ def main(source="granap"):
     for i, barrier in enumerate(BARRIERS):
         ds.set("barrier", np.full(ds.n_nodes(), float(barrier)))
         mecha()
-        port[barrier] = plots.port_frame(mecha, segment, libraries=(library,))
+        port[barrier] = plots.port_frame(mecha, segment)
         legacy[barrier] = legacy_frame(run, i, organ)
         Kx = float(np.ravel(run.stages[i]["Kx"])[0])
         print(f"{'':{len(source) + 1}s} {barrier:8d} {run.stages[i]['kr']:12.6e} {ds.get('kr')[0]:12.6e} {Kx:12.6e} "

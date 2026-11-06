@@ -90,7 +90,7 @@ def main(source="granap"):
         mecha()
         print(f"  barrier {barrier} | kr = {ds.get('kr')[0]:.4e} cm hPa-1 d-1 | Kx = {ds.get('Kx')[0]:.4e} "
               f"cm4 hPa-1 d-1")
-        frames[barrier] = plots.port_frame(mecha, segment, libraries=(library,))
+        frames[barrier] = plots.port_frame(mecha, segment)
 
     folder = os.path.join(HERE, "outputs")
     os.makedirs(folder, exist_ok=True)

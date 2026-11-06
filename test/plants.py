@@ -70,11 +70,9 @@ def anatomy_data_structure(architecture, anatomy_class=Anatomy):
 
 
 def template_organ(anatomy, g, segment):
-    """The GRANAP organ the segment's anatomy was copied from (its template's, in the root or a shoot library)."""
-    from openalea.granap.metafspm.library import find_template
-    index = int(g.property("anatomy_template")[segment])
-    libraries = [anatomy.library] + [organ.library for organ in getattr(anatomy, "shoot", {}).values()]
-    return find_template(libraries, index).organ
+    """The GRANAP organ the segment's anatomy was copied from (its template's, the population's: g.objects)."""
+    from openalea.granap.metafspm.library import template_by_index
+    return template_by_index(g, int(g.property("anatomy_template")[segment])).organ
 
 
 def needle(length=HEIGHT):
