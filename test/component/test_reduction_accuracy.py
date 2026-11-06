@@ -5,7 +5,9 @@ segments of several lengths with a lateral; GRANAP's anatomies, every section re
 sections' kinds by length class (length_classes=0.1, the default: a section between two classes their kinds' blend)
 or one per length ("exact"): the roots' uptake, the blade's water potential and the root system's conductance (Krs,
 root_system) within 0.5 % of the exact kinds'; each class's kind evaluated once. The kinds evaluated in bounded batches, in
-the reduction's library kept from one batch to the next, are those of one evaluation.
+the reduction's library kept from one batch to the next, are those of one evaluation. The shoot's lumped kept nodes
+(plant_reduction's leaf_ports="bundles" and vapour_path="air_spaces", metafspm's devplan O-7): the uptake and the
+blade's water potential within 0.5 % of each conduit and each evaporating wall its own node, on far fewer nodes.
 """
 import numpy as np
 import pytest
@@ -104,11 +106,11 @@ class SeedlingModel(CompositeModel):
         self.hydraulics()
 
 
-def _seedling(length_classes):
+def _seedling(length_classes, **options):
     scenario = {"stem_anatomy": {}, "leaf_anatomy": {}, "sheath_anatomy": {}, "soil_node": True,
                 "instanced_anatomy": True, "collar_condition": 0., "uniform_soil_psi": SOIL,
                 "transpiration": TRANSPIRATION, "reduced": True, "reduced_where": {"label": list(LABELS)},
-                "length_classes": length_classes}
+                "length_classes": length_classes, **options}
     return population_data_structure(planting([Planting()], SeedlingModel, scenario), SeedlingModel, time_step=STEP)
 
 
@@ -176,6 +178,38 @@ def test_the_length_classes_give_the_exact_kinds_uptake_and_leaf_potential_withi
     width = np.log1p(0.1)
     np.testing.assert_allclose(np.log(sorted(classes)) / width, np.round(np.log(sorted(classes)) / width),
                                atol=1e-9)                              # on the classes (1.1)^k
+
+
+def _nodes_by_label(ds) -> dict:
+    labels = np.asarray(ds.labels(location="SubOrgan", per_node=False))
+    nodes = np.bincount(np.asarray(ds.owner("SubOrgan")), minlength=labels.size)
+    return {label: int(nodes[labels == label].sum()) for label in LABELS}
+
+
+def test_the_shoots_bundles_and_air_spaces_give_the_uptake_and_leaf_potential_within_half_a_percent():
+    """leaf_ports="bundles" and vapour_path="air_spaces" (the shoot's conduits per vascular bundle, a leaf's
+    evaporating walls per air space: each one node) against each conduit and wall its own node, the same 3 days'
+    growth: the roots' uptake and the blade's water potential within 0.5 % (of the transpiration, of the blade's
+    drop below the soil); the stem's, sheath's and blade's kept nodes a quarter of theirs, the roots' the same."""
+    results, nodes = {}, {}
+    for name, options in (("cells", {}), ("lumped", {"leaf_ports": "bundles", "vapour_path": "air_spaces"})):
+        population = _seedling(0.1, **options)
+        g = population.data_structure.structure
+        initial = {int(v): float(g.property("length")[int(v)]) for v in population.data_structure.entity_ids("SubOrgan")
+                   if g.label(g.complex(int(v))) != g.labels.Organ.StemInternode}
+        series = []
+        for step in range(int(DAYS * 24 * 3600 / STEP) + 1):
+            _grow(population, initial, step * STEP / 3600.)
+            population.instance.run()
+            series.append(_measures(population.data_structure))
+        results[name], nodes[name] = series, _nodes_by_label(population.data_structure)
+    for (uptake, leaf), (cells_uptake, cells_leaf) in zip(results["lumped"], results["cells"]):
+        assert np.abs(uptake - cells_uptake).max() <= TOLERANCE * np.abs(cells_uptake).sum()
+        assert abs(leaf - cells_leaf) <= TOLERANCE * abs(cells_leaf - SOIL)
+        assert uptake.sum() == pytest.approx(TRANSPIRATION, rel=1e-8)
+    assert nodes["lumped"]["RootSegment"] == nodes["cells"]["RootSegment"]
+    for label in ("StemElement", "LeafElement"):
+        assert nodes["lumped"][label] < nodes["cells"][label] / 4
 
 
 def test_the_length_classes_give_the_exact_kinds_root_system_conductance_within_half_a_percent():

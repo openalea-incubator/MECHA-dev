@@ -376,7 +376,8 @@ def test_the_reduction_s_scenario_entries_are_accepted_with_the_reduction_off():
     """scenario_reduction owns its scenario entries (scenario_keys): with "reduced" false, its labels and classes are
     inactive entries of the plant model, not unknown ones; the seedling is whole."""
     from openalea.mecha.component import scenario_reduction
-    assert set(scenario_reduction.scenario_keys) == {"reduced", "reduced_where", "length_classes", "osmotic_reduction"}
+    assert set(scenario_reduction.scenario_keys) == {"reduced", "reduced_where", "length_classes", "osmotic_reduction",
+                                                     "leaf_ports", "vapour_path"}
     ds, hydraulics = _seedling(reduced=False, soil_node=True, reduced_where={"label": "RootSegment"},
                                length_classes="exact")
     assert ds.reduction is None and hydraulics._reduction() is None

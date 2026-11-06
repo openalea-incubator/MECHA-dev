@@ -26,7 +26,7 @@ from openalea.mecha.conductance import (Network, assemble, boundary_terms, corte
                                        elongation_sink, kelvin_alpha, set_edge_ends, set_wall_thickness,
                                        sieve_tube_terms, vapour_conductances)
 from openalea.mecha.geometry import (AXIAL_JUNCTION, LEAF_SURFACE, MEMBRANE, SOIL, SOIL_NODE, STOMATAL, XYLEM_CGROUPS,
-                                     AIR_LINK, WALL_AIR, local_index,
+                                     AIR_LINK, WALL, WALL_AIR, local_index,
                                      phi_thick_cells,
                                      section_geometry, section_of, section_parts, template_section, template_values)
 from openalea.mecha.postprocess import (VISCOSITY_PHLOEM, VISCOSITY_XYLEM, axial_conductances, conduit_axial_conductances,
@@ -940,7 +940,7 @@ class MechaHydraulics(MechaSections):
         kept_nodes = nodes[kron.kept_nodes]
         reference = kept_nodes[0] if kept_nodes.size else nodes[0]
         plant = (float(P_node["thickness_source"][reference]), float(P_node["thickness"][reference]))
-        unit = self._template_unit_volumes(full_template, plant)
+        unit = kind.contract(self._template_unit_volumes(full_template, plant))   # a merged node's: its members' sum
         vapour = (np.asarray(ds.get("vapour_node")) > 0) | (np.asarray(ds.get("kind")) == LEAF_SURFACE)
         return unit[kron.kept_nodes] + kron.shares(~vapour[kept_nodes], unit[kron.interior_nodes])
 
@@ -1373,7 +1373,52 @@ def vapour_edges(template) -> np.ndarray:
     return out
 
 
-def plant_reduction(where=None, length_classes=0.1, osmotic: bool = False):
+def air_space_of_wall(template) -> np.ndarray:
+    """Per vertex of a SectionTemplate, the air space its evaporating wall faces (the row of the other end of its
+    wall-air Connection; a leaf's walls each face one), -1 for the others: the walls of one air space are one node
+    with plant_reduction's vapour_path="air_spaces" (a merge's labels, metafspm's Reduction(merge=))."""
+    out = np.full(template.size, -1, dtype=np.int64)
+    rows, values = template.properties.get("network_path", (np.zeros(0, dtype=np.int64), np.zeros(0)))
+    edges = np.asarray(rows, dtype=np.int64)[np.asarray(values, dtype=float) == WALL_AIR]
+    if not edges.size:
+        return out
+    kind = np.full(template.size, np.nan)
+    kind_rows, kind_values = template.properties["kind"]
+    kind[np.asarray(kind_rows, dtype=np.int64)] = np.asarray(kind_values, dtype=float)
+    ends = []
+    for link in ("n_id_a", "n_id_b"):
+        where, linked = template.properties[link]
+        ends.append(np.asarray(linked, dtype=np.int64)[np.searchsorted(where, edges)])
+    a_is_wall = kind[ends[0]] == WALL
+    walls, air = np.where(a_is_wall, ends[0], ends[1]), np.where(a_is_wall, ends[1], ends[0])
+    out[walls] = air
+    return out
+
+
+def shoot_conduits(template) -> np.ndarray:
+    """The conduits (GRANAP's entity set conduits) of a SectionTemplate of the shoot: none in a root's (a reduced
+    root section has a soil node: MECHA's node soil boundaries, which a reduced root needs), so that
+    plant_reduction's leaf_ports="bundles" leaves the roots' conduits each its own node."""
+    from openalea.metafspm.coupling.declaration import template_selection
+    if template_selection("GranapAnatomy.soil_nodes", template).any():
+        return np.zeros(template.size, dtype=bool)
+    return template_selection("GranapAnatomy.conduits", template)
+
+
+_VAPOUR_PATH = vapour_path                    # plant_reduction's keep rule (its argument vapour_path is an option)
+
+# plant_reduction's options as metafspm's Reduction(merge=) dicts: a shoot section's conduits lumped per vascular
+# bundle and family (GRANAP's pole_id and family: its xylem vessels one node, its sieve tubes another), the merged
+# conduit's area its members' root sum of squares (a Poiseuille conductance goes as the area squared: the junctions'
+# conductances summed); a leaf's evaporating walls lumped per air space
+LEAF_PORTS = {"conduits": None,
+              "bundles": {"where": shoot_conduits, "by": ("pole_id", "family"),
+                          "properties": {"cell_area": "root_sum_square"}}}
+VAPOUR_PATHS = {"cells": None, "air_spaces": {"where": _VAPOUR_PATH, "by": air_space_of_wall}}
+
+
+def plant_reduction(where=None, length_classes=0.1, osmotic: bool = False, leaf_ports: str = "conduits",
+                    vapour_path: str = "cells"):
     """
     The Reduction (solve.reduction) of a plant model with GRANAP's anatomies and MechaHydraulics' plant problem: the
     sections *where* selects (a filter of the SubOrgans, metafspm's Reduction(where=): {"label": ...} their labels,
@@ -1386,16 +1431,30 @@ def plant_reduction(where=None, length_classes=0.1, osmotic: bool = False):
     "exact" (a kind per length: the exactness's reference); with *osmotic*, the conduits' and the hidden tissues'
     osmotic potentials as per-section inputs (conduit_osmotic_potential, tissue_osmotic_potential); the sections' kr,
     standard uptake and perimeter from their kind.
+
+    Two approximations shrink the shoot's dense blocks (each kept node of a section a row of its dense block) by
+    lumping kept nodes (metafspm's Reduction(merge=): a merged group one node, its members held at one potential):
+      leaf_ports   "conduits" (default): each conduit its own node; "bundles": a shoot section's conduits per
+                   vascular bundle (LEAF_PORTS: its xylem vessels one node, its sieve tubes another; the junctions
+                   between sections then join bundles, the merged conduit's area the root sum of squares of its
+                   members', so that its Poiseuille conductance is theirs summed); the roots' unchanged
+      vapour_path  "cells" (default): each evaporating wall its own node; "air_spaces": a leaf's evaporating walls per
+                   air space they face (VAPOUR_PATHS: one node, their wall-air exchanges summed on it)
     """
     import openalea.granap.metafspm.component                   # noqa: F401  (GranapAnatomy's entity sets)
     from openalea.metafspm.solve.reduction import Reduction, Relative
+    if leaf_ports not in LEAF_PORTS:
+        raise ValueError(f"plant_reduction: leaf_ports is one of {sorted(LEAF_PORTS)}, got {leaf_ports!r}")
+    if vapour_path not in VAPOUR_PATHS:
+        raise ValueError(f"plant_reduction: vapour_path is one of {sorted(VAPOUR_PATHS)}, got {vapour_path!r}")
     kind = {"barrier": None, "length": None if length_classes == "exact" else Relative(float(length_classes))}
     inputs = {"osmotic_potential": dict(by="tissue", group="tissue_osmotic_potential",
                                         kept="conduit_osmotic_potential")} if osmotic else {}
+    merge = tuple(spec for spec in (LEAF_PORTS[leaf_ports], VAPOUR_PATHS[vapour_path]) if spec is not None)
     return Reduction(location="SubOrgan", where={"label": "RootSegment"} if where is None else where,
-                     ports="GranapAnatomy.conduits", keep=("GranapAnatomy.soil_nodes", vapour_path),
+                     ports="GranapAnatomy.conduits", keep=("GranapAnatomy.soil_nodes", _VAPOUR_PATH),
                      explicit_edges=vapour_edges, kind=kind, inputs=inputs, systems=("MechaHydraulics._plant_problem",),
-                     outputs=("kr", "standard_uptake", "perimeter"))
+                     outputs=("kr", "standard_uptake", "perimeter"), merge=merge or None)
 
 
 def scenario_reduction(scenario):
@@ -1404,13 +1463,17 @@ def scenario_reduction(scenario):
     class reduced or not): with "reduced" true, plant_reduction of the sections "reduced_where" selects (a filter of
     the SubOrgans, e.g. {"label": ("RootSegment", "RootApex", "StemElement", "LeafElement", "Seed")}: every section;
     the root segments by default), their kinds by "length_classes" (0.1 by default, plant_reduction's), the osmotic
-    inputs with "osmotic_reduction" (false by default); None without it (the whole network).
+    inputs with "osmotic_reduction" (false by default), the shoot's conduits by "leaf_ports" and a leaf's vapour path
+    by "vapour_path" (plant_reduction's: "conduits" and "cells" by default); None without it (the whole network).
     """
     if not scenario.get("reduced", False):
         return None
     return plant_reduction(where=scenario.get("reduced_where"), length_classes=scenario.get("length_classes", 0.1),
-                           osmotic=bool(scenario.get("osmotic_reduction", False)))
+                           osmotic=bool(scenario.get("osmotic_reduction", False)),
+                           leaf_ports=scenario.get("leaf_ports", "conduits"),
+                           vapour_path=scenario.get("vapour_path", "cells"))
 
 
 # the scenario entries scenario_reduction owns, read or not (metafspm accepts them with "reduced" off)
-scenario_reduction.scenario_keys = ("reduced", "reduced_where", "length_classes", "osmotic_reduction")
+scenario_reduction.scenario_keys = ("reduced", "reduced_where", "length_classes", "osmotic_reduction", "leaf_ports",
+                                    "vapour_path")
