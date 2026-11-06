@@ -1085,7 +1085,7 @@ class MechaHydraulics(MechaSections):
     # tol (cm3 d-1): the pinned walls' penalty puts their residuals' round-off at ~1e-9; the systems are linear,
     # solved by the first Newton step
     @graph_system(node_unknowns=["standard_psi"], solver="newton", max_iterations=3, tolerance=1e-8, schedule_as="state",
-                  filters={"in_standard_problem": ">0"},
+                  filters={"in_standard_problem": ">0"}, symmetric=True,
                   condense=lambda self: "SubOrgan" if self.plant_solver == "condensed" else None)
     class _standard_problem:
         """
