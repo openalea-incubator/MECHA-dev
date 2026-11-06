@@ -17,7 +17,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import StructuralComponent
 from openalea.metafspm.data_structure.configs import PropsConfig
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
@@ -71,11 +70,11 @@ def section(source):
         library = (AnatomyLibrary() if source == "granap" else
                    AnatomyLibrary(organ_class=cellset_organ_class(FILES[source])))
 
-    Choregrapher().add_simulation_time_step(3600.)
     plants = pd.DataFrame([dict(plant="p0", model=None, x=0., y=0., z=0., rotation=0., scenario={"parameters": {}})])
     g, _ = build_population(plants, initiators=(Root, Anatomy))
     g.convert_properties_to_arraydict()
     ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiring=junction_rules(g))
+    ds.simulation_time_step = 3600.
     Anatomy(data_structure=ds)()
     ds.register("barrier", np.ones(ds.n_nodes()), location="node")
     return ds, MechaHydraulics(data_structure=ds), Anatomy.library
