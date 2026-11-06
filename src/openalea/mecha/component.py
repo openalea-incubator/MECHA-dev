@@ -17,6 +17,7 @@ from scipy.sparse import diags
 from openalea.metafspm.coupling.component import (FunctionalComponent, input_variable, parameter, setting,
                                                    state_variable)
 from openalea.metafspm.data_structure.configs import ScalesConfig
+from openalea.metafspm.solve.conservation import Conservation
 from openalea.metafspm.solve.decorator import (boundary_set, declared_system, explicit_term, graph_jacobian,
                                                graph_output, graph_system, input_jacobian, kind_derived,
                                                node_balance, rate, totalstate)
@@ -36,6 +37,9 @@ PHLOEM_CGROUPS = (11, 23)
 # The root sections' SubOrgan labels: the root segments and the root apices (an axis' tip, ArchiSimple's, with an
 # anatomy of its own: GRANAP's root apex kind), the sections with a soil contact, a kr and an uptake
 ROOT_LABELS = ("RootSegment", "RootApex")
+# The plant problem's water, conserved: nothing held (a steady flow), in from the soil, out by the organs'
+# transpiration and to the elongating cells (cm3 d-1 x s, in cm3); its residual, each step, is the plant's imbalance
+PLANT_WATER = Conservation(inflow="root_uptake", outflow=("leaf_transpiration", "elongation_sink"), unit="cm3")
 
 SCALES = ScalesConfig()
 
@@ -135,7 +139,7 @@ class MechaSections(FunctionalComponent):
         reduced = self._reduced_nodes()
         stamp = (ds.structure_stamp(), templates.tobytes(),
                  reduced.tobytes())
-        kept = self.__dict__.get("_section_geometries")
+        kept = self.caches().get("section_geometries")              # the component's caches (dropped on a load)
         if kept is not None and kept[0] == stamp:                   # the same sections: the same dict (read only)
             return kept[1]
         template = dict(zip(ds.entity_ids("SubOrgan").tolist(), templates.tolist()))
@@ -154,7 +158,7 @@ class MechaSections(FunctionalComponent):
                 cached = cache[key] = ((nodes.size, edges.size),
                                                   section_geometry(section_of(ds, nodes, edges)))
             out[segment] = (nodes, edges, cached[1])
-        self.__dict__["_section_geometries"] = (stamp, out)
+        self.caches()["section_geometries"] = (stamp, out)
         return out
 
     def _reduced_nodes(self) -> np.ndarray:
@@ -1119,13 +1123,15 @@ class MechaHydraulics(MechaSections):
 
     # ── The plant problem: the sections joined by their xylem junctions ──
     @graph_system(node_unknowns=["psi"], solver="newton", max_iterations=3, tolerance=1e-8, schedule_as="state",
-                  condense=lambda self: "SubOrgan" if self.plant_solver == "condensed" else None)
+                  condense=lambda self: "SubOrgan" if self.plant_solver == "condensed" else None,
+                  conserved={"water": PLANT_WATER})
     class _plant_problem:
         """
         The whole plant: every section's edges and the xylem junctions between sections; the soil around the root
         surface (soil_psi), the collar's condition on the first root section's vessels; the leaves' vapour path,
         from their evaporating walls through their air spaces and stomata to their surface nodes, where their organs'
-        transpiration leaves (a Neumann condition).
+        transpiration leaves (a Neumann condition). Its water is conserved (PLANT_WATER: nothing held, what the roots
+        take up leaves by transpiration and to the elongating cells; a collar condition's flow is not counted).
         """
 
         @node_balance(field="psi")

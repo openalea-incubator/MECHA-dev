@@ -93,7 +93,7 @@ class RootSystemConductance(FunctionalComponent):
         total, inflow = equivalent_conductance(ds.to_graph_view(), network, sources=sources, sinks=collar,
                                                source_conductance=through,
                                                groups=ds.owner("SubOrgan") if self.plant_solver == "condensed" else None,
-                                               cache=self.__dict__.setdefault("_krs_condensation", {}),
+                                               cache=self.caches().setdefault("krs_condensation", {}),
                                                extra=terms[0] if terms is not None else None)
         per_plant = ds.map_to(inflow, "node", "Plant", "sum")
         plant_total = ds.map_to(per_plant, "Plant", "node", "broadcast")
