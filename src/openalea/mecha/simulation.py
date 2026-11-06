@@ -204,7 +204,7 @@ def _summary(section: Section) -> pd.Series:
 
 
 def simulate(parameters: dict = None, anatomy: dict = None, barrier: float = 1., soil_psi: float = 0.,
-             xylem_psi: float = -5000., osmotic: dict = None, outputs: str = None) -> Section:
+             xylem_psi: float = -5000., osmotic: dict = None, outputs: str = None, compute=None) -> Section:
     """Solve the water flow across one root cross section: GRANAP's anatomy (*anatomy*: its parameters, e.g.
     {"preset": "for_dicot_root", "cortex": {"n_layers": 3}}; a monocot root by default), MECHA's hydraulics with its
     defaults changed by *parameters* ({name: value}), the apoplastic barriers *barrier* (MECHA's maturity code: 1
@@ -220,7 +220,8 @@ def simulate(parameters: dict = None, anatomy: dict = None, barrier: float = 1.,
 
     The summary: kr, the radial conductivity (cm hPa-1 d-1; kr_SI in m s-1 MPa-1), the water uptake (cm³ d-1), the
     perimeter (cm), the number of cells, and the share of the radial flow carried across the cortex by the walls,
-    the membranes and the plasmodesmata."""
+    the membranes and the plasmodesmata.
+    *compute*: the Scene's run configuration (metafspm's Compute: its threads, its memory trim; None: Compute())."""
     scenario = dict(parameters or {}, standard_psi_soil=soil_psi, standard_psi_xylem=xylem_psi,
                     mature_barrier=float(barrier))
     if anatomy is not None:
@@ -229,7 +230,7 @@ def simulate(parameters: dict = None, anatomy: dict = None, barrier: float = 1.,
         scenario.update(osmotic, standard_osmotic=1.)
     recorder = SceneRecorder(outputs, frame_period=1, display_period=1) if outputs is not None else None
     scene = Scene(planting([Planting()], _OsmoticRootSection if osmotic is not None else _RootSection, scenario),
-                  recorder=recorder)
+                  recorder=recorder, compute=compute)
     scene.simulate(1)                                         # one solve, its state recorded with outputs
     section = Section(scene=scene, summary=pd.Series(dtype=float), parameters=dict(parameters or {}))
     section.summary = _summary(section)
@@ -238,14 +239,15 @@ def simulate(parameters: dict = None, anatomy: dict = None, barrier: float = 1.,
 
 def simulate_root(barriers=(3, 3, 3, 1, 1, 0), segment_length: float = 5e-3, radius: float = 0.55e-3,
                   parameters: dict = None, anatomy: dict = None, soil_psi: float = -1000.,
-                  collar_psi: float = -5000., outputs: str = None) -> pd.DataFrame:
+                  collar_psi: float = -5000., outputs: str = None, compute=None) -> pd.DataFrame:
     """Solve the water flow in a root axis (MECHA's plant problem): one section per entry of *barriers* (their
     maturity codes, from the collar to the tip), each *segment_length* m long and of *radius* m, joined by their
     xylem vessels; the soil at *soil_psi* around them, the collar's xylem at *collar_psi* (hPa). Returns a table, one
     row per section: its distance from the collar (mm), barrier, mean xylem potential (hPa), uptake (cm³ d-1), kr
     (its standard problem's) and kr_effective (in the root), both in cm hPa-1 d-1; table.attrs["scene"] is the
     metafspm scene. The barriers are Development's zones (at most three: tip, young, mature), by each section's
-    distance from the tip; the soil UniformSoil's. With *outputs* (a folder), the run is saved there as simulate saves it."""
+    distance from the tip; the soil UniformSoil's. With *outputs* (a folder), the run is saved there as simulate saves it.
+    *compute*: the Scene's run configuration (metafspm's Compute: its threads, its memory trim; None: Compute())."""
     n = len(barriers)
     distances = [(n - 1 - i) * segment_length for i in range(n)]            # from the tip, the collar's first
     scenario = dict(parameters or {}, collar_condition=1., collar_psi=collar_psi, uniform_soil_psi=soil_psi,
@@ -254,7 +256,7 @@ def simulate_root(barriers=(3, 3, 3, 1, 1, 0), segment_length: float = 5e-3, rad
     if anatomy is not None:
         scenario["root_anatomy"] = dict(anatomy)
     recorder = SceneRecorder(outputs, frame_period=1, display_period=1) if outputs is not None else None
-    scene = Scene(planting([Planting()], _RootSection, scenario), recorder=recorder)
+    scene = Scene(planting([Planting()], _RootSection, scenario), recorder=recorder, compute=compute)
     scene.simulate(1)                                         # one solve, its state recorded with outputs
     ds = scene.populations[0].data_structure
     from_collar = np.argsort(-np.asarray(ds.get("distance_from_tip"), dtype=float), kind="stable")
@@ -368,7 +370,7 @@ def root_system(main=(3, 3, 1, 1), laterals=((1, (1, 1)),), segment_length: floa
                 anatomy: dict = None, soil_psi: float = -1000., collar_psi: float = -5000.,
                 experiment: str = "control", instanced: bool = False, plant_solver: str = "full",
                 soil_boundary: str = "per_node", soil_bulk_conductance: float = 0., condensed: bool = False,
-                length_classes="exact", osmotic: dict = None) -> RootSystem:
+                length_classes="exact", osmotic: dict = None, compute=None) -> RootSystem:
     """
     A seedling's root system, every section a GRANAP anatomy and all of them one MECHA network joined by their xylem:
     a main root of len(*main*) segments (their barriers, MECHA's maturity codes, from the collar to the tip) and its
@@ -388,7 +390,8 @@ def root_system(main=(3, 3, 1, 1), laterals=((1, (1, 1)),), segment_length: floa
     MechaOsmoticPresets'; {}: its defaults), reduced sections through their kinds.
 
     Its conductance (Krs, cm3 hPa-1 d-1) and its sections' standard uptake fractions are MARSHAL's (the soil
-    uniform, the collar fixed), computed on the whole anatomical network.
+    uniform, the collar fixed), computed on the whole anatomical network. *compute*: the Scene's run configuration
+    (metafspm's Compute: its threads, its memory trim; None: Compute()).
     """
     if experiment not in EXPERIMENTS:
         raise ValueError(f"root_system(experiment=...): one of {sorted(EXPERIMENTS)}, got {experiment!r}")
@@ -419,7 +422,7 @@ def root_system(main=(3, 3, 1, 1), laterals=((1, (1, 1)),), segment_length: floa
     if condensed:                                  # the plant model's reduction (scenario_reduction)
         scenario.update(reduced=True, length_classes=length_classes, osmotic_reduction=osmotic is not None)
     scene = Scene(planting([Planting()], _OsmoticRootSystem if osmotic is not None else _RootSystem, scenario),
-                  recorder=SceneRecorder())
+                  recorder=SceneRecorder(), compute=compute)
     ds = scene.populations[0].data_structure
     if len(ds.entity_ids("SubOrgan")) != len(layout):
         raise RuntimeError("root_system: the sections do not match the layout")

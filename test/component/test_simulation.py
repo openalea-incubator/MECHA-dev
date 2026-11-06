@@ -97,3 +97,10 @@ def test_an_incomplete_outer_cortex_layer():
     ds = section.data_structure
     cortex = np.asarray(ds.get("tissue"), dtype=object) == "cortex"
     assert cortex.sum() > 0 and np.isfinite(np.asarray(ds.get("osmotic_potential"))[cortex]).all()
+
+
+def test_the_run_configuration_is_the_scenes():
+    """compute= (metafspm's Compute) is the Scene's run configuration."""
+    from openalea.metafspm.compute import Compute
+    compute = Compute(threads=1, memory="keep")
+    assert simulate(compute=compute).scene.compute is compute
