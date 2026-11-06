@@ -310,6 +310,12 @@ On the growing seedling of ``test_reduction_accuracy.py`` (3 days), the two toge
 sheath (447 each conduit and wall a node) and 107 in its blade (434), the roots' 26 unchanged; the roots' uptake
 within 0.03 % of the transpiration and the blade's water potential within 0.2 % of its drop below the soil
 (``leaf_ports`` alone 0.19 %, ``vapour_path`` alone 0.17 %).
+On metafspm's use case 1 (2 plants, day 8), ``leaf_ports="bundles"`` cuts the dense blocks' nonzeros from 1.96M to
+1.09M and the plant solve by a third, the transpiration, uptake and gas exchange within 0.04 %, the leaves' water
+potential 0.45 % above (0.8 % of its drop below the roots'); both options together to 0.30M (the solve 60 % less),
+the fluxes within 0.2 %, the leaves' water potential 3 % above: the lumped walls' common potential stands for walls
+whose potentials differ. The defaults stay ``"conduits"`` and ``"cells"`` (the use case's README, metafspm's
+devplan O-7).
 
 
 The leaves' vapour path (``conductance.vapour_conductances``)
