@@ -240,3 +240,20 @@ def test_the_per_node_soil_boundary_with_reduced_roots_is_refused():
     system.scene.populations[0].instance.hydraulics.soil_boundary = "per_node"
     with pytest.raises(ValueError, match=r"soil_boundary 'per_node' with reduced root sections"):
         system.scene.run()
+
+
+def test_the_kinds_in_a_pool_give_the_same_root_system():
+    """The reduced sections' kinds evaluated in metafspm's process pool (Compute(workers=2)): the same Krs and
+    potentials, bit for bit, as in the process."""
+    from openalea.metafspm.compute import Compute
+    kwargs = dict(main=(3, 1, 1, 0), laterals=((1, (1, 0)),), soil_psi=SOIL, collar_psi=COLLAR, condensed=True)
+    alone = root_system(compute=Compute(workers=1), **kwargs)
+    compute = Compute(workers=2)
+    try:
+        pooled = root_system(compute=compute, **kwargs)
+    finally:
+        compute.close()
+    assert alone.data_structure.structure.reduction._libraries        # evaluated here ...
+    assert not pooled.data_structure.structure.reduction._libraries   # ... and in the pool's processes
+    assert pooled.conductance == alone.conductance
+    np.testing.assert_array_equal(pooled.data_structure.get("psi"), alone.data_structure.get("psi"))
