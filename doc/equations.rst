@@ -283,6 +283,14 @@ within :math:`w^2/8` of its curvature (a root's uptake and a blade's water poten
 exact kinds' on a growing seedling, ``test_reduction_accuracy.py``). ``length_classes="exact"`` gives a kind per
 length (the exactness tests' reference).
 
+In the frames (metafspm's ``SceneRecorder``, ``display="instances"``, the default), a reduced section's ``psi`` on
+every protoplast is not written: each section is an instance of its full template (GRANAP's ``display_instances``)
+holding its kept nodes' ``psi``, and each kind's recovery :math:`x = M [x_K; 1]` (the identity on the kept nodes,
+:math:`A_{II}^{-1}(-A_{IK} x_K - c_I)` on the interior, a lumped member its node's value) is written once, as its
+sparse system :math:`(S, R)`, :math:`M = S^{-1} R` (dense when small); a section between two length classes is the
+weighted sum of its two kinds' operators, as its terms are. The reader (encoding3d's ``evaluate``, ParaView's
+Select at scale) rebuilds ``psi`` for the sections chosen, equal to the recovered interior of ``display="full"``.
+
 **The shoot's lumped kept nodes** (``plant_reduction(leaf_ports=, vapour_path=)``, scenario keys ``leaf_ports``,
 ``vapour_path``). A reduced section's dense block has a row per kept node: a blade keeps its conduits and its vapour
 path (446 nodes on use case 1's day 8: 118 conduits, 282 evaporating walls, 26 air spaces, 20 pores), a stem its
