@@ -322,7 +322,12 @@ On metafspm's use case 1 (2 plants, day 8), ``leaf_ports="bundles"`` cuts the de
 1.09M and the plant solve by a third, the transpiration, uptake and gas exchange within 0.04 %, the leaves' water
 potential 0.45 % above (0.8 % of its drop below the roots'); both options together to 0.30M (the solve 60 % less),
 the fluxes within 0.2 %, the leaves' water potential 3 % above: the lumped walls' common potential stands for walls
-whose potentials differ. The defaults stay ``"conduits"`` and ``"cells"`` (the use case's README, metafspm's
+whose potentials differ. At 16 plants (day 8, 4 processes), ``leaf_ports="bundles"`` takes the nodes from 113k to
+99k and the dense nonzeros from 15.7M to 8.8M: MECHA's time per step 34 % less (2.18 to 1.44 s), the transpiration
+and uptake unchanged, the stomatal conductance within 0.04 %, the leaves' water potential 0.36 % above on average,
+0.54 % at most. It suits multi-plant scenes (8 plants or more, where MECHA's plant solve is a third of the step) when
+such a bias of the leaves' water potential, which the stomata read, is acceptable. The defaults stay
+``"conduits"`` and ``"cells"`` for leaf water potential studies and small scenes (the use case's README, metafspm's
 devplan O-7).
 
 
