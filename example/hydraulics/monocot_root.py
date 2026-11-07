@@ -34,16 +34,8 @@ class RootHydraulics(CompositeModel):
     initiators = (RootAxis, GranapAnatomy)
     from_scale, nodes, wiring = "SubOrgan", "Compartment", junction_rules
 
-    def __init__(self, data_structure, time_step):
-        self.anatomy = GranapAnatomy(data_structure=data_structure, time_step=time_step)
-        self.development = Development(data_structure=data_structure, time_step=time_step)
-        self.hydraulics = MechaHydraulics(data_structure=data_structure, time_step=time_step)
-        self.couple(self.anatomy, self.development, self.hydraulics)
-
-    def run(self):
-        self.development()
-        self.anatomy()
-        self.hydraulics()
+    parts = {"anatomy": GranapAnatomy, "development": Development, "hydraulics": MechaHydraulics}
+    schedule = ("development", "anatomy", "hydraulics")
 
 
 def main():

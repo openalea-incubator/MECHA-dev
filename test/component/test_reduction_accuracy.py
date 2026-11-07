@@ -14,7 +14,7 @@ import pytest
 
 from openalea.metafspm.compute import Compute
 from openalea.metafspm.coupling.component import StructuralComponent
-from openalea.metafspm.coupling.composite_wrapper import CompositeModel
+from openalea.metafspm.coupling.composite_wrapper import CompositeModel, Part
 from openalea.metafspm.data_structure.configs import PropsConfig
 from openalea.metafspm.scene.population import Planting, planting, population_data_structure
 from openalea.metafspm.solve import reduction as reduction_module
@@ -91,19 +91,9 @@ class SeedlingModel(CompositeModel):
     wiring = staticmethod(junction_rules)
     reduction = staticmethod(scenario_reduction)
 
-    def __init__(self, data_structure, time_step):
-        self.anatomy = GranapAnatomy(data_structure=data_structure, time_step=time_step)
-        self.soil = UniformSoil(data_structure=data_structure, time_step=time_step)
-        self.transpiration = Transpiration(data_structure=data_structure, time_step=time_step)
-        self.hydraulics = MechaHydraulics(data_structure=data_structure, time_step=time_step,
-                                          soil_boundary="node_dirichlet")
-        self.couple(self.anatomy, self.soil, self.transpiration, self.hydraulics)
-
-    def run(self):
-        self.soil()
-        self.anatomy()
-        self.transpiration()
-        self.hydraulics()
+    parts = {"anatomy": GranapAnatomy, "soil": UniformSoil, "transpiration": Transpiration,
+             "hydraulics": Part(MechaHydraulics, soil_boundary="node_dirichlet")}
+    schedule = ("soil", "anatomy", "transpiration", "hydraulics")
 
 
 def _seedling(length_classes, **options):

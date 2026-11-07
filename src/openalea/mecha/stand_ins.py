@@ -14,12 +14,8 @@ scenario, or by a Scene forcing of the same name):
     class RootHydraulics(CompositeModel):
         initiators = (RootAxis, GranapAnatomy)
         ...
-        def __init__(self, data_structure, time_step):
-            self.anatomy = GranapAnatomy(data_structure=data_structure, time_step=time_step)
-            self.development = Development(data_structure=data_structure, time_step=time_step)
-            self.soil = UniformSoil(data_structure=data_structure, time_step=time_step)
-            self.hydraulics = MechaHydraulics(data_structure=data_structure, time_step=time_step)
-            self.couple(self.anatomy, self.development, self.soil, self.hydraulics)
+        parts = {"anatomy": GranapAnatomy, "development": Development, "soil": UniformSoil,
+                 "hydraulics": MechaHydraulics}
 
     planting([Planting()], RootHydraulics, {"tip_zone": 0., "tip_barrier": 0., "young_zone": 0.1,
                                             "mature_barrier": 3., "uniform_soil_psi": -1000.})

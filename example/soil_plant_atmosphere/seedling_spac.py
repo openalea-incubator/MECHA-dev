@@ -221,26 +221,15 @@ class SeedlingHydraulics(CompositeModel):
     initiators = (SeedlingArchitecture, GranapAnatomy)
     from_scale, nodes, wiring = "SubOrgan", "Compartment", junction_rules
 
-    def __init__(self, data_structure, time_step):
-        ds = data_structure
-        self.architecture = SeedlingArchitecture(data_structure=ds, time_step=time_step)
-        self.anatomy = GranapAnatomy(data_structure=ds, time_step=time_step)
-        self.development = Development(data_structure=ds, time_step=time_step)
-        self.transpiration = Transpiration(data_structure=ds, time_step=time_step)
-        # MECHA's osmotic presets as the "Solutes" model (§20, Q-O3), until a metabolism model is coupled
-        self.osmotic = MechaOsmoticPresets(data_structure=ds, time_step=time_step)
-        self.hydraulics = MechaHydraulics(data_structure=ds, time_step=time_step)
-        self.couple(self.architecture, self.anatomy, self.development, self.transpiration, self.osmotic,
-                    self.hydraulics)
-        # the roots' soil contacts (MECHA's entity set): the soil links' mapping maps them only
-        ds.define_mask("root_surface", entities="MechaHydraulics.soil_contacts")
+    parts = {"architecture": SeedlingArchitecture, "anatomy": GranapAnatomy, "development": Development,
+             "transpiration": Transpiration, "osmotic": MechaOsmoticPresets,   # MECHA's presets as "Solutes" (§20,
+             "hydraulics": MechaHydraulics}                                    # Q-O3) until a metabolism is coupled
+    schedule = ("development", "anatomy", "transpiration", "osmotic", "hydraulics")
 
-    def run(self):
-        self.development()
-        self.anatomy()
-        self.transpiration()
-        self.osmotic()
-        self.hydraulics()
+    def __init__(self, data_structure, time_step):
+        super().__init__(data_structure, time_step)
+        # the roots' soil contacts (MECHA's entity set): the soil links' mapping maps them only
+        data_structure.define_mask("root_surface", entities="MechaHydraulics.soil_contacts")
 
 
 # the plants and the soil exchange through the roots' surface only (the mask root_surface, by the overlap of its

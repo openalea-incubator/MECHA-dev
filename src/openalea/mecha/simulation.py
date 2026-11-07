@@ -87,18 +87,8 @@ class _RootSection(CompositeModel):
     initiators = (RootAxis, GranapAnatomy)
     from_scale, nodes, wiring = "SubOrgan", "Compartment", junction_rules
 
-    def __init__(self, data_structure, time_step):
-        self.anatomy = GranapAnatomy(data_structure=data_structure, time_step=time_step)
-        self.development = Development(data_structure=data_structure, time_step=time_step)
-        self.soil = UniformSoil(data_structure=data_structure, time_step=time_step)
-        self.hydraulics = MechaHydraulics(data_structure=data_structure, time_step=time_step)
-        self.couple(self.anatomy, self.development, self.soil, self.hydraulics)
-
-    def run(self):
-        self.development()
-        self.soil()
-        self.anatomy()
-        self.hydraulics()
+    parts = {"anatomy": GranapAnatomy, "development": Development, "soil": UniformSoil, "hydraulics": MechaHydraulics}
+    schedule = ("development", "soil", "anatomy", "hydraulics")
 
 
 class _OsmoticRootSection(CompositeModel):
@@ -107,20 +97,9 @@ class _OsmoticRootSection(CompositeModel):
     initiators = (RootAxis, GranapAnatomy)
     from_scale, nodes, wiring = "SubOrgan", "Compartment", junction_rules
 
-    def __init__(self, data_structure, time_step):
-        self.anatomy = GranapAnatomy(data_structure=data_structure, time_step=time_step)
-        self.development = Development(data_structure=data_structure, time_step=time_step)
-        self.soil = UniformSoil(data_structure=data_structure, time_step=time_step)
-        self.presets = MechaOsmoticPresets(data_structure=data_structure, time_step=time_step)
-        self.hydraulics = MechaHydraulics(data_structure=data_structure, time_step=time_step)
-        self.couple(self.anatomy, self.development, self.soil, self.presets, self.hydraulics)
-
-    def run(self):
-        self.development()
-        self.soil()
-        self.anatomy()
-        self.presets()
-        self.hydraulics()
+    parts = {"anatomy": GranapAnatomy, "development": Development, "soil": UniformSoil,
+             "presets": MechaOsmoticPresets, "hydraulics": MechaHydraulics}
+    schedule = ("development", "soil", "anatomy", "presets", "hydraulics")
 
 
 @dataclass
@@ -290,20 +269,9 @@ class _RootSystem(CompositeModel):
     from_scale, nodes, wiring = "SubOrgan", "Compartment", junction_rules
     reduction = staticmethod(scenario_reduction)
 
-    def __init__(self, data_structure, time_step):
-        self.anatomy = GranapAnatomy(data_structure=data_structure, time_step=time_step)
-        self.development = Development(data_structure=data_structure, time_step=time_step)
-        self.soil = UniformSoil(data_structure=data_structure, time_step=time_step)
-        self.hydraulics = MechaHydraulics(data_structure=data_structure, time_step=time_step)
-        self.conductance = RootSystemConductance(data_structure=data_structure, time_step=time_step)
-        self.couple(self.anatomy, self.development, self.soil, self.hydraulics, self.conductance)
-
-    def run(self):
-        self.development()
-        self.soil()
-        self.anatomy()
-        self.hydraulics()
-        self.conductance()
+    parts = {"anatomy": GranapAnatomy, "development": Development, "soil": UniformSoil, "hydraulics": MechaHydraulics,
+             "conductance": RootSystemConductance}
+    schedule = ("development", "soil", "anatomy", "hydraulics", "conductance")
 
 
 class _OsmoticRootSystem(CompositeModel):
@@ -312,22 +280,9 @@ class _OsmoticRootSystem(CompositeModel):
     from_scale, nodes, wiring = "SubOrgan", "Compartment", junction_rules
     reduction = staticmethod(scenario_reduction)
 
-    def __init__(self, data_structure, time_step):
-        self.anatomy = GranapAnatomy(data_structure=data_structure, time_step=time_step)
-        self.development = Development(data_structure=data_structure, time_step=time_step)
-        self.soil = UniformSoil(data_structure=data_structure, time_step=time_step)
-        self.presets = MechaOsmoticPresets(data_structure=data_structure, time_step=time_step)
-        self.hydraulics = MechaHydraulics(data_structure=data_structure, time_step=time_step)
-        self.conductance = RootSystemConductance(data_structure=data_structure, time_step=time_step)
-        self.couple(self.anatomy, self.development, self.soil, self.presets, self.hydraulics, self.conductance)
-
-    def run(self):
-        self.development()
-        self.soil()
-        self.anatomy()
-        self.presets()
-        self.hydraulics()
-        self.conductance()
+    parts = {"anatomy": GranapAnatomy, "development": Development, "soil": UniformSoil,
+             "presets": MechaOsmoticPresets, "hydraulics": MechaHydraulics, "conductance": RootSystemConductance}
+    schedule = ("development", "soil", "anatomy", "presets", "hydraulics", "conductance")
 
 
 @dataclass

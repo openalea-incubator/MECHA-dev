@@ -169,7 +169,10 @@ def test_a_subclass_of_mecha_hydraulics_is_reduced_as_mecha_hydraulics(monkeypat
 
     kwargs = dict(main=(3, 1, 1, 0), laterals=((1, (1, 0)),), soil_psi=SOIL, collar_psi=COLLAR, condensed=True)
     reference = root_system(**kwargs)
-    monkeypatch.setattr(simulation, "MechaHydraulics", OwnHydraulics)
+    class OwnRootSystem(simulation._RootSystem):                       # its parts with the subclass in place
+        parts = {**simulation._RootSystem.parts, "hydraulics": OwnHydraulics}
+
+    monkeypatch.setattr(simulation, "_RootSystem", OwnRootSystem)
     own = root_system(**kwargs)
     assert type(own.scene.populations[0].instance.hydraulics) is OwnHydraulics
     assert own.data_structure.n_nodes() == reference.data_structure.n_nodes()

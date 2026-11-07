@@ -44,19 +44,9 @@ class OsmoticRoot(CompositeModel):
     initiators = (RootAxis, GranapAnatomy)
     from_scale, nodes, wiring = "SubOrgan", "Compartment", junction_rules
 
-    def __init__(self, data_structure, time_step):
-        ds = data_structure
-        self.anatomy = GranapAnatomy(data_structure=ds, time_step=time_step)
-        self.development = Development(data_structure=ds, time_step=time_step)
-        self.osmotic = MechaOsmoticPresets(data_structure=ds, time_step=time_step)
-        self.hydraulics = MechaHydraulics(data_structure=ds, time_step=time_step)
-        self.couple(self.anatomy, self.development, self.osmotic, self.hydraulics)
-
-    def run(self):
-        self.development()
-        self.anatomy()
-        self.osmotic()
-        self.hydraulics()
+    parts = {"anatomy": GranapAnatomy, "development": Development, "osmotic": MechaOsmoticPresets,
+             "hydraulics": MechaHydraulics}
+    schedule = ("development", "anatomy", "osmotic", "hydraulics")
 
 
 def main():

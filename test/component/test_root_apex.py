@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from openalea.metafspm.coupling.component import StructuralComponent
-from openalea.metafspm.coupling.composite_wrapper import CompositeModel
+from openalea.metafspm.coupling.composite_wrapper import CompositeModel, Part
 from openalea.metafspm.data_structure.configs import PropsConfig
 from openalea.metafspm.scene.population import Planting, planting, population_data_structure
 
@@ -64,21 +64,9 @@ def _seedling(reduced=False, barriers=BARRIERS):
         wiring = staticmethod(junction_rules)
         reduction = staticmethod(scenario_reduction)
 
-        def __init__(self, data_structure, time_step):
-            self.anatomy = Anatomy(data_structure=data_structure, time_step=time_step)
-            self.barriers = Development(data_structure=data_structure, time_step=time_step)
-            self.soil = UniformSoil(data_structure=data_structure, time_step=time_step)
-            self.transpiration = Transpiration(data_structure=data_structure, time_step=time_step)
-            self.hydraulics = MechaHydraulics(data_structure=data_structure, time_step=time_step,
-                                              soil_boundary="node_dirichlet")
-            self.couple(self.anatomy, self.barriers, self.soil, self.transpiration, self.hydraulics)
-
-        def run(self):
-            self.soil()
-            self.anatomy()
-            self.barriers()
-            self.transpiration()
-            self.hydraulics()
+        parts = {"anatomy": Anatomy, "barriers": Development, "soil": UniformSoil, "transpiration": Transpiration,
+                 "hydraulics": Part(MechaHydraulics, soil_boundary="node_dirichlet")}
+        schedule = ("soil", "anatomy", "barriers", "transpiration", "hydraulics")
 
     scenario = dict(barriers, collar_condition=0., uniform_soil_psi=SOIL, transpiration=TRANSPIRATION,
                     soil_node=True, instanced_anatomy=True)

@@ -151,7 +151,7 @@ def _seedling(reduced=False, labels=("RootSegment", "StemElement"), **scenario):
     """The seedling as a plant model (GRANAP's anatomies and MechaHydraulics, the leaf transpiring); *reduced*: its
     stem and root sections reduced (plant_reduction: their conduits and the root's soil node kept), the leaf whole: the
     scenario's entries "reduced" and "reduced_where" (scenario_reduction), one model class for both."""
-    from openalea.metafspm.coupling.composite_wrapper import CompositeModel
+    from openalea.metafspm.coupling.composite_wrapper import CompositeModel, Part
     from openalea.metafspm.scene.population import population_data_structure
     from openalea.granap.metafspm.component import junction_rules
     from openalea.mecha.component import scenario_reduction
@@ -161,19 +161,9 @@ def _seedling(reduced=False, labels=("RootSegment", "StemElement"), **scenario):
         wiring = staticmethod(junction_rules)
         reduction = staticmethod(scenario_reduction)
 
-        def __init__(self, data_structure, time_step):
-            self.anatomy = Anatomy(data_structure=data_structure, time_step=time_step)
-            self.soil = UniformSoil(data_structure=data_structure, time_step=time_step)
-            self.transpiration = Transpiration(data_structure=data_structure, time_step=time_step)
-            self.hydraulics = MechaHydraulics(data_structure=data_structure, time_step=time_step,
-                                              soil_boundary="node_dirichlet")
-            self.couple(self.anatomy, self.soil, self.transpiration, self.hydraulics)
-
-        def run(self):
-            self.soil()
-            self.anatomy()
-            self.transpiration()
-            self.hydraulics()
+        parts = {"anatomy": Anatomy, "soil": UniformSoil, "transpiration": Transpiration,
+                 "hydraulics": Part(MechaHydraulics, soil_boundary="node_dirichlet")}
+        schedule = ("soil", "anatomy", "transpiration", "hydraulics")
 
     scenario = dict(scenario, collar_condition=0., uniform_soil_psi=SOIL, transpiration=TRANSPIRATION)
     if reduced:                                  # the exactness's reference: a kind per length (no classes)
@@ -337,18 +327,9 @@ def test_a_blade_and_a_sheath_both_transpire():
         from_scale, nodes, initiators = "SubOrgan", "Compartment", (BladeAndSheath, GranapAnatomy)
         wiring = staticmethod(junction_rules)
 
-        def __init__(self, data_structure, time_step):
-            self.anatomy = GranapAnatomy(data_structure=data_structure, time_step=time_step)
-            self.soil = UniformSoil(data_structure=data_structure, time_step=time_step)
-            self.transpiration = Transpiration(data_structure=data_structure, time_step=time_step)
-            self.hydraulics = MechaHydraulics(data_structure=data_structure, time_step=time_step)
-            self.couple(self.anatomy, self.soil, self.transpiration, self.hydraulics)
-
-        def run(self):
-            self.soil()
-            self.anatomy()
-            self.transpiration()
-            self.hydraulics()
+        parts = {"anatomy": GranapAnatomy, "soil": UniformSoil, "transpiration": Transpiration,
+                 "hydraulics": MechaHydraulics}
+        schedule = ("soil", "anatomy", "transpiration", "hydraulics")
 
     scenario = {"stem_anatomy": {}, "leaf_anatomy": {}, "sheath_anatomy": {}, "collar_condition": 0.,
                 "uniform_soil_psi": SOIL, "transpiration": TRANSPIRATION}
