@@ -33,7 +33,7 @@ def scene(folder=None, tolerance=1e-4):
 
 def summary(built, stop):
     plant = built.populations[0].data_structure
-    soil = next(model for model in built.environment if isinstance(model, Soil)).grid
+    soil = built.model(Soil).grid
     transpiration = plant.get("evaporation").sum() * CM3_PER_DAY_TO_MM3_PER_S
     uptake = plant.get("root_uptake").sum() * CM3_PER_DAY_TO_MM3_PER_S
     print(f"converged in {built.iteration} steps; largest change of Ψ per step (MPa): "
