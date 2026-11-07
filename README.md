@@ -21,8 +21,8 @@ in one environment.
 
 ```bash
 mkdir fspm && cd fspm                       # any folder: the three repositories side by side
-git clone -b data_structure_api https://github.com/openalea/metafspm.git metafspm
-git clone https://github.com/openalea/encoding3d.git encoding3d
+git clone -b release2026 https://github.com/openalea/metafspm.git metafspm
+git clone -b other_platforms_bindings https://github.com/openalea/encoding3d.git encoding3d
 git clone -b to_metafspm https://github.com/openalea-incubator/GRANAP-dev.git GRANAP
 git clone -b to_metafspm https://github.com/openalea-incubator/MECHA-dev.git MECHA-dev
 
