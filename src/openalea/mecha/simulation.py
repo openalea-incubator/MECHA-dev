@@ -229,7 +229,7 @@ def simulate(parameters: dict = None, anatomy: dict = None, barrier: float = 1.,
         scenario["root_anatomy"] = dict(anatomy)
     if osmotic is not None:
         scenario.update(osmotic, standard_osmotic=1.)
-    recorder = SceneRecorder(outputs, frame_period=1, display_period=1) if outputs is not None else None
+    recorder = SceneRecorder(outputs, frame_period="step", display_period="step") if outputs is not None else None
     scene = Scene(planting([Planting()], _OsmoticRootSection if osmotic is not None else _RootSection, scenario),
                   recorder=recorder, compute=compute)
     scene.simulate(1)                                         # one solve, its state recorded with outputs
@@ -257,7 +257,7 @@ def simulate_root(barriers=(3, 3, 3, 1, 1, 0), segment_length: float = 5e-3, rad
                     root_segments=[[radius, segment_length, distance] for distance in distances])
     if anatomy is not None:
         scenario["root_anatomy"] = dict(anatomy)
-    recorder = SceneRecorder(outputs, frame_period=1, display_period=1) if outputs is not None else None
+    recorder = SceneRecorder(outputs, frame_period="step", display_period="step") if outputs is not None else None
     scene = Scene(planting([Planting()], _RootSection, scenario), recorder=recorder, compute=compute)
     scene.simulate(1)                                         # one solve, its state recorded with outputs
     ds = scene.populations[0].data_structure
