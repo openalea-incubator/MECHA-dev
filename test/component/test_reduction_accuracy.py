@@ -62,10 +62,10 @@ class GrowingSeedling(StructuralComponent):
                                           **PropsConfig(scale=s.SubOrgan, edge_type='/', label=L.SubOrgan.LeafElement))
         for v, length in ((stem, SHOOT_LENGTHS["stem"]), (sheath, SHOOT_LENGTHS["sheath"]),
                           (blade, SHOOT_LENGTHS["blade"])):
-            g.property("stem_radius")[v] = 1e-3
-            g.property("radius")[v] = 1e-3
-            g.property("length")[v] = length
-            g.property("distance_from_tip")[v] = 0.
+            g.set_values("stem_radius", [v], [1e-3])
+            g.set_values("radius", [v], [1e-3])
+            g.set_values("length", [v], [length])
+            g.set_values("distance_from_tip", [v], [0.])
         root_organ = organ("Root", "Root", "RootInternode")
         segments, previous = [], stem
         for rank, length in enumerate(ROOT_LENGTHS):
@@ -74,16 +74,16 @@ class GrowingSeedling(StructuralComponent):
             previous = (g.add_component_with_topo(root_organ, previous, **props) if previous is stem
                         else g.add_child(previous, **props))
             segments.append(previous)
-            g.property("radius")[previous] = 0.55e-3
-            g.property("length")[previous] = length
-            g.property("distance_from_tip")[previous] = sum(ROOT_LENGTHS[rank + 1:])
+            g.set_values("radius", [previous], [0.55e-3])
+            g.set_values("length", [previous], [length])
+            g.set_values("distance_from_tip", [previous], [sum(ROOT_LENGTHS[rank + 1:])])
         for bearer, length in zip(segments, LATERAL_LENGTHS):
             lateral = g.add_component_with_topo(organ("Root", "Root", "RootInternode"), bearer,
                                                 **PropsConfig(scale=s.SubOrgan, edge_type='+',
                                                               label=L.SubOrgan.RootSegment))
-            g.property("radius")[lateral] = 0.25e-3
-            g.property("length")[lateral] = length
-            g.property("distance_from_tip")[lateral] = 0.
+            g.set_values("radius", [lateral], [0.25e-3])
+            g.set_values("length", [lateral], [length])
+            g.set_values("distance_from_tip", [lateral], [0.])
 
 
 class SeedlingModel(CompositeModel):
@@ -114,8 +114,8 @@ def _grow(population, initial, hours) -> None:
     for rank, vid in enumerate(sorted(initial, key=lambda v: initial[v])):
         rate = GROWTH / (1. + (len(initial) - 1 - rank) / 2.)
         lengths[vid] = initial[vid] * np.exp(rate * hours / 24.)
-        g.property("length")[vid] = lengths[vid]
-    per_group = np.array([lengths.get(int(v), float(g.property("length")[int(v)])) for v in vids])
+        g.set_values("length", [vid], [lengths[vid]])
+    per_group = np.array([lengths.get(int(v), float(g.view("length")[int(v)])) for v in vids])
     if ds.location("length") == "node":
         ds.set("length", per_group[np.asarray(ds.owner("SubOrgan"))])
     else:
@@ -150,7 +150,7 @@ def test_the_length_classes_give_the_exact_kinds_uptake_and_leaf_potential_withi
     for length_classes in ("exact", 0.1):
         population = _seedling(length_classes)
         g = population.data_structure.structure
-        initial = {int(v): float(g.property("length")[int(v)]) for v in population.data_structure.entity_ids("SubOrgan")
+        initial = {int(v): float(g.view("length")[int(v)]) for v in population.data_structure.entity_ids("SubOrgan")
                    if g.label(g.complex(int(v))) != g.labels.Organ.StemInternode}
         counter.kinds, counter.keys, series = 0, [], []
         for step in range(int(DAYS * 24 * 3600 / STEP) + 1):
@@ -185,7 +185,7 @@ def test_the_shoots_bundles_and_air_spaces_give_the_uptake_and_leaf_potential_wi
     for name, options in (("cells", {}), ("lumped", {"leaf_ports": "bundles", "vapour_path": "air_spaces"})):
         population = _seedling(0.1, **options)
         g = population.data_structure.structure
-        initial = {int(v): float(g.property("length")[int(v)]) for v in population.data_structure.entity_ids("SubOrgan")
+        initial = {int(v): float(g.view("length")[int(v)]) for v in population.data_structure.entity_ids("SubOrgan")
                    if g.label(g.complex(int(v))) != g.labels.Organ.StemInternode}
         series = []
         for step in range(int(DAYS * 24 * 3600 / STEP) + 1):

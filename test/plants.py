@@ -30,9 +30,9 @@ def root(n_segments=1, length=HEIGHT, radius=RADIUS):
                 if rank:
                     segment = g.add_child(segment, **PropsConfig(scale=s.SubOrgan, edge_type='<',
                                                                  label=L.SubOrgan.RootSegment))
-                g.property("radius")[segment] = radius
-                g.property("length")[segment] = length
-                g.property("distance_from_tip")[segment] = (n_segments - 1 - rank) * length
+                g.set_values("radius", [segment], [radius])
+                g.set_values("length", [segment], [length])
+                g.set_values("distance_from_tip", [segment], [(n_segments - 1 - rank) * length])
 
     return Root
 
@@ -88,9 +88,9 @@ def needle(length=HEIGHT):
                 complex_ = g.add_component(complex_, **PropsConfig(scale=scale, edge_type='/', label=label))
             segment = g.add_component(complex_, **PropsConfig(scale=s.SubOrgan, edge_type='/',
                                                               label=L.SubOrgan.LeafElement))
-            g.property("radius")[segment] = 0.6e-3
-            g.property("length")[segment] = length
-            g.property("distance_from_tip")[segment] = 0.
+            g.set_values("radius", [segment], [0.6e-3])
+            g.set_values("length", [segment], [length])
+            g.set_values("distance_from_tip", [segment], [0.])
 
     return Needle
 

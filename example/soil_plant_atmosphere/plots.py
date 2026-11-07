@@ -17,11 +17,11 @@ XYLEM = (13, 19, 20)
 def _segments(ds):
     """Per segment: (label name, its nodes' mask index, x1, x2, z1, z2, y1, y2)."""
     g = ds.mtg
-    labels = g.property("label")
+    labels = g.view("label")
     names = {g.labels.SubOrgan.RootSegment: "root", g.labels.SubOrgan.StemElement: "stem",
              g.labels.SubOrgan.LeafElement: "leaf"}
     segments = ds.entity_ids("SubOrgan")
-    coords = {name: np.array([g.property(name)[int(v)] for v in segments]) for name in
+    coords = {name: np.array([g.view(name)[int(v)] for v in segments]) for name in
               ("x1", "x2", "y1", "y2", "z1", "z2")}
     return segments, [names.get(labels[int(v)], "?") for v in segments], coords
 
@@ -306,7 +306,7 @@ def chains(built):
     """
     plant = built.populations[0].data_structure
     g = plant.mtg
-    labels, L = g.property("label"), g.labels.SubOrgan
+    labels, L = g.view("label"), g.labels.SubOrgan
     segments = [int(v) for v in plant.entity_ids("SubOrgan")]
     roots = [v for v in segments if labels[v] == L.RootSegment]
     stems = [v for v in segments if labels[v] == L.StemElement]

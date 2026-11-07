@@ -49,13 +49,13 @@ class SeedlingWithApex(StructuralComponent):
         root = g.add_component_with_topo(organ("Root", "Root", "RootInternode"), stem,
                                          **PropsConfig(scale=s.SubOrgan, edge_type='+', label=L.SubOrgan.RootSegment))
         apex = g.add_child(root, **PropsConfig(scale=s.SubOrgan, edge_type='<', label=L.SubOrgan.RootApex))
-        g.property("stem_radius")[stem] = 1e-3
+        g.set_values("stem_radius", [stem], [1e-3])
         for vertex, radius, length, distance in ((stem, 1e-3, 5e-3, 0.), (leaf, 1e-3, 5e-3, 0.),
                                                  (root, RADIUS, SEGMENT, SEGMENT + APEX),
                                                  (apex, RADIUS, APEX, APEX)):
-            g.property("radius")[vertex] = radius
-            g.property("length")[vertex] = length
-            g.property("distance_from_tip")[vertex] = distance
+            g.set_values("radius", [vertex], [radius])
+            g.set_values("length", [vertex], [length])
+            g.set_values("distance_from_tip", [vertex], [distance])
 
 
 def _seedling(reduced=False, barriers=BARRIERS):

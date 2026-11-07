@@ -71,8 +71,8 @@ def build_architecture(g, plant, parameters):
              pivot_gravitropism=0.8, n_pivot_segments=8, pivot_lateral_ranks=(2, 5))
     p.update({key: value for key, value in parameters.items() if key in p})
     s, labels = g.scales, g.labels
-    x0, y0, z0 = (float(g.property(name)[plant]) for name in ("x", "y", "z"))
-    rotation = float(g.property("rotation").get(plant, 0.))
+    x0, y0, z0 = (float(g.view(name)[plant]) for name in ("x", "y", "z"))
+    rotation = float(g.view("rotation").get(plant, 0.))
     segments = {}                                    # vid -> (length, radius, start, end)
     chains = []                                      # each axis' segments, base to tip
 
@@ -164,13 +164,13 @@ def build_architecture(g, plant, parameters):
     for vid, (length, radius, start, end) in segments.items():
         for name, value in (("length", length), ("radius", radius), ("x1", start[0]), ("x2", end[0]),
                             ("y1", start[1]), ("y2", end[1]), ("z1", start[2]), ("z2", end[2])):
-            g.property(name)[vid] = float(value)
-        if g.property("label")[vid] == g.labels.SubOrgan.StemElement:     # GRANAP's stems' class input
-            g.property("stem_radius")[vid] = float(radius)
+            g.set_values(name, [vid], [float(value)])
+        if g.view("label")[vid] == g.labels.SubOrgan.StemElement:     # GRANAP's stems' class input
+            g.set_values("stem_radius", [vid], [float(radius)])
     for chain in chains:                                               # distance from each axis' tip
         lengths = [segments[v][0] for v in chain]
         for k, vid in enumerate(chain):
-            g.property("distance_from_tip")[vid] = float(sum(lengths[k + 1:]))
+            g.set_values("distance_from_tip", [vid], [float(sum(lengths[k + 1:]))])
 
 
 @dataclass
