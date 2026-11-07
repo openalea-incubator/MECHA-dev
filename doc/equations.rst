@@ -325,10 +325,15 @@ the fluxes within 0.2 %, the leaves' water potential 3 % above: the lumped walls
 whose potentials differ. At 16 plants (day 8, 4 processes), ``leaf_ports="bundles"`` takes the nodes from 113k to
 99k and the dense nonzeros from 15.7M to 8.8M: MECHA's time per step 34 % less (2.18 to 1.44 s), the transpiration
 and uptake unchanged, the stomatal conductance within 0.04 %, the leaves' water potential 0.36 % above on average,
-0.54 % at most. It suits multi-plant scenes (8 plants or more, where MECHA's plant solve is a third of the step) when
-such a bias of the leaves' water potential, which the stomata read, is acceptable. The defaults stay
-``"conduits"`` and ``"cells"`` for leaf water potential studies and small scenes (the use case's README, metafspm's
-devplan O-7).
+0.54 % at most.
+
+Both are options, not recommendations: the defaults are ``"conduits"`` and ``"cells"``, every conduit and every
+evaporating wall its own node, at any scene size. What ``leaf_ports="bundles"`` gives up is each vessel's own
+axial path and its own junction to its successor in the next section: a bundle's vessels are held at one
+potential and joined bundle to bundle, so the potential differences between the vessels of a bundle and the way
+water passes from one vessel into the next section's are not represented. Its measured cost is a bias of the
+leaves' water potential, which the stomata read (Tuzet): 0.45 % above at 2 plants, 0.36 % on average and 0.54 %
+at most at 16 plants (day 8), 3 % above with ``vapour_path="air_spaces"`` too.
 
 
 The leaves' vapour path (``conductance.vapour_conductances``)
