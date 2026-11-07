@@ -52,8 +52,9 @@ simulate(outputs="outputs")                   # the run saved: run.json, scenari
 ```
 
 `simulate(..., compute=Compute(...))` (`from openalea.metafspm import Compute`) sets how the run uses the machine:
-the BLAS and numba threads, the process pool of a reduction's kinds (`workers="auto"` by default), the device
-(`"cpu"`, or `"cuda"` with CuPy), the memory policy and the sparse solver (`linear_solver=`). The default
+the threads of numba's kernels and of the linear solves' blocks (BLAS stays at one), the process pool of a
+reduction's kinds (`workers="auto"` by default), the device (`"cpu"`, or `"cuda"` with CuPy), the memory policy and
+the sparse solver (`linear_solver=`: SuperLU by default; PARDISO and MUMPS optional, used when installed). The default
 `Compute()` suits a laptop; metafspm's user guide (`docs/user.md`, *The run configuration*) and *Running on a GPU*
 (`docs/gpu.md`) give the details.
 

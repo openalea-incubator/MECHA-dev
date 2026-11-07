@@ -120,8 +120,8 @@ def test_kr_at_barrier_0_against_the_protophloem(solved):
 
 def test_the_standard_problem_is_declared_symmetric_and_checked():
     """@graph_system(symmetric=True): its matrix checked once per pattern (it holds: a conductance network with Robin
-    terms), and solved by CHOLMOD with Compute(linear_solver="cholmod") (scikit-sparse, optional) to SuperLU's
-    potentials. The plant problem is not declared: measured on use case 1, its Jacobian is unsymmetric beyond
+    terms), and solved by CHOLMOD with Compute(linear_solver="cholmod") (scikit-sparse, optional), and by PARDISO and
+    MUMPS when installed, to SuperLU's potentials. The plant problem is not declared: measured on use case 1, its Jacobian is unsymmetric beyond
     round-off once the leaves transpire (pairs of kept shoot nodes, 0.049 one way and 3.6e-8 the other: the explicit
     terms of the leaves' vapour path), its reduced kinds symmetric to 3e-16."""
     from openalea.metafspm.compute import Compute
@@ -134,6 +134,8 @@ def test_the_standard_problem_is_declared_symmetric_and_checked():
         solvers.append("cholmod")
     except ImportError:
         pass
+    from openalea.metafspm.solve.linear import LINEAR_SOLVERS
+    solvers += [name for name in ("pardiso", "mumps") if name in LINEAR_SOLVERS]   # optional: when installed
     for name in solvers:
         g, ds, anatomy = anatomy_data_structure(root(3))
         ds.register("barrier", np.array([0., 1., 3.])[ds.owner("SubOrgan")], location="node")
@@ -143,5 +145,5 @@ def test_the_standard_problem_is_declared_symmetric_and_checked():
                        if key[1] == "_standard_problem" for pattern in patterns]
         assert checked and all(checked)
         results[name] = np.asarray(ds.get("standard_psi"), dtype=float)
-    if "cholmod" in results:
-        np.testing.assert_allclose(results["cholmod"], results["superlu"], rtol=1e-8, atol=1e-6)
+    for name in results:
+        np.testing.assert_allclose(results[name], results["superlu"], rtol=1e-8, atol=1e-6)
