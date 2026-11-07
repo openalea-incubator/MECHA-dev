@@ -4,6 +4,7 @@
 from openalea.mecha.legacy import Mecha, InData, NetworkBuilder, visualize
 from openalea.granap.network_base import AbstractNetwork
 from openalea.granap.root_class import RootAnatomy
+from openalea.granap.input_data import OrganInputData
 from openalea.granap.anatomy_writer import AnatomyWriter
 
 from utils import assert_close_range
@@ -14,10 +15,13 @@ import numpy as np
 
 def test_compare_granar_ganache():
     # Create a Mecha instance with a GRANAP network
-    root = RootAnatomy()
-    root.update_params("aerenchyma", "aerenchyma_proportion", 0.02)
-    root.update_params("aerenchyma", "n_files", 1)
-    root.update_params("inter_cellular_spaces", "tissue", "cortex")
+    data = OrganInputData.for_root()
+    data.set_value("aerenchyma", "aerenchyma_proportion", 0.02)
+    data.set_value("aerenchyma", "n_files", 1)
+    # smoothness as one value first: the validator checks it against the tissues at each assignment
+    data.set_value("inter_cellular_spaces", "smoothness", 0.05)
+    data.set_value("inter_cellular_spaces", "tissue", ["cortex"])
+    root = RootAnatomy(data)
 
     _ = root.export_to_adjencymatrix()
 
