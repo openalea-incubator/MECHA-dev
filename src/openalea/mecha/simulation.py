@@ -200,8 +200,8 @@ def simulate(parameters: dict = None, anatomy: dict = None, barrier: float = 1.,
     The summary: kr, the radial conductivity (cm hPa-1 d-1; kr_SI in m s-1 MPa-1), the water uptake (cm³ d-1), the
     perimeter (cm), the number of cells, and the share of the radial flow carried across the cortex by the walls,
     the membranes and the plasmodesmata.
-    *compute*: the Scene's run configuration (metafspm's Compute: its threads, its process pool and sparse solver,
-    its memory trim; None: Compute())."""
+    *compute*: the Scene's run configuration (metafspm's Compute: its threads, those of a reduction's
+    kinds included, its sparse solver, its memory trim; None: Compute())."""
     scenario = dict(parameters or {}, standard_psi_soil=soil_psi, standard_psi_xylem=xylem_psi,
                     mature_barrier=float(barrier))
     if anatomy is not None:
@@ -227,8 +227,8 @@ def simulate_root(barriers=(3, 3, 3, 1, 1, 0), segment_length: float = 5e-3, rad
     (its standard problem's) and kr_effective (in the root), both in cm hPa-1 d-1; table.attrs["scene"] is the
     metafspm scene. The barriers are Development's zones (at most three: tip, young, mature), by each section's
     distance from the tip; the soil UniformSoil's. With *outputs* (a folder), the run is saved there as simulate saves it.
-    *compute*: the Scene's run configuration (metafspm's Compute: its threads, its process pool and sparse solver,
-    its memory trim; None: Compute())."""
+    *compute*: the Scene's run configuration (metafspm's Compute: its threads, those of a reduction's
+    kinds included, its sparse solver, its memory trim; None: Compute())."""
     n = len(barriers)
     distances = [(n - 1 - i) * segment_length for i in range(n)]            # from the tip, the collar's first
     scenario = dict(parameters or {}, collar_condition=1., collar_psi=collar_psi, uniform_soil_psi=soil_psi,
@@ -348,7 +348,8 @@ def root_system(main=(3, 3, 1, 1), laterals=((1, (1, 1)),), segment_length: floa
 
     Its conductance (Krs, cm3 hPa-1 d-1) and its sections' standard uptake fractions are MARSHAL's (the soil
     uniform, the collar fixed), computed on the whole anatomical network. *compute*: the Scene's run configuration
-    (metafspm's Compute: its threads, its process pool and sparse solver, its memory trim; None: Compute()).
+    (metafspm's Compute: its threads, those of a reduction's kinds included, its sparse solver, its memory trim;
+    None: Compute()).
     """
     if experiment not in EXPERIMENTS:
         raise ValueError(f"root_system(experiment=...): one of {sorted(EXPERIMENTS)}, got {experiment!r}")

@@ -213,8 +213,7 @@ def test_the_length_classes_give_the_exact_kinds_root_system_conductance_within_
 
 def test_batches_in_the_kept_library_give_the_kinds_of_one_evaluation():
     """The kinds of the seedling evaluated one per batch (Compute(kind_batch) of one section's interior cells), each
-    batch in the library the former left (its groups replaced), are those of one evaluation in a fresh library. In
-    the process (workers=1): "auto" would deal so many kinds over a pool of processes."""
+    batch in the library the former left (its groups replaced), are those of one evaluation in a fresh library."""
     def kinds(population):
         ds = population.data_structure
         reduction = ds.structure.reduction
@@ -223,7 +222,7 @@ def test_batches_in_the_kept_library_give_the_kinds_of_one_evaluation():
 
     reference = kinds(_seedling("exact"))
     population = _seedling("exact")
-    with Compute(kind_batch=1, workers=1).limits():
+    with Compute(kind_batch=1).limits():
         batched = kinds(population)
     reduction = population.data_structure.structure.reduction
     assert len(reduction._libraries) == 1

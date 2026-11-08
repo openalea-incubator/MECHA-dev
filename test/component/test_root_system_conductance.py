@@ -245,18 +245,12 @@ def test_the_per_node_soil_boundary_with_reduced_roots_is_refused():
         system.scene.run()
 
 
-def test_the_kinds_in_a_pool_give_the_same_root_system():
-    """The reduced sections' kinds evaluated in metafspm's process pool (Compute(workers=2)): the same Krs and
-    potentials, bit for bit, as in the process."""
+def test_the_kinds_in_threads_give_the_same_root_system():
+    """The reduced sections' kinds worked out in threads (metafspm's Compute(threads=4): each kind's Kron reduction
+    in its own): the same Krs and potentials, bit for bit, as in one thread."""
     from openalea.metafspm.compute import Compute
     kwargs = dict(main=(3, 1, 1, 0), laterals=((1, (1, 0)),), soil_psi=SOIL, collar_psi=COLLAR, condensed=True)
-    alone = root_system(compute=Compute(workers=1), **kwargs)
-    compute = Compute(workers=2)
-    try:
-        pooled = root_system(compute=compute, **kwargs)
-    finally:
-        compute.close()
-    assert alone.data_structure.structure.reduction._libraries        # evaluated here ...
-    assert not pooled.data_structure.structure.reduction._libraries   # ... and in the pool's processes
-    assert pooled.conductance == alone.conductance
-    np.testing.assert_array_equal(pooled.data_structure.get("psi"), alone.data_structure.get("psi"))
+    alone = root_system(compute=Compute(threads=1), **kwargs)
+    threaded = root_system(compute=Compute(threads=4), **kwargs)
+    assert threaded.conductance == alone.conductance
+    np.testing.assert_array_equal(threaded.data_structure.get("psi"), alone.data_structure.get("psi"))
