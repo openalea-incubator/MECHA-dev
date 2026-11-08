@@ -1359,12 +1359,15 @@ class MechaHydraulics(MechaSections):
         Each membrane's standard transmembrane fraction (its standard flow from wall to cell / its section's standard
         uptake: ``Mecha.standard_transmembrane_fractions``) and its layer row (postprocess.transmembrane_layers sums
         them by layer), on the root sections solving the standard problem. Computed again only when one of these, the
-        parameters, the settings or the structure changed (memo=True).
+        parameters, the settings or the structure changed (memo=True). Not on a reduction's library (0 and -1: a
+        post-processing quantity, which no kind reads).
         """
         from openalea.mecha.osmotic import membrane_rows             # osmotic imports this module
         ds = self.data_structure
-        view = ds.to_graph_view()
         fraction, layer = np.zeros(ds.n_edges()), np.full(ds.n_edges(), -1.)
+        if ds.reduction is not None and ds.reduction.library:
+            return fraction, "membrane_layer", layer
+        view = ds.to_graph_view()
         flow, path, kind = np.asarray(standard_flow, dtype=float), np.asarray(network_path), np.asarray(kind)
         uptake, barrier = np.asarray(standard_uptake, dtype=float), np.asarray(barrier)
         where = {int(v): i for i, v in enumerate(ds.entity_ids("SubOrgan"))}
