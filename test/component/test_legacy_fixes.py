@@ -163,7 +163,7 @@ def test_q_l1_every_branch(dicot, barrier, outer):
     cgroup = net.cgroup.copy()
     cgroup[cells] = rng.choice([1, 2, 3, 4, 5, 11, 12, 13, 16, 17, 18, 19, 21, 23], cells.size)
     net = replace(net, cgroup=cgroup, outercortex_connec_rank=np.full_like(net.outercortex_connec_rank, outer))
-    P_edge = mecha.parameter_table("edge")
+    P_edge = mecha.parameter_table(mecha.PARAMETERS, "edge")
     P = {name: float(values[0]) for name, values in P_edge.items()}
     e = np.flatnonzero(net.in_section & (net.path == PLASMODESMATA))
     got = _plasmodesmata_original(net, e, P_edge, np.full(e.size, barrier))

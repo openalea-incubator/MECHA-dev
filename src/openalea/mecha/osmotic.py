@@ -430,7 +430,7 @@ class MechaOsmoticPresets(MechaSections):
         view = ds.to_graph_view()
         path = np.asarray(network_path)
         barrier = np.asarray(barrier)
-        table = {name: np.asarray(self.parameter_values(name, "node")) for name in type(self).declared_parameters()}
+        table = self.parameter_table(type(self).declared_parameters(), "node")
         roots = self.section_roles()[1]
         every = np.asarray(table["presets_sections"]) == 2
         for segment, (nodes, edges, geo) in self.section_geometries().items():

@@ -68,7 +68,7 @@ def port_frame(mecha, segment, psi="standard_psi", flow="standard_flow") -> Sect
     plasmodesmata = path == "plasmodesmata"
     if plasmodesmata.any():
         from openalea.mecha.conductance import plasmodesmata_spatial_coefficients
-        aperture[plasmodesmata], _ = plasmodesmata_spatial_coefficients(mecha.network(), mecha.parameter_table("edge"),
+        aperture[plasmodesmata], _ = plasmodesmata_spatial_coefficients(mecha.network(), mecha.parameter_table(mecha.PARAMETERS, "edge"),
                                                                         e[plasmodesmata])
     distance = np.asarray(ds.get("contact_distance"))[nodes] if ds.has("contact_distance") else None
     return SectionFrame(xy=np.c_[geo.x, geo.y], kind=geo.kind, rank=geo.cell_rank, tissue=geo.tissue,

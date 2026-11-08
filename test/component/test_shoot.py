@@ -254,7 +254,7 @@ def test_the_condensed_volumes_are_each_kinds_derived_values():
     kinds = reduction.group_kinds(small, groups)
     g = small.structure
     vapour = np.asarray(small.get("vapour_node")) > 0
-    P_node = hydraulics.parameter_table("node")
+    P_node = hydraulics.parameter_table(hydraulics.PARAMETERS, "node")
     for i, (owner, key) in groups.items():
         kind = kinds[i][system]
         first, _ = g.instances.block(owner)

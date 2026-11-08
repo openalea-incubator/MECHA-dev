@@ -681,18 +681,14 @@ class MechaHydraulics(MechaSections):
         return rank, "perimeter", perimeter
 
     # ── Conductances ──
-    PARAMETERS = ()                       # filled below: the names of the numeric parameters
-
-    def parameter_table(self, location: str) -> dict:
-        """{parameter: value per entity of *location*} (each entity its plant's value)."""
-        return {name: np.asarray(self.parameter_values(name, location)) for name in self.PARAMETERS}
+    PARAMETERS = ()                       # filled below: the names of the numeric parameters (parameter_table)
 
     def network(self, geometries: dict = None) -> Network:
         """The sections' MECHA geometry on the whole DataStructure, their φ-thickened cells included."""
         ds = self.data_structure
         geometries = self.section_geometries() if geometries is None else geometries
         items = list(geometries.values())
-        layers = self.parameter_table("node")
+        layers = self.parameter_table(self.PARAMETERS, "node")
         phi = [phi_thick_cells(geo, int(layers["n_phi_layers"][nodes[0]]), int(layers["phi_type"][nodes[0]]))
                for nodes, _, geo in items]
         net = assemble(ds.n_nodes(), ds.n_edges(), items, phi)
@@ -738,7 +734,7 @@ class MechaHydraulics(MechaSections):
         height_node = np.asarray(length, dtype=float) * 1.0E6                     # m -> µm
         self._check_heights(height_node)
         self._check_soil_boundary()
-        P_node, P_edge = self.parameter_table("node"), self.parameter_table("edge")
+        P_node, P_edge = self.parameter_table(self.PARAMETERS, "node"), self.parameter_table(self.PARAMETERS, "edge")
         a_cortex, b_cortex = self.cortex_gradient(geometries, height_node, P_node)
         tail = np.maximum(net.a, 0)
         P_edge["a_cortex"], P_edge["b_cortex"] = a_cortex[tail], b_cortex[tail]
@@ -886,7 +882,7 @@ class MechaHydraulics(MechaSections):
         standard problem of the plants with standard_elongation."""
         geometries = self.section_geometries()
         net = self.network(geometries)
-        P_node = self.parameter_table("node")
+        P_node = self.parameter_table(self.PARAMETERS, "node")
         sink = elongation_sink(net, P_node, np.asarray(barrier), self.relative_x(geometries))
         return sink, "standard_elongation_sink", np.where(P_node["standard_elongation"] > 0, sink, 0.)
 
@@ -936,7 +932,7 @@ class MechaHydraulics(MechaSections):
         reduction's library, once per kind (metafspm's kind_derived): its nodes the full group's there, their
         vapour path and the plant's thickness parameters the library's."""
         ds = self.data_structure
-        P_node = self.parameter_table("node")
+        P_node = self.parameter_table(self.PARAMETERS, "node")
         kept_nodes = nodes[kron.kept_nodes]
         reference = kept_nodes[0] if kept_nodes.size else nodes[0]
         plant = (float(P_node["thickness_source"][reference]), float(P_node["thickness"][reference]))
