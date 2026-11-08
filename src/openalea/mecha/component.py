@@ -1134,9 +1134,8 @@ class MechaHydraulics(MechaSections):
 
         @graph_jacobian
         def _jacobian(self, conductance, air_tail_conductance, air_head_conductance):
-            B = self.graph_view.incidence
-            return (B @ diags(conductance) @ B.T
-                    + _wall_air_jacobian(B, air_tail_conductance, air_head_conductance)).tocsr()
+            return (self.graph_view.laplacian(conductance)
+                    + _wall_air_jacobian(self.graph_view.incidence, air_tail_conductance, air_head_conductance)).tocsr()
 
         @graph_output("standard_flow", location="edge")
         def _standard_flow(self, standard_psi, conductance, standard_osmotic_drive, air_tail_conductance,
@@ -1178,8 +1177,7 @@ class MechaHydraulics(MechaSections):
         @input_jacobian("osmotic_potential")
         def _osmotic_jacobian(self, conductance, xylem_axial_conductance, reflection_coefficient):
             """The balance's derivative with respect to the osmotic potentials: B (K σ) Bᵀ (the drive σ Bᵀπ)."""
-            B = self.graph_view.incidence
-            return (B @ diags((conductance + xylem_axial_conductance) * reflection_coefficient) @ B.T).tocsr()
+            return self.graph_view.laplacian((conductance + xylem_axial_conductance) * reflection_coefficient)
 
         soil = boundary_set(filters={"plant_soil_conductance": ">0"}, kind="robin", value="soil_psi",
                             weight="plant_soil_conductance", field="psi")
@@ -1192,8 +1190,7 @@ class MechaHydraulics(MechaSections):
 
         @graph_jacobian
         def _jacobian(self, conductance, xylem_axial_conductance):
-            B = self.graph_view.incidence
-            return (B @ diags(conductance + xylem_axial_conductance) @ B.T).tocsr()
+            return self.graph_view.laplacian(conductance + xylem_axial_conductance)
 
         @graph_output("flow", location="edge")
         def _flow(self, psi, conductance, xylem_axial_conductance, osmotic_drive, air_tail_conductance,
