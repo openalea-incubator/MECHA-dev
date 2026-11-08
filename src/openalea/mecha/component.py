@@ -970,7 +970,21 @@ class MechaHydraulics(MechaSections):
 
     def _template_unit_volumes(self, full, plant) -> np.ndarray:
         """Per Compartment of the full template *full*, its volume per unit height (cm³ µm⁻¹, _node_volumes at a height
-        of 1 µm; 0 on the leaf surface and the soil node), with the plant's thickness parameters *plant*."""
+        of 1 µm; 0 on the leaf surface and the soil node), with the plant's thickness parameters *plant*; kept per
+        (template, parameters) (keep(saved=False): a reduction's library keeps it from one batch of kinds to the
+        next), read-only."""
+        cache = self.kept("template_unit_volumes")
+        if cache is None:
+            cache = {}
+            self.keep("template_unit_volumes", cache, saved=False)
+        key = (full.key, plant)
+        if key not in cache:
+            cache[key] = self._unit_volumes_of(full, plant)
+            cache[key].setflags(write=False)
+        return cache[key]
+
+    def _unit_volumes_of(self, full, plant) -> np.ndarray:
+        """_template_unit_volumes' values, computed."""
         scales = self.data_structure.structure.scales
         section, nodes, edges, tail, head = template_section(full, scales.Compartment, scales.Connection)
         compartments = full.rows_at_scale(scales.Compartment)
