@@ -161,6 +161,37 @@ class MechaSections(FunctionalComponent):
         self.caches()["section_geometries"] = (stamp, out)
         return out
 
+    def section_layout(self, geometries: dict = None) -> tuple:
+        """
+        (node_section, section_geometry, distinct) of *geometries* (section_geometries' by default), for the per-node
+        quantities of the sections' geometries in one gather (ds.local_gather): each node's section (its row among
+        the sections, -1 for none), each section's geometry (its index in *distinct*, the distinct SectionGeometry
+        objects); kept per geometries dict.
+        """
+        geometries = self.section_geometries() if geometries is None else geometries
+        kept = self.caches().get("section_layout")
+        if kept is not None and kept[0] is geometries:
+            return kept[1]
+        node_section = np.full(self.data_structure.n_nodes(), -1, dtype=np.int64)
+        index, distinct = {}, []
+        section_geometry = np.empty(len(geometries), dtype=np.int64)
+        for row, (nodes, _, geometry) in enumerate(geometries.values()):
+            node_section[nodes] = row
+            if id(geometry) not in index:
+                index[id(geometry)] = len(distinct)
+                distinct.append(geometry)
+            section_geometry[row] = index[id(geometry)]
+        value = (node_section, section_geometry, distinct)
+        self.caches()["section_layout"] = (geometries, value)
+        return value
+
+    def per_node(self, quantity, geometries: dict = None, fill=np.nan) -> np.ndarray:
+        """Per node, *quantity*(geometry)[its local row] of its section's geometry (*fill* outside the sections): one
+        table per distinct geometry, gathered at once (section_layout, ds.local_gather)."""
+        node_section, section_geometry, distinct = self.section_layout(geometries)
+        return self.data_structure.local_gather(node_section, section_geometry,
+                                                [quantity(geometry) for geometry in distinct], fill=fill)
+
     def _reduced_nodes(self) -> np.ndarray:
         """bool per node: in a reduced group (the plant model's Reduction, solve.reduction: no cells here)."""
         ds = self.data_structure
@@ -201,10 +232,9 @@ class MechaSections(FunctionalComponent):
     def _root_nodes(self, geometries) -> np.ndarray:
         """bool per node: in a root section."""
         roots = self.section_roles()[1]
-        out = np.zeros(self.data_structure.n_nodes(), dtype=bool)
-        for segment, (nodes, _, _) in geometries.items():
-            out[nodes] = segment in roots
-        return out
+        node_section = self.section_layout(geometries)[0]
+        is_root = np.array([segment in roots for segment in geometries] + [False], dtype=bool)   # row -1: none
+        return is_root[node_section]
 
 
 @dataclass
@@ -665,13 +695,12 @@ class MechaHydraulics(MechaSections):
         (their templates' geometry, cached), read whole from the DataStructure.
         """
         ds = self.data_structure
-        rank = np.full(ds.n_nodes(), -1.)
+        rank = self.per_node(lambda geometry: geometry.cell_rank, fill=-1.)
         segments = ds.entity_ids("SubOrgan")
         perimeter = np.full(segments.size, np.nan)
         where = {int(v): i for i, v in enumerate(segments)}
         roots = self.section_roles()[1]
         for segment, (nodes, _, geometry) in self.section_geometries().items():
-            rank[nodes] = geometry.cell_rank
             if segment in roots:                                       # a root quantity (E1)
                 perimeter[where[segment]] = geometry.perimeter
         reduction = self._reduction()
@@ -869,12 +898,11 @@ class MechaHydraulics(MechaSections):
     def relative_x(self, geometries: dict) -> np.ndarray:
         """Per node, its x relative to its section's cells' x range (0 left, 1 right; the legacy's x_rel, from the
         cells' centroids: doc/legacy.rst, ME-22)."""
-        out = np.zeros(self.data_structure.n_nodes())
-        for nodes, _, geo in geometries.values():
+        def relative(geo):
             x_cells = geo.x[geo.cells]
             low, high = x_cells.min(), x_cells.max()
-            out[nodes] = (geo.x - low) / (high - low) if high > low else 0.
-        return out
+            return (geo.x - low) / (high - low) if high > low else np.zeros(np.size(geo.x))
+        return self.per_node(relative, geometries, fill=0.)
 
     @rate(include_inactive=True)
     def _elongation_sink(self, barrier, anatomy_template) -> tuple[np.ndarray, str, np.ndarray]:
