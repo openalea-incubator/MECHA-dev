@@ -48,7 +48,7 @@ result = simulate()
 print(result.summary)                         # kr, the uptake, the pathways' shares in the cortex
 result.draw("potential")                      # the section coloured by water potential
 result = simulate({"kaqp": 8e-4}, barrier=3)  # more aquaporins, a suberized endodermis
-simulate(outputs="outputs")                   # the run saved: run.json, scenario.json, summaries, encoding3d frames
+simulate(outputs="outputs")                   # the run saved: run.json, scenario.json, summaries, frames.fspm.zip
 ```
 
 `simulate(..., compute=Compute(...))` (`from openalea.metafspm import Compute`) sets how the run uses the machine:

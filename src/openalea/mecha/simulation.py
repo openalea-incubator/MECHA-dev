@@ -16,7 +16,8 @@ MECHA for users: the water flow across one root cross section in a few lines, it
     simulate_root(barriers=(3, 3, 1, 1, 0))       a root axis: its sections from the collar to the tip, joined by
                                                   their xylem, in a soil at soil_psi; a table per section
     simulate(barrier=3, outputs="outputs")        the run saved in ./outputs: run.json (its status), scenario.json,
-                                                  Plant/<model>/summaries.csv and frames/ (the solved section, encoding3d)
+                                                  Plant/<model>/summaries.csv and frames.fspm.zip (the solved
+                                                  section, encoding3d)
     seedling = root_system()                      a seedling's root system, a main root and a lateral, one network:
     seedling.conductance, seedling.sections       its conductance (Krs) and its sections' uptake fractions (SUF)
     fit_root_system(observations)                 MECHA's membrane conductivities (kaqp, kmb) fitted to measured Krs,
@@ -194,8 +195,9 @@ def simulate(parameters: dict = None, anatomy: dict = None, barrier: float = 1.,
     osmotic_left_soil...), the cells', walls' and soil's osmotic potentials act across the membranes (their reflection
     coefficients); *soil_psi* and *xylem_psi* are then their pressure potentials. With *outputs* (a folder), the run is
     saved there: run.json (its status, timing and versions), scenario.json (the parameters it ran with),
-    Plant/<model>/summaries.csv (the section's state variables) and frames/ (the section before and after its solve,
-    encoding3d files, openalea.encoding3d.read reads them).
+    Plant/<model>/summaries.csv (the section's state variables) and frames.fspm.zip (the section before and after its
+    solve, encoding3d frames: the frames folder packed at the end, the archive checked, then the folder removed;
+    openalea.encoding3d.read reads them, e.g. frames.fspm.zip/frame_000001.glb).
 
     The summary: kr, the radial conductivity (cm hPa-1 d-1; kr_SI in m s-1 MPa-1), the water uptake (cm³ d-1), the
     perimeter (cm), the number of cells, and the share of the radial flow carried across the cortex by the walls,
@@ -208,7 +210,8 @@ def simulate(parameters: dict = None, anatomy: dict = None, barrier: float = 1.,
         scenario["root_anatomy"] = dict(anatomy)
     if osmotic is not None:
         scenario.update(osmotic, standard_osmotic=1.)
-    recorder = SceneRecorder(outputs, frame_period="step", display_period="step") if outputs is not None else None
+    recorder = SceneRecorder(outputs, frame_period="step", display_period="step", pack_at_finish=True) \
+        if outputs is not None else None
     scene = Scene(planting([Planting()], _OsmoticRootSection if osmotic is not None else _RootSection, scenario),
                   recorder=recorder, compute=compute)
     scene.simulate(1)                                         # one solve, its state recorded with outputs
@@ -236,7 +239,8 @@ def simulate_root(barriers=(3, 3, 3, 1, 1, 0), segment_length: float = 5e-3, rad
                     root_segments=[[radius, segment_length, distance] for distance in distances])
     if anatomy is not None:
         scenario["root_anatomy"] = dict(anatomy)
-    recorder = SceneRecorder(outputs, frame_period="step", display_period="step") if outputs is not None else None
+    recorder = SceneRecorder(outputs, frame_period="step", display_period="step", pack_at_finish=True) \
+        if outputs is not None else None
     scene = Scene(planting([Planting()], _RootSection, scenario), recorder=recorder, compute=compute)
     scene.simulate(1)                                         # one solve, its state recorded with outputs
     ds = scene.populations[0].data_structure
