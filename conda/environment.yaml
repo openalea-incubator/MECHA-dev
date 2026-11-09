@@ -10,7 +10,7 @@ channel_priority: flexible
 # environment once it is created, from the folder holding the three repositories:
 #
 #     conda activate mecha
-#     pip install -e metafspm          # branch data_structure_api
+#     pip install -e metafspm          # branch release2026
 #     pip install -e GRANAP            # branch to_metafspm
 #
 # The dependencies below are theirs and MECHA's. The geometry stack is pinned as in GRANAP (its golden regression
