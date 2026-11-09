@@ -120,11 +120,13 @@ def test_kr_at_barrier_0_against_the_protophloem(solved):
 
 def test_the_standard_problem_is_declared_symmetric_and_checked():
     """@graph_system(symmetric=True): its matrix checked once per pattern (it holds: a conductance network with Robin
-    terms), and solved by CHOLMOD with Compute(linear_solver="cholmod") (scikit-sparse, optional), and by PARDISO and
-    MUMPS when installed, to SuperLU's potentials. The plant problem is not declared: measured on use case 1, its Jacobian is unsymmetric beyond
+    terms). MECHA declares the property, the run maps it to a backend (Compute(linear_solver={"symmetric": ...})):
+    CHOLMOD (scikit-sparse, optional), PARDISO and MUMPS when installed, to SuperLU's potentials; the plant problem
+    keeps the default. The plant problem is not declared: measured on use case 1, its Jacobian is unsymmetric beyond
     round-off once the leaves transpire (pairs of kept shoot nodes, 0.049 one way and 3.6e-8 the other: the explicit
     terms of the leaves' vapour path), its reduced kinds symmetric to 3e-16."""
     from openalea.metafspm.compute import Compute
+    from openalea.metafspm.solve.decorator import linear_system
     assert MechaHydraulics._graph_system_specs["_standard_problem"]["symmetric"]
     assert not MechaHydraulics._graph_system_specs["_plant_problem"]["symmetric"]
     results = {}
@@ -135,14 +137,18 @@ def test_the_standard_problem_is_declared_symmetric_and_checked():
     except ImportError:
         pass
     from openalea.metafspm.solve.linear import LINEAR_SOLVERS
-    solvers += [name for name in ("pardiso", "mumps") if name in LINEAR_SOLVERS]   # optional: when installed
+    solvers += [name for name in ("superlu_reuse", "pardiso", "mumps") if name in LINEAR_SOLVERS]  # when installed
     for name in solvers:
         g, ds, anatomy = anatomy_data_structure(root(3))
         ds.register("barrier", np.array([0., 1., 3.])[ds.owner("SubOrgan")], location="node")
-        with Compute(linear_solver=name).limits() as compute:
-            MechaHydraulics(data_structure=ds)()
-            checked = [pattern.symmetric_checked for key, patterns in compute.linear()._patterns.items()
+        mecha = MechaHydraulics(data_structure=ds)
+        with Compute(linear_solver={"default": "superlu", "symmetric": name}).limits() as compute:
+            mecha()
+            standard = compute.linear(linear_system(mecha, "_standard_problem"))
+            checked = [pattern.symmetric_checked for key, patterns in standard._patterns.items()
                        if key[1] == "_standard_problem" for pattern in patterns]
+            assert standard.name == name
+            assert compute.linear(linear_system(mecha, "_plant_problem")).name == "superlu"
         assert checked and all(checked)
         results[name] = np.asarray(ds.get("standard_psi"), dtype=float)
     for name in results:

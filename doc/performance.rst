@@ -125,8 +125,11 @@ identical. With metafspm's vectorised reduction, the last day's step went from 2
 from 1.14 to 0.94 s at 8 plants, day 4.
 
 **The linear solvers** (MECHA ``bde92cf``, metafspm O-6, 2026-11-06; MECHA ``5149d56``, metafspm P3, 2026-11-07).
-``_standard_problem`` is declared ``@graph_system(symmetric=True)`` (checked once per pattern; CHOLMOD with
-``Compute(linear_solver="cholmod")``). ``_plant_problem`` is not symmetric once the leaves transpire: on use case 1,
+``_standard_problem`` is declared ``@graph_system(symmetric=True)`` (checked once per pattern). MECHA declares the
+property, never a library: the run maps it to a backend, e.g. CHOLMOD with
+``Compute(linear_solver={"default": "superlu", "symmetric": "cholmod"})`` (metafspm fix-D: a backend per system, by
+its qualified name such as ``"MechaHydraulics._plant_problem"``, else a property it declares, else ``"default"``; the
+reductions' Kron factorisations follow the plant problem's). ``_plant_problem`` is not symmetric once the leaves transpire: on use case 1,
 pairs of kept shoot nodes at 0.049 one way and 3.6e-8 the other, on rows with a 1.4e-6 diagonal (the vapour path's
 explicit terms). metafspm solves the plant problem's independent blocks (one per plant) apart. On the plant system at
 8 plants, day 13 (252 k rows, 13.3 M nonzeros, 8 blocks; its pattern changes every hour, so no analysis is ever
