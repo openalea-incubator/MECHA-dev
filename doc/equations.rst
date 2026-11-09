@@ -322,10 +322,14 @@ On metafspm's use case 1 (2 plants, day 8), ``leaf_ports="bundles"`` cuts the de
 1.09M and the plant solve by a third, the transpiration, uptake and gas exchange within 0.04 %, the leaves' water
 potential 0.45 % above (0.8 % of its drop below the roots'); both options together to 0.30M (the solve 60 % less),
 the fluxes within 0.2 %, the leaves' water potential 3 % above: the lumped walls' common potential stands for walls
-whose potentials differ. At 16 plants (day 8, 4 processes), ``leaf_ports="bundles"`` takes the nodes from 113k to
-99k and the dense nonzeros from 15.7M to 8.8M: MECHA's time per step 34 % less (2.18 to 1.44 s), the transpiration
-and uptake unchanged, the stomatal conductance within 0.04 %, the leaves' water potential 0.36 % above on average,
-0.54 % at most.
+whose potentials differ. At 16 plants (day 8; measured on 2026-11-06 with the 4-process pool of its time),
+``leaf_ports="bundles"`` takes the nodes from 113k to 99k and the dense nonzeros from 15.7M to 8.8M: MECHA's time per
+step 34 % less (2.18 to 1.44 s), the transpiration and uptake unchanged, the stomatal conductance within 0.04 %, the
+leaves' water potential 0.36 % above on average, 0.54 % at most. metafspm's process pool was removed since (its QG-3,
+2026-11-08): a reduction's kinds are now evaluated in the run's threads. The bundles' comparison was not measured
+again without it. With the default options at 16 plants, day 8, ``threads="auto"`` (2026-11-08, metafspm
+``86a4a60``), the whole scene's step took 3.26 s on the last day without the pool, against 2.96 s with it, at a
+memory peak of 3.68 GB against 4.60 GB.
 
 Both are options, not recommendations: the defaults are ``"conduits"`` and ``"cells"``, every conduit and every
 evaporating wall its own node, at any scene size. What ``leaf_ports="bundles"`` gives up is each vessel's own
