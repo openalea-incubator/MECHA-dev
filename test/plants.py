@@ -3,6 +3,7 @@ The plants of the tests: a root of one or more segments (lengths in m, as metafs
 anatomies, and the DataStructure over their Compartments (anatomy mode).
 """
 from openalea.metafspm.coupling.component import StructuralComponent
+from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.data_structure.configs import PropsConfig
 from openalea.metafspm.scene.population import Planting, planting, population_data_structure
 
@@ -52,11 +53,8 @@ def initiated(table, *initiators, time_step: float = 3600.):
     """The plants of *table* built by *initiators* (an architecture, then GRANAP's anatomies), their Compartments
     wired at the segments' junctions, in one MPGDataStructure: metafspm's population_data_structure with a model of no
     component (the tests build theirs on population.data_structure)."""
-    def __init__(self, data_structure, time_step):
-        self.components = []
-
-    model = type("Initiated", (), dict(initiators=tuple(initiators), nodes="Compartment",
-                                       wiring=staticmethod(junction_rules), __init__=__init__, run=lambda self: None))
+    model = type("Initiated", (CompositeModel,), dict(initiators=tuple(initiators), nodes="Compartment",
+                                                      wiring=staticmethod(junction_rules)))
     return population_data_structure(table, model, time_step=time_step)
 
 
