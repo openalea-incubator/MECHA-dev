@@ -104,3 +104,27 @@ def test_the_run_configuration_is_the_scenes():
     from openalea.metafspm.compute import Compute
     compute = Compute(threads=1, memory="keep")
     assert simulate(compute=compute).scene.compute is compute
+
+
+def test_the_plant_summaries_weight_kr_by_the_root_surface(tmp_path):
+    """The recorder's per-plant kr is the sections' mean weighted by their root surface (perimeter × length), so that
+    kr × the total surface is the sum of the sections' kr × surface; the boundary potentials are weighted as psi."""
+    import warnings
+
+    import pandas as pd
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        table = simulate_root(barriers=(3, 1, 1), outputs=str(tmp_path))
+    ds = table.attrs["scene"].populations[0].data_structure
+    kr, surface = np.asarray(ds.get("kr")), np.asarray(ds.get("radial_surface"))
+    length = ds.map_to(np.asarray(ds.get("length")), "node", "SubOrgan", "mean")
+    assert surface == pytest.approx(np.asarray(ds.get("perimeter")) * length * 100.)    # cm × m -> cm2
+    rows = pd.read_csv(next((tmp_path / "Plant").glob("*/summaries.csv")))
+    measured = np.isfinite(kr)
+    assert rows["kr"].iloc[-1] == pytest.approx(np.sum((kr * surface)[measured]) / np.sum(surface[measured]),
+                                                rel=1e-12)
+    unweighted = " ".join(str(w.message) for w in caught if "without a declared weight" in str(w.message))
+    for name in ("MechaHydraulics.kr", "MechaHydraulics.kr_effective", "MechaHydraulics.standard_soil_psi",
+                 "UniformSoil.soil_psi", "soil_node_kind", "collar_value", "contact_distance"):
+        assert name not in unweighted

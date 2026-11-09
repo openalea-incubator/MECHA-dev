@@ -400,6 +400,9 @@ over the section's soil-contact nodes and vessels (NaN at :math:`b = 0`: the pla
 stele boundary, its xylem immature and its protophloem's potential not imposed, so that it takes up almost nothing,
 :math:`U \approx 0` with :math:`\bar\psi_\text{soil} - \bar\psi \approx 0`). :math:`k_r`, the uptake and :math:`P` are root
 quantities (NaN on stems and leaves).
+Each section's root surface :math:`S = P\,h\,10^{-4}` (cm², ``radial_surface``) is the weight of the sections' mean
+:math:`k_r` and :math:`k_{r,\text{effective}}` in a scene's per-plant summaries: :math:`\sum k_r S / \sum S`, the
+plant's uptake per unit of surface and potential difference where the differences are equal.
 
 **Pathways** (``plots.pathway_breakdown``): each edge's radial component of :math:`|Q|` assigned to the nearest mean
 radius of the cell layers, as shares of the walls, membranes and plasmodesmata.

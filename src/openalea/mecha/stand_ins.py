@@ -108,7 +108,8 @@ class UniformSoil(FunctionalComponent):
                                                             "root section's soil node and the soil"), by="Soil",
                                                      default=0.)
     soil_psi: float = state_variable(**_doc("hPa", "the soil's water potential around the Compartment"), default=0.,
-                                     scale=SCALES.Compartment, location="node", kind="intensive")
+                                     scale=SCALES.Compartment, location="node", kind="intensive",
+                                     weight="liquid_volume")
     soil_bulk_conductance: float = state_variable(**_doc("cm3 hPa-1 d-1", "on a root section's soil node: the "
                                                          "conductance between it and the soil at soil_psi"),
                                                   default=0., scale=SCALES.Compartment, location="node",
