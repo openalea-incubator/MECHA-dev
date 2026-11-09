@@ -56,6 +56,32 @@ class SoluteTransport:
                               (new; HydraulicMatrixBuilder does not build this)
             'sigma'         : dict {cgroup_int: float}
                               membrane reflection coefficient (0–1; default 0)
+            'sigma_casp'    : optional Casparian-band reflection coefficient (0-1)
+                              for the advective carry factor f = 1 - sigma on
+                              the band's wall-junction edges: a float (both
+                              bands) or {'endo': s, 'exo': s} (a missing key
+                              falls back to the hydraulic graph's 'sigma_wall',
+                              i.e. HydraulicData.sigma_casp_*). Overrides the
+                              graph value; applies ONLY to edges carrying
+                              'casp' (never to other apoplastic edges). sigma is
+                              solute-specific (e.g. NaCl vs mannitol). The
+                              osmotic volume flux K*sigma*d_pi is already in the
+                              edge fluxes (compute_edge_flows), so no extra
+                              osmotic coupling is added for walls.
+            'membrane_pd'   : optional. Structure-aware membrane diffusive
+                              permeability [cm/d] (MECHA units cm, d):
+                              ``dict(lipid=P_l, aqp=P_a)`` or a scalar (= lipid
+                              only; 1 m/s = 8.64e6 cm/d). When given it REPLACES
+                              the uniform 'membrane' diffusivity:
+                                P = P_l + P_a * f_aqp   (f_aqp = the cell's
+                                    HydraulicData aquaporin factor, default 1)
+                              in series with a suberin lamella if the hydraulic
+                              lamella model is on:
+                                P_lam = D_wall (kw_lam/kw) / s,  s in cm
+                                P_eff = 1 / (1/P + 1/P_lam)
+                              conductance = P_eff * (height + dist) * length * 1e-8
+                              [cm³/d] (the hydraulic membrane area). Intercellular
+                              (air-space) cells get zero membrane diffusion.
         }
     capacitance_params : dict, optional
         {
@@ -91,6 +117,15 @@ class SoluteTransport:
         self.D_pd   = float(diffusion_params.get('plasmodesmata', 0.0))
         self.D_mem  = float(diffusion_params.get('membrane',      0.0))
         self.sigma  = diffusion_params.get('sigma', {})
+        self.sigma_casp_override = diffusion_params.get('sigma_casp', None)
+        mpd = diffusion_params.get('membrane_pd')
+        if mpd is None:
+            self.membrane_pd = None
+        elif isinstance(mpd, dict):
+            self.membrane_pd = (float(mpd.get('lipid', 0.0)), float(mpd.get('aqp', 0.0)))
+        else:
+            self.membrane_pd = (float(mpd), 0.0)
+        self._last_solve = None   # (h, i_maturity, i_scenario, scheme, operators) of the last solve()
         self.k_deg  = float(reaction_params.get('k_deg', 0.0)) if reaction_params else 0.0
 
         # Advective solute exchange with the domain boundary (soil contact,
@@ -188,7 +223,9 @@ class SoluteTransport:
 
         D = matrix_C.tocsr()
 
-        if self.D_mem > 0.0 and self.mode != 'apo':
+        if self.membrane_pd is not None and self.mode != 'apo':
+            D = D + self._build_membrane_diffusion_pd(h, i_maturity)
+        elif self.D_mem > 0.0 and self.mode != 'apo':
             D = D + self._build_membrane_diffusion(i_maturity)
 
         nwj = self.n_wall_junction
@@ -243,6 +280,77 @@ class SoluteTransport:
                     rows.append(r); cols.append(c); data.append(v)
 
         return coo_matrix((data, (rows, cols)), shape=(n, n)).tocsr()
+
+    def _build_membrane_diffusion_pd(self, h: int, i_maturity: int) -> sp.csr_matrix:
+        """Structure-aware passive transmembrane diffusion (``membrane_pd`` mode).
+
+        Per membrane edge (wall i, cell j):
+            P     = P_lipid + P_aqp * f_aqp(cell)            [cm/d]
+            P_lam = D_wall * (kw_lam / kw) / (s * 1e-4)       [cm/d]  (lamella only)
+            P_eff = 1 / (1/P + 1/P_lam)
+            DF    = P_eff * (height + dist) * length * 1e-8   [cm3/d]
+        Air-space (intercellular) cells: DF = 0. ``kw_lam`` / ``s`` are those the
+        hydraulic builder used for the membrane series term (edge attributes
+        ``kw_lam`` / ``s_lam``, only present with ``suberin_model='lamella'``).
+        """
+        P_l, P_a = self.membrane_pd
+        height = float(self.mecha.geometry.maturity_stages[i_maturity].get('height'))
+        hyd = self.mecha.hydraulic
+        kw = float(hyd.get_kw_value(h))
+        cm = self.mecha.network.cell_manager
+        air_nodes = {c.node_id for c in cm.intercellular}
+        nwj, n = self.n_wall_junction, self.n_total
+        rows, cols, data = [], [], []
+
+        for node, edges in self.network.graph.adjacency():
+            i = self.indice[node]
+            if i >= nwj:
+                continue
+            for neighbor, eattr in edges.items():
+                j = self.indice[neighbor]
+                if j <= i or eattr.get('path') != 'membrane':
+                    continue
+                cell = cm.get_by_node_id(neighbor)
+                if neighbor in air_nodes:
+                    P_eff = 0.0
+                else:
+                    f = hyd.get_aqp_factor(cell.cell_id, cell.cell_type) if cell is not None else None
+                    P = P_l + P_a * (1.0 if f is None else f)
+                    kw_lam = eattr.get('kw_lam')
+                    s_lam = eattr.get('s_lam')
+                    if P <= 0.0:
+                        P_eff = 0.0
+                    elif kw_lam is not None and s_lam:
+                        P_lam = self.D_wall * (kw_lam / kw) / (s_lam * 1e-4) if kw > 0 else 0.0
+                        P_eff = 0.0 if P_lam <= 0.0 else 1.0 / (1.0 / P + 1.0 / P_lam)
+                    else:
+                        P_eff = P
+                DF = P_eff * (height + eattr.get('dist', 1.0)) * eattr.get('length', 1.0) * 1e-8
+                eattr['membrane_diffusivity'] = DF
+                if DF == 0.0:
+                    continue
+                for r, c, v in ((i, i, -DF), (i, j, DF), (j, j, -DF), (j, i, DF)):
+                    rows.append(r); cols.append(c); data.append(v)
+
+        return coo_matrix((data, (rows, cols)), shape=(n, n)).tocsr()
+
+    def _wall_edge_sigma(self, u, v) -> float:
+        """Reflection coefficient of apoplastic edge (u, v): non-zero only for the
+        wall-junction edges of a Casparian band (edge attribute ``casp``). The
+        ``diffusion_params['sigma_casp']`` override (float, or {'endo': s, 'exo': s};
+        a missing key falls back to the graph) beats the graph's ``sigma_wall``."""
+        ea = self.network.graph.get_edge_data(u, v)
+        band = ea.get('casp') if ea else None
+        if band is None:
+            return 0.0
+        ov = self.sigma_casp_override
+        if ov is not None:
+            if isinstance(ov, dict):
+                if band in ov:
+                    return float(ov[band])
+            else:
+                return float(ov)
+        return float(ea.get('sigma_wall', 0.0))
 
     # ------------------------------------------------------------------
     # Advection operator A  (upwind, same sign convention as D)
@@ -309,6 +417,8 @@ class SoluteTransport:
                 cg     = _cgroup_canonical(
                     self.network.graph.nodes[cell_node].get('cgroup', 4))
                 factor = 1.0 - float(self.sigma.get(cg, 0.0))
+            elif is_apo:
+                factor = 1.0 - self._wall_edge_sigma(src, tgt)
             else: # need to check for pd
                 factor = 1.0
 
@@ -595,6 +705,8 @@ class SoluteTransport:
                             F_os_wc = K * sig * (_os(wall_obj) - _os(cell_obj))
                             # F_os_wc is wall→cell; convert to i→j.
                             F += F_os_wc if (wall_id == i) else -F_os_wc
+            elif is_apo:
+                factor = 1.0 - self._wall_edge_sigma(u, v)   # wall reflection (default 0)
             else: # need to check for pd
                 factor = 1.0
 
@@ -904,6 +1016,7 @@ class SoluteTransport:
 
         n    = self._matrix_size
         zero = sp.csr_matrix((n, n))
+        self._last_solve = (h, i_maturity, i_scenario, scheme, operators)
 
         R = self.build_reaction_matrix(i_maturity)
 
@@ -952,3 +1065,69 @@ class SoluteTransport:
             lhs = lhs.tocsr()
 
         return spla.spsolve(lhs, rhs_eff)
+
+    # ------------------------------------------------------------------
+    # Boundary flux diagnostic
+    # ------------------------------------------------------------------
+
+    def boundary_flux(self, c: np.ndarray, nodes, h: int = None,
+                      i_maturity: int = None, i_scenario: int = None,
+                      operators: str = None, scheme: str = None,
+                      per_node: bool = False):
+        """Net solute flux leaving the domain through the Dirichlet *nodes*.
+
+        Computed from the UNMODIFIED assembled spatial operator T = D + A - R (as
+        in :meth:`solve`, i.e. before the Dirichlet row overrides, which only exist
+        on a local copy inside ``solve``).  Since (T c)_i is the net flux INTO node
+        i from its neighbours, node i must hand exactly that amount to the external
+        reservoir holding it at c_i:
+
+            flux = sum_{i in nodes} (T c)_i      [mol/d when c is mol/cm3, since
+                                                  T is in cm3/d]
+
+        Sign: POSITIVE = solute leaves the domain through *nodes* (e.g. a c=0 sink);
+        NEGATIVE = solute enters through them (e.g. a c=1 source).  For a
+        conservative operator (no reaction, steady state) the sums over inlet and
+        outlet node sets are equal and opposite.  (This is -(A_bc c) with A_bc the
+        flux operator from the boundary node into the domain.)  Capacitance is
+        ignored (steady / quasi-steady diagnostic).
+
+        Parameters
+        ----------
+        c : ndarray, concentrations in the active mode's indexing (as returned by
+            :meth:`solve`).
+        nodes : iterable of full-network node ids (auto-shifted in 'sym' mode).
+        h, i_maturity, i_scenario, scheme, operators : default to those of the
+            last ``solve`` call ('T' if none; operators 'T' | 'D' | 'A' as in
+            :meth:`solve`).
+        per_node : return the per-node array instead of the sum.
+        """
+        if self._last_solve is None and (h is None or i_maturity is None or i_scenario is None):
+            raise ValueError("pass h, i_maturity, i_scenario (no previous solve())")
+        lh, lm, ls, lsch, lop = self._last_solve if self._last_solve else (None,) * 5
+        operators = (lop or 'T') if operators is None else operators
+        if operators not in ('D', 'A', 'T'):
+            raise ValueError(f"operators must be 'D', 'A', or 'T'; got {operators!r}")
+        h = lh if h is None else h
+        i_maturity = lm if i_maturity is None else i_maturity
+        i_scenario = ls if i_scenario is None else i_scenario
+        scheme = (lsch or 'upwind') if scheme is None else scheme
+        if scheme == 'sg' and operators != 'T':
+            raise ValueError("scheme='sg' requires operators='T'")
+
+        R = self.build_reaction_matrix(i_maturity)
+        if scheme == 'sg':
+            T = self.build_transport_operator(h, i_maturity, i_scenario, scheme='sg') - R
+        else:
+            n = self._matrix_size
+            zero = sp.csr_matrix((n, n))
+            D = self.build_diffusion_matrix(h, i_maturity) if operators in ('D', 'T') else zero
+            A = (self.build_advection_matrix(i_maturity, i_scenario)
+                 if operators in ('A', 'T') else zero)
+            T = D + A - R
+
+        nwj = self.n_wall_junction
+        idx = [(nd - nwj if self.mode == 'sym' else nd) for nd in nodes]
+        idx = np.array([k for k in idx if 0 <= k < self._matrix_size], dtype=int)
+        Tc = np.asarray(T.dot(np.asarray(c, dtype=float))).ravel()
+        return Tc[idx] if per_node else float(Tc[idx].sum())

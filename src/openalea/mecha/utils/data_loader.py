@@ -22,7 +22,7 @@ import os
 import xml.etree.ElementTree as ET
 from lxml import etree 
 import numpy as np
-from typing import Dict, List, Any, Optional, Tuple, Union
+from typing import Callable, Dict, List, Any, Optional, Tuple, Union
 from dataclasses import dataclass, field
 
 BARRIER_KEY = {
@@ -1048,6 +1048,29 @@ class HydraulicData:
     # Thickness [um] per side of the endodermal tertiary layer (kw = kw, on the cell side
     # of the suberin; only where endodermal lamella keys exist). 0 = off.
     tert_wall_thickness: float = 0.0
+    # ── Optional per-cell / per-wall multipliers (all OFF by default: None) ────────
+    # Aquaporin multiplier applied to the aquaporin part (kaqp_curr, NOT kmb) of the
+    # membrane of the cell owning it.  ``aqp_factor`` = {cell_id: factor} (MECHA cell
+    # id = ``HydraulicCell.cell_id`` = node id - network.n_wall_junction);
+    # ``aqp_factor_by_type`` = {cell_type: factor} (``HydraulicCell.cell_type``, e.g.
+    # 'sclerenchyma'). A cell id entry overrides a cell-type entry. Cells without an
+    # entry are untouched (the original arithmetic is not even evaluated).
+    aqp_factor: Optional[Dict[int, float]] = None
+    aqp_factor_by_type: Optional[Dict[str, float]] = None
+    # Wall conductivity multiplier applied to the wall conductance K and to its
+    # diffusive temp_factor: ``kw_wall_factor`` = {wall_id: factor} (graph node id of
+    # the mid-wall node, < network.n_walls) and/or ``kw_wall_factor_fn(wall_id, cells)
+    # -> factor | None`` (cells = flanking HydraulicCell list). The dict wins over
+    # the callable; None / missing -> wall untouched.
+    kw_wall_factor: Optional[Dict[int, float]] = None
+    kw_wall_factor_fn: Optional[Callable[..., Optional[float]]] = None
+    # Reflection coefficient of the Casparian band wall (Steudle composite transport
+    # model; the suberized / lignified band sieves solutes such as hydrated Na+,
+    # Ranathunge et al. 2011), endodermal and exodermal band respectively. Default 0
+    # (no osmotic term, full solute advection). Applies only to the two-cell walls
+    # that are a band at the current maturity (see HydraulicMatrixBuilder._wall_sigma).
+    sigma_casp_endo: float = 0.0
+    sigma_casp_exo: float = 0.0
     kaqp: List[Dict[str, float]] = field(default_factory=lambda: [{'value': 0.000430, 'cortex_factor': 1.0, 'endo_factor': 1.0, 'epi_factor': 1.0, 'exo_factor': 1.0, 'stele_factor': 1.0}])
     kpl: List[Dict[str, float]] = field(default_factory=lambda: [{'value': 5.3E-12, 'phloem_companion_cell_factor': 0.0, 'pericycle_phloem_pole_factor': 0.0, 'phloem_sieve_tube_factor': 0.0, 'cortex_factor': 1.0}])
 
@@ -1209,6 +1232,30 @@ class HydraulicData:
                 continue
             for interface in interfaces:
                 self.fplxheight_map[tuple(sorted(interface))] = value
+
+    def get_aqp_factor(self, cell_id: int, cell_type: Optional[str] = None) -> Optional[float]:
+        """Per-cell aquaporin multiplier, or ``None`` when none is set (default)."""
+        if self.aqp_factor is not None and cell_id in self.aqp_factor:
+            return float(self.aqp_factor[cell_id])
+        if self.aqp_factor_by_type is not None and cell_type in self.aqp_factor_by_type:
+            return float(self.aqp_factor_by_type[cell_type])
+        return None
+
+    def get_wall_kw_factor(self, wall_id: int, cells) -> Optional[float]:
+        """Per-wall kw multiplier for mid-wall node *wall_id*, or ``None`` (default)."""
+        if self.kw_wall_factor is not None and wall_id in self.kw_wall_factor:
+            return float(self.kw_wall_factor[wall_id])
+        if self.kw_wall_factor_fn is not None:
+            f = self.kw_wall_factor_fn(wall_id, cells)
+            return None if f is None else float(f)
+        return None
+
+    def get_casp_sigma(self, band: str) -> float:
+        """Casparian-band reflection coefficient for *band* ('endo' | 'exo'), in [0, 1]."""
+        sig = float(getattr(self, 'sigma_casp_' + band))
+        if not (0.0 <= sig <= 1.0):
+            raise ValueError(f"sigma_casp_{band} must be in [0, 1], got {sig}")
+        return sig
 
     def get_xcontact(self, h: int) -> float:
         """Get the soil-contact x-threshold for scenario index *h*.

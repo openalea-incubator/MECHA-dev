@@ -26,6 +26,52 @@ class HydraulicMatrixBuilder:
         self._scl_pd = {}
         self._wall_air_cids = set()
 
+    def _aqp_factor(self, cell):
+        """Optional per-cell aquaporin multiplier (``HydraulicData.aqp_factor`` /
+        ``aqp_factor_by_type``), or ``None`` (default: leave kaqp untouched)."""
+        h = self.hydraulic
+        if cell is None or (getattr(h, 'aqp_factor', None) is None
+                            and getattr(h, 'aqp_factor_by_type', None) is None):
+            return None
+        return h.get_aqp_factor(cell.cell_id, cell.cell_type)
+
+    def _wall_kw_factor(self, wall_id, cells):
+        """Optional per-wall kw multiplier (``HydraulicData.kw_wall_factor`` /
+        ``kw_wall_factor_fn``), or ``None`` (default: wall untouched)."""
+        h = self.hydraulic
+        if (getattr(h, 'kw_wall_factor', None) is None
+                and getattr(h, 'kw_wall_factor_fn', None) is None):
+            return None
+        if wall_id >= self.network.n_walls:      # junction node: not a wall
+            return None
+        return h.get_wall_kw_factor(wall_id, cells)
+
+    def _wall_sigma(self, wall_id, cells, kw_config, kw):
+        """``(sigma, band)`` of a wall: the Casparian-band reflection coefficient
+        (``HydraulicData.sigma_casp_endo`` / ``sigma_casp_exo``, possibly 0) and the
+        band name ('endo' | 'exo') when the wall IS a band at this maturity, else
+        ``(0.0, None)``.
+
+        A band is a two-cell wall whose interface resolves, via ``interface_kw_key_map``,
+        to ``kw_endo_endo`` / ``kw_exo_exo`` AND whose ``kw_config`` value is below the
+        plain ``kw`` (i.e. the band exists at this barrier level; barrier 0 gives
+        kw_endo_endo == kw_exo_exo == kw). Independent of the K branch taken in
+        ``_fill_wall``: a passage cell or the suberin-lamella model changes the membrane /
+        the wall kw but the Casparian band remains. Ghost / air-space walls are never
+        endo-endo or exo-exo, junction nodes are not walls."""
+        h = self.hydraulic
+        se, sx = h.get_casp_sigma('endo'), h.get_casp_sigma('exo')   # validates
+        if wall_id >= self.network.n_walls or len(cells) != 2:
+            return 0.0, None
+        if (cells[0].phi_thick, cells[1].phi_thick) == (1, 1) and cells[0].rank == cells[1].rank:
+            return 0.0, None                    # phi-thickening wall (kw_phi_thick branch)
+        key = h.interface_kw_key_map.get(tuple(sorted((cells[0].cgroup, cells[1].cgroup))))
+        if key == 'kw_endo_endo' and kw_config.get(key, kw) < kw:
+            return se, 'endo'
+        if key == 'kw_exo_exo' and kw_config.get(key, kw) < kw:
+            return sx, 'exo'
+        return 0.0, None
+
     def _build_wall_thickness(self):
         """Per-wall thickness map for ``geometry.use_wall_thickness``.
 
@@ -564,10 +610,36 @@ class HydraulicMatrixBuilder:
         else:
             eattr.pop('t_wall', None)
 
+        # Optional per-wall kw multiplier (default None: arithmetic untouched). Applied
+        # to K and temp_factor so the diffusive conductance follows.
+        wf = self._wall_kw_factor(node, cells_i)
+        if wf is not None:
+            K = K * wf
+            temp_factor = temp_factor * wf
+
         # Store K on the HydraulicWall object for post-solve inspection
         wall = cm.get_wall_by_node_id(i)
         if wall is not None:
             wall.kw = float(K)
+
+        # Optional Casparian-band reflection coefficient (default 0: no 'sigma_wall' /
+        # 'casp' edge attribute). Consumed by Mecha.initialize_scenarios (osmotic term
+        # K*sigma*d_pi), Mecha.compute_edge_flows and SoluteTransport (advection
+        # factor 1 - sigma). NB: not named 'sigma' because compute_edge_flows
+        # overwrites eattr['sigma'] on every edge (membrane / PD reflection).
+        sw, band = self._wall_sigma(node, cells_i, kw_config, kw)
+        # 'casp' tags every band wall edge (also with sigma 0, so a solute-specific
+        # SoluteTransport override can address it); 'sigma_wall' only when sigma != 0.
+        if band is not None:
+            eattr['casp'] = band
+        else:
+            eattr.pop('casp', None)
+        if sw != 0.0:
+            eattr['sigma_wall'] = float(sw)
+        else:
+            eattr.pop('sigma_wall', None)
+        if wall is not None:
+            wall.sigma = float(sw)
 
         self._add_W(i, i, -K)
         self._add_W(i, j,  K)
@@ -660,6 +732,14 @@ class HydraulicMatrixBuilder:
             if kaqp_curr < 0:
                 print('Error, negative kaqp in cortical cell, adjust Paqp_cortex')
 
+        # Optional per-cell aquaporin multiplier (default None: untouched; kmb unaffected)
+        aqp_f = self._aqp_factor(cm.get_by_node_id(neighboor))
+        if aqp_f is not None:
+            kaqp_curr = kaqp_curr * aqp_f
+            eattr['aqp_factor'] = float(aqp_f)
+        else:
+            eattr.pop('aqp_factor', None)
+
         # ── Flanking cells information ────────────────────────────────────────
         cells_i = self._get_cells_for_wall_node(i)
 
@@ -685,6 +765,14 @@ class HydraulicMatrixBuilder:
                     p_half = self._prim_thickness(thickness) / 2
                     s_lam = self._sec_thickness(cell_c, thickness)
                     t_lam = self._tert_thickness(cell_c, others)
+
+        # Lamella (suberin) layer of this membrane, read by the membrane-PD solute mode
+        if kw_lam is not None and s_lam > 0.0:
+            eattr['kw_lam'] = float(kw_lam)
+            eattr['s_lam'] = float(s_lam)
+        else:
+            eattr.pop('kw_lam', None)
+            eattr.pop('s_lam', None)
 
         # ── Membrane conductance calculation ──────────────────────────────────
         is_barrier_interface = (n_endo >= 2) or (n_exo >= 2) or (n_stele > 0 and n_endo > 0)
@@ -788,6 +876,10 @@ class HydraulicMatrixBuilder:
             kaqp_curr = float(a_cortex * self.network.distance_center_grav[wall_idx][0] * 1.0E-04 + b_cortex)
             if kaqp_curr < 0:
                 print('Error, negative kaqp in cortical cell, adjust Paqp_cortex')
+
+        aqp_f = self._aqp_factor(cm.get_by_node_id(cell_node))
+        if aqp_f is not None:
+            kaqp_curr = kaqp_curr * aqp_f
 
         # ── Series kw of the owning cell (mirrors _fill_membrane) ────────────
         cells_i = self._get_cells_for_wall_node(wall_idx)
