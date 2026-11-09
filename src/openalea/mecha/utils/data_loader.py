@@ -23,6 +23,13 @@ import xml.etree.ElementTree as ET
 from lxml import etree 
 import numpy as np
 from typing import Callable, Dict, List, Any, Optional, Tuple, Union
+
+# Default sclerenchyma lignified-wall conductivity (Lig_scl), as a fraction of
+# the plain wall conductivity kw, used when Lig_scl is absent from kw_barrier.
+LIG_SCL_KW_FRACTION = 0.1
+# Default phi-thickening lignin conductivity (kw_phi_thick), as a fraction of kw,
+# used when no <phi_thick value="..."/> element is given in the hydraulics file.
+LIG_PHI_KW_FRACTION = 0.01
 from dataclasses import dataclass, field
 
 BARRIER_KEY = {
@@ -832,7 +839,7 @@ class HydraulicData:
     path_hydraulics: List[Any] = field(default_factory=list)
 
     # φ-thickening           
-    kw_phi_thick: List[float] = field(default_factory=lambda: [1.0E-16])
+    kw_phi_thick: List[float] = field(default_factory=list)   # empty -> LIG_PHI_KW_FRACTION * kw
 
     # Counts
     n_kw: int = 1
@@ -1105,7 +1112,8 @@ class HydraulicData:
 
         # φ-thickening configuration
         phi_elem = root.xpath('phi_thick')
-        self.kw_phi_thick = [float(kw.get("value")) for kw in phi_elem] if phi_elem else [1E-16]
+        # <phi_thick value="..."/> overrides; without it kw_phi_thick = LIG_PHI_KW_FRACTION * kw
+        self.kw_phi_thick = [float(kw.get("value")) for kw in phi_elem] if phi_elem else []
 
         # Optional suberin-lamella model: <suberin_model value="lamella"/>,
         # <prim_wall_thickness value="0.5"/>, <sec_wall_thickness value="0.5"
@@ -1349,13 +1357,17 @@ class HydraulicData:
 
     def get_kw_opr_barrier_values(self, h: int, kw_barrier_casparian: float,
                                   kw_barrier_suberin: List[float],
-                                  kw_barrier_lignin: float) -> Tuple[float, List[float], float]:
+                                  kw_barrier_lignin: float,
+                                  kw: Optional[float] = None) -> Tuple[float, List[float], float]:
         """Get the outer-part-of-root (OPR) barrier conductivities.
 
         Optional ``kw_barrier`` attributes ``Casp_exo`` (exodermal Casparian
         band), ``Sub_exo`` (exodermal suberin) and ``Lig_scl`` (sclerenchyma
         lignin) let the exodermis/sclerenchyma differ from the endodermis.
-        Each falls back to the shared Casp / Sub / Lig value when absent.
+        ``Casp_exo`` and ``Sub_exo`` fall back to the shared Casp / Sub value
+        when absent. ``Lig_scl`` defaults to 10 % of the plain wall
+        conductivity ``kw`` (lignified fibre walls stay permeable to water),
+        or to the shared Lig value when ``kw`` is not given.
         """
         if self.n_kw_barrier == self.n_hydraulics and h < len(self.kw_barrier_elems):
             elem = self.kw_barrier_elems[h]
@@ -1369,7 +1381,12 @@ class HydraulicData:
         lig_scl = elem.get("Lig_scl")
         casp_exo = kw_barrier_casparian if casp_exo is None else float(casp_exo)
         sub_exo = list(kw_barrier_suberin) if sub_exo is None else [float(sub_exo)] * 2
-        lig_scl = kw_barrier_lignin if lig_scl is None else float(lig_scl)
+        if lig_scl is not None:
+            lig_scl = float(lig_scl)
+        elif kw is not None:
+            lig_scl = LIG_SCL_KW_FRACTION * float(kw)
+        else:
+            lig_scl = kw_barrier_lignin
         return casp_exo, sub_exo, lig_scl
 
     def get_kw_sub_generic(self, h: int, default: float) -> float:
@@ -1383,13 +1400,22 @@ class HydraulicData:
         sub = elem.get("Sub")
         return default if sub is None else float(sub)
 
+    def get_kw_phi_value(self, h: int, kw: float) -> float:
+        """Phi-thickening lignin conductivity: the ``<phi_thick value="..."/>`` element of
+        the hydraulics file when given (first value), else ``LIG_PHI_KW_FRACTION`` (1 %)
+        of the plain wall conductivity ``kw``."""
+        if self.kw_phi_thick:
+            return float(self.kw_phi_thick[0])
+        return LIG_PHI_KW_FRACTION * float(kw)
+
     def get_wall_conductivities(self, barrier: int, h: int) -> Dict[str, float]:
         """Get wall conductivities based on barrier type."""
         kw =  self.get_kw_value(h)
         kw_septa = self.get_kw_septa_value(h)
         kw_barrier_casparian, kw_barrier_suberin, kw_barrier_lignin = self.get_kw_barrier_values(h)
         casp_exo, sub_exo, lig_scl = self.get_kw_opr_barrier_values(
-            h, kw_barrier_casparian, kw_barrier_suberin, kw_barrier_lignin)
+            h, kw_barrier_casparian, kw_barrier_suberin, kw_barrier_lignin, kw=kw)
+        kw_phi = self.get_kw_phi_value(h, kw)
         barrier_configs = {
             0: {  # No Casparian strip
                 'kw_endo_endo': kw,
@@ -1402,7 +1428,7 @@ class HydraulicData:
                 'kw_endo_peri': kw,
                 'kw_endo_cortex': kw,
                 'kw_passage': kw,
-                'kw_phi_thick': kw_barrier_lignin
+                'kw_phi_thick': kw_phi
             },
             1: {  # Endodermis radial walls
                 'kw_endo_endo': kw_barrier_casparian,
@@ -1414,7 +1440,7 @@ class HydraulicData:
                 'kw_endo_peri': kw,
                 'kw_endo_cortex': kw,
                 'kw_passage': kw,
-                'kw_phi_thick': kw_barrier_lignin
+                'kw_phi_thick': kw_phi
             },
             2: {  # Endodermis with passage cells
                 'kw_endo_endo': kw_barrier_casparian,
@@ -1426,7 +1452,7 @@ class HydraulicData:
                 'kw_endo_peri': kw_barrier_suberin[0],
                 'kw_endo_cortex': kw_barrier_suberin[1],
                 'kw_passage': kw,
-                'kw_phi_thick': kw_barrier_lignin
+                'kw_phi_thick': kw_phi
             },
             3: {  # Endodermis full
                 'kw_endo_endo': kw_barrier_casparian,
@@ -1438,7 +1464,7 @@ class HydraulicData:
                 'kw_endo_peri': kw_barrier_suberin[0],
                 'kw_endo_cortex': kw_barrier_suberin[1],
                 'kw_passage': kw_barrier_suberin[0],
-                'kw_phi_thick': kw_barrier_lignin
+                'kw_phi_thick': kw_phi
             },
             4: {  # Endodermis full and exodermis radial walls
                 'kw_endo_endo': kw_barrier_casparian,
@@ -1450,7 +1476,7 @@ class HydraulicData:
                 'kw_endo_peri': kw_barrier_suberin[0],
                 'kw_endo_cortex': kw_barrier_suberin[1],
                 'kw_passage': kw_barrier_suberin[0],
-                'kw_phi_thick': kw_barrier_lignin
+                'kw_phi_thick': kw_phi
             },
             5: {  # Endodermal & exodermal Casparian strips
                 'kw_endo_endo': kw_barrier_casparian,
@@ -1462,7 +1488,7 @@ class HydraulicData:
                 'kw_endo_peri': kw,
                 'kw_endo_cortex': kw,
                 'kw_passage': kw,
-                'kw_phi_thick': kw_barrier_lignin
+                'kw_phi_thick': kw_phi
             },
             6: {  # Exodermis full and endodermis radial walls
                 'kw_endo_endo': kw_barrier_casparian,
@@ -1474,7 +1500,7 @@ class HydraulicData:
                 'kw_endo_peri': kw,
                 'kw_endo_cortex': kw,
                 'kw_passage': kw,
-                'kw_phi_thick': kw_barrier_lignin
+                'kw_phi_thick': kw_phi
             },
             7: {  # Exodermis radial walls
                 'kw_endo_endo': kw,
@@ -1486,7 +1512,7 @@ class HydraulicData:
                 'kw_endo_peri': kw,
                 'kw_endo_cortex': kw,
                 'kw_passage': kw,
-                'kw_phi_thick': kw_barrier_lignin
+                'kw_phi_thick': kw_phi
             },
             8: {  # Exodermis full suberized and endodermis full suberized
                 'kw_endo_endo': kw_barrier_casparian,
@@ -1498,7 +1524,7 @@ class HydraulicData:
                 'kw_endo_peri': kw_barrier_suberin[0],
                 'kw_endo_cortex': kw_barrier_suberin[1],
                 'kw_passage': kw,
-                'kw_phi_thick': kw_barrier_lignin
+                'kw_phi_thick': kw_phi
             },
             9: {  # Lignin Cap
                 'kw_endo_endo': kw_barrier_casparian,
@@ -1510,7 +1536,7 @@ class HydraulicData:
                 'kw_endo_peri': kw,
                 'kw_endo_cortex': kw,
                 'kw_passage': kw,
-                'kw_phi_thick': kw_barrier_lignin
+                'kw_phi_thick': kw_phi
             },
             11: {  # Exodermis and endodermis fully suberized + lignified sclerenchyma
                 'kw_endo_endo': kw_barrier_casparian,
@@ -1522,7 +1548,7 @@ class HydraulicData:
                 'kw_endo_peri': kw_barrier_suberin[0],
                 'kw_endo_cortex': kw_barrier_suberin[1],
                 'kw_passage': kw,
-                'kw_phi_thick': kw_barrier_lignin,
+                'kw_phi_thick': kw_phi,
                 'kw_scler': lig_scl
             },
             10: {  # Exodermis sub + lignin
@@ -1535,7 +1561,7 @@ class HydraulicData:
                 'kw_endo_peri': kw,
                 'kw_endo_cortex': kw,
                 'kw_passage': kw,
-                'kw_phi_thick': kw_barrier_lignin
+                'kw_phi_thick': kw_phi
             }
         }
 
