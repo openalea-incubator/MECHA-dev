@@ -232,3 +232,34 @@ def test_batches_in_the_kept_library_give_the_kinds_of_one_evaluation():
         np.testing.assert_allclose(batched[i].e, kind.e, rtol=1e-12, atol=1e-14 * max(np.abs(kind.e).max(), 1e-300))
         for name, value in kind.outputs.items():
             np.testing.assert_allclose(batched[i].outputs[name], value, rtol=1e-12)
+
+
+
+def _grown(population) -> list:
+    """The seedling grown for DAYS (_grow, as the tests above): each day's measures."""
+    g = population.data_structure.structure
+    initial = {int(v): float(g.view("length")[int(v)]) for v in population.data_structure.entity_ids("SubOrgan")
+               if g.label(g.complex(int(v))) != g.labels.Organ.StemInternode}
+    series = []
+    for step in range(int(DAYS * 24 * 3600 / STEP) + 1):
+        _grow(population, initial, step * STEP / 3600.)
+        population.instance.run()
+        series.append(_measures(population.data_structure))
+    return series
+
+
+def test_growth_and_kinds_pass_the_topology_and_kinds_checks(monkeypatch):
+    """The growing seedling (its sections lengthening: new kinds every day, the reduction's library patched with
+    their sections in place of the former) under metafspm's checks: every patched structure-derived value equal to
+    its build (METAFSPM_CHECK_TOPOLOGY) and every kind evaluated equal to its evaluation alone in a fresh library
+    (METAFSPM_CHECK_KINDS); the results those of the unchecked run, bit for bit."""
+    from openalea.metafspm.data_structure import mpg as mpg_module
+    counter = _Counter(monkeypatch)
+    unchecked = _grown(_seedling(0.1))
+    assert len(set(counter.keys)) > 2                                  # kinds evaluated as the sections grow
+    monkeypatch.setattr(mpg_module, "_CHECK_TOPOLOGY", True)
+    monkeypatch.setenv("METAFSPM_CHECK_KINDS", "1")
+    checked = _grown(_seedling(0.1))
+    for (uptake, leaf), (checked_uptake, checked_leaf) in zip(unchecked, checked):
+        np.testing.assert_array_equal(uptake, checked_uptake)
+        assert leaf == checked_leaf
