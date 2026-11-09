@@ -26,7 +26,7 @@ def scene(folder=None, tolerance=1e-4):
                      yrange=0.2)                                     # a 0.2 m x 0.2 m column of soil
     stop = largest_change(tolerance)
     built = Scene(table, environment=[Soil], environment_scenarios=[SOIL_SCENARIO], translator=SCENE_TRANSLATOR,
-                  time_step=3600, stop_when=stop,
+                  time_step="1 h", stop_when=stop,
                   recorder=SceneRecorder(folder) if folder else None)
     return built, stop
 
