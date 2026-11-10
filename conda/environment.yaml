@@ -1,8 +1,6 @@
 name: mecha
 channels:
   - openalea3            # openalea.metafspm, openalea.mtg / plantgl
-  - openalea3/label/rc
-  - openalea3/label/dev
   - conda-forge
   - nodefaults           # ignore the defaults channels added by ~/miniconda3/.condarc
 # flexible: strict priority doubled GRANAP's solve time with no different outcome
