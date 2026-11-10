@@ -55,7 +55,36 @@ class SoluteTransport:
             'membrane'      : float  cm²/d  passive transmembrane diffusivity
                               (new; HydraulicMatrixBuilder does not build this)
             'sigma'         : dict {cgroup_int: float}
-                              membrane reflection coefficient (0–1; default 0)
+                              FALLBACK reflection coefficient (0–1) used only
+                              when the per-edge membrane/PD σ set by mecha
+                              (mb.sigma / pd.sigma, already baked into
+                              edge_flux_list) is unavailable; default 0
+            'sigma_casp'    : optional Casparian-band reflection coefficient (0-1)
+                              for the advective carry factor f = 1 - sigma on
+                              the band's wall-junction edges: a float (both
+                              bands) or {'endo': s, 'exo': s} (a missing key
+                              falls back to the hydraulic graph's 'sigma_wall',
+                              i.e. HydraulicData.sigma_casp_*). Overrides the
+                              graph value; applies ONLY to edges carrying
+                              'casp' (never to other apoplastic edges). sigma is
+                              solute-specific (e.g. NaCl vs mannitol). The
+                              osmotic volume flux K*sigma*d_pi is already in the
+                              edge fluxes (compute_edge_flows), so no extra
+                              osmotic coupling is added for walls.
+            'membrane_pd'   : optional. Structure-aware membrane diffusive
+                              permeability [cm/d] (MECHA units cm, d):
+                              ``dict(lipid=P_l, aqp=P_a)`` or a scalar (= lipid
+                              only; 1 m/s = 8.64e6 cm/d). When given it REPLACES
+                              the uniform 'membrane' diffusivity:
+                                P = P_l + P_a * f_aqp   (f_aqp = the cell's
+                                    HydraulicData aquaporin factor, default 1)
+                              in series with a suberin lamella if the hydraulic
+                              lamella model is on:
+                                P_lam = D_wall (kw_lam/kw) / s,  s in cm
+                                P_eff = 1 / (1/P + 1/P_lam)
+                              conductance = P_eff * (height + dist) * length * 1e-8
+                              [cm³/d] (the hydraulic membrane area). Intercellular
+                              (air-space) cells get zero membrane diffusion.
         }
     capacitance_params : dict, optional
         {
@@ -91,6 +120,15 @@ class SoluteTransport:
         self.D_pd   = float(diffusion_params.get('plasmodesmata', 0.0))
         self.D_mem  = float(diffusion_params.get('membrane',      0.0))
         self.sigma  = diffusion_params.get('sigma', {})
+        self.sigma_casp_override = diffusion_params.get('sigma_casp', None)
+        mpd = diffusion_params.get('membrane_pd')
+        if mpd is None:
+            self.membrane_pd = None
+        elif isinstance(mpd, dict):
+            self.membrane_pd = (float(mpd.get('lipid', 0.0)), float(mpd.get('aqp', 0.0)))
+        else:
+            self.membrane_pd = (float(mpd), 0.0)
+        self._last_solve = None   # (h, i_maturity, i_scenario, scheme, operators) of the last solve()
         self.k_deg  = float(reaction_params.get('k_deg', 0.0)) if reaction_params else 0.0
 
         # Advective solute exchange with the domain boundary (soil contact,
@@ -119,6 +157,71 @@ class SoluteTransport:
         self._D_cache: dict = {}   # (h, i_maturity) → csr_matrix
         self._T_cache: dict = {}   # (scheme, mode, h, i_mat, i_scen, fp) → csr_matrix
         self._A_cache: dict = {}   # (mode, i_mat, i_scen, fp) → csr_matrix
+
+        # Mesophyll air-space / sub-stomatal chamber cells carry a VAPOUR DOF
+        # (coupled only by wall_air / air_link edges whose edge_flux_list fluxes
+        # are vapour volume fluxes). Dissolved solute must never enter them, so
+        # exclude any edge with an air-cell endpoint from D/A/T. Empty for roots.
+        self._air_nodes: frozenset = self._collect_air_nodes()
+
+    def _collect_air_nodes(self) -> frozenset:
+        """Full-network node ids of mesophyll air spaces (vapour-only cells).
+
+        Mirrors NetworkBuilder.is_wall_air_cell (cell_type == "air space" and
+        protect_topology); falls back to the node attributes directly when that
+        predicate is unavailable. Returns an empty set for anatomies without air
+        spaces (e.g. roots), making the air-cell exclusion a no-op there.
+        """
+        network = self.network
+        nwj     = self.n_wall_junction
+        graph   = network.graph
+        is_air  = getattr(network, 'is_wall_air_cell', None)
+        nodes   = set()
+        for cid in range(self.n_cells):
+            node_id = nwj + cid
+            if node_id not in graph:
+                continue
+            flagged = False
+            if callable(is_air):
+                try:
+                    flagged = bool(is_air(node_id))
+                except Exception:
+                    flagged = False
+            if not flagged:
+                nd = graph.nodes[node_id]
+                ct = str(nd.get('cell_type', '')).strip().lower()
+                flagged = ct == 'air space' and bool(nd.get('protect_topology', False))
+            if flagged:
+                nodes.add(self.indice[node_id])
+        return frozenset(nodes)
+
+    # ------------------------------------------------------------------
+    # Reflection coefficient σ
+    # ------------------------------------------------------------------
+    def _edge_sigma(self, i: int, j: int, is_mem: bool, is_pd: bool,
+                    cell_node: int) -> float:
+        """Per-edge reflection coefficient σ, consistent with mecha_class.
+
+        mecha.compute_edge_flows bakes the Kedem–Katchalsky osmotic term with
+        the per-edge membrane/PD σ (``mb.sigma`` / ``pd.sigma``) into
+        edge_flux_list.  The solute carry factor (1−σ) must use the SAME σ, so
+        read it from the same membrane/PD object.  Fall back to the per-cgroup
+        ``diffusion_params['sigma']`` dict only when the object is unavailable.
+        """
+        cm = self.network.cell_manager
+        if is_mem:
+            mb = cm.get_membrane_by_edge(i, j)
+            if mb is not None and mb.sigma is not None:
+                return float(mb.sigma)
+        elif is_pd:
+            pd = cm.get_plasmodesmata_by_edge(i, j)
+            if pd is not None and pd.sigma is not None:
+                return float(pd.sigma)
+        else:
+            return 0.0   # walls/junctions: no reflection
+        cg = _cgroup_canonical(
+            self.network.graph.nodes[cell_node].get('cgroup', 4))
+        return float(self.sigma.get(cg, 0.0))
 
     # ------------------------------------------------------------------
     # Diffusion operator D
@@ -188,7 +291,9 @@ class SoluteTransport:
 
         D = matrix_C.tocsr()
 
-        if self.D_mem > 0.0 and self.mode != 'apo':
+        if self.membrane_pd is not None and self.mode != 'apo':
+            D = D + self._build_membrane_diffusion_pd(h, i_maturity)
+        elif self.D_mem > 0.0 and self.mode != 'apo':
             D = D + self._build_membrane_diffusion(i_maturity)
 
         nwj = self.n_wall_junction
@@ -232,6 +337,9 @@ class SoluteTransport:
 
                 if j <= i or eattr.get('path') != 'membrane':
                     continue
+                # No transmembrane solute diffusion into a vapour air space.
+                if j in self._air_nodes:
+                    continue
                 L  = eattr.get('length', 1.0)
                 d  = eattr.get('dist',   1.0)
                 DF = self.D_mem * L * height * 1e-4 / d
@@ -243,6 +351,77 @@ class SoluteTransport:
                     rows.append(r); cols.append(c); data.append(v)
 
         return coo_matrix((data, (rows, cols)), shape=(n, n)).tocsr()
+
+    def _build_membrane_diffusion_pd(self, h: int, i_maturity: int) -> sp.csr_matrix:
+        """Structure-aware passive transmembrane diffusion (``membrane_pd`` mode).
+
+        Per membrane edge (wall i, cell j):
+            P     = P_lipid + P_aqp * f_aqp(cell)            [cm/d]
+            P_lam = D_wall * (kw_lam / kw) / (s * 1e-4)       [cm/d]  (lamella only)
+            P_eff = 1 / (1/P + 1/P_lam)
+            DF    = P_eff * (height + dist) * length * 1e-8   [cm3/d]
+        Air-space (intercellular) cells: DF = 0. ``kw_lam`` / ``s`` are those the
+        hydraulic builder used for the membrane series term (edge attributes
+        ``kw_lam`` / ``s_lam``, only present with ``suberin_model='lamella'``).
+        """
+        P_l, P_a = self.membrane_pd
+        height = float(self.mecha.geometry.maturity_stages[i_maturity].get('height'))
+        hyd = self.mecha.hydraulic
+        kw = float(hyd.get_kw_value(h))
+        cm = self.mecha.network.cell_manager
+        air_nodes = {c.node_id for c in cm.intercellular}
+        nwj, n = self.n_wall_junction, self.n_total
+        rows, cols, data = [], [], []
+
+        for node, edges in self.network.graph.adjacency():
+            i = self.indice[node]
+            if i >= nwj:
+                continue
+            for neighbor, eattr in edges.items():
+                j = self.indice[neighbor]
+                if j <= i or eattr.get('path') != 'membrane':
+                    continue
+                cell = cm.get_by_node_id(neighbor)
+                if neighbor in air_nodes:
+                    P_eff = 0.0
+                else:
+                    f = hyd.get_aqp_factor(cell.cell_id, cell.cell_type) if cell is not None else None
+                    P = P_l + P_a * (1.0 if f is None else f)
+                    kw_lam = eattr.get('kw_lam')
+                    s_lam = eattr.get('s_lam')
+                    if P <= 0.0:
+                        P_eff = 0.0
+                    elif kw_lam is not None and s_lam:
+                        P_lam = self.D_wall * (kw_lam / kw) / (s_lam * 1e-4) if kw > 0 else 0.0
+                        P_eff = 0.0 if P_lam <= 0.0 else 1.0 / (1.0 / P + 1.0 / P_lam)
+                    else:
+                        P_eff = P
+                DF = P_eff * (height + eattr.get('dist', 1.0)) * eattr.get('length', 1.0) * 1e-8
+                eattr['membrane_diffusivity'] = DF
+                if DF == 0.0:
+                    continue
+                for r, c, v in ((i, i, -DF), (i, j, DF), (j, j, -DF), (j, i, DF)):
+                    rows.append(r); cols.append(c); data.append(v)
+
+        return coo_matrix((data, (rows, cols)), shape=(n, n)).tocsr()
+
+    def _wall_edge_sigma(self, u, v) -> float:
+        """Reflection coefficient of apoplastic edge (u, v): non-zero only for the
+        wall-junction edges of a Casparian band (edge attribute ``casp``). The
+        ``diffusion_params['sigma_casp']`` override (float, or {'endo': s, 'exo': s};
+        a missing key falls back to the graph) beats the graph's ``sigma_wall``."""
+        ea = self.network.graph.get_edge_data(u, v)
+        band = ea.get('casp') if ea else None
+        if band is None:
+            return 0.0
+        ov = self.sigma_casp_override
+        if ov is not None:
+            if isinstance(ov, dict):
+                if band in ov:
+                    return float(ov[band])
+            else:
+                return float(ov)
+        return float(ea.get('sigma_wall', 0.0))
 
     # ------------------------------------------------------------------
     # Advection operator A  (upwind, same sign convention as D)
@@ -257,6 +436,9 @@ class SoluteTransport:
         {'source': i, 'target': j, 'flux': F}  with F [cm³/d]:
           F > 0  flow from source to target (source = upstream)
           F < 0  flow from target to source (target = upstream)
+        F is the FULL Kedem–Katchalsky volume flux K(Δψ_p + σΔψ_os) already
+        assembled by mecha.compute_edge_flows, so the osmotic membrane term is
+        NOT re-added here.
 
         First-order upwind.  Stable only while the edge Peclet number
         Pe = |F·f| / D_edge stays ≲ 2; at high Pe the steady operator D + A 
@@ -293,6 +475,12 @@ class SoluteTransport:
             if F == 0.0:
                 continue
 
+            # wall_air / air_link edges carry a VAPOUR volume flux; the dissolved
+            # solute must not be advected into the air space. Skip any edge with
+            # an air-cell endpoint.
+            if src in self._air_nodes or tgt in self._air_nodes:
+                continue
+
             src_apo = src < nwj
             tgt_apo = tgt < nwj
             is_apo  = src_apo and tgt_apo
@@ -306,9 +494,9 @@ class SoluteTransport:
 
             if is_mem:
                 cell_node = tgt if not tgt_apo else src
-                cg     = _cgroup_canonical(
-                    self.network.graph.nodes[cell_node].get('cgroup', 4))
-                factor = 1.0 - float(self.sigma.get(cg, 0.0))
+                factor = 1.0 - self._edge_sigma(src, tgt, is_mem, is_pd, cell_node)
+            elif is_apo:
+                factor = 1.0 - self._wall_edge_sigma(src, tgt)
             else: # need to check for pd
                 factor = 1.0
 
@@ -322,7 +510,6 @@ class SoluteTransport:
                     rows.append(r); cols.append(c); data.append(v)
 
         A = coo_matrix((data, (rows, cols)), shape=(n, n)).tocsr()
-        A = A + self._build_osmotic_advection(i_maturity)
         if self.conserve_boundary:
             A = A + self._build_boundary_advection(i_maturity, i_scenario)
 
@@ -493,16 +680,16 @@ class SoluteTransport:
 
         nwj = self.n_wall_junction
         n   = self.n_total
-        cm  = self.network.cell_manager
         graph = self.network.graph
 
         # Diffusion off-diagonals D_e per node pair (full network).  Each simple
         # graph edge is a single physical link, so D[i,j] is that edge's D_e.
         D_full = self._diffusion_full(h, i_maturity)
 
-        # ── Per-edge advective volume flux F_ij (i<j), pressure-driven ──────────
+        # ── Per-edge advective volume flux F_ij (i<j) ──────────────────────────
         # edge_flux_list holds one entry per active edge with a signed flux and a
         # source→target orientation; re-key to canonical (min,max) with a sign.
+        # F is the FULL Kedem–Katchalsky flux K(Δψ_p + σΔψ_os) from mecha.
         flux_ij: dict = {}
         for edge in self.mecha.edge_flux_list[i_maturity][i_scenario]:
             src, tgt, F = edge['source'], edge['target'], edge['flux']
@@ -511,10 +698,6 @@ class SoluteTransport:
             a, b = (src, tgt) if src < tgt else (tgt, src)
             s = 1.0 if src < tgt else -1.0
             flux_ij[(a, b)] = flux_ij.get((a, b), 0.0) + s * F
-
-        def _os(obj):
-            v = getattr(obj, 'psi_os', None)
-            return float(v) if (v is not None and not np.isnan(float(v))) else 0.0
 
         rows, cols, data = [], [], []
 
@@ -560,6 +743,11 @@ class SoluteTransport:
                 continue
             seen.add((i, j))
 
+            # Air spaces (sub-stomatal chambers) hold a vapour DOF; their
+            # wall_air / air_link edges carry vapour, not dissolved solute.
+            if i in self._air_nodes or j in self._air_nodes:
+                continue
+
             i_apo = i < nwj
             j_apo = j < nwj
             is_apo = i_apo and j_apo
@@ -574,27 +762,15 @@ class SoluteTransport:
 
             De = float(D_full[i, j])
 
-            # Advective volume flux i→j = pressure flux + osmotic membrane flux,
-            # scaled by the membrane carry factor f = 1 − σ.
+            # Advective volume flux i→j is the FULL Kedem–Katchalsky flux
+            # K(Δψ_p + σΔψ_os) already in edge_flux_list; it is only scaled by
+            # the membrane carry factor f = 1 − σ.
             F = flux_ij.get((i, j), 0.0)
             if is_mem:
                 cell_node = v if not j_apo else u   # the cell end of the membrane
-                cg = _cgroup_canonical(graph.nodes[cell_node].get('cgroup', 4))
-                sig = float(self.sigma.get(cg, 0.0))
-                factor = 1.0 - sig
-                # Osmotic Kedem–Katchalsky flux F_os = K σ (ψ_os,wall − ψ_os,cell),
-                # oriented wall→cell.  Rewrite in the canonical i→j orientation.
-                if sig != 0.0:
-                    K = eattr.get('K', 0.0)
-                    if K:
-                        wall_id = i if i_apo else j
-                        cell_id = j if i_apo else i
-                        wall_obj = cm.get_wall_by_node_id(wall_id)
-                        cell_obj = cm.get_by_node_id(cell_id)
-                        if wall_obj is not None and cell_obj is not None:
-                            F_os_wc = K * sig * (_os(wall_obj) - _os(cell_obj))
-                            # F_os_wc is wall→cell; convert to i→j.
-                            F += F_os_wc if (wall_id == i) else -F_os_wc
+                factor = 1.0 - self._edge_sigma(i, j, is_mem, is_pd, cell_node)
+            elif is_apo:
+                factor = 1.0 - self._wall_edge_sigma(u, v)   # wall reflection (default 0)
             else: # need to check for pd
                 factor = 1.0
 
@@ -642,76 +818,6 @@ class SoluteTransport:
             self._D_cache.pop((h, i_maturity), None)   # clear the full-mode entry
         self._D_cache[cache_key] = D_full
         return D_full
-
-    def _build_osmotic_advection(self, i_maturity: int) -> sp.csr_matrix:
-        """
-        Osmotic contribution to advective solute transport at membrane edges.
-
-        edge_flux_list captures only the pressure-driven volume flux
-            F_p = K × (ψ_p,wall − ψ_p,cell).
-        The true Kedem-Katchalsky volume flux is
-            J_v = K × (Δψ_p + σ Δψ_os)
-        so the missing term is
-            F_os = K × σ × (ψ_os,wall − ψ_os,cell).
-        The advective solute flux couples with factor (1−σ), identical to the
-        pressure-driven path, giving an additional upwind contribution
-            ΔJ_s = (1−σ) × F_os × c_upstream.
-
-        osmotic potentials are read from wall_obj.psi_os / cell_obj.psi_os,
-        which are set by mecha.initialize_scenarios().  If both are zero (or
-        None) for every membrane edge the returned matrix is all-zero, so
-        calling this when no osmotic scenario has been set is safe.
-        """
-        nwj = self.n_wall_junction
-        n   = self.n_total
-        rows, cols, data = [], [], []
-        cm = self.network.cell_manager
-
-        def _os(obj):
-            v = getattr(obj, 'psi_os', None)
-            return float(v) if (v is not None and not np.isnan(float(v))) else 0.0
-
-        for node, edges in self.network.graph.adjacency():
-            i = self.indice[node]
-            if i >= nwj:
-                continue  # only start from wall nodes to avoid double-counting
-
-            for neighbor, eattr in edges.items():
-                j = self.indice[neighbor]
-                if j <= i or eattr.get('path') != 'membrane':
-                    continue
-
-                K = eattr.get('K', 0.0)
-                if not K:
-                    continue
-
-                cg  = _cgroup_canonical(
-                    self.network.graph.nodes[neighbor].get('cgroup', 4))
-                sig = float(self.sigma.get(cg, 0.0))
-                if sig == 0.0:
-                    continue
-
-                wall_obj = cm.get_wall_by_node_id(i)
-                cell_obj = cm.get_by_node_id(j)
-                if wall_obj is None or cell_obj is None:
-                    continue
-
-                F_os = K * sig * (_os(wall_obj) - _os(cell_obj))
-                if F_os == 0.0:
-                    continue
-
-                factor = 1.0 - sig   # Kedem-Katchalsky advection coupling
-
-                if F_os > 0.0:       # osmotic drive: wall → cell (wall is upstream)
-                    for r, c, v in ((i, i, -F_os * factor),
-                                    (j, i,  F_os * factor)):
-                        rows.append(r); cols.append(c); data.append(v)
-                else:                # osmotic drive: cell → wall (cell is upstream)
-                    for r, c, v in ((j, j,  F_os * factor),
-                                    (i, j, -F_os * factor)):
-                        rows.append(r); cols.append(c); data.append(v)
-
-        return coo_matrix((data, (rows, cols)), shape=(n, n)).tocsr()
 
     # ------------------------------------------------------------------
     # Capacitance C and reaction R — both are diagonal, volume-weighted,
@@ -904,6 +1010,7 @@ class SoluteTransport:
 
         n    = self._matrix_size
         zero = sp.csr_matrix((n, n))
+        self._last_solve = (h, i_maturity, i_scenario, scheme, operators)
 
         R = self.build_reaction_matrix(i_maturity)
 
@@ -952,3 +1059,69 @@ class SoluteTransport:
             lhs = lhs.tocsr()
 
         return spla.spsolve(lhs, rhs_eff)
+
+    # ------------------------------------------------------------------
+    # Boundary flux diagnostic
+    # ------------------------------------------------------------------
+
+    def boundary_flux(self, c: np.ndarray, nodes, h: int = None,
+                      i_maturity: int = None, i_scenario: int = None,
+                      operators: str = None, scheme: str = None,
+                      per_node: bool = False):
+        """Net solute flux leaving the domain through the Dirichlet *nodes*.
+
+        Computed from the UNMODIFIED assembled spatial operator T = D + A - R (as
+        in :meth:`solve`, i.e. before the Dirichlet row overrides, which only exist
+        on a local copy inside ``solve``).  Since (T c)_i is the net flux INTO node
+        i from its neighbours, node i must hand exactly that amount to the external
+        reservoir holding it at c_i:
+
+            flux = sum_{i in nodes} (T c)_i      [mol/d when c is mol/cm3, since
+                                                  T is in cm3/d]
+
+        Sign: POSITIVE = solute leaves the domain through *nodes* (e.g. a c=0 sink);
+        NEGATIVE = solute enters through them (e.g. a c=1 source).  For a
+        conservative operator (no reaction, steady state) the sums over inlet and
+        outlet node sets are equal and opposite.  (This is -(A_bc c) with A_bc the
+        flux operator from the boundary node into the domain.)  Capacitance is
+        ignored (steady / quasi-steady diagnostic).
+
+        Parameters
+        ----------
+        c : ndarray, concentrations in the active mode's indexing (as returned by
+            :meth:`solve`).
+        nodes : iterable of full-network node ids (auto-shifted in 'sym' mode).
+        h, i_maturity, i_scenario, scheme, operators : default to those of the
+            last ``solve`` call ('T' if none; operators 'T' | 'D' | 'A' as in
+            :meth:`solve`).
+        per_node : return the per-node array instead of the sum.
+        """
+        if self._last_solve is None and (h is None or i_maturity is None or i_scenario is None):
+            raise ValueError("pass h, i_maturity, i_scenario (no previous solve())")
+        lh, lm, ls, lsch, lop = self._last_solve if self._last_solve else (None,) * 5
+        operators = (lop or 'T') if operators is None else operators
+        if operators not in ('D', 'A', 'T'):
+            raise ValueError(f"operators must be 'D', 'A', or 'T'; got {operators!r}")
+        h = lh if h is None else h
+        i_maturity = lm if i_maturity is None else i_maturity
+        i_scenario = ls if i_scenario is None else i_scenario
+        scheme = (lsch or 'upwind') if scheme is None else scheme
+        if scheme == 'sg' and operators != 'T':
+            raise ValueError("scheme='sg' requires operators='T'")
+
+        R = self.build_reaction_matrix(i_maturity)
+        if scheme == 'sg':
+            T = self.build_transport_operator(h, i_maturity, i_scenario, scheme='sg') - R
+        else:
+            n = self._matrix_size
+            zero = sp.csr_matrix((n, n))
+            D = self.build_diffusion_matrix(h, i_maturity) if operators in ('D', 'T') else zero
+            A = (self.build_advection_matrix(i_maturity, i_scenario)
+                 if operators in ('A', 'T') else zero)
+            T = D + A - R
+
+        nwj = self.n_wall_junction
+        idx = [(nd - nwj if self.mode == 'sym' else nd) for nd in nodes]
+        idx = np.array([k for k in idx if 0 <= k < self._matrix_size], dtype=int)
+        Tc = np.asarray(T.dot(np.asarray(c, dtype=float))).ravel()
+        return Tc[idx] if per_node else float(Tc[idx].sum())

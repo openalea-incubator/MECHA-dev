@@ -22,7 +22,14 @@ import os
 import xml.etree.ElementTree as ET
 from lxml import etree 
 import numpy as np
-from typing import Dict, List, Any, Optional, Tuple, Union
+from typing import Callable, Dict, List, Any, Optional, Tuple, Union
+
+# Default sclerenchyma lignified-wall conductivity (Lig_scl), as a fraction of
+# the plain wall conductivity kw, used when Lig_scl is absent from kw_barrier.
+LIG_SCL_KW_FRACTION = 0.1
+# Default phi-thickening lignin conductivity (kw_phi_thick), as a fraction of kw,
+# used when no <phi_thick value="..."/> element is given in the hydraulics file.
+LIG_PHI_KW_FRACTION = 0.01
 from dataclasses import dataclass, field
 
 BARRIER_KEY = {
@@ -36,6 +43,7 @@ BARRIER_KEY = {
     7 : "Ex_cs",
     8 : "En_sub + Ex_sub",
     9 : "Ex_Lcap",
+    10 : "Ex_sub + Ex_lig",
     11 : "En_sub + Ex_sub + Scl_lig"
 }
 
@@ -464,6 +472,11 @@ class GeometryData:
 
     # Geometry parameters
     thickness: float = 1.5 # µm
+    # Opt-in: use each wall's own double thickness (µm) from the network graph
+    # (GRANAP ``cell_wall_thickness``, node attribute ``wall_thickness`` = sum of
+    # both flanking cells' values) instead of the global ``thickness``. Walls
+    # without a value fall back to ``thickness``.
+    use_wall_thickness: bool = False
     # 7.47E-5 µm²: historical value used in MECHA simulations (Couvreur et al.)
     # 1.79E-4 µm²: PD type I width = 22 nm, desmotubule diameter = 16 nm --> cytoplasmic sleeve thickness = 3 nm (Nicolas et al. 2017)
     # 8.16E-4 µm²: PD type II + spokes: 36 nm, desmotubule diameter = 16 nm --> sleeve thick=10 nm (Nicolas et al. 2017)
@@ -533,6 +546,8 @@ class GeometryData:
         self.diffusion_length[1][0] = float(diff_length_elem.get("stele"))
         
         self.thickness = float(root.xpath('thickness')[0].get("value")) # in microns
+        use_wt = root.xpath('use_wall_thickness')
+        self.use_wall_thickness = bool(use_wt) and int(use_wt[0].get("flag")) == 1
         self.pd_section = float(root.xpath('PD_section')[0].get("value")) # in microns^2
         self.xylem_pieces = int(root.xpath('Xylem_pieces')[0].get("flag")) == 1
 
@@ -824,7 +839,7 @@ class HydraulicData:
     path_hydraulics: List[Any] = field(default_factory=list)
 
     # φ-thickening           
-    kw_phi_thick: List[float] = field(default_factory=lambda: [1.0E-16])
+    kw_phi_thick: List[float] = field(default_factory=list)   # empty -> LIG_PHI_KW_FRACTION * kw
 
     # Counts
     n_kw: int = 1
@@ -937,6 +952,12 @@ class HydraulicData:
             (4, 4):   'cortex_factor',                # cortex–cortex
             (12, 12): 'phloem_companion_cell_factor',  # companion–companion
             (11, 11): 'phloem_sieve_tube_factor',      # sieve–sieve
+            (1, 1):   'exo_factor',                    # exo–exo
+            (2, 2):   'epi_factor',                    # epi–epi
+
+            # Outer part of the root (cross-tissue)
+            (1, 2):   ('epi_factor', 'exo_factor'),    # epi–exo (harmonic mean)
+            (1, 4):   'exo_factor',                    # exo–cortex/sclerenchyma
 
             # Cross-tissue: inner endodermis (peri/stele side)
             (3, 5):   'endo_in_factor',                # endo–stele
@@ -1018,6 +1039,45 @@ class HydraulicData:
     # anatomies set this to a near-zero value (e.g. 1e-16) via
     # ``needle_defaults`` to lignify/block the hypodermis–mesophyll wall.
     kw_meso_hypo: Optional[float] = None
+    # Optional suberin-lamella wall model (roots). 'none': the interface map decides
+    # wall and membrane conductivities (default; suberin acts on the membrane of the
+    # owning endodermal / exodermal cell only). 'lamella': a wall is an additive sandwich
+    # tertiary | secondary | primary walls + middle lamella | secondary | tertiary
+    # (see HydraulicMatrixBuilder._fill_wall / _fill_membrane).
+    suberin_model: str = 'none'
+    # Thickness [um] of the middle layer (primary walls + middle lamella); None -> the
+    # local wall thickness t (GRANAP per-wall or global), as for any ordinary wall.
+    prim_wall_thickness: Optional[float] = None
+    # Thickness [um] per side of the secondary layer (suberin lamella / lignified
+    # secondary wall), ADDED to the primary wall: float, or dict keyed by cell_type with
+    # a 'default' entry; None -> t/3 of the local wall thickness t.
+    sec_wall_thickness: Optional[Union[float, Dict[str, float]]] = None
+    # Thickness [um] per side of the endodermal tertiary layer (kw = kw, on the cell side
+    # of the suberin; only where endodermal lamella keys exist). 0 = off.
+    tert_wall_thickness: float = 0.0
+    # ── Optional per-cell / per-wall multipliers (all OFF by default: None) ────────
+    # Aquaporin multiplier applied to the aquaporin part (kaqp_curr, NOT kmb) of the
+    # membrane of the cell owning it.  ``aqp_factor`` = {cell_id: factor} (MECHA cell
+    # id = ``HydraulicCell.cell_id`` = node id - network.n_wall_junction);
+    # ``aqp_factor_by_type`` = {cell_type: factor} (``HydraulicCell.cell_type``, e.g.
+    # 'sclerenchyma'). A cell id entry overrides a cell-type entry. Cells without an
+    # entry are untouched (the original arithmetic is not even evaluated).
+    aqp_factor: Optional[Dict[int, float]] = None
+    aqp_factor_by_type: Optional[Dict[str, float]] = None
+    # Wall conductivity multiplier applied to the wall conductance K and to its
+    # diffusive temp_factor: ``kw_wall_factor`` = {wall_id: factor} (graph node id of
+    # the mid-wall node, < network.n_walls) and/or ``kw_wall_factor_fn(wall_id, cells)
+    # -> factor | None`` (cells = flanking HydraulicCell list). The dict wins over
+    # the callable; None / missing -> wall untouched.
+    kw_wall_factor: Optional[Dict[int, float]] = None
+    kw_wall_factor_fn: Optional[Callable[..., Optional[float]]] = None
+    # Reflection coefficient of the Casparian band wall (Steudle composite transport
+    # model; the suberized / lignified band sieves solutes such as hydrated Na+,
+    # Ranathunge et al. 2011), endodermal and exodermal band respectively. Default 0
+    # (no osmotic term, full solute advection). Applies only to the two-cell walls
+    # that are a band at the current maturity (see HydraulicMatrixBuilder._wall_sigma).
+    sigma_casp_endo: float = 0.0
+    sigma_casp_exo: float = 0.0
     kaqp: List[Dict[str, float]] = field(default_factory=lambda: [{'value': 0.000430, 'cortex_factor': 1.0, 'endo_factor': 1.0, 'epi_factor': 1.0, 'exo_factor': 1.0, 'stele_factor': 1.0}])
     kpl: List[Dict[str, float]] = field(default_factory=lambda: [{'value': 5.3E-12, 'phloem_companion_cell_factor': 0.0, 'pericycle_phloem_pole_factor': 0.0, 'phloem_sieve_tube_factor': 0.0, 'cortex_factor': 1.0}])
 
@@ -1052,7 +1112,27 @@ class HydraulicData:
 
         # φ-thickening configuration
         phi_elem = root.xpath('phi_thick')
-        self.kw_phi_thick = [float(kw.get("value")) for kw in phi_elem] if phi_elem else [1E-16]
+        # <phi_thick value="..."/> overrides; without it kw_phi_thick = LIG_PHI_KW_FRACTION * kw
+        self.kw_phi_thick = [float(kw.get("value")) for kw in phi_elem] if phi_elem else []
+
+        # Optional suberin-lamella model: <suberin_model value="lamella"/>,
+        # <prim_wall_thickness value="0.5"/>, <sec_wall_thickness value="0.5"
+        # sclerenchyma="2.75"/>, <tert_wall_thickness value="1.0"/> (value = 'default', other attributes = cell types)
+        sm = root.xpath('suberin_model')
+        if sm:
+            self.suberin_model = str(sm[0].get("value", "none"))
+        pw = root.xpath('prim_wall_thickness')
+        if pw:
+            self.prim_wall_thickness = float(pw[0].get("value"))
+        tw = root.xpath('tert_wall_thickness')
+        if tw:
+            self.tert_wall_thickness = float(tw[0].get("value"))
+        sw = root.xpath('sec_wall_thickness')
+        if sw:
+            sec = {str(k): float(v) for k, v in sw[0].attrib.items() if k != 'value'}
+            if sw[0].get("value") is not None:
+                sec['default'] = float(sw[0].get("value"))
+            self.sec_wall_thickness = sec if len(sec) > 1 or 'default' not in sec                 else sec['default']
 
         # Extract single-value parameters
         self.kmb = float(root.xpath('km')[0].get("value"))
@@ -1113,6 +1193,11 @@ class HydraulicData:
             kpl_dict['cortex_factor'] = float(kpl_elem.get("cortex_factor", 1.0))
             kpl_dict['endo_in_factor'] = float(kpl_elem.get("endo_in_factor", 1.0))
             kpl_dict['endo_out_factor'] = float(kpl_elem.get("endo_out_factor", 1.0))
+            kpl_dict['exo_factor'] = float(kpl_elem.get("exo_factor", 1.0))
+            kpl_dict['epi_factor'] = float(kpl_elem.get("epi_factor", 1.0))
+            kpl_dict['scl_dead_fraction'] = float(kpl_elem.get("scl_dead_fraction", 0.8))
+            kpl_dict['scl_pd_factor'] = float(kpl_elem.get("scl_pd_factor", 0.05))
+            kpl_dict['scl_seed'] = int(kpl_elem.get("scl_seed", 0))
 
             self.kpl.append(kpl_dict)
 
@@ -1156,6 +1241,30 @@ class HydraulicData:
             for interface in interfaces:
                 self.fplxheight_map[tuple(sorted(interface))] = value
 
+    def get_aqp_factor(self, cell_id: int, cell_type: Optional[str] = None) -> Optional[float]:
+        """Per-cell aquaporin multiplier, or ``None`` when none is set (default)."""
+        if self.aqp_factor is not None and cell_id in self.aqp_factor:
+            return float(self.aqp_factor[cell_id])
+        if self.aqp_factor_by_type is not None and cell_type in self.aqp_factor_by_type:
+            return float(self.aqp_factor_by_type[cell_type])
+        return None
+
+    def get_wall_kw_factor(self, wall_id: int, cells) -> Optional[float]:
+        """Per-wall kw multiplier for mid-wall node *wall_id*, or ``None`` (default)."""
+        if self.kw_wall_factor is not None and wall_id in self.kw_wall_factor:
+            return float(self.kw_wall_factor[wall_id])
+        if self.kw_wall_factor_fn is not None:
+            f = self.kw_wall_factor_fn(wall_id, cells)
+            return None if f is None else float(f)
+        return None
+
+    def get_casp_sigma(self, band: str) -> float:
+        """Casparian-band reflection coefficient for *band* ('endo' | 'exo'), in [0, 1]."""
+        sig = float(getattr(self, 'sigma_casp_' + band))
+        if not (0.0 <= sig <= 1.0):
+            raise ValueError(f"sigma_casp_{band} must be in [0, 1], got {sig}")
+        return sig
+
     def get_xcontact(self, h: int) -> float:
         """Get the soil-contact x-threshold for scenario index *h*.
 
@@ -1187,6 +1296,21 @@ class HydraulicData:
             return self.kw_septa[0]
         else:
             return self.kw_septa[int(h/(self.n_kaqp*self.n_kpl))%self.n_kw_septa]
+
+    @staticmethod
+    def check_kw_septa(kw: float, kw_septa: float) -> None:
+        """Raise if the desiccated-wall conductivity ``kw_septa`` is not below ``kw``.
+
+        ``kw_septa`` is used for septa between two air spaces and for the desiccated
+        air-side half of lacuna-lining walls (k_eff = 0.5 * (kw + kw_septa)), so it
+        must describe a drier, less conductive wall than the hydrated ``kw``.
+        """
+        if kw_septa >= kw:
+            raise ValueError(
+                f"kw_septa ({kw_septa:g}) must be smaller than kw ({kw:g}): it is the "
+                "conductivity of a desiccated wall bordering an air space. Lower "
+                "data.hydraulic.kw_septa or raise kw."
+            )
 
     def get_kw_barrier_values(self, h: int) -> Tuple[float, List[float]]:
         """Get the kw_barrier values based on the scenario index."""
@@ -1231,11 +1355,67 @@ class HydraulicData:
 
         return kw_barrier_casparian, kw_barrier_suberin_all, kw_barrier_lignin
 
+    def get_kw_opr_barrier_values(self, h: int, kw_barrier_casparian: float,
+                                  kw_barrier_suberin: List[float],
+                                  kw_barrier_lignin: float,
+                                  kw: Optional[float] = None) -> Tuple[float, List[float], float]:
+        """Get the outer-part-of-root (OPR) barrier conductivities.
+
+        Optional ``kw_barrier`` attributes ``Casp_exo`` (exodermal Casparian
+        band), ``Sub_exo`` (exodermal suberin) and ``Lig_scl`` (sclerenchyma
+        lignin) let the exodermis/sclerenchyma differ from the endodermis.
+        ``Casp_exo`` and ``Sub_exo`` fall back to the shared Casp / Sub value
+        when absent. ``Lig_scl`` defaults to 10 % of the plain wall
+        conductivity ``kw`` (lignified fibre walls stay permeable to water),
+        or to the shared Lig value when ``kw`` is not given.
+        """
+        if self.n_kw_barrier == self.n_hydraulics and h < len(self.kw_barrier_elems):
+            elem = self.kw_barrier_elems[h]
+        elif self.n_kw_barrier <= 1:
+            elem = self.kw_barrier_elems[0] if self.kw_barrier_elems else {}
+        else:
+            elem = self.kw_barrier_elems[int(h/(self.n_kaqp*self.n_kpl*self.n_kw)) % self.n_kw_barrier]
+
+        casp_exo = elem.get("Casp_exo")
+        sub_exo = elem.get("Sub_exo")
+        lig_scl = elem.get("Lig_scl")
+        casp_exo = kw_barrier_casparian if casp_exo is None else float(casp_exo)
+        sub_exo = list(kw_barrier_suberin) if sub_exo is None else [float(sub_exo)] * 2
+        if lig_scl is not None:
+            lig_scl = float(lig_scl)
+        elif kw is not None:
+            lig_scl = LIG_SCL_KW_FRACTION * float(kw)
+        else:
+            lig_scl = kw_barrier_lignin
+        return casp_exo, sub_exo, lig_scl
+
+    def get_kw_sub_generic(self, h: int, default: float) -> float:
+        """Generic ``Sub`` barrier value (endodermal suberin, radial walls), else *default*."""
+        if self.n_kw_barrier == self.n_hydraulics and h < len(self.kw_barrier_elems):
+            elem = self.kw_barrier_elems[h]
+        elif self.n_kw_barrier <= 1:
+            elem = self.kw_barrier_elems[0] if self.kw_barrier_elems else {}
+        else:
+            elem = self.kw_barrier_elems[int(h/(self.n_kaqp*self.n_kpl*self.n_kw)) % self.n_kw_barrier]
+        sub = elem.get("Sub")
+        return default if sub is None else float(sub)
+
+    def get_kw_phi_value(self, h: int, kw: float) -> float:
+        """Phi-thickening lignin conductivity: the ``<phi_thick value="..."/>`` element of
+        the hydraulics file when given (first value), else ``LIG_PHI_KW_FRACTION`` (1 %)
+        of the plain wall conductivity ``kw``."""
+        if self.kw_phi_thick:
+            return float(self.kw_phi_thick[0])
+        return LIG_PHI_KW_FRACTION * float(kw)
+
     def get_wall_conductivities(self, barrier: int, h: int) -> Dict[str, float]:
         """Get wall conductivities based on barrier type."""
         kw =  self.get_kw_value(h)
         kw_septa = self.get_kw_septa_value(h)
         kw_barrier_casparian, kw_barrier_suberin, kw_barrier_lignin = self.get_kw_barrier_values(h)
+        casp_exo, sub_exo, lig_scl = self.get_kw_opr_barrier_values(
+            h, kw_barrier_casparian, kw_barrier_suberin, kw_barrier_lignin, kw=kw)
+        kw_phi = self.get_kw_phi_value(h, kw)
         barrier_configs = {
             0: {  # No Casparian strip
                 'kw_endo_endo': kw,
@@ -1248,7 +1428,7 @@ class HydraulicData:
                 'kw_endo_peri': kw,
                 'kw_endo_cortex': kw,
                 'kw_passage': kw,
-                'kw_phi_thick': kw_barrier_lignin
+                'kw_phi_thick': kw_phi
             },
             1: {  # Endodermis radial walls
                 'kw_endo_endo': kw_barrier_casparian,
@@ -1260,7 +1440,7 @@ class HydraulicData:
                 'kw_endo_peri': kw,
                 'kw_endo_cortex': kw,
                 'kw_passage': kw,
-                'kw_phi_thick': kw_barrier_lignin
+                'kw_phi_thick': kw_phi
             },
             2: {  # Endodermis with passage cells
                 'kw_endo_endo': kw_barrier_casparian,
@@ -1272,7 +1452,7 @@ class HydraulicData:
                 'kw_endo_peri': kw_barrier_suberin[0],
                 'kw_endo_cortex': kw_barrier_suberin[1],
                 'kw_passage': kw,
-                'kw_phi_thick': kw_barrier_lignin
+                'kw_phi_thick': kw_phi
             },
             3: {  # Endodermis full
                 'kw_endo_endo': kw_barrier_casparian,
@@ -1284,11 +1464,11 @@ class HydraulicData:
                 'kw_endo_peri': kw_barrier_suberin[0],
                 'kw_endo_cortex': kw_barrier_suberin[1],
                 'kw_passage': kw_barrier_suberin[0],
-                'kw_phi_thick': kw_barrier_lignin
+                'kw_phi_thick': kw_phi
             },
             4: {  # Endodermis full and exodermis radial walls
                 'kw_endo_endo': kw_barrier_casparian,
-                'kw_exo_exo': kw_barrier_casparian,
+                'kw_exo_exo': casp_exo,
                 'kw_exo_epi': kw,
                 'kw_exo_cortex': kw,
                 'kw_septa': kw_septa,
@@ -1296,11 +1476,11 @@ class HydraulicData:
                 'kw_endo_peri': kw_barrier_suberin[0],
                 'kw_endo_cortex': kw_barrier_suberin[1],
                 'kw_passage': kw_barrier_suberin[0],
-                'kw_phi_thick': kw_barrier_lignin
+                'kw_phi_thick': kw_phi
             },
             5: {  # Endodermal & exodermal Casparian strips
                 'kw_endo_endo': kw_barrier_casparian,
-                'kw_exo_exo': kw_barrier_casparian,
+                'kw_exo_exo': casp_exo,
                 'kw_exo_epi': kw,
                 'kw_exo_cortex': kw,
                 'kw_septa': kw_septa,
@@ -1308,23 +1488,23 @@ class HydraulicData:
                 'kw_endo_peri': kw,
                 'kw_endo_cortex': kw,
                 'kw_passage': kw,
-                'kw_phi_thick': kw_barrier_lignin
+                'kw_phi_thick': kw_phi
             },
             6: {  # Exodermis full and endodermis radial walls
                 'kw_endo_endo': kw_barrier_casparian,
-                'kw_exo_exo': kw_barrier_casparian,
-                'kw_exo_epi': kw_barrier_suberin[1],
-                'kw_exo_cortex': kw_barrier_suberin[0],
+                'kw_exo_exo': casp_exo,
+                'kw_exo_epi': sub_exo[1],
+                'kw_exo_cortex': sub_exo[0],
                 'kw_septa': kw_septa,
                 'kw_cortex_cortex': kw,
                 'kw_endo_peri': kw,
                 'kw_endo_cortex': kw,
                 'kw_passage': kw,
-                'kw_phi_thick': kw_barrier_lignin
+                'kw_phi_thick': kw_phi
             },
             7: {  # Exodermis radial walls
                 'kw_endo_endo': kw,
-                'kw_exo_exo': kw_barrier_casparian,
+                'kw_exo_exo': casp_exo,
                 'kw_exo_epi': kw,
                 'kw_exo_cortex': kw,
                 'kw_septa': kw_septa,
@@ -1332,23 +1512,23 @@ class HydraulicData:
                 'kw_endo_peri': kw,
                 'kw_endo_cortex': kw,
                 'kw_passage': kw,
-                'kw_phi_thick': kw_barrier_lignin
+                'kw_phi_thick': kw_phi
             },
             8: {  # Exodermis full suberized and endodermis full suberized
                 'kw_endo_endo': kw_barrier_casparian,
-                'kw_exo_exo': kw_barrier_casparian,
-                'kw_exo_epi': kw_barrier_suberin[1],
-                'kw_exo_cortex': kw_barrier_suberin[0],
+                'kw_exo_exo': casp_exo,
+                'kw_exo_epi': sub_exo[1],
+                'kw_exo_cortex': sub_exo[0],
                 'kw_septa': kw_septa,
                 'kw_cortex_cortex': kw,
                 'kw_endo_peri': kw_barrier_suberin[0],
                 'kw_endo_cortex': kw_barrier_suberin[1],
                 'kw_passage': kw,
-                'kw_phi_thick': kw_barrier_lignin
+                'kw_phi_thick': kw_phi
             },
             9: {  # Lignin Cap
                 'kw_endo_endo': kw_barrier_casparian,
-                'kw_exo_exo': kw_barrier_casparian,
+                'kw_exo_exo': casp_exo,
                 'kw_exo_epi': kw_barrier_lignin,
                 'kw_exo_cortex': kw,
                 'kw_septa': kw_septa,
@@ -1356,32 +1536,32 @@ class HydraulicData:
                 'kw_endo_peri': kw,
                 'kw_endo_cortex': kw,
                 'kw_passage': kw,
-                'kw_phi_thick': kw_barrier_lignin
+                'kw_phi_thick': kw_phi
             },
             11: {  # Exodermis and endodermis fully suberized + lignified sclerenchyma
                 'kw_endo_endo': kw_barrier_casparian,
-                'kw_exo_exo': kw_barrier_casparian,
-                'kw_exo_epi': kw_barrier_suberin[1],
-                'kw_exo_cortex': kw_barrier_suberin[0],
+                'kw_exo_exo': casp_exo,
+                'kw_exo_epi': sub_exo[1],
+                'kw_exo_cortex': sub_exo[0],
                 'kw_septa': kw_septa,
                 'kw_cortex_cortex': kw,
                 'kw_endo_peri': kw_barrier_suberin[0],
                 'kw_endo_cortex': kw_barrier_suberin[1],
                 'kw_passage': kw,
-                'kw_phi_thick': kw_barrier_lignin,
-                'kw_scler': kw_barrier_lignin
+                'kw_phi_thick': kw_phi,
+                'kw_scler': lig_scl
             },
             10: {  # Exodermis sub + lignin
                 'kw_endo_endo': kw,
-                'kw_exo_exo': kw_barrier_casparian,
-                'kw_exo_epi': kw_barrier_suberin[1],
-                'kw_exo_cortex': kw_barrier_suberin[0],
+                'kw_exo_exo': casp_exo,
+                'kw_exo_epi': sub_exo[1],
+                'kw_exo_cortex': sub_exo[0],
                 'kw_septa': kw_septa,
                 'kw_cortex_cortex': kw,
                 'kw_endo_peri': kw,
                 'kw_endo_cortex': kw,
                 'kw_passage': kw,
-                'kw_phi_thick': kw_barrier_lignin
+                'kw_phi_thick': kw_phi
             }
         }
 
@@ -1390,6 +1570,17 @@ class HydraulicData:
 
         # Hypodermis/epidermis–mesophyll (2, 4) wall
         config['kw_meso_hypo'] = self.kw_meso_hypo if self.kw_meso_hypo is not None else kw
+
+        # Suberin-lamella values, only where the stage has that suberin (used only by
+        # suberin_model == 'lamella'; extra keys do not affect the 'none' model).
+        if barrier in (2, 3, 4, 8, 11):                            # stages with endodermal suberin
+            config['kw_lam_endo_out'] = kw_barrier_suberin[1]      # Sub_out, cortex side
+            config['kw_lam_endo_in'] = kw_barrier_suberin[0]       # Sub_in, stele side
+            config['kw_lam_endo_rad'] = self.get_kw_sub_generic(h, kw_barrier_suberin[1])
+        if barrier in (6, 8, 10, 11):                              # stages with exodermal suberin
+            config['kw_lam_exo_out'] = sub_exo[1]                  # epidermis side
+            config['kw_lam_exo_in'] = sub_exo[0]                   # cortex / inner side
+            config['kw_lam_exo_rad'] = sub_exo[0]                  # generic Sub_exo
         return config
 
     def get_plasmodesmatal_conductance(self, h: int) -> Dict[str, float]:
@@ -1462,7 +1653,14 @@ class HydraulicData:
             'cortex_factor': cortex_factor,
             'phloem_companion_cell_factor': phloem_companion_cell_factor, # PCC
             'pericycle_phloem_pole_factor': phloem_pericycle_pole_factor, # PPP
-            'phloem_sieve_tube_factor': phloem_sieve_tube_factor # PST
+            'phloem_sieve_tube_factor': phloem_sieve_tube_factor, # PST
+            # Barrier stage 11 only: dead / apoptotic sclerenchyma fibres. A
+            # fraction ``scl_dead_fraction`` of the sclerenchyma cells loses all
+            # PD, the rest keeps ``scl_pd_factor`` of them (seeded, see solver).
+            # Defaults to 0 / 1 to switch off.
+            'scl_dead_fraction': float(self.kpl[iPD].get('scl_dead_fraction', 0.8)),
+            'scl_pd_factor': float(self.kpl[iPD].get('scl_pd_factor', 0.05)),
+            'scl_seed': int(self.kpl[iPD].get('scl_seed', 0)),
         }
         # Legacy short aliases, kept so that downstream code reading
         # config['cortex'] / ['endo_in'] / ... keeps working.
