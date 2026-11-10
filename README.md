@@ -15,9 +15,12 @@ into the composite nature of water transport in roots. *Plant Physiology* 178, 1
 
 ## Installation
 
-MECHA, GRANAP and metafspm are not installable from the `openalea3` channel yet in the versions used here: clone the
-three repositories on their working branches, next to each other, and install them from source (`pip install -e`)
-in one environment.
+MECHA's environment brings [metafspm](https://github.com/openalea/metafspm) (`openalea.metafspm`, from `openalea3`)
+and, through it, encoding3d. GRANAP (not published yet in the version used here) and MECHA are installed from their
+clones (`pip install -e`), next to each other.
+Until metafspm's `release2026` and encoding3d are published on `openalea3`, the environment's `openalea.metafspm`
+is an older version: install the two from their clones over it, as below (`--no-deps`: the environment already has
+their dependencies). Once they are published, the clones and those two lines are no longer needed.
 
 ```bash
 mkdir fspm && cd fspm                       # any folder: the three repositories side by side
@@ -26,16 +29,15 @@ git clone -b other_platforms_bindings https://github.com/openalea/encoding3d.git
 git clone -b to_metafspm https://github.com/openalea-incubator/GRANAP-dev.git GRANAP
 git clone -b to_metafspm https://github.com/openalea-incubator/MECHA-dev.git MECHA-dev
 
-mamba env create -f MECHA-dev/conda/environment.yaml     # the dependencies of the three, and MECHA itself
+mamba env create -f MECHA-dev/conda/environment.yaml     # GRANAP's and MECHA's dependencies, openalea.metafspm
 mamba activate mecha
-pip install -e encoding3d
-pip install -e metafspm
+pip install -e encoding3d --no-deps                      # until encoding3d is published
+pip install -e metafspm --no-deps                        # until metafspm's release2026 is published
 pip install -e GRANAP
 pip install -e MECHA-dev
 ```
 
-Keep the folder names above: GRANAP's own environment file (`GRANAP/conda/environment.yaml`) expects `metafspm` next
-to it. To update, `git pull` in each repository; the editable installs follow.
+To update, `git pull` in each repository; the editable installs follow.
 
 ## Getting started
 
