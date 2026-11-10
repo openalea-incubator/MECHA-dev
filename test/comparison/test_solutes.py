@@ -15,6 +15,8 @@ from openalea.mecha.geometry import MEMBRANE
 from legacy_run import legacy_reactions_step
 from solute_case import D_APO, D_MEM, D_PD, DT, mesophyll_source, needle_case as _needle_case, port_step as _run
 
+pytestmark = pytest.mark.slow    # minutes long: run before a release or a merge to main (pytest -m slow)
+
 STARCH = (2.0, 1.0)                                           # d-1: synthesis, degradation (the diurnal runs')
 PHOTOSYNTHESIS = 5e-6                                         # mol cm-3: the diurnal runs' c_photo, at g = 1
 

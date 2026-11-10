@@ -21,6 +21,8 @@ from openalea.mecha.stand_ins import Transpiration, UniformSoil
 
 from plants import initiated
 
+pytestmark = pytest.mark.slow    # minutes long: run before a release or a merge to main (pytest -m slow)
+
 SOIL = -1000.                                            # hPa
 TRANSPIRATION = 0.05                                     # cm3 d-1, the leaf organ's
 

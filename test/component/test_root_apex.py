@@ -20,6 +20,8 @@ from openalea.mecha.stand_ins import Development, Transpiration, UniformSoil
 
 from test_shoot import SOIL, TRANSPIRATION, Anatomy
 
+pytestmark = pytest.mark.slow    # minutes long: run before a release or a merge to main (pytest -m slow)
+
 SEGMENT, APEX, RADIUS = 4.5e-3, 2e-3, 0.55e-3          # m
 BARRIERS = {"tip_zone": 0., "tip_barrier": 0., "young_zone": 0.1, "young_barrier": 1., "mature_barrier": 3.}
 TIP_ZONE_ON_THE_APEX = dict(BARRIERS, tip_zone=APEX)                        # the apex at barrier 0

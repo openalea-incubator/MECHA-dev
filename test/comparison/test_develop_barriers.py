@@ -13,6 +13,8 @@ from openalea.mecha.geometry import section_parts
 from legacy_run import legacy_options, legacy_section
 from plants import anatomy_data_structure, root, template_organ
 
+pytestmark = pytest.mark.slow    # minutes long: run before a release or a merge to main (pytest -m slow)
+
 DEVELOP_BARRIERS = tuple(range(12))
 
 

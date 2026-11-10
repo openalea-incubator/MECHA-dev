@@ -10,6 +10,8 @@ import pytest
 from openalea.mecha.root_system import NETWORK, RootSystemConductance
 from openalea.mecha.simulation import fit_root_system, root_system
 
+pytestmark = pytest.mark.slow    # minutes long: run before a release or a merge to main (pytest -m slow)
+
 SOIL, COLLAR = -1000., -5000.
 
 

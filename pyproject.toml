@@ -96,3 +96,8 @@ Repository = "https://github.com/MECHARoot/MECHA-dev"
 
 [project.entry-points."wralea"]
 "mecha" = "openalea.mecha_wralea"
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: minutes long (the plant and shoot problems, the reduction's accuracy, the legacy comparisons); left out by pytest -m 'not slow', run before a release or a merge to main",
+]

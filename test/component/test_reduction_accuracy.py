@@ -24,6 +24,8 @@ from openalea.mecha.component import MechaHydraulics, scenario_reduction
 from openalea.mecha.simulation import root_system
 from openalea.mecha.stand_ins import Transpiration, UniformSoil
 
+pytestmark = pytest.mark.slow    # minutes long: run before a release or a merge to main (pytest -m slow)
+
 SOIL = -1000.                                            # hPa
 TRANSPIRATION = 0.05                                     # cm3 d-1
 LABELS = ("RootSegment", "StemElement", "LeafElement")       # the sheaths' elements are StemElements

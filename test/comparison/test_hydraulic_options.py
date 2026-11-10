@@ -15,6 +15,8 @@ from openalea.mecha.legacy import Mecha
 from legacy_run import legacy_options, legacy_section
 from plants import template_organ
 
+pytestmark = pytest.mark.slow    # minutes long: run before a release or a merge to main (pytest -m slow)
+
 KAQP = dict(cortex_factor=0.5, endo_factor=2.0, exo_factor=0.7, epi_factor=1.3, stele_factor=0.8)
 OPTIONS = {
     "phi_inner": dict(port=dict(n_phi_layers=1., phi_type=1.), network=dict(n_phi_layers=1, phi_type=1)),

@@ -13,6 +13,8 @@ from openalea.mecha.osmotic import MechaOsmoticPresets
 from legacy_run import legacy_options, legacy_osmotic
 from plants import template_organ
 
+pytestmark = pytest.mark.slow    # minutes long: run before a release or a merge to main (pytest -m slow)
+
 # every case sets all three (the DataStructure keeps a component's parameters from one case to the next)
 SCENARIOS = [dict(os_hetero=0, s_hetero=0, s_factor=1.0), dict(os_hetero=1, s_hetero=1, s_factor=1.0),
              dict(os_hetero=2, s_hetero=2, s_factor=1.0), dict(os_hetero=3, s_hetero=0, s_factor=0.7),

@@ -17,6 +17,8 @@ from openalea.mecha.solutes import MechaSolutes
 from legacy_run import legacy_coupled, legacy_options
 from plants import template_organ
 
+pytestmark = pytest.mark.slow    # minutes long: run before a release or a merge to main (pytest -m slow)
+
 SIGMA = 0.5
 PRODUCTION = 2e-13                                     # mol d-1 per cortex cell
 D_APO, D_PD, D_MEM = 0.1, 0.5, 1e-6
