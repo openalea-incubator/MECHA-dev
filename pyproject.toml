@@ -56,8 +56,6 @@ channels = [
 ]
 dependencies = [
     "python",
-    "numpy",
-    "scipy",
     "networkx",
     "lxml",
     "geopandas",
@@ -65,10 +63,10 @@ dependencies = [
     "shapely",
     "opencv",
     "pydantic",
-    "openalea.mtg",
-    # "openalea.granap",     # required (the cross-sections, generated into metafspm's MPG), with
-    # "openalea.metafspm",   # the MPG and the component framework: not packaged yet in the versions the port needs,
-    #                        # install both from source (see conda/environment.yaml)
+    "openalea.metafspm",     # the MPG and the component framework; brings numpy, scipy, pandas, numba, pyyaml,
+                             # openalea.mtg and openalea.encoding3d
+    # "openalea.granap",     # required (the cross-sections, generated into metafspm's MPG): not packaged yet in
+    #                        # the version the port needs, install it from source (see conda/environment.yaml)
 ]
 
 [project.optional-dependencies]

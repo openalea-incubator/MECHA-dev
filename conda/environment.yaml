@@ -1,29 +1,28 @@
 name: mecha
 channels:
-  - openalea3            # openalea.mtg / plantgl (metafspm)
+  - openalea3            # openalea.metafspm, openalea.mtg / plantgl
+  - openalea3/label/rc
+  - openalea3/label/dev
   - conda-forge
   - nodefaults           # ignore the defaults channels added by ~/miniconda3/.condarc
 # flexible: strict priority doubled GRANAP's solve time with no different outcome
 channel_priority: flexible
 
-# GRANAP and metafspm are not packaged yet in the versions this port needs: install them from source in this
-# environment once it is created, from the folder holding the three repositories:
+# GRANAP is not packaged yet in the version this port needs: install it from source in this environment once it
+# is created, from the folder holding the repositories:
 #
 #     conda activate mecha
-#     pip install -e metafspm          # branch release2026
 #     pip install -e GRANAP            # branch to_metafspm
 #
-# The dependencies below are theirs and MECHA's. The geometry stack is pinned as in GRANAP (its golden regression
-# suite pins an exact cell census, and a different GEOS build shifts it).
+# The dependencies below are GRANAP's and MECHA's; openalea.metafspm brings its own. The geometry stack is pinned
+# as in GRANAP (its golden regression suite pins an exact cell census, and a different GEOS build shifts it).
 dependencies:
   - python                # openalea.plantgl (via openalea.mtg) has no 3.14 build
   - pip
   - geos =3.14.1          # geometry engine — decides GRANAP's golden census
   - shapely =2.1.2        # GEOS bindings
-  - scipy >=1.13,<1.18    # sparse solvers; GRANAP's Voronoi / cKDTree
-  - numpy
+  - scipy >=1.13,<1.18    # sparse solvers; GRANAP's Voronoi / cKDTree (metafspm's scipy, bounded)
   - geopandas
-  - pandas
   - matplotlib            # bundles pylab
   - networkx
   - lxml
@@ -31,12 +30,9 @@ dependencies:
   - pydantic >=2.7
   - roifile               # GRANAP
   - ipykernel             # notebooks
-  # metafspm
-  - openalea.mtg
-  - numba
-  - pyyaml
+  # the platform; brings numpy, pandas, numba, pyyaml, openalea.mtg and openalea.encoding3d
+  - openalea.metafspm
   - pytest
-  - jsonschema                    # openalea.encoding3d's (metafspm's encoding3d exchange)
   # MECHA's documentation tools
   - pandoc                # the docs' notebooks (nbsphinx)
   - pyan3
