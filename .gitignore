@@ -11,6 +11,7 @@ src_old/*
 src_old
 example/**/outputs/
 /dev*.md
+/.devplan/
 
 # documentation builds, and the tutorials they copy
 doc/_build/
