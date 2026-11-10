@@ -1,6 +1,6 @@
 """
-The seedling of metafspm's soil–plant–atmosphere example (examples/soil_plant_atmosphere), its anatomies populated by
-GRANAP and its hydraulics by MECHA (devplan_metafspm.md, §15):
+The seedling of metafspm's soil–plant–atmosphere example (examples/soil_plant_atm_fspm2026_workshop), its
+anatomies populated by GRANAP and its hydraulics by MECHA (devplan_metafspm.md, §15):
 
     SeedlingArchitecture   the architecture of metafspm's seedling (a stem of three phytomers, each with a leaf of
                            three elements; three root axes from the collar, a pivot with two laterals and two oblique
