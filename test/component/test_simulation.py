@@ -124,7 +124,10 @@ def test_the_plant_summaries_weight_kr_by_the_root_surface(tmp_path):
     measured = np.isfinite(kr)
     assert rows["kr"].iloc[-1] == pytest.approx(np.sum((kr * surface)[measured]) / np.sum(surface[measured]),
                                                 rel=1e-12)
-    unweighted = " ".join(str(w.message) for w in caught if "without a declared weight" in str(w.message))
-    for name in ("MechaHydraulics.kr", "MechaHydraulics.kr_effective", "MechaHydraulics.standard_soil_psi",
-                 "UniformSoil.soil_psi", "soil_node_kind", "collar_value", "contact_distance"):
-        assert name not in unweighted
+    sections = np.asarray(ds.get("section_length"))
+    assert sections == pytest.approx(length * 100.)                                     # m -> cm
+    Kx = np.asarray(ds.get("Kx"))
+    assert rows["Kx"].iloc[-1] == pytest.approx(np.sum(Kx * sections) / np.sum(sections), rel=1e-12)
+    conductance = np.asarray(ds.get("soil_conductance"))                                 # in parallel: summed
+    assert rows["soil_conductance"].iloc[-1] == pytest.approx(conductance.sum(), rel=1e-12)
+    assert not [w for w in caught if "without a declared weight" in str(w.message)]

@@ -402,7 +402,11 @@ stele boundary, its xylem immature and its protophloem's potential not imposed, 
 quantities (NaN on stems and leaves).
 Each section's root surface :math:`S = P\,h\,10^{-4}` (cm², ``radial_surface``) is the weight of the sections' mean
 :math:`k_r` and :math:`k_{r,\text{effective}}` in a scene's per-plant summaries: :math:`\sum k_r S / \sum S`, the
-plant's uptake per unit of surface and potential difference where the differences are equal.
+plant's uptake per unit of surface and potential difference where the differences are equal. Each section's length
+:math:`h\,10^{-4}` (cm, ``section_length``) is the weight of the sections' mean :math:`K_x` and
+:math:`K_{x,\text{phloem}}`, conductivities along the axis. The conductances to a boundary (``soil_conductance``,
+``plant_soil_conductance``, ``axial_boundary_conductance``, the soil's ``soil_bulk_conductance``) and the inflows
+(``standard_axial_inflow``, ``surface_inflow``) are extensive: in parallel, a plant's is their sum.
 
 **Pathways** (``plots.pathway_breakdown``): each edge's radial component of :math:`|Q|` assigned to the nearest mean
 radius of the cell layers, as shares of the walls, membranes and plasmodesmata.

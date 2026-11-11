@@ -113,7 +113,7 @@ class UniformSoil(FunctionalComponent):
     soil_bulk_conductance: float = state_variable(**_doc("cm3 hPa-1 d-1", "on a root section's soil node: the "
                                                          "conductance between it and the soil at soil_psi"),
                                                   default=0., scale=SCALES.Compartment, location="node",
-                                                  kind="intensive")
+                                                  kind="NonInertialExtensive")
 
     @rate(include_inactive=True)
     def _soil_psi(self, uniform_soil_psi, uniform_soil_bulk_conductance) -> dict:

@@ -168,19 +168,19 @@ class MechaSolutes(MechaSections):
                                         kind="NonInertialIntensive")
     soil_conductance: float = input_variable(**_doc("cm3 hPa-1 d-1", "MechaHydraulics'"), by="Hydraulics",
                                              default=0., scale=SCALES.Compartment, location="node",
-                                             kind="NonInertialIntensive")
+                                             kind="NonInertialExtensive")
     standard_soil_psi: float = input_variable(**_doc("hPa", "MechaHydraulics'"), by="Hydraulics", default=0.,
                                               scale=SCALES.Compartment, location="node",
                                               kind="NonInertialIntensive")
     axial_boundary_conductance: float = input_variable(**_doc("cm3 hPa-1 d-1", "MechaHydraulics'"), by="Hydraulics",
                                                        default=0., scale=SCALES.Compartment, location="node",
-                                                       kind="NonInertialIntensive")
+                                                       kind="NonInertialExtensive")
     standard_axial_psi: float = input_variable(**_doc("hPa", "MechaHydraulics'"), by="Hydraulics", default=0.,
                                                scale=SCALES.Compartment, location="node",
                                                kind="NonInertialIntensive")
     standard_axial_inflow: float = input_variable(**_doc("cm3 d-1", "MechaHydraulics'"), by="Hydraulics",
                                                   default=0., scale=SCALES.Compartment, location="node",
-                                                  kind="NonInertialIntensive")
+                                                  kind="NonInertialExtensive")
     standard_elongation_sink: float = input_variable(**_doc("cm3 d-1", "MechaHydraulics'"), by="Hydraulics",
                                                      default=0., scale=SCALES.Compartment, location="node",
                                                      kind="NonInertialExtensive")
