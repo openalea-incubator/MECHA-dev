@@ -225,7 +225,7 @@ the vessels as their areas (``_standard_axial_inflow``): :math:`q_v = -Q_\text{s
 enter only with ``standard_osmotic`` 1.
 
 **The plant problem** (``_plant_problem``): every section's edges and the xylem junctions; the soil as a Robin term
-with ``soil_psi`` (an input); at the collar, on the vessels of each root system's first section (``_collar_kind``),
+with ``soil_psi`` (an input); at the collar, on the vessels of each root system's first section (``_collar_node_condition``),
 the potential ``collar_psi`` (``collar_condition`` 1) or the flow ``collar_flow`` split as the vessels' Poiseuille
 conductances, :math:`q_v = -Q_\text{collar}\,A_v^2 / \sum A^2` (``collar_condition`` 2); each leaf organ's
 transpiration :math:`E` as a Neumann outflow at its leaf-surface node, :math:`q = -E` (a leaf organ: any organ
@@ -267,28 +267,28 @@ walls'; not the air nodes) by the Kron reduction's recovery weights :math:`x_I =
 :math:`V_k \mathrel{+}= \sum_i V_i W_{ik} / \sum_{k'} W_{ik'}`; its ``liquid_volume`` is that, 0 on the air nodes.
 Each section's volume and liquid volume are the full anatomy's, and a liquid mean on the kept nodes is the full
 section's when its eliminated nodes have no sources of their own (the steady state's local gradients aside). The
-volumes per unit height are computed once per kind of section (``_condensed_unit_volume``, metafspm's
-``@kind_derived``), on the reduction's library while the kind's factorisation is live: the shares
+volumes per unit height are computed once per archetype of section (``_condensed_unit_volume``, metafspm's
+``@archetype_derived``), on the reduction's library while the archetype's factorisation is live: the shares
 :math:`\sum_i V_i W_{ik} / \sum_{k'} W_{ik'}` from two single solves (``KronReduction.shares``), no dense
 :math:`W`.
 
-A reduced section's kind (``plant_reduction``) is its anatomy, its barrier and its length class: the classes
+A reduced section's archetype (``plant_reduction``) is its anatomy, its barrier and its length class: the classes
 :math:`(1 + w)^k` of relative width ``length_classes`` (:math:`w = 0.1` by default, about 60 from 1 mm to 30 cm, each
 evaluated once and shared by the plants), a section of length :math:`h` between the classes :math:`h_k \le h <
-h_{k+1}` given their kinds' blend, :math:`D = (1 - t) D_k + t D_{k+1}`, :math:`t = (h - h_k) / (h_{k+1} - h_k)`, and
+h_{k+1}` given their archetypes' blend, :math:`D = (1 - t) D_k + t D_{k+1}`, :math:`t = (h - h_k) / (h_{k+1} - h_k)`, and
 so its source terms, kr, standard uptake, condensed volumes and recovered interior (metafspm's
 ``Relative(w, interpolate=True)``). A section's walls' and membranes' conductances are :math:`\propto h`, its
 conduits' :math:`\propto 1/h` and its vapour path's not: the reduced term is nearly affine in :math:`h` and the blend
 within :math:`w^2/8` of its curvature (a root's uptake and a blade's water potential within :math:`10^{-6}` of the
-exact kinds' on a growing seedling, ``test_reduction_accuracy.py``). ``length_classes="exact"`` gives a kind per
+exact archetypes' on a growing seedling, ``test_reduction_accuracy.py``). ``length_classes="exact"`` gives an archetype per
 length (the exactness tests' reference).
 
 In the frames (metafspm's ``SceneRecorder``, ``display="instances"``, the default), a reduced section's ``psi`` on
 every protoplast is not written: each section is an instance of its full template (GRANAP's ``display_instances``)
-holding its kept nodes' ``psi``, and each kind's recovery :math:`x = M [x_K; 1]` (the identity on the kept nodes,
+holding its kept nodes' ``psi``, and each archetype's recovery :math:`x = M [x_K; 1]` (the identity on the kept nodes,
 :math:`A_{II}^{-1}(-A_{IK} x_K - c_I)` on the interior, a lumped member its node's value) is written once, as its
 sparse system :math:`(S, R)`, :math:`M = S^{-1} R` (dense when small); a section between two length classes is the
-weighted sum of its two kinds' operators, as its terms are. The reader (encoding3d's ``evaluate``, ParaView's
+weighted sum of its two archetypes' operators, as its terms are. The reader (encoding3d's ``evaluate``, ParaView's
 Select at scale) rebuilds ``psi`` for the sections chosen, equal to the recovered interior of ``display="full"``.
 
 **The shoot's lumped kept nodes** (``plant_reduction(leaf_ports=, vapour_path=)``, scenario keys ``leaf_ports``,
@@ -296,7 +296,7 @@ Select at scale) rebuilds ``psi`` for the sections chosen, equal to the recovere
 path (446 nodes on use case 1's day 8: 118 conduits, 282 evaporating walls, 26 air spaces, 20 pores), a stem its
 conduits (198). Two options lump kept nodes into one (metafspm's ``Reduction(merge=)``): a merged group is one node,
 its members held at one potential :math:`\psi_G`. With :math:`P` the matrix summing a group's members (a column per
-node, a 1 in each member's row), the kind's full matrix and sources are contracted, :math:`A \to P^\top A P`,
+node, a 1 in each member's row), the archetype's full matrix and sources are contracted, :math:`A \to P^\top A P`,
 :math:`c \to P^\top c`, then Kron-reduced as before; the group's live terms are its representative's (its first
 member's) and those of the members' explicit edges, joined to it. It is exact when the members' potentials are equal
 in the full section and an approximation otherwise: the potential differences across a group (the lateral gradients
@@ -326,7 +326,7 @@ whose potentials differ. At 16 plants (day 8; measured on 2026-11-06 with the 4-
 ``leaf_ports="bundles"`` takes the nodes from 113k to 99k and the dense nonzeros from 15.7M to 8.8M: MECHA's time per
 step 34 % less (2.18 to 1.44 s), the transpiration and uptake unchanged, the stomatal conductance within 0.04 %, the
 leaves' water potential 0.36 % above on average, 0.54 % at most. metafspm's process pool was removed since (its QG-3,
-2026-11-08): a reduction's kinds are now evaluated in the run's threads. The bundles' comparison was not measured
+2026-11-08): a reduction's archetypes are now evaluated in the run's threads. The bundles' comparison was not measured
 again without it. With the default options at 16 plants, day 8, ``threads="auto"`` (2026-11-08, metafspm
 ``86a4a60``), the whole scene's step took 3.26 s on the last day without the pool, against 2.96 s with it, at a
 memory peak of 3.68 GB against 4.60 GB.

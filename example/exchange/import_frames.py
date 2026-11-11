@@ -32,7 +32,7 @@ def profile(path: str) -> tuple:
     compartments = encoding3d.read(path).data_structures[0].entity_set("Compartment")
     declared = compartments.variables["water_potential"]
     assert declared.unit == "hPa" and declared.standard_name == "water_potential", (declared.unit, declared.standard_name)
-    protoplasts = compartments.columns["kind"] == PROTOPLAST
+    protoplasts = compartments.columns["compartment_type"] == PROTOPLAST
     table = pd.DataFrame({"tissue": compartments.columns["tissue"][protoplasts],
                           "water_potential": compartments.columns["water_potential"][protoplasts]})
     means = table.groupby("tissue")["water_potential"].mean()
@@ -50,11 +50,11 @@ def main():
     profiles, uptakes = {}, {}
     for barrier, path in paths.items():
         profiles[f"barrier {barrier}"], uptakes[barrier] = profile(path)
-        identifier, ds = next(iter(import_frame(path).items()))       # {id: DataStructure}, as metafspm wrote them
-        rebuilt = float(np.nansum(ds.get("root_uptake")))
+        identifier, data_structure = next(iter(import_frame(path).items()))       # {id: DataStructure}, as metafspm wrote them
+        rebuilt = float(np.nansum(data_structure.get("root_uptake")))
         assert rebuilt == uptakes[barrier]
         print(f"barrier {barrier}: uptake {uptakes[barrier]:.4g} cm3 d-1, the same in the DataStructure metafspm "
-              f"rebuilt ('{identifier}', {ds.n_nodes()} nodes)")
+              f"rebuilt ('{identifier}', {data_structure.n_nodes()} nodes)")
     table = pd.DataFrame(profiles)
     print("\nRead with openalea.encoding3d (the protoplasts' mean water potential, hPa, from the soil to the xylem):")
     print(table.round(1).to_string())

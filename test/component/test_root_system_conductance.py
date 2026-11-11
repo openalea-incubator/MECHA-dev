@@ -35,8 +35,8 @@ def test_one_section_alone_has_its_kr_times_its_surface():
     """A root of one section: Krs is its kr (MECHA's standard problem) times its surface, within 0.5 % (the standard
     problem has its own boundary terms: 0.12 % here)."""
     alone = root_system(main=(1,), laterals=())
-    ds = alone.data_structure
-    surface = float(np.asarray(ds.get("perimeter"))[0]) * 0.5                  # cm: 5 mm long
+    data_structure = alone.data_structure
+    surface = float(np.asarray(data_structure.get("perimeter"))[0]) * 0.5                  # cm: 5 mm long
     assert alone.conductance == pytest.approx(float(alone.sections.loc[0, "kr"]) * surface, rel=5e-3)
 
 
@@ -45,7 +45,7 @@ def test_the_upscaling_is_declared():
     declared = table.loc["root_system_conductance", "upscaling"]
     assert declared.law == "network" and declared.of == NETWORK and "uniform" in declared.protocol
     assert table.loc["standard_uptake_fraction", "upscaling"].of == NETWORK
-    assert table.loc["conductance", "role"] == "input"
+    assert table.loc["conductance", "role"] == "input_variable"
 
 
 def test_the_inhibited_experiment_lowers_krs(seedling):
@@ -84,10 +84,10 @@ def test_one_soil_node_per_section_held_at_the_soil_is_the_per_node_soil(seedlin
     held = root_system(main=(3, 1, 1), laterals=((1, (1,)),), soil_psi=SOIL, collar_psi=COLLAR,
                        soil_boundary="node_dirichlet")
     a, b = seedling.data_structure, held.data_structure
-    anatomy = np.asarray(b.get("kind")) != 4
+    anatomy = np.asarray(b.get("compartment_type")) != 4
     np.testing.assert_allclose(b.get("psi")[anatomy], a.get("psi"), rtol=1e-11)
     assert held.conductance == pytest.approx(seedling.conductance, rel=1e-10)   # its soil nodes held: equivalent
-    uptake = [ds.map_to(np.asarray(ds.get("root_uptake")), "node", "SubOrgan", "sum") for ds in (a, b)]
+    uptake = [data_structure.map_to(np.asarray(data_structure.get("root_uptake")), "node", "SubOrgan", "sum") for data_structure in (a, b)]
     np.testing.assert_allclose(uptake[1], uptake[0], rtol=1e-10)
     np.testing.assert_allclose(held.sections["uptake"], seedling.sections["uptake"], rtol=1e-10)
 
@@ -131,9 +131,9 @@ def test_a_condensed_root_system_is_the_full_one_on_its_conduits_and_soil_nodes(
     a, b = full.data_structure, small.data_structure
     assert b.n_nodes() < a.n_nodes() / 100
 
-    def places(ds):
-        node = ds.structure.values_of("template_node", ds.entity_ids("node"))
-        return [(int(o), int(node[int(v)])) for o, v in zip(ds.owner("SubOrgan"), ds.entity_ids("node"))]
+    def places(data_structure):
+        node = data_structure.structure.values_of("template_node", data_structure.entity_ids("node"))
+        return [(int(o), int(node[int(v)])) for o, v in zip(data_structure.owner("SubOrgan"), data_structure.entity_ids("node"))]
     row = {place: i for i, place in enumerate(places(a))}
     rows = [row[place] for place in places(b)]
     np.testing.assert_allclose(b.get("psi"), a.get("psi")[rows], rtol=1e-11)
@@ -144,11 +144,11 @@ def test_a_condensed_root_system_is_the_full_one_on_its_conduits_and_soil_nodes(
     for name in ("Kx", "Kx_phloem"):                     # from the conduits alone: every one of them is kept
         np.testing.assert_allclose(b.get(name), a.get(name), rtol=1e-12)
     assert small.conductance == pytest.approx(full.conductance, rel=1e-10)
-    g = b.structure                                       # a section's cells, recovered from its kind
+    mtg = b.structure                                       # a section's cells, recovered from its kind
     kept = np.flatnonzero(np.asarray(b.owner("SubOrgan")) == 2)
-    rows, psi = g.reduction.recover(b, 2, b.get("psi")[kept])
+    rows, psi = mtg.reduction.recover(b, 2, b.get("psi")[kept])
     segment = int(b.entity_ids("SubOrgan")[2])
-    full_template = g.reduction._full[g.instances.template_of(segment).key]
+    full_template = mtg.reduction._full[mtg.instances.template_of(segment).key]
     where, node = full_template.properties["template_node"]
     node_of_row = dict(zip(where.tolist(), np.asarray(node, dtype=int).tolist()))
     by_node = {node: i for i, (o, node) in enumerate(places(a)) if o == 2}
@@ -193,9 +193,9 @@ def test_condensed_osmotic_terms_are_the_full_anatomys():
     small = root_system(condensed=True, length_classes="exact", **kwargs)     # the reference: a kind per length
     a, b = full.data_structure, small.data_structure
 
-    def places(ds):
-        node = ds.structure.values_of("template_node", ds.entity_ids("node"))
-        return [(int(o), int(node[int(v)])) for o, v in zip(ds.owner("SubOrgan"), ds.entity_ids("node"))]
+    def places(data_structure):
+        node = data_structure.structure.values_of("template_node", data_structure.entity_ids("node"))
+        return [(int(o), int(node[int(v)])) for o, v in zip(data_structure.owner("SubOrgan"), data_structure.entity_ids("node"))]
     row = {place: i for i, place in enumerate(places(a))}
     rows = np.array([row[place] for place in places(b)])
 
@@ -207,7 +207,7 @@ def test_condensed_osmotic_terms_are_the_full_anatomys():
     before = b.get("psi").copy()
     section, owner_a, owner_b = 1, np.asarray(a.owner("SubOrgan")), np.asarray(b.owner("SubOrgan"))
     pi = np.array(a.get("osmotic_potential"), dtype=float)                 # the full anatomy given them directly
-    conduits_b = np.flatnonzero((owner_b == section) & (np.asarray(b.get("kind")) != 4))
+    conduits_b = np.flatnonzero((owner_b == section) & (np.asarray(b.get("compartment_type")) != 4))
     pi[rows[conduits_b]] = -9000.
     pi[(owner_a == section) & (np.asarray(a.get("tissue"), dtype=object) == "cortex")] = -7000.
     a.set("osmotic_potential", pi)
@@ -228,12 +228,12 @@ def test_a_section_with_an_anatomy_and_no_length_is_refused():
     the network. A section with an anatomy and no length raises, naming it (GRANAP gives none to a section without
     length: a pass-through until it grows)."""
     system = root_system(main=(3, 1), laterals=(), soil_psi=SOIL, collar_psi=COLLAR)
-    ds = system.data_structure
-    lengths = np.asarray(ds.get("length"), dtype=float).copy()
-    section = int(np.asarray(ds.owner("SubOrgan"))[0])
-    flat = np.asarray(ds.owner("SubOrgan")) == section
+    data_structure = system.data_structure
+    lengths = np.asarray(data_structure.get("length"), dtype=float).copy()
+    section = int(np.asarray(data_structure.owner("SubOrgan"))[0])
+    flat = np.asarray(data_structure.owner("SubOrgan")) == section
     lengths[flat] = 0.
-    ds.set("length", lengths)
+    data_structure.set("length", lengths)
     with pytest.raises(ValueError, match=r"have an anatomy and no length"):
         system.scene.run()
 

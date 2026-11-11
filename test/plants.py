@@ -19,21 +19,21 @@ def root(n_segments=1, length=HEIGHT, radius=RADIUS):
 
     class Root(StructuralComponent):
         @classmethod
-        def initiate_plant(cls, g, plant, parameters):
-            s, L = g.scales, g.labels
+        def initiate_plant(cls, mtg, plant, parameters):
+            s, L = mtg.scales, mtg.labels
             complex_ = plant
             for scale, label in ((s.Axis, L.Axis.Root), (s.GrowthUnit, L.GrowthUnit.Root),
                                  (s.Phytomer, L.Phytomer.Root), (s.Organ, L.Organ.RootInternode)):
-                complex_ = g.add_component(complex_, **PropsConfig(scale=scale, edge_type='/', label=label))
-            segment = g.add_component(complex_, **PropsConfig(scale=s.SubOrgan, edge_type='/',
+                complex_ = mtg.add_component(complex_, **PropsConfig(scale=scale, edge_type='/', label=label))
+            segment = mtg.add_component(complex_, **PropsConfig(scale=s.SubOrgan, edge_type='/',
                                                               label=L.SubOrgan.RootSegment))
             for rank in range(n_segments):
                 if rank:
-                    segment = g.add_child(segment, **PropsConfig(scale=s.SubOrgan, edge_type='<',
+                    segment = mtg.add_child(segment, **PropsConfig(scale=s.SubOrgan, edge_type='<',
                                                                  label=L.SubOrgan.RootSegment))
-                g.set_values("radius", [segment], [radius])
-                g.set_values("length", [segment], [length])
-                g.set_values("distance_from_tip", [segment], [(n_segments - 1 - rank) * length])
+                mtg.set_values("radius", [segment], [radius])
+                mtg.set_values("length", [segment], [length])
+                mtg.set_values("distance_from_tip", [segment], [(n_segments - 1 - rank) * length])
 
     return Root
 
@@ -59,18 +59,18 @@ def initiated(table, *initiators, time_step: float = 3600.):
 
 
 def anatomy_data_structure(architecture, anatomy_class=Anatomy):
-    """The plant, its GRANAP anatomies, and the DataStructure over their Compartments: (g, ds, anatomy)."""
-    ds = initiated(planting([Planting()], None), architecture, anatomy_class).data_structure
-    g = ds.structure
-    anatomy = anatomy_class(data_structure=ds)
+    """The plant, its GRANAP anatomies, and the DataStructure over their Compartments: (mtg, data_structure, anatomy)."""
+    data_structure = initiated(planting([Planting()], None), architecture, anatomy_class).data_structure
+    mtg = data_structure.structure
+    anatomy = anatomy_class(data_structure=data_structure)
     anatomy()
-    return g, ds, anatomy
+    return mtg, data_structure, anatomy
 
 
-def template_organ(anatomy, g, segment):
-    """The GRANAP organ the segment's anatomy was copied from (its template's, the population's: g.objects)."""
+def template_organ(anatomy, mtg, segment):
+    """The GRANAP organ the segment's anatomy was copied from (its template's, the population's: mtg.objects)."""
     from openalea.granap.metafspm.library import template_by_index
-    return template_by_index(g, int(g.property("anatomy_template")[segment])).organ
+    return template_by_index(mtg, int(mtg.property("anatomy_template")[segment])).organ
 
 
 def needle(length=HEIGHT):
@@ -78,17 +78,17 @@ def needle(length=HEIGHT):
 
     class Needle(StructuralComponent):
         @classmethod
-        def initiate_plant(cls, g, plant, parameters):
-            s, L = g.scales, g.labels
+        def initiate_plant(cls, mtg, plant, parameters):
+            s, L = mtg.scales, mtg.labels
             complex_ = plant
             for scale, label in ((s.Axis, L.Axis.Shoot), (s.GrowthUnit, L.GrowthUnit.Shoot),
                                  (s.Phytomer, L.Phytomer.Shoot), (s.Organ, L.Organ.Leaf)):
-                complex_ = g.add_component(complex_, **PropsConfig(scale=scale, edge_type='/', label=label))
-            segment = g.add_component(complex_, **PropsConfig(scale=s.SubOrgan, edge_type='/',
+                complex_ = mtg.add_component(complex_, **PropsConfig(scale=scale, edge_type='/', label=label))
+            segment = mtg.add_component(complex_, **PropsConfig(scale=s.SubOrgan, edge_type='/',
                                                               label=L.SubOrgan.LeafElement))
-            g.set_values("radius", [segment], [0.6e-3])
-            g.set_values("length", [segment], [length])
-            g.set_values("distance_from_tip", [segment], [0.])
+            mtg.set_values("radius", [segment], [0.6e-3])
+            mtg.set_values("length", [segment], [length])
+            mtg.set_values("distance_from_tip", [segment], [0.])
 
     return Needle
 

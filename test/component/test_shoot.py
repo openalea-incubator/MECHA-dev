@@ -29,29 +29,29 @@ TRANSPIRATION = 0.05                                     # cm3 d-1, the leaf org
 
 class Seedling(StructuralComponent):
     @classmethod
-    def initiate_plant(cls, g, plant, parameters):
-        s, L = g.scales, g.labels
+    def initiate_plant(cls, mtg, plant, parameters):
+        s, L = mtg.scales, mtg.labels
 
-        def organ(axis_label, kind, organ_label):
-            axis = g.add_component(plant, **PropsConfig(scale=s.Axis, edge_type='/', label=getattr(L.Axis, axis_label)))
-            unit = g.add_component(axis, **PropsConfig(scale=s.GrowthUnit, edge_type='/',
-                                                       label=getattr(L.GrowthUnit, kind)))
-            phytomer = g.add_component(unit, **PropsConfig(scale=s.Phytomer, edge_type='/',
-                                                           label=getattr(L.Phytomer, kind)))
-            return g.add_component(phytomer, **PropsConfig(scale=s.Organ, edge_type='/',
+        def organ(axis_label, compartment_type, organ_label):
+            axis = mtg.add_component(plant, **PropsConfig(scale=s.Axis, edge_type='/', label=getattr(L.Axis, axis_label)))
+            unit = mtg.add_component(axis, **PropsConfig(scale=s.GrowthUnit, edge_type='/',
+                                                       label=getattr(L.GrowthUnit, compartment_type)))
+            phytomer = mtg.add_component(unit, **PropsConfig(scale=s.Phytomer, edge_type='/',
+                                                           label=getattr(L.Phytomer, compartment_type)))
+            return mtg.add_component(phytomer, **PropsConfig(scale=s.Organ, edge_type='/',
                                                            label=getattr(L.Organ, organ_label)))
 
-        stem = g.add_component(organ("Shoot", "Shoot", "StemInternode"),
+        stem = mtg.add_component(organ("Shoot", "Shoot", "StemInternode"),
                                **PropsConfig(scale=s.SubOrgan, edge_type='/', label=L.SubOrgan.StemElement))
-        leaf = g.add_component_with_topo(organ("Shoot", "Shoot", "Leaf"), stem,
+        leaf = mtg.add_component_with_topo(organ("Shoot", "Shoot", "Leaf"), stem,
                                          **PropsConfig(scale=s.SubOrgan, edge_type='+', label=L.SubOrgan.LeafElement))
-        root = g.add_component_with_topo(organ("Root", "Root", "RootInternode"), stem,
+        root = mtg.add_component_with_topo(organ("Root", "Root", "RootInternode"), stem,
                                          **PropsConfig(scale=s.SubOrgan, edge_type='+', label=L.SubOrgan.RootSegment))
-        g.set_values("stem_radius", [stem], [1e-3])                     # GRANAP's stems' class input
+        mtg.set_values("stem_radius", [stem], [1e-3])                     # GRANAP's stems' class input
         for v, radius in ((stem, 1e-3), (leaf, 1e-3), (root, 0.55e-3)):
-            g.set_values("radius", [v], [radius])
-            g.set_values("length", [v], [5e-3])
-            g.set_values("distance_from_tip", [v], [0.])
+            mtg.set_values("radius", [v], [radius])
+            mtg.set_values("length", [v], [5e-3])
+            mtg.set_values("distance_from_tip", [v], [0.])
 
 
 class Anatomy(GranapAnatomy):
@@ -63,59 +63,59 @@ class Anatomy(GranapAnatomy):
 
 @pytest.fixture(scope="module")
 def plant():
-    ds = initiated(planting([Planting()], None), Seedling, Anatomy, time_step=3600.).data_structure
-    g = ds.structure
-    Anatomy(data_structure=ds)()
-    ds.register("barrier", np.ones(ds.n_nodes()), location="node")
-    ds.register("soil_psi", np.full(ds.n_nodes(), SOIL), location="node")
-    Transpiration(data_structure=ds, transpiration=TRANSPIRATION)()       # its one leaf organ's
-    mecha = MechaHydraulics(data_structure=ds)
+    data_structure = initiated(planting([Planting()], None), Seedling, Anatomy, time_step=3600.).data_structure
+    mtg = data_structure.structure
+    Anatomy(data_structure=data_structure)()
+    data_structure.register("barrier", np.ones(data_structure.n_nodes()), location="node")
+    data_structure.register("soil_psi", np.full(data_structure.n_nodes(), SOIL), location="node")
+    Transpiration(data_structure=data_structure, transpiration=TRANSPIRATION)()       # its one leaf organ's
+    mecha = MechaHydraulics(data_structure=data_structure)
     mecha.collar_condition = 0.
     mecha()
-    labels = g.property("label")
-    kinds = {int(v): labels[int(v)] for v in ds.entity_ids("SubOrgan")}
-    return g, ds, mecha, kinds
+    labels = mtg.property("label")
+    kinds = {int(v): labels[int(v)] for v in data_structure.entity_ids("SubOrgan")}
+    return mtg, data_structure, mecha, kinds
 
 
-def _organ_nodes(g, ds, kinds, label):
-    owners = ds.entity_ids("SubOrgan")[ds.owner("SubOrgan")]
+def _organ_nodes(mtg, data_structure, kinds, label):
+    owners = data_structure.entity_ids("SubOrgan")[data_structure.owner("SubOrgan")]
     return np.isin(owners, [v for v, k in kinds.items() if k == label])
 
 
 def test_only_the_root_meets_the_soil_and_the_leaf_has_its_vapour_path(plant):
-    g, ds, mecha, kinds = plant
-    L = g.labels.SubOrgan
-    root, leaf = _organ_nodes(g, ds, kinds, L.RootSegment), _organ_nodes(g, ds, kinds, L.LeafElement)
-    soil = ds.get("soil_conductance")
+    mtg, data_structure, mecha, kinds = plant
+    L = mtg.labels.SubOrgan
+    root, leaf = _organ_nodes(mtg, data_structure, kinds, L.RootSegment), _organ_nodes(mtg, data_structure, kinds, L.LeafElement)
+    soil = data_structure.get("soil_conductance")
     assert (soil[root] > 0).any() and (soil[~root] == 0).all()
-    kind, path, K = ds.get("kind"), ds.get("network_path"), ds.get("conductance")
-    surface = np.flatnonzero(kind == 3)
-    assert surface.size == 1 and ds.get("surface_inflow")[surface[0]] == pytest.approx(-TRANSPIRATION)
+    compartment_type, path, K = data_structure.get("compartment_type"), data_structure.get("network_path"), data_structure.get("conductance")
+    surface = np.flatnonzero(compartment_type == 3)
+    assert surface.size == 1 and data_structure.get("surface_inflow")[surface[0]] == pytest.approx(-TRANSPIRATION)
     stomatal = path == 6
-    assert stomatal.sum() == (ds.get("tissue") == "pore").sum() > 0 and (K[stomatal] > 0).all()
-    assert (K[path == 4] > 0).all() and (ds.get("air_tail_conductance")[path == 1] > 0).all()
-    vapour = ds.get("vapour_node") > 0
-    assert vapour[surface].all() and leaf[vapour & (kind != 3)].all()
+    assert stomatal.sum() == (data_structure.get("tissue") == "pore").sum() > 0 and (K[stomatal] > 0).all()
+    assert (K[path == 4] > 0).all() and (data_structure.get("air_tail_conductance")[path == 1] > 0).all()
+    vapour = data_structure.get("vapour_node") > 0
+    assert vapour[surface].all() and leaf[vapour & (compartment_type != 3)].all()
 
 
 def test_root_uptake_is_transpired(plant):
     """The organ's transpiration leaves through its stomata, from what the root takes up."""
-    g, ds, mecha, kinds = plant
-    uptake, evaporation = ds.get("root_uptake").sum(), ds.get("evaporation").sum()
+    mtg, data_structure, mecha, kinds = plant
+    uptake, evaporation = data_structure.get("root_uptake").sum(), data_structure.get("evaporation").sum()
     assert uptake == pytest.approx(TRANSPIRATION, rel=1e-8) and evaporation == pytest.approx(TRANSPIRATION, rel=1e-8)
-    pores = ds.get("tissue") == "pore"
-    assert (ds.get("evaporation")[pores] > 0).all() and (ds.get("evaporation")[~pores] == 0).all()
+    pores = data_structure.get("tissue") == "pore"
+    assert (data_structure.get("evaporation")[pores] > 0).all() and (data_structure.get("evaporation")[~pores] == 0).all()
 
 
 def test_potentials_along_the_path(plant):
     """Liquid potentials below the soil's, the air spaces' (Kelvin) below the walls', the leaf surface the driest."""
-    g, ds, mecha, kinds = plant
-    psi, water = ds.get("psi"), ds.get("water_potential")
-    vapour = ds.get("vapour_node") > 0
+    mtg, data_structure, mecha, kinds = plant
+    psi, water = data_structure.get("psi"), data_structure.get("water_potential")
+    vapour = data_structure.get("vapour_node") > 0
     assert np.isfinite(water).all() and psi[~vapour].max() <= SOIL + 1e-6
     x = psi[vapour]
     assert ((x > 0) & (x <= 1)).all()                                   # relative vapour pressures
-    surface = ds.get("kind") == 3
+    surface = data_structure.get("compartment_type") == 3
     assert water[surface][0] <= water[vapour].min() + 1e-6
     assert water[surface][0] < psi[~vapour].min()
 
@@ -123,30 +123,30 @@ def test_potentials_along_the_path(plant):
 def test_the_liquid_volume_weighs_a_leaf_element_s_water_potential(plant):
     """liquid_volume is the nodes' volume but on the vapour nodes (the air spaces, the pores, the surface): weighted by
     it, a leaf element's mean water potential is its liquid's (walls and protoplasts), not the air's Kelvin values."""
-    g, ds, mecha, kinds = plant
-    leaf = _organ_nodes(g, ds, kinds, g.labels.SubOrgan.LeafElement)
-    liquid, volume = ds.get("liquid_volume"), ds.get("node_volume")
-    vapour = ds.get("vapour_node") > 0
+    mtg, data_structure, mecha, kinds = plant
+    leaf = _organ_nodes(mtg, data_structure, kinds, mtg.labels.SubOrgan.LeafElement)
+    liquid, volume = data_structure.get("liquid_volume"), data_structure.get("node_volume")
+    vapour = data_structure.get("vapour_node") > 0
     assert (liquid[vapour] == 0).all() and np.array_equal(liquid[~vapour], volume[~vapour])
-    water = ds.get("water_potential")
+    water = data_structure.get("water_potential")
     mean = np.sum(water[leaf] * liquid[leaf]) / np.sum(liquid[leaf])
     assert water[leaf & ~vapour].min() <= mean <= water[leaf & ~vapour].max()
 
 
 def test_the_leaf_organ_transpires_its_plant_s_transpiration(plant):
     """Transpiration's share: the plant's on its one leaf organ, none on the stem's and the root's."""
-    _, ds, _, _ = plant
-    leaf = ds.labels(location="Organ", per_node=False) == "Leaf"
-    np.testing.assert_array_equal(np.asarray(ds.get("leaf_transpiration")), np.where(leaf, TRANSPIRATION, 0.))
+    _, data_structure, _, _ = plant
+    leaf = data_structure.labels(location="Organ", per_node=False) == "Leaf"
+    np.testing.assert_array_equal(np.asarray(data_structure.get("leaf_transpiration")), np.where(leaf, TRANSPIRATION, 0.))
 
 
 def test_root_quantities_on_roots_only(plant):
-    g, ds, mecha, kinds = plant
-    L = g.labels.SubOrgan
-    for i, v in enumerate(ds.entity_ids("SubOrgan")):
+    mtg, data_structure, mecha, kinds = plant
+    L = mtg.labels.SubOrgan
+    for i, v in enumerate(data_structure.entity_ids("SubOrgan")):
         root = kinds[int(v)] == L.RootSegment
-        assert np.isfinite(ds.get("perimeter")[i]) == root and np.isfinite(ds.get("kr")[i]) == root
-        assert np.isfinite(ds.get("Kx")[i])
+        assert np.isfinite(data_structure.get("perimeter")[i]) == root and np.isfinite(data_structure.get("kr")[i]) == root
+        assert np.isfinite(data_structure.get("Kx")[i])
 
 
 def _seedling(reduced=False, labels=("RootSegment", "StemElement"), **scenario):
@@ -172,9 +172,9 @@ def _seedling(reduced=False, labels=("RootSegment", "StemElement"), **scenario):
         scenario.update(reduced=True, reduced_where={"label": list(labels)},
                         length_classes=scenario.get("length_classes", "exact"))
     population = population_data_structure(planting([Planting()], SeedlingModel, scenario), SeedlingModel)
-    ds = population.data_structure
+    data_structure = population.data_structure
     population.instance.run()
-    return ds, population.instance.hydraulics
+    return data_structure, population.instance.hydraulics
 
 
 def test_a_condensed_stem_and_root_with_a_whole_leaf_are_the_full_seedling():
@@ -185,17 +185,17 @@ def test_a_condensed_stem_and_root_with_a_whole_leaf_are_the_full_seedling():
     small, _ = _seedling(reduced=True, soil_node=True)
     assert small.n_nodes() < full.n_nodes() / 3
 
-    def places(ds):
-        node = ds.structure.values_of("template_node", ds.entity_ids("node"))
-        return [(int(o), node.get(int(v), -int(v))) for o, v in zip(ds.owner("SubOrgan"), ds.entity_ids("node"))]
+    def places(data_structure):
+        node = data_structure.structure.values_of("template_node", data_structure.entity_ids("node"))
+        return [(int(o), node.get(int(v), -int(v))) for o, v in zip(data_structure.owner("SubOrgan"), data_structure.entity_ids("node"))]
     row = {place: i for i, place in enumerate(places(full))}
     shared = [(i, row[place]) for i, place in enumerate(places(small)) if place in row]
     b, a = np.array(shared).T
     labels = full.labels(location="SubOrgan")
     assert {"StemElement", "LeafElement", "RootSegment"} <= set(labels[a].tolist())
     np.testing.assert_allclose(small.get("psi")[b], full.get("psi")[a], rtol=1e-9)
-    for ds in (full, small):
-        assert float(np.sum(ds.get("root_uptake"))) == pytest.approx(TRANSPIRATION, rel=1e-8)
+    for data_structure in (full, small):
+        assert float(np.sum(data_structure.get("root_uptake"))) == pytest.approx(TRANSPIRATION, rel=1e-8)
 
 
 def test_a_reduced_leaf_keeps_its_vapour_path_and_gives_the_full_seedling():
@@ -209,15 +209,15 @@ def test_a_reduced_leaf_keeps_its_vapour_path_and_gives_the_full_seedling():
     small_leaf = int((np.asarray(small.owner("SubOrgan")) == leaf).sum())
     assert small_leaf < full_leaf
 
-    def places(ds):
-        node = ds.structure.values_of("template_node", ds.entity_ids("node"))
-        return [(int(o), node.get(int(v), -int(v))) for o, v in zip(ds.owner("SubOrgan"), ds.entity_ids("node"))]
+    def places(data_structure):
+        node = data_structure.structure.values_of("template_node", data_structure.entity_ids("node"))
+        return [(int(o), node.get(int(v), -int(v))) for o, v in zip(data_structure.owner("SubOrgan"), data_structure.entity_ids("node"))]
     row = {place: i for i, place in enumerate(places(full))}
     shared = [(i, row[place]) for i, place in enumerate(places(small)) if place in row]
     b, a = np.array(shared).T
     np.testing.assert_allclose(small.get("psi")[b], full.get("psi")[a], rtol=1e-8)
-    for ds in (full, small):
-        assert float(np.sum(ds.get("root_uptake"))) == pytest.approx(TRANSPIRATION, rel=1e-8)
+    for data_structure in (full, small):
+        assert float(np.sum(data_structure.get("root_uptake"))) == pytest.approx(TRANSPIRATION, rel=1e-8)
 
 
 def test_a_reduced_section_s_kept_nodes_hold_its_volumes_and_its_liquid_mean():
@@ -229,57 +229,57 @@ def test_a_reduced_section_s_kept_nodes_hold_its_volumes_and_its_liquid_mean():
     assert small.n_nodes() < full.n_nodes() / 3
     sections = range(len(full.entity_ids("SubOrgan")))
 
-    def per_section(ds, values):
-        owner = np.asarray(ds.owner("SubOrgan"))
+    def per_section(data_structure, values):
+        owner = np.asarray(data_structure.owner("SubOrgan"))
         return np.array([float(np.sum(np.asarray(values)[owner == i])) for i in sections])
     for name in ("node_volume", "liquid_volume"):
         assert (per_section(small, small.get(name)) > 0).all()
         np.testing.assert_allclose(per_section(small, small.get(name)), per_section(full, full.get(name)), rtol=1e-12)
-    for ds in (full, small):
-        assert (ds.get("liquid_volume")[ds.get("vapour_node") > 0] == 0).all()
+    for data_structure in (full, small):
+        assert (data_structure.get("liquid_volume")[data_structure.get("vapour_node") > 0] == 0).all()
 
-    def liquid_mean(ds):
-        liquid = np.asarray(ds.get("liquid_volume"))
-        return per_section(ds, liquid * np.asarray(ds.get("water_potential"))) / per_section(ds, liquid)
+    def liquid_mean(data_structure):
+        liquid = np.asarray(data_structure.get("liquid_volume"))
+        return per_section(data_structure, liquid * np.asarray(data_structure.get("water_potential"))) / per_section(data_structure, liquid)
     np.testing.assert_allclose(liquid_mean(small), liquid_mean(full), rtol=1e-8)
 
 
 def test_the_condensed_volumes_are_each_kinds_derived_values():
     """The kept nodes' condensed volumes per unit height are computed once per kind, on its library while its
-    factorisation is live (metafspm's kind_derived, kron.shares: two single solves), and kept in the kind's outputs:
+    factorisation is live (metafspm's archetype_derived, kron.shares: two single solves), and kept in the kind's outputs:
     the same as the dense recovery weights (the interior recovered for each kept node's unit potential, its rows over
     the liquid kept nodes normalised), and a kind evaluated again gives them again."""
     small, hydraulics = _seedling(reduced=True, labels=("RootSegment", "StemElement", "LeafElement"), soil_node=True)
     reduction = hydraulics._reduction()
     system = hydraulics._plant_problem_name(reduction)
     groups = reduction.reduced_groups(small)
-    kinds = reduction.group_kinds(small, groups)
-    g = small.structure
+    kinds = reduction.group_archetypes(small, groups)
+    mtg = small.structure
     vapour = np.asarray(small.get("vapour_node")) > 0
     P_node = hydraulics.parameter_table(hydraulics.PARAMETERS, "node")
     for i, (owner, key) in groups.items():
-        kind = kinds[i][system]
-        first, _ = g.instances.block(owner)
-        kept = small.index_of(first + g.instances.templates[key].rows_at_scale(g.scales.Compartment))
+        compartment_type = kinds[i][system]
+        first, _ = mtg.instances.block(owner)
+        kept = small.index_of(first + mtg.instances.templates[key].rows_at_scale(mtg.scales.Compartment))
         full = reduction.full_template(key)
         unit = hydraulics._template_unit_volumes(full, (float(P_node["thickness_source"][kept[0]]),
                                                          float(P_node["thickness"][kept[0]])))
-        compartments = full.rows_at_scale(g.scales.Compartment)
-        kept_positions = np.searchsorted(compartments, kind.kept_rows)
-        interior_positions = np.searchsorted(compartments, kind.interior_rows)
+        compartments = full.rows_at_scale(mtg.scales.Compartment)
+        kept_positions = np.searchsorted(compartments, compartment_type.kept_rows)
+        interior_positions = np.searchsorted(compartments, compartment_type.interior_rows)
         targets = ~vapour[kept]
         expected = unit[kept_positions].copy()
         if interior_positions.size and targets.any():
-            weights = np.asarray(kind.reduction.recover(np.eye(kept_positions.size)))[:, targets]
+            weights = np.asarray(compartment_type.reduction.recover(np.eye(kept_positions.size)))[:, targets]
             total = weights.sum(axis=1)
             weights = np.where((total > 0)[:, None], weights / np.where(total > 0, total, 1.)[:, None],
                                1. / targets.sum())
             expected[targets] += weights.T @ unit[interior_positions]
-        np.testing.assert_allclose(kind.outputs["condensed_unit_volume"], expected, rtol=1e-10, atol=1e-30)
+        np.testing.assert_allclose(compartment_type.outputs["condensed_unit_volume"], expected, rtol=1e-10, atol=1e-30)
     volumes = np.array(small.get("node_volume"))
-    for kind in [k for by_system in reduction._kinds.values() for k in by_system.values()]:
-        kind.release()                                   # evaluated again: new kind objects, the same values
-    reduction._kinds.clear()
+    for compartment_type in [k for by_system in reduction._archetypes.values() for k in by_system.values()]:
+        compartment_type.release()                                   # evaluated again: new kind objects, the same values
+    reduction._archetypes.clear()
     hydraulics.__dict__.pop("_step_memos", None)         # the conductances computed again (a memoized step)
     hydraulics()
     np.testing.assert_allclose(small.get("node_volume"), volumes, rtol=1e-12)
@@ -290,31 +290,31 @@ class BladeAndSheath(StructuralComponent):
     sheath anatomy: a bent leaf) and the sheath its blade (an Organ Blade, a LeafElement), and a root segment."""
 
     @classmethod
-    def initiate_plant(cls, g, plant, parameters):
-        s, L = g.scales, g.labels
+    def initiate_plant(cls, mtg, plant, parameters):
+        s, L = mtg.scales, mtg.labels
 
-        def organ(axis_label, kind, organ_label):
-            axis = g.add_component(plant, **PropsConfig(scale=s.Axis, edge_type='/', label=getattr(L.Axis, axis_label)))
-            unit = g.add_component(axis, **PropsConfig(scale=s.GrowthUnit, edge_type='/',
-                                                       label=getattr(L.GrowthUnit, kind)))
-            phytomer = g.add_component(unit, **PropsConfig(scale=s.Phytomer, edge_type='/',
-                                                           label=getattr(L.Phytomer, kind)))
-            return g.add_component(phytomer, **PropsConfig(scale=s.Organ, edge_type='/',
+        def organ(axis_label, compartment_type, organ_label):
+            axis = mtg.add_component(plant, **PropsConfig(scale=s.Axis, edge_type='/', label=getattr(L.Axis, axis_label)))
+            unit = mtg.add_component(axis, **PropsConfig(scale=s.GrowthUnit, edge_type='/',
+                                                       label=getattr(L.GrowthUnit, compartment_type)))
+            phytomer = mtg.add_component(unit, **PropsConfig(scale=s.Phytomer, edge_type='/',
+                                                           label=getattr(L.Phytomer, compartment_type)))
+            return mtg.add_component(phytomer, **PropsConfig(scale=s.Organ, edge_type='/',
                                                            label=getattr(L.Organ, organ_label)))
 
-        stem = g.add_component(organ("Shoot", "Shoot", "StemInternode"),
+        stem = mtg.add_component(organ("Shoot", "Shoot", "StemInternode"),
                                **PropsConfig(scale=s.SubOrgan, edge_type='/', label=L.SubOrgan.StemElement))
-        sheath = g.add_component_with_topo(organ("Shoot", "Shoot", "Sheath"), stem,
+        sheath = mtg.add_component_with_topo(organ("Shoot", "Shoot", "Sheath"), stem,
                                            **PropsConfig(scale=s.SubOrgan, edge_type='+', label=L.SubOrgan.StemElement))
-        blade = g.add_component_with_topo(organ("Shoot", "Shoot", "Blade"), sheath,
+        blade = mtg.add_component_with_topo(organ("Shoot", "Shoot", "Blade"), sheath,
                                           **PropsConfig(scale=s.SubOrgan, edge_type='/', label=L.SubOrgan.LeafElement))
-        root = g.add_component_with_topo(organ("Root", "Root", "RootInternode"), stem,
+        root = mtg.add_component_with_topo(organ("Root", "Root", "RootInternode"), stem,
                                          **PropsConfig(scale=s.SubOrgan, edge_type='+', label=L.SubOrgan.RootSegment))
         for v, radius in ((stem, 1e-3), (sheath, 1e-3), (blade, 1e-3), (root, 0.55e-3)):
-            g.set_values("stem_radius", [v], [1e-3])
-            g.set_values("radius", [v], [radius])
-            g.set_values("length", [v], [5e-3])
-            g.set_values("distance_from_tip", [v], [0.])
+            mtg.set_values("stem_radius", [v], [1e-3])
+            mtg.set_values("radius", [v], [radius])
+            mtg.set_values("length", [v], [5e-3])
+            mtg.set_values("distance_from_tip", [v], [0.])
 
 
 def test_a_blade_and_a_sheath_both_transpire():
@@ -336,22 +336,22 @@ def test_a_blade_and_a_sheath_both_transpire():
     scenario = {"stem_anatomy": {}, "leaf_anatomy": {}, "sheath_anatomy": {}, "collar_condition": 0.,
                 "uniform_soil_psi": SOIL, "transpiration": TRANSPIRATION}
     population = population_data_structure(planting([Planting()], AdelLeafModel, scenario), AdelLeafModel)
-    ds = population.data_structure
+    data_structure = population.data_structure
     population.instance.run()
-    organs = ds.labels(location="Organ", per_node=False)
+    organs = data_structure.labels(location="Organ", per_node=False)
     blade, sheath = list(organs).index("Blade"), list(organs).index("Sheath")
     expected = np.zeros(len(organs))
     expected[[blade, sheath]] = TRANSPIRATION / 2
-    np.testing.assert_array_equal(np.asarray(ds.get("leaf_transpiration")), expected)
-    kind, organ = np.asarray(ds.get("kind")), np.asarray(ds.owner("Organ"))
-    surface = np.flatnonzero(kind == 3)
+    np.testing.assert_array_equal(np.asarray(data_structure.get("leaf_transpiration")), expected)
+    compartment_type, organ = np.asarray(data_structure.get("compartment_type")), np.asarray(data_structure.owner("Organ"))
+    surface = np.flatnonzero(compartment_type == 3)
     assert sorted(organ[surface].tolist()) == sorted([blade, sheath])
-    np.testing.assert_allclose(np.asarray(ds.get("surface_inflow"))[surface], -TRANSPIRATION / 2, rtol=1e-12)
-    assert (np.asarray(ds.get("surface_inflow"))[kind != 3] == 0).all()
-    evaporation = np.asarray(ds.get("evaporation"))
+    np.testing.assert_allclose(np.asarray(data_structure.get("surface_inflow"))[surface], -TRANSPIRATION / 2, rtol=1e-12)
+    assert (np.asarray(data_structure.get("surface_inflow"))[compartment_type != 3] == 0).all()
+    evaporation = np.asarray(data_structure.get("evaporation"))
     for transpiring in (blade, sheath):
         assert evaporation[organ == transpiring].sum() == pytest.approx(TRANSPIRATION / 2, rel=1e-8)
-    assert float(np.sum(ds.get("root_uptake"))) == pytest.approx(TRANSPIRATION, rel=1e-8)
+    assert float(np.sum(data_structure.get("root_uptake"))) == pytest.approx(TRANSPIRATION, rel=1e-8)
     assert evaporation.sum() == pytest.approx(TRANSPIRATION, rel=1e-8)
 
 
@@ -361,6 +361,6 @@ def test_the_reduction_s_scenario_entries_are_accepted_with_the_reduction_off():
     from openalea.mecha.component import scenario_reduction
     assert set(scenario_reduction.scenario_keys) == {"reduced", "reduced_where", "length_classes", "osmotic_reduction",
                                                      "leaf_ports", "vapour_path"}
-    ds, hydraulics = _seedling(reduced=False, soil_node=True, reduced_where={"label": "RootSegment"},
+    data_structure, hydraulics = _seedling(reduced=False, soil_node=True, reduced_where={"label": "RootSegment"},
                                length_classes="exact")
-    assert ds.reduction is None and hydraulics._reduction() is None
+    assert data_structure.reduction is None and hydraulics._reduction() is None

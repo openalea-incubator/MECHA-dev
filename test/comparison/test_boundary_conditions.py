@@ -21,27 +21,27 @@ BARRIER = 3
 
 @pytest.fixture(scope="module")
 def both(case):
-    ds, g = case["ds"], case["g"]
-    if not ds.has("barrier"):
-        ds.register("barrier", np.ones(ds.n_nodes()), location="node")
-    ds.set("barrier", np.full(ds.n_nodes(), float(BARRIER)))
-    mecha = legacy_options(MechaHydraulics(data_structure=ds))
+    data_structure, g = case["data_structure"], case["mtg"]
+    if not data_structure.has("barrier"):
+        data_structure.register("barrier", np.ones(data_structure.n_nodes()), location="node")
+    data_structure.set("barrier", np.full(data_structure.n_nodes(), float(BARRIER)))
+    mecha = legacy_options(MechaHydraulics(data_structure=data_structure))
     mecha()                                                         # Dirichlet: the uptake
-    dirichlet = dict(uptake=float(ds.get("standard_uptake")[0]), kr=float(ds.get("kr")[0]))
+    dirichlet = dict(uptake=float(data_structure.get("standard_uptake")[0]), kr=float(data_structure.get("kr")[0]))
     mecha.standard_axial_condition, mecha.standard_axial_flow = 2., dirichlet["uptake"]
     try:
         mecha()
-        port = dict(psi=np.asarray(ds.get("standard_psi")).copy(), uptake=float(ds.get("standard_uptake")[0]),
-                    kr=float(ds.get("kr")[0]))
+        port = dict(psi=np.asarray(data_structure.get("standard_psi")).copy(), uptake=float(data_structure.get("standard_uptake")[0]),
+                    kr=float(data_structure.get("kr")[0]))
     finally:
         mecha.standard_axial_condition, mecha.standard_axial_flow = 1., 0.
     legacy = legacy_neumann(template_organ(case["anatomy"], g, case["segment"]), BARRIER, dirichlet["uptake"],
                             height=case["height"])
-    nodes, _ = section_parts(ds)[case["segment"]]
+    nodes, _ = section_parts(data_structure)[case["segment"]]
     geo = mecha.section_geometries()[case["segment"]][2]
     net = case["legacy"].network
     mecha_index = g.property("mecha_index")
-    index = np.array([int(mecha_index[int(v)]) for v in ds.entity_ids("node")[nodes]])
+    index = np.array([int(mecha_index[int(v)]) for v in data_structure.entity_ids("node")[nodes]])
     index[geo.junction_order] = net.n_walls + np.arange(net.n_junctions)
     typed = [c for t in XYLEM_TYPES for c in geo.cells[geo.tissue[geo.cells] == t]]
     same_order = list(typed) == list(geo.xylem_cells)               # the legacy's shares are then the right ones

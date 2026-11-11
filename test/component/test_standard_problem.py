@@ -11,16 +11,16 @@ from plants import anatomy_data_structure, root
 
 @pytest.fixture(scope="module")
 def solved():
-    g, ds, anatomy = anatomy_data_structure(root(3))
-    ds.register("barrier", np.array([0., 1., 3.])[ds.owner("SubOrgan")], location="node")
-    mecha = MechaHydraulics(data_structure=ds)
+    mtg, data_structure, anatomy = anatomy_data_structure(root(3))
+    data_structure.register("barrier", np.array([0., 1., 3.])[data_structure.owner("SubOrgan")], location="node")
+    mecha = MechaHydraulics(data_structure=data_structure)
     mecha()
-    return g, ds, mecha
+    return mtg, data_structure, mecha
 
 
 def test_potentials_between_soil_and_xylem(solved):
-    g, ds, mecha = solved
-    psi, owner = ds.get("standard_psi"), ds.owner("SubOrgan")
+    mtg, data_structure, mecha = solved
+    psi, owner = data_structure.get("standard_psi"), data_structure.owner("SubOrgan")
     assert np.isfinite(psi).all()
     for i in (1, 2):                                   # barriers: between the xylem's -5000 hPa and the soil's 0
         assert psi[owner == i].min() >= -5000. - 1e-6 and psi[owner == i].max() <= 1e-6
@@ -32,9 +32,9 @@ def test_mass_balance(solved):
     """Each section's uptake from the soil is the flow into its xylem (the axial boundary), to the round-off of the
     boundary's terms (the vessels' Poiseuille conductances, up to ~10 cm3 hPa-1 d-1, hold them near the xylem's
     potential: their flows are small differences of large terms)."""
-    g, ds, mecha = solved
-    psi, axial, owner = ds.get("standard_psi"), ds.get("axial_boundary_conductance"), ds.owner("SubOrgan")
-    uptake = ds.get("standard_uptake")
+    mtg, data_structure, mecha = solved
+    psi, axial, owner = data_structure.get("standard_psi"), data_structure.get("axial_boundary_conductance"), data_structure.owner("SubOrgan")
+    uptake = data_structure.get("standard_uptake")
     for i in (1, 2):
         into_xylem = (axial * (psi - mecha.standard_psi_xylem))[owner == i].sum()
         scale = (axial * abs(mecha.standard_psi_xylem))[owner == i].sum()
@@ -45,8 +45,8 @@ def test_mass_balance(solved):
 
 
 def test_kr_kx(solved):
-    g, ds, mecha = solved
-    kr, Kx, Kx_phloem = ds.get("kr"), ds.get("Kx"), ds.get("Kx_phloem")
+    mtg, data_structure, mecha = solved
+    kr, Kx, Kx_phloem = data_structure.get("kr"), data_structure.get("Kx"), data_structure.get("Kx_phloem")
     assert kr[0] > kr[1] > kr[2] > 0          # no barrier (0) above the strip's (1), suberin (3) lowers kr below it
     assert Kx[0] == 0. and Kx[1] == Kx[2] > 0                        # same anatomy, same height
     assert (Kx_phloem >= 0).all()
@@ -54,31 +54,31 @@ def test_kr_kx(solved):
 
 def test_optional(solved):
     """standard_solve = 0: the standard problem is not solved, kr not computed (NaN); Kx still is."""
-    g, ds, mecha = solved
-    before = ds.get("standard_psi").copy()
+    mtg, data_structure, mecha = solved
+    before = data_structure.get("standard_psi").copy()
     mecha.standard_solve = 0.
     try:
-        ds.set("barrier", np.full(ds.n_nodes(), 1.))
+        data_structure.set("barrier", np.full(data_structure.n_nodes(), 1.))
         mecha()
-        assert np.isnan(ds.get("kr")).all() and (ds.get("Kx") > 0).all()
-        np.testing.assert_array_equal(ds.get("standard_psi"), before)
+        assert np.isnan(data_structure.get("kr")).all() and (data_structure.get("Kx") > 0).all()
+        np.testing.assert_array_equal(data_structure.get("standard_psi"), before)
     finally:
         mecha.standard_solve = 1.
-        ds.set("barrier", np.array([0., 1., 3.])[ds.owner("SubOrgan")])
+        data_structure.set("barrier", np.array([0., 1., 3.])[data_structure.owner("SubOrgan")])
         mecha()
 
 
 def test_flow_condition_at_the_xylem(solved):
     """standard_axial_condition 2: the given flow leaves through the xylem; the section's uptake is that flow."""
-    g, ds, mecha = solved
+    mtg, data_structure, mecha = solved
     mecha.standard_axial_condition, mecha.standard_axial_flow = 2., 1e-3
     try:
         mecha()
-        inflow, owner = ds.get("standard_axial_inflow"), ds.owner("SubOrgan")
+        inflow, owner = data_structure.get("standard_axial_inflow"), data_structure.owner("SubOrgan")
         for i in (1, 2):                                  # barriers 1 and 3 (barrier 0: no mature xylem)
             assert inflow[owner == i].sum() == pytest.approx(-1e-3, rel=1e-12)
-            assert ds.get("standard_uptake")[i] == pytest.approx(1e-3, rel=1e-9)
-        assert np.isfinite(ds.get("kr")[1:]).all()
+            assert data_structure.get("standard_uptake")[i] == pytest.approx(1e-3, rel=1e-9)
+        assert np.isfinite(data_structure.get("kr")[1:]).all()
     finally:
         mecha.standard_axial_condition, mecha.standard_axial_flow = 1., 0.
         mecha()
@@ -89,29 +89,29 @@ def test_kr_at_barrier_0_against_the_protophloem(solved):
     boundary: its protosieve cells, or, GRANAP's anatomies typing none, its sieve tubes, at standard_psi_sieve (1.1e4
     hPa, MECHA's BCs.xml). NaN, it has no axial boundary: the soil's potential everywhere, kr undefined. A phloem flow
     (standard_sieve_flow) replaces the potential, split among the protophloem's cells, kr against their mean."""
-    g, ds, mecha = solved
-    nodes, _, geo = mecha.section_geometries()[int(ds.entity_ids("SubOrgan")[0])]
+    mtg, data_structure, mecha = solved
+    nodes, _, geo = mecha.section_geometries()[int(data_structure.entity_ids("SubOrgan")[0])]
     assert geo.protosieve_cells.size == 0 and geo.sieve_cells.size > 0
     np.testing.assert_array_equal(geo.protophloem_cells, geo.sieve_cells)
-    axial = ds.get("axial_boundary_conductance")[nodes]
+    axial = data_structure.get("axial_boundary_conductance")[nodes]
     assert (axial[geo.sieve_cells] > 0).all() and np.count_nonzero(axial) == geo.sieve_cells.size
     assert mecha.standard_psi_sieve == 1.1E4
-    uptake, height = ds.get("standard_uptake")[0], ds.get("length")[0] * 1e6                    # µm
-    assert ds.get("kr")[0] == pytest.approx(uptake / ((0. - 1.1E4) * ds.get("perimeter")[0] * height * 1e-4),
+    uptake, height = data_structure.get("standard_uptake")[0], data_structure.get("length")[0] * 1e6                    # µm
+    assert data_structure.get("kr")[0] == pytest.approx(uptake / ((0. - 1.1E4) * data_structure.get("perimeter")[0] * height * 1e-4),
                                             rel=1e-12)
     try:
         mecha.standard_psi_sieve = float("nan")
         mecha()
-        assert np.isnan(ds.get("kr")[0]) and np.isfinite(ds.get("kr")[1:]).all()
-        np.testing.assert_allclose(ds.get("standard_psi")[nodes], 0., atol=1e-9)
+        assert np.isnan(data_structure.get("kr")[0]) and np.isfinite(data_structure.get("kr")[1:]).all()
+        np.testing.assert_allclose(data_structure.get("standard_psi")[nodes], 0., atol=1e-9)
         mecha.standard_psi_sieve, mecha.standard_sieve_flow = 1.1E4, -1e-3         # the phloem unloading 1e-3 cm3 d-1
         mecha()
-        inflow = ds.get("standard_axial_inflow")[nodes]
-        assert inflow[geo.sieve_cells].sum() == pytest.approx(1e-3, rel=1e-12) and ds.get("axial_boundary_conductance")[
+        inflow = data_structure.get("standard_axial_inflow")[nodes]
+        assert inflow[geo.sieve_cells].sum() == pytest.approx(1e-3, rel=1e-12) and data_structure.get("axial_boundary_conductance")[
             nodes].sum() == 0.
-        assert ds.get("standard_uptake")[0] == pytest.approx(-1e-3, rel=1e-9)
-        protophloem = ds.get("standard_psi")[nodes[geo.sieve_cells]].mean()
-        assert ds.get("kr")[0] == pytest.approx(-1e-3 / ((0. - protophloem) * ds.get("perimeter")[0] * height * 1e-4),
+        assert data_structure.get("standard_uptake")[0] == pytest.approx(-1e-3, rel=1e-9)
+        protophloem = data_structure.get("standard_psi")[nodes[geo.sieve_cells]].mean()
+        assert data_structure.get("kr")[0] == pytest.approx(-1e-3 / ((0. - protophloem) * data_structure.get("perimeter")[0] * height * 1e-4),
                                                 rel=1e-9)
     finally:
         mecha.standard_psi_sieve, mecha.standard_sieve_flow = 1.1E4, float("nan")
@@ -139,9 +139,9 @@ def test_the_standard_problem_is_declared_symmetric_and_checked():
     from openalea.metafspm.solve.linear import LINEAR_SOLVERS
     solvers += [name for name in ("superlu_reuse", "pardiso", "mumps") if name in LINEAR_SOLVERS]  # when installed
     for name in solvers:
-        g, ds, anatomy = anatomy_data_structure(root(3))
-        ds.register("barrier", np.array([0., 1., 3.])[ds.owner("SubOrgan")], location="node")
-        mecha = MechaHydraulics(data_structure=ds)
+        mtg, data_structure, anatomy = anatomy_data_structure(root(3))
+        data_structure.register("barrier", np.array([0., 1., 3.])[data_structure.owner("SubOrgan")], location="node")
+        mecha = MechaHydraulics(data_structure=data_structure)
         with Compute(linear_solver={"default": "superlu", "symmetric": name}).limits() as compute:
             mecha()
             standard = compute.linear(linear_system(mecha, "_standard_problem"))
@@ -150,6 +150,6 @@ def test_the_standard_problem_is_declared_symmetric_and_checked():
             assert standard.name == name
             assert compute.linear(linear_system(mecha, "_plant_problem")).name == "superlu"
         assert checked and all(checked)
-        results[name] = np.asarray(ds.get("standard_psi"), dtype=float)
+        results[name] = np.asarray(data_structure.get("standard_psi"), dtype=float)
     for name in results:
         np.testing.assert_allclose(results[name], results["superlu"], rtol=1e-8, atol=1e-6)

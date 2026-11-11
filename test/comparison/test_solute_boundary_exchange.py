@@ -15,40 +15,40 @@ from plants import template_organ
 
 
 def test_boundary_exchange_is_the_legacys(case):
-    ds, g = case["ds"], case["g"]
-    if not ds.has("barrier"):
-        ds.register("barrier", np.ones(ds.n_nodes()), location="node")
-    ds.set("barrier", np.ones(ds.n_nodes()))
-    presets = MechaOsmoticPresets(data_structure=ds)
+    data_structure, g = case["data_structure"], case["mtg"]
+    if not data_structure.has("barrier"):
+        data_structure.register("barrier", np.ones(data_structure.n_nodes()), location="node")
+    data_structure.set("barrier", np.ones(data_structure.n_nodes()))
+    presets = MechaOsmoticPresets(data_structure=data_structure)
     for name, value in dict(os_hetero=0., s_hetero=0., s_factor=1., presets_rules=2.).items():
         setattr(presets, name, value)
-    mecha = legacy_options(MechaHydraulics(data_structure=ds))
+    mecha = legacy_options(MechaHydraulics(data_structure=data_structure))
     mecha.standard_osmotic = 1.
     try:
         presets()
         mecha()
-        flow = np.asarray(ds.get("standard_flow")).copy()
+        flow = np.asarray(data_structure.get("standard_flow")).copy()
     finally:                                 # the case's DataStructure is shared with the other comparisons
         mecha.standard_osmotic = 0.
-        ds.set("osmotic_potential", np.zeros(ds.n_nodes()))
-        ds.set("reflection_coefficient", np.zeros(ds.n_edges()))
+        data_structure.set("osmotic_potential", np.zeros(data_structure.n_nodes()))
+        data_structure.set("reflection_coefficient", np.zeros(data_structure.n_edges()))
     legacy = legacy_osmotic(template_organ(case["anatomy"], g, case["segment"]), 1, height=case["height"],
                             os_hetero=0, s_hetero=0, s_factor=1.0)
     from openalea.mecha.legacy import SoluteTransport
     reference = SoluteTransport(legacy["mecha"], {"apo_wall": 0.1, "plasmodesmata": 0.5, "membrane": 1e-6},
                                 {"dt": 0.1})._boundary_flux(0, 1)
-    nodes, edges = section_parts(ds)[case["segment"]]
-    view = ds.to_graph_view()
-    path = np.asarray(ds.get("network_path"))
-    counted = np.zeros(ds.n_edges(), dtype=bool)
+    nodes, edges = section_parts(data_structure)[case["segment"]]
+    view = data_structure.to_graph_view()
+    path = np.asarray(data_structure.get("network_path"))
+    counted = np.zeros(data_structure.n_edges(), dtype=bool)
     counted[edges] = np.isin(path[edges], (WALL_PATH, MEMBRANE, PLASMODESMATA))
-    liquid = np.zeros(ds.n_nodes(), dtype=bool)
+    liquid = np.zeros(data_structure.n_nodes(), dtype=bool)
     liquid[nodes] = True
     outflow, inflow = liquid_boundary_exchange(view.incidence, flow, counted, liquid)
     geo = mecha.section_geometries()[case["segment"]][2]
     net = case["legacy"].network
     mecha_index = g.property("mecha_index")
-    index = np.array([int(mecha_index[int(v)]) for v in ds.entity_ids("node")[nodes]])
+    index = np.array([int(mecha_index[int(v)]) for v in data_structure.entity_ids("node")[nodes]])
     index[geo.junction_order] = net.n_walls + np.arange(net.n_junctions)
     expected = reference[index]                                  # its matrix index is the node id
     scale = np.abs(reference).max()

@@ -187,13 +187,13 @@ def test_q_l4_each_wall_its_own_thickness():
     net = mecha.network()
     own = np.asarray(ds.get("wall_thickness"), dtype=float)
     e = np.flatnonzero(net.in_section & net.junction_edge & (K1 > 1e-20))
-    wall = np.where(net.kind[net.a[e]] == WALL, net.a[e], net.b[e])
+    wall = np.where(net.compartment_type[net.a[e]] == WALL, net.a[e], net.b[e])
     t, t1, h = own[wall], mecha.thickness, np.asarray(ds.get("length"))[wall] * 1e6
     lateral = net.edge_lateral_distance[e]
     np.testing.assert_allclose(K2[e] / K1[e], ((lateral + h) * t - t ** 2) / ((lateral + h) * t1 - t1 ** 2), rtol=1e-12)
-    walls = np.flatnonzero((soil1 > 0) & (net.kind == WALL))
+    walls = np.flatnonzero((soil1 > 0) & (net.compartment_type == WALL))
     np.testing.assert_allclose(soil2[walls] / soil1[walls], t1 / own[walls], rtol=1e-12)
-    junctions = np.flatnonzero((soil1 > 0) & (net.kind != WALL))
+    junctions = np.flatnonzero((soil1 > 0) & (net.compartment_type != WALL))
     np.testing.assert_allclose(soil2[junctions] / soil1[junctions], t1 / net.wall_thickness[junctions], rtol=1e-12)
     assert np.isfinite(net.wall_thickness[junctions]).all() and junctions.size > 0
 
@@ -212,7 +212,7 @@ def test_plasmodesmata_diffusion_through_the_crossed_wall():
     one_factor = ds.get("symplastic_diffusion_factor").copy()
     net = mecha.network()
     e = np.flatnonzero(net.in_section & (net.path == PLASMODESMATA) & (one_factor > 0))
-    walls = np.flatnonzero(net.kind == WALL)
+    walls = np.flatnonzero(net.compartment_type == WALL)
     crossed = {tuple(sorted(cells)): wall for wall, cells in zip(walls, net.wall_cells[walls].tolist())}
     wall = np.array([crossed[tuple(sorted((a, b)))] for a, b in zip(net.a[e].tolist(), net.b[e].tolist())])
     own = np.asarray(ds.get("wall_thickness"), dtype=float)[wall]
@@ -240,7 +240,7 @@ def test_p_cortex_layers_from_the_outer_cortex():
     ds, nodes, geo, rank_to_row, row_outer = _presets_section(os_hetero=1., presets_rules=1.)
     pi = np.asarray(ds.get("osmotic_potential"))[nodes]
     vals, _ = tissue_values({"os_hetero": 1, "os_cortex": -4800., "osmotic_sieve": -1e4, "s_factor": 1., "s_hetero": 0})
-    interc = np.zeros(geo.kind.size, dtype=bool)
+    interc = np.zeros(geo.compartment_type.size, dtype=bool)
     interc[geo.typed["intercellular"]] = True
     cortex = [c for c in geo.cells if 40 <= geo.cell_rank[c] < 50 and not interc[c]]
     for c in cortex:

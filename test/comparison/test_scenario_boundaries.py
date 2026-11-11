@@ -40,20 +40,20 @@ RESET = dict(standard_elongation=0., elongation_midpoint_rate=0., elongation_sid
 @pytest.fixture(scope="module", params=list(CASES))
 def both(case, request):
     spec = CASES[request.param]
-    ds, g = case["ds"], case["g"]
-    if not ds.has("barrier"):
-        ds.register("barrier", np.ones(ds.n_nodes()), location="node")
-    ds.set("barrier", np.full(ds.n_nodes(), float(spec["barrier"])))
-    presets = MechaOsmoticPresets(data_structure=ds)
+    data_structure, g = case["data_structure"], case["mtg"]
+    if not data_structure.has("barrier"):
+        data_structure.register("barrier", np.ones(data_structure.n_nodes()), location="node")
+    data_structure.set("barrier", np.full(data_structure.n_nodes(), float(spec["barrier"])))
+    presets = MechaOsmoticPresets(data_structure=data_structure)
     for name, value in PRESETS.items():
         setattr(presets, name, value)
-    mecha = legacy_options(MechaHydraulics(data_structure=ds))
+    mecha = legacy_options(MechaHydraulics(data_structure=data_structure))
     mecha.standard_osmotic = 1.
     for name, value in spec["port"].items():
         setattr(mecha, name, value)
     presets()
     mecha()
-    port = {name: np.asarray(ds.get(name)).copy() for name in
+    port = {name: np.asarray(data_structure.get(name)).copy() for name in
             ("standard_psi", "standard_flow", "conductance", "standard_uptake", "soil_conductance",
              "standard_soil_psi", "standard_elongation_sink", "osmotic_potential")}
     geo = mecha.section_geometries()[case["segment"]][2]
@@ -77,16 +77,16 @@ def both(case, request):
     legacy = legacy_osmotic(template_organ(case["anatomy"], g, case["segment"]), spec["barrier"],
                             height=case["height"], scenario_zero=spec["legacy"], edit_network=edit,
                             hydraulic=dict(k_sieve=np.array([1.0])), before_solve=sieve_flow, **spec["legacy"])
-    nodes, edges = section_parts(ds)[case["segment"]]
+    nodes, edges = section_parts(data_structure)[case["segment"]]
     net = case["legacy"].network
     mecha_index = g.property("mecha_index")
-    index = np.array([int(mecha_index[int(v)]) for v in ds.entity_ids("node")[nodes]])
+    index = np.array([int(mecha_index[int(v)]) for v in data_structure.entity_ids("node")[nodes]])
     index[geo.junction_order] = net.n_walls + np.arange(net.n_junctions)
-    yield dict(port=port, legacy=legacy, nodes=nodes, edges=edges, index=index, ds=ds, spec=spec)
+    yield dict(port=port, legacy=legacy, nodes=nodes, edges=edges, index=index, data_structure=data_structure, spec=spec)
     for name, value in RESET.items():
         setattr(mecha, name, value)
-    ds.set("osmotic_potential", np.zeros(ds.n_nodes()))
-    ds.set("reflection_coefficient", np.zeros(ds.n_edges()))
+    data_structure.set("osmotic_potential", np.zeros(data_structure.n_nodes()))
+    data_structure.set("reflection_coefficient", np.zeros(data_structure.n_edges()))
 
 
 def test_elongation_sink(both):
@@ -111,9 +111,9 @@ def test_flows_and_uptake(both):
     """The edge flows, to 1e-12 of the potentials they are differences of; the uptake: Σ K_soil (ψ_soil − ψ) with each
     border node's own soil potential (the legacy's total takes the left one everywhere, doc/legacy.rst h), to
     1e-12."""
-    ds, port, legacy, index = both["ds"], both["port"], both["legacy"], both["index"]
-    view = ds.to_graph_view()
-    local = np.full(ds.n_nodes(), -1, dtype=np.int64)
+    data_structure, port, legacy, index = both["data_structure"], both["port"], both["legacy"], both["index"]
+    view = data_structure.to_graph_view()
+    local = np.full(data_structure.n_nodes(), -1, dtype=np.int64)
     local[both["nodes"]] = np.arange(both["nodes"].size)
     potentials = abs(legacy["solution"]).max() + abs(port["osmotic_potential"][both["nodes"]]).max()
     checked = 0

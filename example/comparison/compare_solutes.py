@@ -47,9 +47,9 @@ def cases(case):
     rows.append(("photosynthesis", "sucrose", photosynthesis["c1"], sucrose))
     rows.append(("photosynthesis", "starch", photosynthesis["starch1"], starch))
 
-    r1 = legacy_reactions_step(organ, **DIFFUSIVITIES, solute_sigma={g: SIGMA for g in range(40)})
-    ds = case["ds"]
-    sucrose, _ = port_step(case, r1, sigma=np.where(np.asarray(ds.get("network_path")) == MEMBRANE, SIGMA, 0.))
+    r1 = legacy_reactions_step(organ, **DIFFUSIVITIES, solute_sigma={mtg: SIGMA for mtg in range(40)})
+    data_structure = case["data_structure"]
+    sucrose, _ = port_step(case, r1, sigma=np.where(np.asarray(data_structure.get("network_path")) == MEMBRANE, SIGMA, 0.))
     rows.append(("r1: K σ Δπ counted twice", "sucrose", r1["c1"], sucrose))
 
     r4 = legacy_reactions_step(organ, **DIFFUSIVITIES, starch=STARCH, cells_only=False,
@@ -68,7 +68,7 @@ def main():
     case = needle_case()
     liquid, index = case["liquid"], case["index"]
     port_xy, legacy_xy = case["xy"][liquid], case["legacy_xy"][index[liquid]]
-    cell = (np.asarray(case["ds"].get("kind"))[case["nodes"]] == 0)[liquid]
+    cell = (np.asarray(case["data_structure"].get("compartment_type"))[case["nodes"]] == 0)[liquid]
     rows = cases(case)
     fig, axes = plt.subplots(len(rows), 3, figsize=(15, 3.3 * len(rows)), layout="constrained")
     for (title, quantity, legacy, port), ax in zip(rows, axes):

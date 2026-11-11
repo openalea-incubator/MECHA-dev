@@ -109,7 +109,7 @@ def main():
     print(path)
 
     liquid, index = case["liquid"], case["index"]
-    cell = (np.asarray(case["ds"].get("kind"))[case["nodes"]] == 0)[liquid]
+    cell = (np.asarray(case["data_structure"].get("compartment_type"))[case["nodes"]] == 0)[liquid]
     port_xy, legacy_xy = case["xy"][liquid], case["legacy_xy"][index[liquid]]
     last = history[-1]
     fig, axes = plt.subplots(2, 3, figsize=(15, 6.6), layout="constrained")

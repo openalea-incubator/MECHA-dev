@@ -21,28 +21,28 @@ FAR = 1.0E9                                       # x_contact beyond every wall:
 
 @pytest.mark.parametrize("rule, package", [(1, legacy), (2, legacy_reactions)], ids=["develop", "reactions"])
 def test_contact_by_cells(case, rule, package):
-    ds, g = case["ds"], case["g"]
-    if not ds.has("barrier"):
-        ds.register("barrier", np.ones(ds.n_nodes()), location="node")
-    ds.set("barrier", np.full(ds.n_nodes(), float(BARRIER)))
-    nodes, _ = section_parts(ds)[case["segment"]]
-    mecha = legacy_options(MechaHydraulics(data_structure=ds))
+    data_structure, g = case["data_structure"], case["mtg"]
+    if not data_structure.has("barrier"):
+        data_structure.register("barrier", np.ones(data_structure.n_nodes()), location="node")
+    data_structure.set("barrier", np.full(data_structure.n_nodes(), float(BARRIER)))
+    nodes, _ = section_parts(data_structure)[case["segment"]]
+    mecha = legacy_options(MechaHydraulics(data_structure=data_structure))
     geo = mecha.section_geometries()[case["segment"]][2]
     epidermis = geo.cells[geo.cgroup[geo.cells] == 2]
     left = epidermis[geo.x[epidermis] < np.median(geo.x[epidermis])]
     mecha_index = g.property("mecha_index")
-    node_ids = ds.entity_ids("node")
+    node_ids = data_structure.entity_ids("node")
     run_network = case["legacy"].network
     contact_ids = [int(mecha_index[int(node_ids[nodes[c]])]) - run_network.n_wall_junction for c in left]
-    flags = np.zeros(ds.n_nodes())
+    flags = np.zeros(data_structure.n_nodes())
     flags[nodes[left]] = 1.
-    ds.set("soil_contact_cell", flags)
+    data_structure.set("soil_contact_cell", flags)
     try:
         mecha.x_contact, mecha.contact_junction_rule = FAR, float(rule)
         mecha()
-        soil, psi = np.asarray(ds.get("soil_conductance")).copy(), np.asarray(ds.get("standard_psi")).copy()
+        soil, psi = np.asarray(data_structure.get("soil_conductance")).copy(), np.asarray(data_structure.get("standard_psi")).copy()
     finally:
-        ds.set("soil_contact_cell", np.zeros(ds.n_nodes()))
+        data_structure.set("soil_contact_cell", np.zeros(data_structure.n_nodes()))
         mecha.x_contact, mecha.contact_junction_rule = -15E9, 1.
     run = legacy_section(template_organ(case["anatomy"], g, case["segment"]), barriers=(BARRIER,),
                          height=case["height"], hydraulic=dict(xcontactrange=[FAR]),

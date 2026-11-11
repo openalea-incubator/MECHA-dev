@@ -109,10 +109,10 @@ of different phases are not compared with each other. "8 plants resumed" runs st
 day 12 is hours 267 to 288, day 13 hours 289 to 312. The runs of 2026-11-06 used one thread, the default of the time,
 and those of O-6 the process pool of the time where stated.
 
-**Kinds by length class** (MECHA ``ae1e519``, metafspm O-4, 2026-11-06). ``plant_reduction``, ``scenario_reduction``
-and ``root_system`` take ``length_classes=0.1`` by default: a reduced section's kind is interpolated between the two
-neighbouring length classes :math:`(1 + 0.1)^k` (``"exact"`` keeps one kind per exact length; the exactness tests use
-it). At 1 plant to day 8, against an earlier run with one kind per exact length (metafspm ``343749c``), the kinds
+**Archetypes by length class** (MECHA ``ae1e519``, metafspm O-4, 2026-11-06). ``plant_reduction``, ``scenario_reduction``
+and ``root_system`` take ``length_classes=0.1`` by default: a reduced section's archetype is interpolated between the two
+neighbouring length classes :math:`(1 + 0.1)^k` (``"exact"`` keeps one archetype per exact length; the exactness tests use
+it). At 1 plant to day 8, against an earlier run with one archetype per exact length (metafspm ``343749c``), the archetypes
 evaluated went from 1398 (218.5 s) to 470 (106 s) and the day-8 step from 3.83 to 1.81 s. Against ``"exact"`` at
 1 plant over 3 days, the total uptake is within 1e-10 of its mean, the roots' and the leaves' water potentials within
 2e-6 and 1e-6. Not bit-identical to ``"exact"``, by design.
@@ -150,10 +150,10 @@ bits at any thread count (8 plants resumed at 1, 4 and 12 threads). ``superlu_re
 is not advised on use case 1: at 2 plants over hours 121 to 168 it took 73.9 s against 73.2 s, and its memory grew
 about 0.6 GB a day more (2026-11-06, with the process pool of its time).
 
-**The kinds' assembly** (metafspm P2.3, 2026-11-07). metafspm's ``reduction.terms`` writes every group's kinds' blocks
+**The archetypes' assembly** (metafspm P2.3, 2026-11-07). metafspm's ``reduction.terms`` writes every group's archetypes' blocks
 with a compiled kernel: 0.79 to 0.21 s of a profiled step, and the group tables 171 to 62 MB, at 8 plants, day 12,
 1 thread. Over metafspm's P2 (8 plants from the sowing to day 13, 1 thread), MechaHydraulics went from 2.81 to 2.30 s
-per step on day 13. At day 12 the kinds' evaluation took 0.49 s of a profiled step: the library's groups 0.17 s,
+per step on day 13. At day 12 the archetypes' evaluation took 0.49 s of a profiled step: the library's groups 0.17 s,
 MECHA's components on the library 0.20 s, the Kron reductions (SuperLU) 0.06 s, the condensed volumes 0.04 s.
 
 **threads="auto"** (MECHA README ``1a09fd1``, metafspm P5, 2026-11-07). ``Compute(threads="auto")`` is the default; the
@@ -168,7 +168,7 @@ profiler (hours 290 to 292), metafspm's ``parameter_view`` 0.10 s.
 - GK-1 (MECHA ``7540d87``): MECHA's own ``parameter_table`` is gone; the components call metafspm's
   ``FunctionalComponent.parameter_table(names, location)``, gathered through an owner index kept per topology.
 - GK-2 (MECHA ``18af37e``): ``section_layout`` and ``per_node`` (``_cell_rank``'s ranks, ``relative_x``,
-  ``_root_nodes``) are one ``ds.local_gather`` each. The other per-section loops (the network's φ cells,
+  ``_root_nodes``) are one ``data_structure.local_gather`` each. The other per-section loops (the network's φ cells,
   ``cortex_gradient``, ``_kr``, ``_standard_axial_inflow``) stay: in use case 1 every section is reduced, so they run
   on the reduction's library only.
 - GK-3 (MECHA ``7142f9e``): the plant and standard problems' Jacobians and the osmotic input Jacobian are
@@ -177,14 +177,14 @@ profiler (hours 290 to 292), metafspm's ``parameter_view`` 0.10 s.
 - Over GK-1 to GK-3, 8 plants resumed: the day-13 step went from 4.93 to 4.46 s at 1 thread and from 4.75 to 4.20 s
   at ``"auto"``.
 - GK-4 (MECHA ``5a4cef4``, ``a343048``, with metafspm ``1896fb7``: one library per reduction and time step, every
-  signature's kinds in the same batches): the condensed volumes' unit volumes per template are kept per (template,
-  thickness parameters) in the component's own caches (``keep(saved=False)``), from one batch of kinds to the next:
-  the ``@kind_derived`` time over the 48 resumed steps to day 13 went from 1.71 to 0.35 s. The standard
-  transmembrane fractions, which no kind reads, are not computed on a reduction's library (0 and -1 there): they had
-  taken 0.9 s over the same steps. At 8 plants to day 8, 1 thread, the kinds' time went from 115.7 to 100.5 s.
+  signature's archetypes in the same batches): the condensed volumes' unit volumes per template are kept per (template,
+  thickness parameters) in the component's own caches (``keep(saved=False)``), from one batch of archetypes to the next:
+  the ``@archetype_derived`` time over the 48 resumed steps to day 13 went from 1.71 to 0.35 s. The standard
+  transmembrane fractions, which no archetype reads, are not computed on a reduction's library (0 and -1 there): they had
+  taken 0.9 s over the same steps. At 8 plants to day 8, 1 thread, the archetypes' time went from 115.7 to 100.5 s.
 
 **The process pool removed** (MECHA ``fea259b``, metafspm QG-3 ``b69347a``, 2026-11-08). metafspm's process pool for
-the kinds (``Compute(workers=)``) is gone; a reduction's kinds are evaluated in the run's threads (metafspm GK-5), with
+the archetypes (``Compute(workers=)``) is gone; a reduction's archetypes are evaluated in the run's threads (metafspm GK-5), with
 the same results bit for bit (MECHA's test: ``Compute(threads=4)`` against 1). At 8 plants from the sowing to day 8,
 ``"auto"``: 292.6 s at a memory peak of 3.15 GB, against 283.1 s and 3.83 GB with the former pool. At 8 plants resumed
 from hour 192: day 12 3.59 s, day 13 4.27 s per step at 1 thread; 3.27 and 3.92 s at ``"auto"``. At 16 plants, day 8,

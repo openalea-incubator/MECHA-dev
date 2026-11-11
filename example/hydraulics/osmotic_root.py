@@ -20,9 +20,7 @@ from dataclasses import replace
 import matplotlib.pyplot as plt
 import numpy as np
 
-from openalea.metafspm.coupling.composite_wrapper import CompositeModel
-from openalea.metafspm.scene.population import Planting, planting
-from openalea.metafspm.scene.scene import Scene
+from openalea.metafspm import CompositeModel, Planting, planting, Scene
 
 from openalea.granap.metafspm.architectures import RootAxis
 from openalea.granap.metafspm.component import GranapAnatomy, junction_rules
@@ -54,9 +52,9 @@ def main():
     table = planting([Planting(x=float(i)) for i in range(len(CASES))], OsmoticRoot, {"standard_osmotic": 1.},
                      plant_scenarios=list(CASES.values()))
     scene = Scene(table)
-    ds = scene.populations[0].data_structure
+    data_structure = scene.populations[0].data_structure
     development, mecha = scene.populations[0].instance.development, scene.populations[0].instance.hydraulics
-    segments = [int(s) for s in ds.entity_ids("SubOrgan")]            # one per plant, in the table's order
+    segments = [int(s) for s in data_structure.entity_ids("SubOrgan")]            # one per plant, in the table's order
 
     results = {}
     for barrier in BARRIERS:
@@ -70,7 +68,7 @@ def main():
             for frame in frames.values():             # the profiles: cells without the air spaces
                 frame.profile_psi = frame.psi.copy()
                 frame.profile_psi[geo.typed["intercellular"]] = np.nan
-            results[(barrier, case)] = frames, dict(uptake=ds.get("standard_uptake")[i], kr=ds.get("kr")[i])
+            results[(barrier, case)] = frames, dict(uptake=data_structure.get("standard_uptake")[i], kr=data_structure.get("kr")[i])
     print(f"{'barrier':>8s} {'case':>12s} {'uptake (cm3/d)':>15s} {'kr (cm/hPa/d)':>14s}")
     for (barrier, case), (_, r) in results.items():
         print(f"{barrier:8d} {case:>12s} {r['uptake']:15.4e} {r['kr']:14.4e}")

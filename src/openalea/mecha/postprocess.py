@@ -101,7 +101,7 @@ def conduit_axial_conductances(group, sections: int, tissue, cell_area, height, 
     return Kx, Kx_phloem
 
 
-def transmembrane_layers(ds, segment) -> "pd.DataFrame":
+def transmembrane_layers(data_structure, segment) -> "pd.DataFrame":
     """
     The section *segment*'s standard transmembrane flows by layer row (MECHA's ``uptake_layer_plus``, ``_minus``,
     ``stf_layer_plus``, ``_minus``), from MechaHydraulics' standard_flow, standard_transmembrane_fraction and
@@ -110,10 +110,10 @@ def transmembrane_layers(ds, segment) -> "pd.DataFrame":
     """
     import pandas as pd
     from openalea.mecha.geometry import section_parts
-    _, edges = section_parts(ds)[segment]
-    layer = np.asarray(ds.get("membrane_layer"))[edges].astype(np.int64)
-    fraction = np.asarray(ds.get("standard_transmembrane_fraction"))[edges]
-    uptake = np.asarray(ds.get("standard_uptake"))[list(ds.entity_ids("SubOrgan")).index(segment)]
+    _, edges = section_parts(data_structure)[segment]
+    layer = np.asarray(data_structure.get("membrane_layer"))[edges].astype(np.int64)
+    fraction = np.asarray(data_structure.get("standard_transmembrane_fraction"))[edges]
+    uptake = np.asarray(data_structure.get("standard_uptake"))[list(data_structure.entity_ids("SubOrgan")).index(segment)]
     flow = fraction * uptake
     on = layer >= 0
     n = int(layer[on].max()) + 1 if on.any() else 0
@@ -126,21 +126,21 @@ def transmembrane_layers(ds, segment) -> "pd.DataFrame":
                          "fraction_minus": by_row(np.minimum(fraction, 0.))})
 
 
-def transmembrane_cells(ds, segment) -> "pd.DataFrame":
+def transmembrane_cells(data_structure, segment) -> "pd.DataFrame":
     """
     The section *segment*'s standard transmembrane fractions by protoplast (MECHA's ``stf_cell_plus``, ``_minus``):
     per cell (its DataStructure node), its membranes' fractions summed where positive and where negative.
     """
     import pandas as pd
     from openalea.mecha.geometry import section_parts
-    nodes, edges = section_parts(ds)[segment]
-    view = ds.to_graph_view()
-    kind = np.asarray(ds.get("kind"))
-    on = np.asarray(ds.get("membrane_layer"))[edges] >= 0
-    fraction = np.asarray(ds.get("standard_transmembrane_fraction"))[edges][on]
+    nodes, edges = section_parts(data_structure)[segment]
+    view = data_structure.to_graph_view()
+    compartment_type = np.asarray(data_structure.get("compartment_type"))
+    on = np.asarray(data_structure.get("membrane_layer"))[edges] >= 0
+    fraction = np.asarray(data_structure.get("standard_transmembrane_fraction"))[edges][on]
     tail, head = view.tail[edges][on], view.head[edges][on]
-    cell = np.where(kind[tail] == 0, tail, head)
-    cells = nodes[kind[nodes] == 0]
+    cell = np.where(compartment_type[tail] == 0, tail, head)
+    cells = nodes[compartment_type[nodes] == 0]
     index = np.searchsorted(cells, cell)
     return pd.DataFrame({"node": cells,
                          "fraction_plus": np.bincount(index, weights=np.maximum(fraction, 0.), minlength=cells.size),
@@ -156,15 +156,15 @@ def axial_layers(mecha, segment) -> "pd.DataFrame":
     """
     import pandas as pd
     from openalea.mecha.osmotic import legacy_rows
-    ds = mecha.data_structure
+    data_structure = mecha.data_structure
     nodes, _, geo = mecha.section_geometries()[segment]
-    psi = np.asarray(ds.get("standard_psi"), dtype=float)[nodes]
-    entering = (np.asarray(ds.get("axial_boundary_conductance"), dtype=float)[nodes]
-                * (np.asarray(ds.get("standard_axial_psi"), dtype=float)[nodes] - psi)
-                + np.asarray(ds.get("standard_axial_inflow"), dtype=float)[nodes])
+    psi = np.asarray(data_structure.get("standard_psi"), dtype=float)[nodes]
+    entering = (np.asarray(data_structure.get("axial_boundary_conductance"), dtype=float)[nodes]
+                * (np.asarray(data_structure.get("standard_axial_psi"), dtype=float)[nodes] - psi)
+                + np.asarray(data_structure.get("standard_axial_inflow"), dtype=float)[nodes])
     rank_to_row, _, _ = legacy_rows(geo.n_layer, geo.layer_dist)
     n = int(np.nanmax(rank_to_row)) + 1
-    barrier = int(np.asarray(ds.get("barrier"))[nodes[0]])
+    barrier = int(np.asarray(data_structure.get("barrier"))[nodes[0]])
     xylem = geo.xylem_cells if barrier > 0 else np.zeros(0, dtype=np.int64)
     phloem = geo.sieve_cells if barrier > 0 else geo.protophloem_cells
 

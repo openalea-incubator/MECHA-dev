@@ -64,7 +64,7 @@ class Development(FunctionalComponent):
                                     default=1., scale=SCALES.SubOrgan, location="node", aggregation="broadcast",
                                     kind="descriptor")
 
-    @rate(filters={"label": ROOT_LABELS}, include_inactive=True)
+    @rate(where={"label": ROOT_LABELS}, include_inactive=True)
     def _barrier(self, distance_from_tip, tip_zone, tip_barrier, young_zone, young_barrier, mature_barrier):
         """Each root section's code, by the zone its distance from the tip is in (an apex's: the tip's)."""
         distance = np.asarray(distance_from_tip, dtype=float)
@@ -113,7 +113,7 @@ class UniformSoil(FunctionalComponent):
     soil_bulk_conductance: float = state_variable(**_doc("cm3 hPa-1 d-1", "on a root section's soil node: the "
                                                          "conductance between it and the soil at soil_psi"),
                                                   default=0., scale=SCALES.Compartment, location="node",
-                                                  kind="NonInertialExtensive")
+                                                  kind="non_inertial_extensive")
 
     @rate(include_inactive=True)
     def _soil_psi(self, uniform_soil_psi, uniform_soil_bulk_conductance) -> dict:
@@ -128,7 +128,7 @@ class Transpiration(FunctionalComponent):
     name, a time series), shared equally by its transpiring organs: those the anatomy gave a leaf surface (a
     Compartment of kind 3, GRANAP's for its leaf kinds: a leaf's elements, Adel's blades' and sheaths'), the organs
     whose transpiration MechaHydraulics takes as a Neumann flux on that surface."""
-    kind: float = input_variable(**_doc("", "the Compartment's kind (3: an organ's leaf surface, GRANAP's)"),
+    compartment_type: float = input_variable(**_doc("", "the Compartment's kind (3: an organ's leaf surface, GRANAP's)"),
                                  by="Anatomy", default=0., scale=SCALES.Compartment, location="node",
                                  kind="descriptor")
     transpiration: float = parameter(**_doc("cm3 d-1", "the plant's transpiration"), by="Transpiration", default=0.)
@@ -139,18 +139,18 @@ class Transpiration(FunctionalComponent):
                                                default=0., scale=SCALES.Organ, location="Organ", kind="extensive")
 
     @rate(include_inactive=True)
-    def _transpiring(self, kind) -> dict:
+    def _transpiring(self, compartment_type) -> dict:
         """The transpiring organs: those owning a leaf surface node (the anatomy's, so that it runs before)."""
-        surface = (np.asarray(kind) == LEAF_SURFACE).astype(float)
+        surface = (np.asarray(compartment_type) == LEAF_SURFACE).astype(float)
         return {"transpiring": (self.data_structure.map_to(surface, "node", "Organ", "sum") > 0).astype(float)}
 
     @rate(include_inactive=True)
     def _leaf_transpiration(self, transpiring, transpiration) -> dict:
         """Each transpiring organ's share of its plant's transpiration. The parameter comes per Organ (the location of
         the step's output), each its plant's."""
-        ds = self.data_structure
+        data_structure = self.data_structure
         leaf = np.asarray(transpiring) > 0
-        leaves = ds.map_to(ds.map_to(leaf, "Organ", "Plant", "sum"), "Plant", "Organ", "broadcast")
+        leaves = data_structure.map_to(data_structure.map_to(leaf, "Organ", "Plant", "sum"), "Plant", "Organ", "broadcast")
         with np.errstate(divide="ignore", invalid="ignore"):
             share = np.asarray(transpiration, dtype=float) / leaves
         return {"leaf_transpiration": np.where(leaf, share, 0.)}

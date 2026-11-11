@@ -25,9 +25,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from openalea.metafspm.coupling.component import StructuralComponent, planting_variable, state_variable
-from openalea.metafspm.coupling.composite_wrapper import CompositeModel
-from openalea.metafspm.coupling.translator import Translator
+from openalea.metafspm import CompositeModel, planting_variable, state_variable, StructuralComponent, Translator
 from openalea.metafspm.data_structure.configs import PropsConfig, ScalesConfig
 from openalea.metafspm.testing.soil import Soil
 
@@ -60,7 +58,7 @@ def _segment_size(description, kind="intensive"):
     return state_variable(**_doc("m", description), default=0., scale=SCALES.SubOrgan, kind=kind)
 
 
-def build_architecture(g, plant, parameters):
+def build_architecture(mtg, plant, parameters):
     """
     metafspm's seedling (its seedling.build_seedling), its architecture only: every segment with its length, radius,
     distance from its tip and 3D extent.
@@ -70,9 +68,9 @@ def build_architecture(g, plant, parameters):
              gravitropism=0.35, lateral_gravitropism=0.08, tortuosity=0.08, pivot_emergence_angle=80.,
              pivot_gravitropism=0.8, n_pivot_segments=8, pivot_lateral_ranks=(2, 5))
     p.update({key: value for key, value in parameters.items() if key in p})
-    s, labels = g.scales, g.labels
-    x0, y0, z0 = (float(g.view(name)[plant]) for name in ("x", "y", "z"))
-    rotation = float(g.view("rotation").get(plant, 0.))
+    s, labels = mtg.scales, mtg.labels
+    x0, y0, z0 = (float(mtg.view(name)[plant]) for name in ("x", "y", "z"))
+    rotation = float(mtg.view("rotation").get(plant, 0.))
     segments = {}                                    # vid -> (length, radius, start, end)
     chains = []                                      # each axis' segments, base to tip
 
@@ -81,28 +79,28 @@ def build_architecture(g, plant, parameters):
         segments[vid] = (length, radius, np.asarray(start, dtype=float), end)
         return end
 
-    shoot = g.add_component(plant, **PropsConfig(scale=s.Axis, edge_type='/', label=labels.Axis.Shoot))
-    unit = g.add_component(shoot, **PropsConfig(scale=s.GrowthUnit, edge_type='/', label=labels.GrowthUnit.Shoot))
+    shoot = mtg.add_component(plant, **PropsConfig(scale=s.Axis, edge_type='/', label=labels.Axis.Shoot))
+    unit = mtg.add_component(shoot, **PropsConfig(scale=s.GrowthUnit, edge_type='/', label=labels.GrowthUnit.Shoot))
     top, phytomer, stem_element, collar, stem = (x0, y0, z0), None, None, None, []
     for rank in range(int(p["n_phytomers"])):
-        phytomer = (g.add_component(unit, **PropsConfig(scale=s.Phytomer, edge_type='/', label=labels.Phytomer.Shoot))
+        phytomer = (mtg.add_component(unit, **PropsConfig(scale=s.Phytomer, edge_type='/', label=labels.Phytomer.Shoot))
                     if phytomer is None else
-                    g.add_child(phytomer, **PropsConfig(scale=s.Phytomer, edge_type='<', label=labels.Phytomer.Shoot)))
-        internode = g.add_component(phytomer, **PropsConfig(scale=s.Organ, edge_type='/',
+                    mtg.add_child(phytomer, **PropsConfig(scale=s.Phytomer, edge_type='<', label=labels.Phytomer.Shoot)))
+        internode = mtg.add_component(phytomer, **PropsConfig(scale=s.Organ, edge_type='/',
                                                              label=labels.Organ.StemInternode))
         props = PropsConfig(scale=s.SubOrgan, edge_type='<' if stem_element else '/', label=labels.SubOrgan.StemElement)
-        stem_element = (g.add_component_with_topo(internode, stem_element, **props) if stem_element
-                        else g.add_component(internode, **props))
+        stem_element = (mtg.add_component_with_topo(internode, stem_element, **props) if stem_element
+                        else mtg.add_component(internode, **props))
         collar = collar or stem_element
         stem.append(stem_element)
         top = segment(stem_element, p["stem_length"], STEM_RADIUS, top, (0., 0., 1.))
-        leaf = g.add_child(internode, **PropsConfig(scale=s.Organ, edge_type='+', label=labels.Organ.Leaf))
+        leaf = mtg.add_child(internode, **PropsConfig(scale=s.Organ, edge_type='+', label=labels.Organ.Leaf))
         azimuth = rotation + rank * 2. * np.pi / 3.
         start, parent, blade = top, stem_element, []
         for element in range(int(p["n_leaf_elements"])):
             props = PropsConfig(scale=s.SubOrgan, edge_type='+' if element == 0 else '<',
                                 label=labels.SubOrgan.LeafElement)
-            vid = (g.add_component_with_topo(leaf, parent, **props) if element == 0 else g.add_child(parent, **props))
+            vid = (mtg.add_component_with_topo(leaf, parent, **props) if element == 0 else mtg.add_child(parent, **props))
             start = segment(vid, p["leaf_length"], STEM_RADIUS, start, (np.cos(azimuth), np.sin(azimuth),
                                                                        0.6 - 0.4 * element))
             parent = vid
@@ -117,11 +115,11 @@ def build_architecture(g, plant, parameters):
         return bent / np.linalg.norm(bent)
 
     for axis_rank in range(int(p["n_root_axes"])):
-        axis = g.add_child(shoot, **PropsConfig(scale=s.Axis, edge_type='+', label=labels.Axis.Root))
-        unit_r = g.add_component(axis, **PropsConfig(scale=s.GrowthUnit, edge_type='/', label=labels.GrowthUnit.Root))
-        phytomer_r = g.add_component(unit_r, **PropsConfig(scale=s.Phytomer, edge_type='/',
+        axis = mtg.add_child(shoot, **PropsConfig(scale=s.Axis, edge_type='+', label=labels.Axis.Root))
+        unit_r = mtg.add_component(axis, **PropsConfig(scale=s.GrowthUnit, edge_type='/', label=labels.GrowthUnit.Root))
+        phytomer_r = mtg.add_component(unit_r, **PropsConfig(scale=s.Phytomer, edge_type='/',
                                                            label=labels.Phytomer.Root))
-        organ = g.add_component(phytomer_r, **PropsConfig(scale=s.Organ, edge_type='/',
+        organ = mtg.add_component(phytomer_r, **PropsConfig(scale=s.Organ, edge_type='/',
                                                           label=labels.Organ.RootInternode))
         pivot = axis_rank == 0
         others = max(int(p["n_root_axes"]) - 1, 1)
@@ -133,7 +131,7 @@ def build_architecture(g, plant, parameters):
         for rank in range(int(p["n_pivot_segments"] if pivot else p["n_root_segments"])):
             props = PropsConfig(scale=s.SubOrgan, edge_type='+' if rank == 0 else '<',
                                 label=labels.SubOrgan.RootSegment)
-            vid = (g.add_component_with_topo(organ, parent, **props) if rank == 0 else g.add_child(parent, **props))
+            vid = (mtg.add_component_with_topo(organ, parent, **props) if rank == 0 else mtg.add_child(parent, **props))
             start = segment(vid, p["root_length"], ROOT_RADIUS, start, direction)
             direction = tropism(direction, gravitropism)
             parent = vid
@@ -142,7 +140,7 @@ def build_architecture(g, plant, parameters):
         bearers = p["pivot_lateral_ranks"] if pivot else (2,)
         for number, bearer_rank in enumerate(bearers):
             bearer = axis_segments[min(int(bearer_rank), len(axis_segments) - 1)]
-            lateral = g.add_child(organ, **PropsConfig(scale=s.Organ, edge_type='+',
+            lateral = mtg.add_child(organ, **PropsConfig(scale=s.Organ, edge_type='+',
                                                        label=labels.Organ.RootInternode))
             side = azimuth + np.pi / 2. + number * np.pi + rng.normal(0., 0.3)
             direction = np.array([np.cos(side), np.sin(side), -0.2])
@@ -151,8 +149,8 @@ def build_architecture(g, plant, parameters):
             for rank in range(int(p["n_lateral_segments"])):
                 props = PropsConfig(scale=s.SubOrgan, edge_type='+' if rank == 0 else '<',
                                     label=labels.SubOrgan.RootSegment)
-                vid = (g.add_component_with_topo(lateral, parent, **props) if rank == 0
-                       else g.add_child(parent, **props))
+                vid = (mtg.add_component_with_topo(lateral, parent, **props) if rank == 0
+                       else mtg.add_child(parent, **props))
                 start = segment(vid, p["lateral_length"], LATERAL_RADIUS, start, direction)
                 direction = tropism(direction, p["lateral_gravitropism"])
                 parent = vid
@@ -160,17 +158,17 @@ def build_architecture(g, plant, parameters):
             chains.append(lateral_segments)
 
     for name in ("length", "radius", "distance_from_tip", "x1", "x2", "y1", "y2", "z1", "z2"):
-        g.properties().setdefault(name, {})
+        mtg.properties().setdefault(name, {})
     for vid, (length, radius, start, end) in segments.items():
         for name, value in (("length", length), ("radius", radius), ("x1", start[0]), ("x2", end[0]),
                             ("y1", start[1]), ("y2", end[1]), ("z1", start[2]), ("z2", end[2])):
-            g.set_values(name, [vid], [float(value)])
-        if g.view("label")[vid] == g.labels.SubOrgan.StemElement:     # GRANAP's stems' class input
-            g.set_values("stem_radius", [vid], [float(radius)])
+            mtg.set_values(name, [vid], [float(value)])
+        if mtg.view("label")[vid] == mtg.labels.SubOrgan.StemElement:     # GRANAP's stems' class input
+            mtg.set_values("stem_radius", [vid], [float(radius)])
     for chain in chains:                                               # distance from each axis' tip
         lengths = [segments[v][0] for v in chain]
         for k, vid in enumerate(chain):
-            g.set_values("distance_from_tip", [vid], [float(sum(lengths[k + 1:]))])
+            mtg.set_values("distance_from_tip", [vid], [float(sum(lengths[k + 1:]))])
 
 
 @dataclass
@@ -193,8 +191,8 @@ class SeedlingArchitecture(StructuralComponent):
     z2: float = _segment_coordinate("end, z")
 
     @classmethod
-    def initiate_plant(cls, g, plant, parameters):
-        build_architecture(g, plant, parameters)
+    def initiate_plant(cls, mtg, plant, parameters):
+        build_architecture(mtg, plant, parameters)
 
 
 # The plant's transpiration (mm3 s-1), split equally between its leaf organs: a constant for now (a transpiration
@@ -252,11 +250,11 @@ def largest_change(tolerance=1e-4):
 
     def condition(scene):
         change = 0.
-        for key, (ds, _, _) in scene.data_structures().items():
-            if ds.has("psi"):
-                values = np.array(ds.get("psi"), dtype=float).reshape(-1) / MPA_TO_HPA
-            elif ds.has("water_potential"):
-                values = np.array(ds.get("water_potential"), dtype=float).reshape(-1)
+        for key, (data_structure, _, _) in scene.data_structures().items():
+            if data_structure.has("psi"):
+                values = np.array(data_structure.get("psi"), dtype=float).reshape(-1) / MPA_TO_HPA
+            elif data_structure.has("water_potential"):
+                values = np.array(data_structure.get("water_potential"), dtype=float).reshape(-1)
             else:
                 continue
             if key in previous and previous[key].shape == values.shape:

@@ -21,23 +21,23 @@ from plants import template_organ
 @pytest.fixture(scope="module", params=(1, 3), ids=lambda b: f"barrier{b}")
 def both(case, request):
     barrier = request.param
-    ds, g = case["ds"], case["g"]
-    if not ds.has("barrier"):
-        ds.register("barrier", np.ones(ds.n_nodes()), location="node")
-    ds.set("barrier", np.full(ds.n_nodes(), float(barrier)))
-    mecha = legacy_options(MechaHydraulics(data_structure=ds))
+    data_structure, g = case["data_structure"], case["mtg"]
+    if not data_structure.has("barrier"):
+        data_structure.register("barrier", np.ones(data_structure.n_nodes()), location="node")
+    data_structure.set("barrier", np.full(data_structure.n_nodes(), float(barrier)))
+    mecha = legacy_options(MechaHydraulics(data_structure=data_structure))
     mecha()
     legacy = legacy_fractions(template_organ(case["anatomy"], g, case["segment"]), barrier, height=case["height"])
-    nodes, edges = section_parts(ds)[case["segment"]]
+    nodes, edges = section_parts(data_structure)[case["segment"]]
     geo = mecha.section_geometries()[case["segment"]][2]
     net = case["legacy"].network
     mecha_index = g.property("mecha_index")
-    index = np.array([int(mecha_index[int(v)]) for v in ds.entity_ids("node")[nodes]])
+    index = np.array([int(mecha_index[int(v)]) for v in data_structure.entity_ids("node")[nodes]])
     index[geo.junction_order] = net.n_walls + np.arange(net.n_junctions)
-    view = ds.to_graph_view()
-    local = np.full(ds.n_nodes(), -1, dtype=np.int64)
+    view = data_structure.to_graph_view()
+    local = np.full(data_structure.n_nodes(), -1, dtype=np.int64)
     local[nodes] = np.arange(nodes.size)
-    membranes = edges[np.asarray(ds.get("network_path"))[edges] == MEMBRANE]
+    membranes = edges[np.asarray(data_structure.get("network_path"))[edges] == MEMBRANE]
     by_pair = {}
     for e in membranes:
         a, b = int(index[local[view.tail[e]]]), int(index[local[view.head[e]]])
@@ -49,19 +49,19 @@ def both(case, request):
                          and int(mecha_net.cell_ranks[c - mecha_net.n_wall_junction]) in rank_to_row)
                         for _, c in legacy["membranes"]])
     tail, head = view.tail[edge_of], view.head[edge_of]
-    kind = np.asarray(ds.get("kind"))
-    wall_is_tail = kind[tail] != 0
+    compartment_type = np.asarray(data_structure.get("compartment_type"))
+    wall_is_tail = compartment_type[tail] != 0
     walls, cells = np.where(wall_is_tail, tail, head), np.where(wall_is_tail, head, tail)
     rows_with_spaces = membrane_rows(geo, barrier, local[walls], local[cells], intercellular=False)
-    yield dict(ds=ds, legacy=legacy, edge_of=edge_of, counted=counted, rows_with_spaces=rows_with_spaces,
+    yield dict(data_structure=data_structure, legacy=legacy, edge_of=edge_of, counted=counted, rows_with_spaces=rows_with_spaces,
                segment=case["segment"], nodes=nodes, index=index)
 
 
 def test_fractions_per_membrane(both):
     """Each membrane the legacy counts: its fraction, to 1e-10 (the standard flows' 1e-12 of the potentials over the
     uptake); the port's 0 on the intercellular spaces' (ME-41)."""
-    fraction = np.asarray(both["ds"].get("standard_transmembrane_fraction"))[both["edge_of"]]
-    layer = np.asarray(both["ds"].get("membrane_layer"))[both["edge_of"]]
+    fraction = np.asarray(both["data_structure"].get("standard_transmembrane_fraction"))[both["edge_of"]]
+    layer = np.asarray(both["data_structure"].get("membrane_layer"))[both["edge_of"]]
     legacy = both["legacy"]["stf_mb"]
     kept = both["counted"] & (layer >= 0)
     assert kept.sum() > 0
@@ -85,12 +85,12 @@ def test_layers_and_cells(both):
     """The layers' and the cells' sums of the port's fractions: equal, and 0 in all (every cell balances the water its
     membranes take and give; the mature vessels' membranes are excluded); the flows' sums, the fractions' × the
     uptake."""
-    ds = both["ds"]
-    layers = transmembrane_layers(ds, both["segment"])
-    cells = transmembrane_cells(ds, both["segment"])
+    data_structure = both["data_structure"]
+    layers = transmembrane_layers(data_structure, both["segment"])
+    cells = transmembrane_cells(data_structure, both["segment"])
     assert layers["fraction_plus"].sum() > 0.1
     assert cells["fraction_plus"].sum() == pytest.approx(layers["fraction_plus"].sum(), rel=1e-12)
     assert cells["fraction_minus"].sum() == pytest.approx(layers["fraction_minus"].sum(), rel=1e-12)
     assert layers["fraction_plus"].sum() + layers["fraction_minus"].sum() == pytest.approx(0., abs=1e-9)
-    uptake = np.asarray(ds.get("standard_uptake"))[0]
+    uptake = np.asarray(data_structure.get("standard_uptake"))[0]
     assert layers["uptake_plus"].sum() == pytest.approx(layers["fraction_plus"].sum() * uptake, rel=1e-12)

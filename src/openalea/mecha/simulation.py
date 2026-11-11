@@ -127,7 +127,7 @@ class Section:
         """Per tissue: its number of cells, their total area (µm²) and their mean water potential (hPa), from the
         outside in."""
         frame = self.frame()
-        cells = np.flatnonzero(frame.kind == 0)
+        cells = np.flatnonzero(frame.compartment_type == 0)
         distance = np.hypot(*(frame.xy[cells] - np.asarray(frame.centre)).T)
         area = np.asarray(self.data_structure.get("cell_area"))[
             self.hydraulics.section_geometries()[int(self.data_structure.entity_ids("SubOrgan")[0])][0]][cells]
@@ -167,17 +167,17 @@ class Section:
 
 
 def _summary(section: Section) -> pd.Series:
-    ds = section.data_structure
-    kr = float(np.asarray(ds.get("kr"))[0])
+    data_structure = section.data_structure
+    kr = float(np.asarray(data_structure.get("kr"))[0])
     _, ranks, flows = plots.pathway_flows(section.frame())
     in_cortex = np.isin(ranks, list(CORTEX_RANKS))
     totals = {name: flows[name][in_cortex].sum() for name in flows}
     total = sum(totals.values()) or 1.
     return pd.Series({
         "kr": kr, "kr_SI": kr * KR_TO_M_PER_S_PER_MPA,
-        "uptake": float(np.asarray(ds.get("standard_uptake"))[0]),
-        "perimeter": float(np.asarray(ds.get("perimeter"))[0]),
-        "cells": int(np.sum(np.asarray(ds.get("kind")) == 0)),
+        "uptake": float(np.asarray(data_structure.get("standard_uptake"))[0]),
+        "perimeter": float(np.asarray(data_structure.get("perimeter"))[0]),
+        "cells": int(np.sum(np.asarray(data_structure.get("compartment_type")) == 0)),
         "cortex_wall_share": totals["wall"] / total, "cortex_membrane_share": totals["membrane"] / total,
         "cortex_plasmodesmata_share": totals["plasmodesmata"] / total,
     })
@@ -243,16 +243,16 @@ def simulate_root(barriers=(3, 3, 3, 1, 1, 0), segment_length: float = 5e-3, rad
         if outputs is not None else None
     scene = Scene(planting([Planting()], _RootSection, scenario), recorder=recorder, compute=compute)
     scene.simulate(1)                                         # one solve, its state recorded with outputs
-    ds = scene.populations[0].data_structure
-    from_collar = np.argsort(-np.asarray(ds.get("distance_from_tip"), dtype=float), kind="stable")
-    xylem = np.isin(np.asarray(ds.get("cgroup")), XYLEM_CGROUPS).astype(float)
-    xylem_potential = ds.map_to(ds.get("psi"), "node", "SubOrgan", "weighted_mean", weights=xylem)
+    data_structure = scene.populations[0].data_structure
+    from_collar = np.argsort(-np.asarray(data_structure.get("distance_from_tip"), dtype=float), kind="stable")
+    xylem = np.isin(np.asarray(data_structure.get("cgroup")), XYLEM_CGROUPS).astype(float)
+    xylem_potential = data_structure.map_to(data_structure.get("psi"), "node", "SubOrgan", "weighted_mean", weights=xylem)
     table = pd.DataFrame({
         "distance": (np.arange(n) + 0.5) * segment_length * 1e3,
-        "barrier": ds.map_to(ds.get("barrier"), "node", "SubOrgan", "max")[from_collar].astype(int),
+        "barrier": data_structure.map_to(data_structure.get("barrier"), "node", "SubOrgan", "max")[from_collar].astype(int),
         "xylem_potential": xylem_potential[from_collar],
-        "uptake": np.asarray(ds.get("uptake"))[from_collar], "kr": np.asarray(ds.get("kr"))[from_collar],
-        "kr_effective": np.asarray(ds.get("kr_effective"))[from_collar]})
+        "uptake": np.asarray(data_structure.get("uptake"))[from_collar], "kr": np.asarray(data_structure.get("kr"))[from_collar],
+        "kr_effective": np.asarray(data_structure.get("kr_effective"))[from_collar]})
     table.attrs["scene"] = scene
     return table
 
@@ -311,10 +311,10 @@ class RootSystem:
         """One row per section: its axis ("main", "lateral 1", ...), its rank on the axis from its base, its barrier,
         its standard uptake fraction (SUF: its share of the uptake under a uniform soil), its uptake (cm³ d-1) and its
         kr (cm hPa-1 d-1, the section alone)."""
-        ds = self.data_structure
-        built = np.argsort(ds.entity_ids("SubOrgan"), kind="stable")    # the sections as RootAxis built them
-        return self.layout.assign(suf=np.asarray(ds.get("standard_uptake_fraction"))[built],
-                                  uptake=np.asarray(ds.get("uptake"))[built], kr=np.asarray(ds.get("kr"))[built])
+        data_structure = self.data_structure
+        built = np.argsort(data_structure.entity_ids("SubOrgan"), kind="stable")    # the sections as RootAxis built them
+        return self.layout.assign(suf=np.asarray(data_structure.get("standard_uptake_fraction"))[built],
+                                  uptake=np.asarray(data_structure.get("uptake"))[built], kr=np.asarray(data_structure.get("kr"))[built])
 
     def update(self, parameters: dict) -> "RootSystem":
         """The same root system with MECHA's *parameters* changed ({name: value}), solved again (its anatomy kept)."""
@@ -385,8 +385,8 @@ def root_system(main=(3, 3, 1, 1), laterals=((1, (1, 1)),), segment_length: floa
         scenario.update(reduced=True, length_classes=length_classes, osmotic_reduction=osmotic is not None)
     scene = Scene(planting([Planting()], _OsmoticRootSystem if osmotic is not None else _RootSystem, scenario),
                   recorder=SceneRecorder(), compute=compute)
-    ds = scene.populations[0].data_structure
-    if len(ds.entity_ids("SubOrgan")) != len(layout):
+    data_structure = scene.populations[0].data_structure
+    if len(data_structure.entity_ids("SubOrgan")) != len(layout):
         raise RuntimeError("root_system: the sections do not match the layout")
     scene.run()
     return RootSystem(scene=scene, parameters=values,

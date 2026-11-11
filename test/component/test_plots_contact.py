@@ -18,10 +18,10 @@ matplotlib.use("Agg")
 
 @pytest.fixture(scope="module")
 def frame():
-    g, ds, anatomy = anatomy_data_structure(root(1))
-    ds.register("barrier", np.ones(ds.n_nodes()), location="node")
-    segment = int(ds.entity_ids("SubOrgan")[0])
-    mecha = MechaHydraulics(data_structure=ds)
+    g, data_structure, anatomy = anatomy_data_structure(root(1))
+    data_structure.register("barrier", np.ones(data_structure.n_nodes()), location="node")
+    segment = int(data_structure.entity_ids("SubOrgan")[0])
+    mecha = MechaHydraulics(data_structure=data_structure)
     mecha.x_contact = float(mecha.section_geometries()[segment][2].gravity_center[0])
     mecha.pd_spatial_profile = 1.
     mecha()
@@ -45,7 +45,7 @@ def test_the_maps(frame):
     import matplotlib.pyplot as plt
     pd = frame.path == "plasmodesmata"
     assert np.nanmin(frame.aperture[pd]) == pytest.approx(0.6) and np.nanmax(frame.aperture[pd]) == pytest.approx(1.)
-    assert np.isfinite(frame.distance[frame.kind == 0]).all()
+    assert np.isfinite(frame.distance[frame.compartment_type == 0]).all()
     fig, axes = plt.subplots(1, 2)
     distance, aperture = plots.contact_distance_map(axes, frame)
     assert aperture.norm.vmin >= 0.6 - 1e-12 and distance.norm.vmax > 0
@@ -55,10 +55,10 @@ def test_the_maps(frame):
 def test_the_contact_all_around_is_centred():
     """With the soil all around, the contact's centroid is within a few µm of the centre: the axis (develop's 1e-9 µm
     threshold kept) is then not meaningful, which the plots' users must know."""
-    g, ds, anatomy = anatomy_data_structure(root(1))
-    ds.register("barrier", np.ones(ds.n_nodes()), location="node")
-    mecha = MechaHydraulics(data_structure=ds)
+    g, data_structure, anatomy = anatomy_data_structure(root(1))
+    data_structure.register("barrier", np.ones(data_structure.n_nodes()), location="node")
+    mecha = MechaHydraulics(data_structure=data_structure)
     mecha()
-    whole = plots.port_frame(mecha, int(ds.entity_ids("SubOrgan")[0]))
+    whole = plots.port_frame(mecha, int(data_structure.entity_ids("SubOrgan")[0]))
     transect = plots.wetdry_axis(whole)
     assert transect is None or np.hypot(*(whole.xy[whole.contact].mean(axis=0) - np.asarray(whole.centre))) < 5.

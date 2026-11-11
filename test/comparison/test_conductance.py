@@ -20,24 +20,24 @@ PSI_SOIL, PSI_XYL = 0.0, -5.0E3                    # the legacy's default scenar
 
 @pytest.fixture(scope="module")
 def port(case):
-    ds, g = case["ds"], case["g"]
-    if not ds.has("barrier"):
-        ds.register("barrier", np.ones(ds.n_nodes()), location="node")
-    mecha = legacy_options(MechaHydraulics(data_structure=ds))
-    nodes, edges = section_parts(ds)[case["segment"]]
+    data_structure, g = case["data_structure"], case["mtg"]
+    if not data_structure.has("barrier"):
+        data_structure.register("barrier", np.ones(data_structure.n_nodes()), location="node")
+    mecha = legacy_options(MechaHydraulics(data_structure=data_structure))
+    nodes, edges = section_parts(data_structure)[case["segment"]]
     net = case["legacy"].network
     mecha_index = g.property("mecha_index")
-    legacy = np.array([int(mecha_index[int(v)]) for v in ds.entity_ids("node")[nodes]])
+    legacy = np.array([int(mecha_index[int(v)]) for v in data_structure.entity_ids("node")[nodes]])
     geo = mecha.section_geometries()[case["segment"]][2]
     by_position = {tuple(net.graph.nodes[j]["position"]): j for j in range(net.n_walls, net.n_wall_junction)}
     for v in geo.junctions:
         legacy[v] = by_position[(geo.x[v], geo.y[v])]
     stages = {}
     for i, barrier in enumerate(BARRIERS):
-        ds.set("barrier", np.full(ds.n_nodes(), float(barrier)))
+        data_structure.set("barrier", np.full(data_structure.n_nodes(), float(barrier)))
         mecha()
-        stages[barrier] = dict(K=np.asarray(ds.get("conductance")).copy(), soil=np.asarray(ds.get("soil_conductance")).copy(),
-                               axial=np.asarray(ds.get("axial_boundary_conductance")).copy(), net=mecha.network(),
+        stages[barrier] = dict(K=np.asarray(data_structure.get("conductance")).copy(), soil=np.asarray(data_structure.get("soil_conductance")).copy(),
+                               axial=np.asarray(data_structure.get("axial_boundary_conductance")).copy(), net=mecha.network(),
                                legacy=case["legacy"].stages[i])
     return dict(mecha=mecha, nodes=nodes, edges=edges, legacy=legacy, stages=stages, segment=case["segment"])
 

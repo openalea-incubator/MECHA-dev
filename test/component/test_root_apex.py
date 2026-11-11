@@ -32,32 +32,32 @@ class SeedlingWithApex(StructuralComponent):
     from the tip ArchiSimple's (from the section's base)."""
 
     @classmethod
-    def initiate_plant(cls, g, plant, parameters):
-        s, L = g.scales, g.labels
+    def initiate_plant(cls, mtg, plant, parameters):
+        s, L = mtg.scales, mtg.labels
 
-        def organ(axis_label, kind, organ_label):
-            axis = g.add_component(plant, **PropsConfig(scale=s.Axis, edge_type='/', label=getattr(L.Axis, axis_label)))
-            unit = g.add_component(axis, **PropsConfig(scale=s.GrowthUnit, edge_type='/',
-                                                       label=getattr(L.GrowthUnit, kind)))
-            phytomer = g.add_component(unit, **PropsConfig(scale=s.Phytomer, edge_type='/',
-                                                           label=getattr(L.Phytomer, kind)))
-            return g.add_component(phytomer, **PropsConfig(scale=s.Organ, edge_type='/',
+        def organ(axis_label, compartment_type, organ_label):
+            axis = mtg.add_component(plant, **PropsConfig(scale=s.Axis, edge_type='/', label=getattr(L.Axis, axis_label)))
+            unit = mtg.add_component(axis, **PropsConfig(scale=s.GrowthUnit, edge_type='/',
+                                                       label=getattr(L.GrowthUnit, compartment_type)))
+            phytomer = mtg.add_component(unit, **PropsConfig(scale=s.Phytomer, edge_type='/',
+                                                           label=getattr(L.Phytomer, compartment_type)))
+            return mtg.add_component(phytomer, **PropsConfig(scale=s.Organ, edge_type='/',
                                                            label=getattr(L.Organ, organ_label)))
 
-        stem = g.add_component(organ("Shoot", "Shoot", "StemInternode"),
+        stem = mtg.add_component(organ("Shoot", "Shoot", "StemInternode"),
                                **PropsConfig(scale=s.SubOrgan, edge_type='/', label=L.SubOrgan.StemElement))
-        leaf = g.add_component_with_topo(organ("Shoot", "Shoot", "Leaf"), stem,
+        leaf = mtg.add_component_with_topo(organ("Shoot", "Shoot", "Leaf"), stem,
                                          **PropsConfig(scale=s.SubOrgan, edge_type='+', label=L.SubOrgan.LeafElement))
-        root = g.add_component_with_topo(organ("Root", "Root", "RootInternode"), stem,
+        root = mtg.add_component_with_topo(organ("Root", "Root", "RootInternode"), stem,
                                          **PropsConfig(scale=s.SubOrgan, edge_type='+', label=L.SubOrgan.RootSegment))
-        apex = g.add_child(root, **PropsConfig(scale=s.SubOrgan, edge_type='<', label=L.SubOrgan.RootApex))
-        g.set_values("stem_radius", [stem], [1e-3])
+        apex = mtg.add_child(root, **PropsConfig(scale=s.SubOrgan, edge_type='<', label=L.SubOrgan.RootApex))
+        mtg.set_values("stem_radius", [stem], [1e-3])
         for vertex, radius, length, distance in ((stem, 1e-3, 5e-3, 0.), (leaf, 1e-3, 5e-3, 0.),
                                                  (root, RADIUS, SEGMENT, SEGMENT + APEX),
                                                  (apex, RADIUS, APEX, APEX)):
-            g.set_values("radius", [vertex], [radius])
-            g.set_values("length", [vertex], [length])
-            g.set_values("distance_from_tip", [vertex], [distance])
+            mtg.set_values("radius", [vertex], [radius])
+            mtg.set_values("length", [vertex], [length])
+            mtg.set_values("distance_from_tip", [vertex], [distance])
 
 
 def _seedling(reduced=False, barriers=BARRIERS):
@@ -85,8 +85,8 @@ def plants():
     return _seedling(), _seedling(reduced=True)
 
 
-def _section(ds, label):
-    return int(np.flatnonzero(ds.labels(location="SubOrgan", per_node=False) == label)[0])
+def _section(data_structure, label):
+    return int(np.flatnonzero(data_structure.labels(location="SubOrgan", per_node=False) == label)[0])
 
 
 def test_the_apex_is_a_root_section_that_takes_up_water(plants):
@@ -123,9 +123,9 @@ def test_a_reduced_apex_takes_up_the_full_one_s_water(plants):
     reduced_groups = small.reduction.reduced_groups(small)
     assert apex in reduced_groups
 
-    def by_section(ds):
-        return np.bincount(np.asarray(ds.owner("SubOrgan")), weights=np.asarray(ds.get("root_uptake"), dtype=float),
-                           minlength=len(ds.entity_ids("SubOrgan")))
+    def by_section(data_structure):
+        return np.bincount(np.asarray(data_structure.owner("SubOrgan")), weights=np.asarray(data_structure.get("root_uptake"), dtype=float),
+                           minlength=len(data_structure.entity_ids("SubOrgan")))
     np.testing.assert_allclose(by_section(small), by_section(full), rtol=1e-7, atol=1e-12)
 
 

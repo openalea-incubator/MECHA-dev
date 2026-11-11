@@ -28,44 +28,44 @@ RESET = dict(solute_flows=1., solute_boundary_advection=1., solute_pathway=1., s
 
 @pytest.fixture(scope="module")
 def root_case(case):
-    ds, g = case["ds"], case["g"]
-    if not ds.has("barrier"):
-        ds.register("barrier", np.ones(ds.n_nodes()), location="node")
-    ds.set("barrier", np.ones(ds.n_nodes()))
-    mecha = legacy_options(MechaHydraulics(data_structure=ds))
+    data_structure, g = case["data_structure"], case["mtg"]
+    if not data_structure.has("barrier"):
+        data_structure.register("barrier", np.ones(data_structure.n_nodes()), location="node")
+    data_structure.set("barrier", np.ones(data_structure.n_nodes()))
+    mecha = legacy_options(MechaHydraulics(data_structure=data_structure))
     mecha()
-    solutes = MechaSolutes(data_structure=ds, time_step=DT * 86400.)
+    solutes = MechaSolutes(data_structure=data_structure, time_step=DT * 86400.)
     for name, value in SOLUTES.items():
         setattr(solutes, name, value)
-    nodes, _ = section_parts(ds)[case["segment"]]
+    nodes, _ = section_parts(data_structure)[case["segment"]]
     geo = mecha.section_geometries()[case["segment"]][2]
     run = legacy_section(template_organ(case["anatomy"], g, case["segment"]), barriers=(1,), height=case["height"])
     net = run.network
     mecha_index = g.property("mecha_index")
-    index = np.array([int(mecha_index[int(v)]) for v in ds.entity_ids("node")[nodes]])
+    index = np.array([int(mecha_index[int(v)]) for v in data_structure.entity_ids("node")[nodes]])
     index[geo.junction_order] = net.n_walls + np.arange(net.n_junctions)
-    c0 = np.where(np.asarray(ds.get("cgroup"))[nodes] == 4, PULSE, 0.)
+    c0 = np.where(np.asarray(data_structure.get("cgroup"))[nodes] == 4, PULSE, 0.)
     # and in the walls of the left half (for the apoplast alone)
-    c0 = np.where((geo.kind != 0) & (geo.x < geo.x[geo.cells].mean()), PULSE, c0)
-    yield dict(ds=ds, solutes=solutes, nodes=nodes, index=index, run=run, c0=c0, kind=geo.kind, geo=geo,
+    c0 = np.where((geo.compartment_type != 0) & (geo.x < geo.x[geo.cells].mean()), PULSE, c0)
+    yield dict(data_structure=data_structure, solutes=solutes, nodes=nodes, index=index, run=run, c0=c0, compartment_type=geo.compartment_type, geo=geo,
                mecha=mecha)
     for name, value in RESET.items():
         setattr(solutes, name, value)
-    ds.set("sucrose", np.zeros(ds.n_nodes()))
-    ds.set("fixed_sucrose", np.full(ds.n_nodes(), np.nan))
+    data_structure.set("sucrose", np.zeros(data_structure.n_nodes()))
+    data_structure.set("fixed_sucrose", np.full(data_structure.n_nodes(), np.nan))
 
 
 def port_step(root_case, **parameters):
     """The port's step from the pulse (*parameters*: MechaSolutes'); the section's sucrose, its sinks."""
-    ds, nodes, solutes = root_case["ds"], root_case["nodes"], root_case["solutes"]
+    data_structure, nodes, solutes = root_case["data_structure"], root_case["nodes"], root_case["solutes"]
     for name, value in parameters.items():
         setattr(solutes, name, value)
-    values = np.zeros(ds.n_nodes())
+    values = np.zeros(data_structure.n_nodes())
     values[nodes] = root_case["c0"]
-    ds.set("sucrose", values)
+    data_structure.set("sucrose", values)
     solutes()
-    sink = np.asarray(ds.get("sucrose_sink"))[nodes] > 0
-    return np.asarray(ds.get("sucrose"))[nodes].copy(), sink
+    sink = np.asarray(data_structure.get("sucrose_sink"))[nodes] > 0
+    return np.asarray(data_structure.get("sucrose"))[nodes].copy(), sink
 
 
 def legacy_step(root_case, sink, mode="full", **options):
@@ -100,7 +100,7 @@ def test_pathways(root_case, mode, pathway):
     sucrose, sink = port_step(root_case, solute_boundary_advection=0., solute_pathway=pathway)
     reference = legacy_step(root_case, sink, mode=mode, conserve_boundary=False)
     inside = np.isfinite(reference)
-    assert np.array_equal(inside, (root_case["kind"] == 0) == (mode == "sym"))
+    assert np.array_equal(inside, (root_case["compartment_type"] == 0) == (mode == "sym"))
     assert abs(sucrose[inside] - root_case["c0"][inside]).max() > 0
     np.testing.assert_allclose(sucrose[inside], reference[inside], rtol=0, atol=1e-11 * abs(reference[inside]).max())
     np.testing.assert_array_equal(sucrose[~inside], root_case["c0"][~inside])
@@ -123,16 +123,16 @@ def test_steady_state_with_held_sources(root_case, k_decay):
     (upwind, its liquid boundary: the clean soil water dilutes, the xylem's carries the solute out), without and with
     a first-order loss k_deg (48 d-1: MECHA's hormone default): every node to 1e-11."""
     from openalea.mecha.legacy.utils.solute_transport import SoluteTransport
-    ds, nodes, geo = root_case["ds"], root_case["nodes"], root_case["geo"]
+    data_structure, nodes, geo = root_case["data_structure"], root_case["nodes"], root_case["geo"]
     epidermis = geo.cells[geo.cgroup[geo.cells] == 2]
-    fixed = np.full(ds.n_nodes(), np.nan)
+    fixed = np.full(data_structure.n_nodes(), np.nan)
     fixed[nodes[epidermis]] = 1.0
-    ds.set("fixed_sucrose", fixed)
+    data_structure.set("fixed_sucrose", fixed)
     try:
         sucrose, held = port_step(root_case, solute_solve=3., solute_sinks=0., solute_scheme=2., k_decay=k_decay,
                                   solute_boundary_advection=1., solute_pathway=1.)
     finally:
-        ds.set("fixed_sucrose", np.full(ds.n_nodes(), np.nan))
+        data_structure.set("fixed_sucrose", np.full(data_structure.n_nodes(), np.nan))
         for name in ("solute_solve", "solute_sinks", "solute_scheme", "k_decay"):
             setattr(root_case["solutes"], name, RESET[name])
     index = root_case["index"]
@@ -156,7 +156,7 @@ def test_operators_alone(root_case, operators):
         mecha.standard_psi_xylem = mecha.standard_psi_soil = 0.
         try:
             mecha()
-            assert abs(np.asarray(root_case["ds"].get("standard_flow"))).max() < 1e-15
+            assert abs(np.asarray(root_case["data_structure"].get("standard_flow"))).max() < 1e-15
             sucrose, sink = port_step(root_case, solute_scheme=2., solute_boundary_advection=1., solute_theta=1.,
                                       solute_pathway=1.)
         finally:

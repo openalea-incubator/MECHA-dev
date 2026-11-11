@@ -18,21 +18,21 @@ PSI_SOIL, PSI_XYL = 0.0, -5.0E3
 
 @pytest.fixture(scope="module")
 def port(case):
-    ds, g = case["ds"], case["g"]
-    if not ds.has("barrier"):
-        ds.register("barrier", np.ones(ds.n_nodes()), location="node")
-    mecha = legacy_options(MechaHydraulics(data_structure=ds))
-    nodes, edges = section_parts(ds)[case["segment"]]
+    data_structure, g = case["data_structure"], case["mtg"]
+    if not data_structure.has("barrier"):
+        data_structure.register("barrier", np.ones(data_structure.n_nodes()), location="node")
+    mecha = legacy_options(MechaHydraulics(data_structure=data_structure))
+    nodes, edges = section_parts(data_structure)[case["segment"]]
     geo = mecha.section_geometries()[case["segment"]][2]
     net = case["legacy"].network
     mecha_index = g.property("mecha_index")
-    legacy = np.array([int(mecha_index[int(v)]) for v in ds.entity_ids("node")[nodes]])
+    legacy = np.array([int(mecha_index[int(v)]) for v in data_structure.entity_ids("node")[nodes]])
     legacy[geo.junction_order] = net.n_walls + np.arange(net.n_junctions)
     stages = {}
     for i, barrier in enumerate(BARRIERS):
-        ds.set("barrier", np.full(ds.n_nodes(), float(barrier)))
+        data_structure.set("barrier", np.full(data_structure.n_nodes(), float(barrier)))
         mecha()
-        stages[barrier] = {name: np.asarray(ds.get(name)).copy() for name in
+        stages[barrier] = {name: np.asarray(data_structure.get(name)).copy() for name in
                            ("conductance", "soil_conductance", "standard_psi", "standard_flow", "standard_uptake", "kr", "Kx",
                             "Kx_phloem")}
         stages[barrier]["legacy"] = case["legacy"].stages[i]
@@ -94,15 +94,15 @@ def test_axial_flows_by_layer(case, stage):
     Each is k_xyl (1.0, the comparisons') × a potential difference of 1e-4 hPa: the solutions' agreement to 1e-12 of
     their 5e3 hPa range bounds it to 5e-9 per vessel. Their sum is minus the uptake, to the same."""
     from openalea.mecha.postprocess import axial_layers
-    ds = case["ds"]
-    if not ds.has("barrier"):
-        ds.register("barrier", np.ones(ds.n_nodes()), location="node")
-    ds.set("barrier", np.full(ds.n_nodes(), float(BARRIERS[stage])))
-    mecha = legacy_options(MechaHydraulics(data_structure=ds))
+    data_structure = case["data_structure"]
+    if not data_structure.has("barrier"):
+        data_structure.register("barrier", np.ones(data_structure.n_nodes()), location="node")
+    data_structure.set("barrier", np.full(data_structure.n_nodes(), float(BARRIERS[stage])))
+    mecha = legacy_options(MechaHydraulics(data_structure=data_structure))
     mecha()
     layers = axial_layers(mecha, case["segment"])
     reference = np.asarray(case["legacy"].mecha.flow_xyl_layer)[:, stage, 0]
-    uptake = float(ds.get("standard_uptake")[0])
+    uptake = float(data_structure.get("standard_uptake")[0])
     bound = 1e-12 * abs(PSI_XYL) * mecha.k_xyl * len(mecha.section_geometries()[case["segment"]][2].xylem_cells)
     assert abs(layers["xylem"].sum() + uptake) <= bound
     n = min(reference.size, len(layers))
@@ -119,30 +119,30 @@ def test_measured_axial_conductances(case, stage):
     """MECHA's Kax_source 2 (each vessel's conductance given, K_xyl by cell id): Kx with measured_axial_conductivity
     (their specific values: × the height) against the legacy's calculate_axial_conductance, to 1e-15; here twice
     Poiseuille's, so that Kx doubles."""
-    ds, g = case["ds"], case["g"]
-    if not ds.has("barrier"):
-        ds.register("barrier", np.ones(ds.n_nodes()), location="node")
-    ds.set("barrier", np.full(ds.n_nodes(), float(BARRIERS[stage])))
-    mecha = legacy_options(MechaHydraulics(data_structure=ds))
-    nodes, _ = section_parts(ds)[case["segment"]]
+    data_structure, g = case["data_structure"], case["mtg"]
+    if not data_structure.has("barrier"):
+        data_structure.register("barrier", np.ones(data_structure.n_nodes()), location="node")
+    data_structure.set("barrier", np.full(data_structure.n_nodes(), float(BARRIERS[stage])))
+    mecha = legacy_options(MechaHydraulics(data_structure=data_structure))
+    nodes, _ = section_parts(data_structure)[case["segment"]]
     geo = mecha.section_geometries()[case["segment"]][2]
     from openalea.mecha.postprocess import poiseuille, VISCOSITY_XYLEM
     height = case["height"]
     vessels = geo.xylem_cells
     conductance = 2 * poiseuille(geo.cell_area[vessels], height, VISCOSITY_XYLEM)       # cm3 hPa-1 d-1
-    measured = np.full(ds.n_nodes(), np.nan)
+    measured = np.full(data_structure.n_nodes(), np.nan)
     measured[nodes[vessels]] = conductance * height / 1.0E04
     mecha()
-    poiseuille_kx = float(ds.get("Kx")[0])
-    ds.set("measured_axial_conductivity", measured)
+    poiseuille_kx = float(data_structure.get("Kx")[0])
+    data_structure.set("measured_axial_conductivity", measured)
     try:
         mecha()
-        kx = float(ds.get("Kx")[0])
+        kx = float(data_structure.get("Kx")[0])
     finally:
-        ds.set("measured_axial_conductivity", np.full(ds.n_nodes(), np.nan))
+        data_structure.set("measured_axial_conductivity", np.full(data_structure.n_nodes(), np.nan))
     mecha_index = g.property("mecha_index")
     run = case["legacy"]
-    node_ids = ds.entity_ids("node")
+    node_ids = data_structure.entity_ids("node")
     elements = [_Element(id=str(int(mecha_index[int(node_ids[nodes[c]])]) - run.network.n_wall_junction), value=str(k))
                 for c, k in zip(vessels, conductance)]
     hydraulic = run.mecha.hydraulic

@@ -24,19 +24,19 @@ BARRIER = 3
 
 
 def main():
-    ds, mecha, library = section("granap")
+    data_structure, mecha, library = section("granap")
     legacy_options(mecha)
-    organ = template_by_index(ds, int(ds.get("anatomy_template")[0])).organ
-    height = float(np.asarray(ds.get("length"))[0]) * 1.0E6
-    ds.set("barrier", np.full(ds.n_nodes(), float(BARRIER)))
+    organ = template_by_index(data_structure, int(data_structure.get("anatomy_template")[0])).organ
+    height = float(np.asarray(data_structure.get("length"))[0]) * 1.0E6
+    data_structure.set("barrier", np.full(data_structure.n_nodes(), float(BARRIER)))
     mecha()
-    port_potential = dict(uptake=float(ds.get("standard_uptake")[0]), kr=float(ds.get("kr")[0]))
+    port_potential = dict(uptake=float(data_structure.get("standard_uptake")[0]), kr=float(data_structure.get("kr")[0]))
     legacy_run = legacy_section(organ, barriers=(BARRIER,), height=height)
     legacy_potential = dict(uptake=float(np.ravel(legacy_run.mecha.total_flow[0][0])[0]),
                             kr=legacy_run.stages[0]["kr"])
     mecha.standard_axial_condition, mecha.standard_axial_flow = 2., port_potential["uptake"]
     mecha()
-    port_flow = dict(uptake=float(ds.get("standard_uptake")[0]), kr=float(ds.get("kr")[0]))
+    port_flow = dict(uptake=float(data_structure.get("standard_uptake")[0]), kr=float(data_structure.get("kr")[0]))
     legacy_flow = legacy_neumann(organ, BARRIER, port_potential["uptake"], height=height)
     legacy_flow = dict(uptake=legacy_flow["total_flow"], kr=legacy_flow["kr"])
     print(f"{'case':12s} {'quantity':10s} {'legacy':>14s} {'port':>14s} {'rel. diff':>10s}")

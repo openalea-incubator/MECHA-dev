@@ -24,7 +24,7 @@ class SectionFrame:
     """One section: nodes (positions µm, kind 0 cell / 1 wall / 2 junction, rank, tissue), its MECHA edges (ends,
     pathway name, K), the solved potentials and flows, the cells' polygons (µm, or None)."""
     xy: np.ndarray
-    kind: np.ndarray
+    compartment_type: np.ndarray
     rank: np.ndarray
     tissue: np.ndarray
     a: np.ndarray
@@ -43,46 +43,46 @@ class SectionFrame:
 def port_frame(mecha, segment, psi="standard_psi", flow="standard_flow") -> SectionFrame:
     """The section of *segment* from MECHA's component (its DataStructure), with GRANAP's cell polygons (from its
     templates, the population's: GRANAP's template_by_index)."""
-    ds = mecha.data_structure
+    data_structure = mecha.data_structure
     nodes, edges, geo = mecha.section_geometries()[segment]
-    local = np.full(ds.n_nodes(), -1, dtype=np.int64)
+    local = np.full(data_structure.n_nodes(), -1, dtype=np.int64)
     local[nodes] = np.arange(nodes.size)
-    view = ds.to_graph_view()
-    path_code = np.asarray(ds.get("network_path"))[edges]
-    K = np.asarray(ds.get("conductance"))[edges]
+    view = data_structure.to_graph_view()
+    path_code = np.asarray(data_structure.get("network_path"))[edges]
+    K = np.asarray(data_structure.get("conductance"))[edges]
     kept = np.isin(path_code, list(_PATH_OF_CODE)) & ((path_code != 2) | geo.junction_edge[np.arange(edges.size)])
     e = edges[kept]
     polygons = []
-    g = ds.mtg
-    template, row = g.view("template"), g.view("template_row")
-    vids = ds.entity_ids("node")[nodes[geo.cells]]
+    mtg = data_structure.mtg
+    template, row = mtg.view("template"), mtg.view("template_row")
+    vids = data_structure.entity_ids("node")[nodes[geo.cells]]
     if vids.size and int(vids[0]) in template:                            # GRANAP's anatomies: their templates
         from shapely import affinity
         from openalea.granap.metafspm.library import template_by_index
-        polygons_of = template_by_index(g, int(template[int(vids[0])])).polygons
+        polygons_of = template_by_index(mtg, int(template[int(vids[0])])).polygons
         scale = 1000.                                                     # mm -> µm
         polygons = [None if polygons_of[int(row[int(v)])] is None else
                     affinity.scale(polygons_of[int(row[int(v)])], scale, scale, origin=(0, 0)) for v in vids]
-    path = np.array([_PATH_OF_CODE[c] for c in np.asarray(ds.get("network_path"))[e].astype(int)])
+    path = np.array([_PATH_OF_CODE[c] for c in np.asarray(data_structure.get("network_path"))[e].astype(int)])
     aperture = np.full(e.size, np.nan)
     plasmodesmata = path == "plasmodesmata"
     if plasmodesmata.any():
         from openalea.mecha.conductance import plasmodesmata_spatial_coefficients
         aperture[plasmodesmata], _ = plasmodesmata_spatial_coefficients(mecha.network(), mecha.parameter_table(mecha.PARAMETERS, "edge"),
                                                                         e[plasmodesmata])
-    distance = np.asarray(ds.get("contact_distance"))[nodes] if ds.has("contact_distance") else None
-    return SectionFrame(xy=np.c_[geo.x, geo.y], kind=geo.kind, rank=geo.cell_rank, tissue=geo.tissue,
+    distance = np.asarray(data_structure.get("contact_distance"))[nodes] if data_structure.has("contact_distance") else None
+    return SectionFrame(xy=np.c_[geo.x, geo.y], compartment_type=geo.compartment_type, rank=geo.cell_rank, tissue=geo.tissue,
                         a=local[view.tail[e]], b=local[view.head[e]], path=path,
-                        K=np.asarray(ds.get("conductance"))[e],
-                        psi=None if psi is None else np.asarray(ds.get(psi))[nodes],
-                        Q=None if flow is None else np.asarray(ds.get(flow))[e],
+                        K=np.asarray(data_structure.get("conductance"))[e],
+                        psi=None if psi is None else np.asarray(data_structure.get(psi))[nodes],
+                        Q=None if flow is None else np.asarray(data_structure.get(flow))[e],
                         polygons=polygons, centre=geo.gravity_center,
-                        contact=np.asarray(ds.get("soil_conductance"))[nodes] > 0, distance=distance,
+                        contact=np.asarray(data_structure.get("soil_conductance"))[nodes] > 0, distance=distance,
                         aperture=aperture)
 
 
 def _cells(frame):
-    return np.flatnonzero(frame.kind == 0)
+    return np.flatnonzero(frame.compartment_type == 0)
 
 
 def _draw_cells(ax, frame, colours, **kwargs):
@@ -121,7 +121,7 @@ def psi_map(ax, frame, title="water potential", norm=None):
     cmap = matplotlib.colormaps["coolwarm_r"]
     if frame.polygons:
         _draw_cells(ax, frame, cmap(norm(frame.psi[cells])))
-    apoplast = frame.kind > 0
+    apoplast = frame.compartment_type > 0
     points = ax.scatter(*frame.xy[apoplast if frame.polygons else slice(None)].T, s=0.4,
                         c=frame.psi[apoplast if frame.polygons else slice(None)], cmap=cmap, norm=norm)
     ax.set_aspect("equal")
@@ -183,7 +183,7 @@ def radial_profile(ax, frame, label=None, bins=40, axis="radial", **style):
     r = coordinate(frame.xy)
     edges = np.linspace(0 if axis == "radial" else r.min(), r.max(), bins + 1)
     middle = (edges[1:] + edges[:-1]) / 2
-    for chosen, part, marker in ((frame.kind == 0, "cells", "o"), (frame.kind > 0, "apoplast", "")):
+    for chosen, part, marker in ((frame.compartment_type == 0, "cells", "o"), (frame.compartment_type > 0, "apoplast", "")):
         which = np.digitize(r[chosen], edges) - 1
         values = frame.psi[chosen]
         mean = np.array([np.nanmean(values[which == k]) if np.isfinite(values[which == k]).any() else np.nan
@@ -209,7 +209,7 @@ def pathway_flows(frame, axis="radial"):
     walls_of = {}
     for a, b, path in zip(frame.a, frame.b, frame.path):
         if path == "membrane":
-            cell, wall = (a, b) if frame.kind[a] == 0 else (b, a)
+            cell, wall = (a, b) if frame.compartment_type[a] == 0 else (b, a)
             walls_of.setdefault(int(cell), []).append(int(wall))
     radii = {}
     for c in cells:
@@ -262,13 +262,13 @@ def contact_distance_map(axes, frame):
     cells = _cells(frame)
     pd = (frame.path == "plasmodesmata") & np.isfinite(frame.aperture)
     total = np.bincount(np.r_[frame.a[pd], frame.b[pd]], weights=np.r_[frame.aperture[pd], frame.aperture[pd]],
-                        minlength=frame.kind.size)
-    count = np.bincount(np.r_[frame.a[pd], frame.b[pd]], minlength=frame.kind.size)
-    aperture = np.divide(total, count, out=np.full(frame.kind.size, np.nan), where=count > 0)
+                        minlength=frame.compartment_type.size)
+    count = np.bincount(np.r_[frame.a[pd], frame.b[pd]], minlength=frame.compartment_type.size)
+    aperture = np.divide(total, count, out=np.full(frame.compartment_type.size, np.nan), where=count > 0)
     membranes = frame.path == "membrane"
-    wetted = np.zeros(frame.kind.size, dtype=bool)
+    wetted = np.zeros(frame.compartment_type.size, dtype=bool)
     for a, b in zip(frame.a[membranes], frame.b[membranes]):
-        cell, wall = (a, b) if frame.kind[a] == 0 else (b, a)
+        cell, wall = (a, b) if frame.compartment_type[a] == 0 else (b, a)
         wetted[cell] |= frame.contact[wall]
     out = []
     for ax, values, cmap, label in ((axes[0], frame.distance, "viridis", "distance to the soil contact (µm)"),

@@ -44,48 +44,48 @@ class GrowingSeedling(StructuralComponent):
     LeafElement), and a root axis of segments with a lateral, each section of its length."""
 
     @classmethod
-    def initiate_plant(cls, g, plant, parameters):
-        s, L = g.scales, g.labels
+    def initiate_plant(cls, mtg, plant, parameters):
+        s, L = mtg.scales, mtg.labels
 
-        def organ(axis_label, kind, organ_label):
-            axis = g.add_component(plant, **PropsConfig(scale=s.Axis, edge_type='/', label=getattr(L.Axis, axis_label)))
-            unit = g.add_component(axis, **PropsConfig(scale=s.GrowthUnit, edge_type='/',
-                                                       label=getattr(L.GrowthUnit, kind)))
-            phytomer = g.add_component(unit, **PropsConfig(scale=s.Phytomer, edge_type='/',
-                                                           label=getattr(L.Phytomer, kind)))
-            return g.add_component(phytomer, **PropsConfig(scale=s.Organ, edge_type='/',
+        def organ(axis_label, compartment_type, organ_label):
+            axis = mtg.add_component(plant, **PropsConfig(scale=s.Axis, edge_type='/', label=getattr(L.Axis, axis_label)))
+            unit = mtg.add_component(axis, **PropsConfig(scale=s.GrowthUnit, edge_type='/',
+                                                       label=getattr(L.GrowthUnit, compartment_type)))
+            phytomer = mtg.add_component(unit, **PropsConfig(scale=s.Phytomer, edge_type='/',
+                                                           label=getattr(L.Phytomer, compartment_type)))
+            return mtg.add_component(phytomer, **PropsConfig(scale=s.Organ, edge_type='/',
                                                            label=getattr(L.Organ, organ_label)))
 
-        stem = g.add_component(organ("Shoot", "Shoot", "StemInternode"),
+        stem = mtg.add_component(organ("Shoot", "Shoot", "StemInternode"),
                                **PropsConfig(scale=s.SubOrgan, edge_type='/', label=L.SubOrgan.StemElement))
-        sheath = g.add_component_with_topo(organ("Shoot", "Shoot", "Sheath"), stem,
+        sheath = mtg.add_component_with_topo(organ("Shoot", "Shoot", "Sheath"), stem,
                                            **PropsConfig(scale=s.SubOrgan, edge_type='+', label=L.SubOrgan.StemElement))
-        blade = g.add_component_with_topo(organ("Shoot", "Shoot", "Blade"), sheath,
+        blade = mtg.add_component_with_topo(organ("Shoot", "Shoot", "Blade"), sheath,
                                           **PropsConfig(scale=s.SubOrgan, edge_type='/', label=L.SubOrgan.LeafElement))
         for v, length in ((stem, SHOOT_LENGTHS["stem"]), (sheath, SHOOT_LENGTHS["sheath"]),
                           (blade, SHOOT_LENGTHS["blade"])):
-            g.set_values("stem_radius", [v], [1e-3])
-            g.set_values("radius", [v], [1e-3])
-            g.set_values("length", [v], [length])
-            g.set_values("distance_from_tip", [v], [0.])
+            mtg.set_values("stem_radius", [v], [1e-3])
+            mtg.set_values("radius", [v], [1e-3])
+            mtg.set_values("length", [v], [length])
+            mtg.set_values("distance_from_tip", [v], [0.])
         root_organ = organ("Root", "Root", "RootInternode")
         segments, previous = [], stem
         for rank, length in enumerate(ROOT_LENGTHS):
             props = PropsConfig(scale=s.SubOrgan, edge_type='+' if previous is stem else '<',
                                 label=L.SubOrgan.RootSegment)
-            previous = (g.add_component_with_topo(root_organ, previous, **props) if previous is stem
-                        else g.add_child(previous, **props))
+            previous = (mtg.add_component_with_topo(root_organ, previous, **props) if previous is stem
+                        else mtg.add_child(previous, **props))
             segments.append(previous)
-            g.set_values("radius", [previous], [0.55e-3])
-            g.set_values("length", [previous], [length])
-            g.set_values("distance_from_tip", [previous], [sum(ROOT_LENGTHS[rank + 1:])])
+            mtg.set_values("radius", [previous], [0.55e-3])
+            mtg.set_values("length", [previous], [length])
+            mtg.set_values("distance_from_tip", [previous], [sum(ROOT_LENGTHS[rank + 1:])])
         for bearer, length in zip(segments, LATERAL_LENGTHS):
-            lateral = g.add_component_with_topo(organ("Root", "Root", "RootInternode"), bearer,
+            lateral = mtg.add_component_with_topo(organ("Root", "Root", "RootInternode"), bearer,
                                                 **PropsConfig(scale=s.SubOrgan, edge_type='+',
                                                               label=L.SubOrgan.RootSegment))
-            g.set_values("radius", [lateral], [0.25e-3])
-            g.set_values("length", [lateral], [length])
-            g.set_values("distance_from_tip", [lateral], [0.])
+            mtg.set_values("radius", [lateral], [0.25e-3])
+            mtg.set_values("length", [lateral], [length])
+            mtg.set_values("distance_from_tip", [lateral], [0.])
 
 
 class SeedlingModel(CompositeModel):
@@ -109,28 +109,28 @@ def _seedling(length_classes, **options):
 def _grow(population, initial, hours) -> None:
     """Each growing section's length after *hours* of growth (from *initial*, {SubOrgan vid: length}), the youngest
     the fastest, the others' unchanged: on the MPG and the DataStructure."""
-    ds = population.data_structure
-    g = ds.structure
-    vids = ds.entity_ids("SubOrgan").tolist()
+    data_structure = population.data_structure
+    mtg = data_structure.structure
+    vids = data_structure.entity_ids("SubOrgan").tolist()
     lengths = {}
     for rank, vid in enumerate(sorted(initial, key=lambda v: initial[v])):
         rate = GROWTH / (1. + (len(initial) - 1 - rank) / 2.)
         lengths[vid] = initial[vid] * np.exp(rate * hours / 24.)
-        g.set_values("length", [vid], [lengths[vid]])
-    per_group = np.array([lengths.get(int(v), float(g.view("length")[int(v)])) for v in vids])
-    if ds.location("length") == "node":
-        ds.set("length", per_group[np.asarray(ds.owner("SubOrgan"))])
+        mtg.set_values("length", [vid], [lengths[vid]])
+    per_group = np.array([lengths.get(int(v), float(mtg.view("length")[int(v)])) for v in vids])
+    if data_structure.location("length") == "node":
+        data_structure.set("length", per_group[np.asarray(data_structure.owner("SubOrgan"))])
     else:
-        ds.set("length", per_group)
+        data_structure.set("length", per_group)
 
 
-def _measures(ds) -> tuple:
+def _measures(data_structure) -> tuple:
     """(each root section's uptake, the blade's liquid-weighted water potential)."""
-    owner = np.asarray(ds.owner("SubOrgan"))
-    labels = np.asarray(ds.labels(location="SubOrgan", per_node=False))
-    uptake = np.bincount(owner, weights=np.asarray(ds.get("root_uptake"), dtype=float), minlength=labels.size)
+    owner = np.asarray(data_structure.owner("SubOrgan"))
+    labels = np.asarray(data_structure.labels(location="SubOrgan", per_node=False))
+    uptake = np.bincount(owner, weights=np.asarray(data_structure.get("root_uptake"), dtype=float), minlength=labels.size)
     blade = labels[owner] == "LeafElement"
-    liquid, psi = np.asarray(ds.get("liquid_volume")), np.asarray(ds.get("psi"))
+    liquid, psi = np.asarray(data_structure.get("liquid_volume")), np.asarray(data_structure.get("psi"))
     return uptake[labels == "RootSegment"], float((liquid * psi)[blade].sum() / liquid[blade].sum())
 
 
@@ -151,9 +151,9 @@ def test_the_length_classes_give_the_exact_kinds_uptake_and_leaf_potential_withi
     results, keys = {}, {}
     for length_classes in ("exact", 0.1):
         population = _seedling(length_classes)
-        g = population.data_structure.structure
-        initial = {int(v): float(g.view("length")[int(v)]) for v in population.data_structure.entity_ids("SubOrgan")
-                   if g.label(g.complex(int(v))) != g.labels.Organ.StemInternode}
+        mtg = population.data_structure.structure
+        initial = {int(v): float(mtg.view("length")[int(v)]) for v in population.data_structure.entity_ids("SubOrgan")
+                   if mtg.label(mtg.complex(int(v))) != mtg.labels.Organ.StemInternode}
         counter.kinds, counter.keys, series = 0, [], []
         for step in range(int(DAYS * 24 * 3600 / STEP) + 1):
             _grow(population, initial, step * STEP / 3600.)
@@ -165,16 +165,16 @@ def test_the_length_classes_give_the_exact_kinds_uptake_and_leaf_potential_withi
         assert abs(leaf - exact_leaf) <= TOLERANCE * abs(exact_leaf - SOIL)
         assert exact_uptake.sum() == pytest.approx(TRANSPIRATION, rel=1e-8)
     assert len(set(keys[0.1])) == len(keys[0.1])                  # each class's kind evaluated once
-    length = list(scenario_reduction({"reduced": True}).kind).index("length")
+    length = list(scenario_reduction({"reduced": True}).archetype_variables).index("length")
     classes = {key[1][length] for key in keys[0.1]}
     width = np.log1p(0.1)
     np.testing.assert_allclose(np.log(sorted(classes)) / width, np.round(np.log(sorted(classes)) / width),
                                atol=1e-9)                              # on the classes (1.1)^k
 
 
-def _nodes_by_label(ds) -> dict:
-    labels = np.asarray(ds.labels(location="SubOrgan", per_node=False))
-    nodes = np.bincount(np.asarray(ds.owner("SubOrgan")), minlength=labels.size)
+def _nodes_by_label(data_structure) -> dict:
+    labels = np.asarray(data_structure.labels(location="SubOrgan", per_node=False))
+    nodes = np.bincount(np.asarray(data_structure.owner("SubOrgan")), minlength=labels.size)
     return {label: int(nodes[labels == label].sum()) for label in LABELS}
 
 
@@ -186,9 +186,9 @@ def test_the_shoots_bundles_and_air_spaces_give_the_uptake_and_leaf_potential_wi
     results, nodes = {}, {}
     for name, options in (("cells", {}), ("lumped", {"leaf_ports": "bundles", "vapour_path": "air_spaces"})):
         population = _seedling(0.1, **options)
-        g = population.data_structure.structure
-        initial = {int(v): float(g.view("length")[int(v)]) for v in population.data_structure.entity_ids("SubOrgan")
-                   if g.label(g.complex(int(v))) != g.labels.Organ.StemInternode}
+        mtg = population.data_structure.structure
+        initial = {int(v): float(mtg.view("length")[int(v)]) for v in population.data_structure.entity_ids("SubOrgan")
+                   if mtg.label(mtg.complex(int(v))) != mtg.labels.Organ.StemInternode}
         series = []
         for step in range(int(DAYS * 24 * 3600 / STEP) + 1):
             _grow(population, initial, step * STEP / 3600.)
@@ -214,34 +214,34 @@ def test_the_length_classes_give_the_exact_kinds_root_system_conductance_within_
 
 
 def test_batches_in_the_kept_library_give_the_kinds_of_one_evaluation():
-    """The kinds of the seedling evaluated one per batch (Compute(kind_batch) of one section's interior cells), each
+    """The kinds of the seedling evaluated one per batch (Compute(archetype_batch) of one section's interior cells), each
     batch in the library the former left (its groups replaced), are those of one evaluation in a fresh library."""
     def kinds(population):
-        ds = population.data_structure
-        reduction = ds.structure.reduction
+        data_structure = population.data_structure
+        reduction = data_structure.structure.reduction
         system = population.instance.hydraulics._plant_problem_name(reduction)
-        return {i: by_system[system] for i, by_system in reduction.group_kinds(ds, reduction.reduced_groups(ds)).items()}
+        return {i: by_system[system] for i, by_system in reduction.group_archetypes(data_structure, reduction.reduced_groups(data_structure)).items()}
 
     reference = kinds(_seedling("exact"))
     population = _seedling("exact")
-    with Compute(kind_batch=1).limits():
+    with Compute(archetype_batch=1).limits():
         batched = kinds(population)
     reduction = population.data_structure.structure.reduction
     assert len(reduction._libraries) == 1
-    assert len({kind.key for kind in batched.values()}) == len(reduction._kinds) > 2
-    for i, kind in reference.items():
-        np.testing.assert_allclose(batched[i].D, kind.D, rtol=1e-12, atol=1e-14 * np.abs(kind.D).max())
-        np.testing.assert_allclose(batched[i].e, kind.e, rtol=1e-12, atol=1e-14 * max(np.abs(kind.e).max(), 1e-300))
-        for name, value in kind.outputs.items():
+    assert len({compartment_type.key for compartment_type in batched.values()}) == len(reduction._archetypes) > 2
+    for i, compartment_type in reference.items():
+        np.testing.assert_allclose(batched[i].D, compartment_type.D, rtol=1e-12, atol=1e-14 * np.abs(compartment_type.D).max())
+        np.testing.assert_allclose(batched[i].e, compartment_type.e, rtol=1e-12, atol=1e-14 * max(np.abs(compartment_type.e).max(), 1e-300))
+        for name, value in compartment_type.outputs.items():
             np.testing.assert_allclose(batched[i].outputs[name], value, rtol=1e-12)
 
 
 
 def _grown(population) -> list:
     """The seedling grown for DAYS (_grow, as the tests above): each day's measures."""
-    g = population.data_structure.structure
-    initial = {int(v): float(g.view("length")[int(v)]) for v in population.data_structure.entity_ids("SubOrgan")
-               if g.label(g.complex(int(v))) != g.labels.Organ.StemInternode}
+    mtg = population.data_structure.structure
+    initial = {int(v): float(mtg.view("length")[int(v)]) for v in population.data_structure.entity_ids("SubOrgan")
+               if mtg.label(mtg.complex(int(v))) != mtg.labels.Organ.StemInternode}
     series = []
     for step in range(int(DAYS * 24 * 3600 / STEP) + 1):
         _grow(population, initial, step * STEP / 3600.)
@@ -254,13 +254,13 @@ def test_growth_and_kinds_pass_the_topology_and_kinds_checks(monkeypatch):
     """The growing seedling (its sections lengthening: new kinds every day, the reduction's library patched with
     their sections in place of the former) under metafspm's checks: every patched structure-derived value equal to
     its build (METAFSPM_CHECK_TOPOLOGY) and every kind evaluated equal to its evaluation alone in a fresh library
-    (METAFSPM_CHECK_KINDS); the results those of the unchecked run, bit for bit."""
+    (METAFSPM_CHECK_ARCHETYPES); the results those of the unchecked run, bit for bit."""
     from openalea.metafspm.data_structure import mpg as mpg_module
     counter = _Counter(monkeypatch)
     unchecked = _grown(_seedling(0.1))
     assert len(set(counter.keys)) > 2                                  # kinds evaluated as the sections grow
     monkeypatch.setattr(mpg_module, "_CHECK_TOPOLOGY", True)
-    monkeypatch.setenv("METAFSPM_CHECK_KINDS", "1")
+    monkeypatch.setenv("METAFSPM_CHECK_ARCHETYPES", "1")
     checked = _grown(_seedling(0.1))
     for (uptake, leaf), (checked_uptake, checked_leaf) in zip(unchecked, checked):
         np.testing.assert_array_equal(uptake, checked_uptake)

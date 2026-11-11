@@ -27,14 +27,14 @@ BARRIERS = (1, 3)
 
 def port_stage(mecha, segment, barrier):
     """The port's K, ψ and Q on the segment's section at *barrier*: the component's own (its standard problem)."""
-    ds = mecha.data_structure
-    ds.set("barrier", np.full(ds.n_nodes(), float(barrier)))
+    data_structure = mecha.data_structure
+    data_structure.set("barrier", np.full(data_structure.n_nodes(), float(barrier)))
     mecha()
-    nodes, edges = section_parts(ds)[segment]
+    nodes, edges = section_parts(data_structure)[segment]
     net = mecha.network()
     e = edges[np.isin(net.path[edges], (0, 3)) | net.junction_edge[edges]]       # the edges of MECHA's matrix
-    return dict(net=net, nodes=nodes, edges=e, K=np.asarray(ds.get("conductance"))[e], psi=np.asarray(ds.get("standard_psi")),
-                Q=np.asarray(ds.get("standard_flow"))[e], kr=float(np.asarray(ds.get("kr"))[0]))
+    return dict(net=net, nodes=nodes, edges=e, K=np.asarray(data_structure.get("conductance"))[e], psi=np.asarray(data_structure.get("standard_psi")),
+                Q=np.asarray(data_structure.get("standard_flow"))[e], kr=float(np.asarray(data_structure.get("kr"))[0]))
 
 
 def draw_edges(ax, segments, values, cmap, norm, width=0.4):
@@ -49,12 +49,12 @@ def draw_edges(ax, segments, values, cmap, norm, width=0.4):
 
 
 def main(preset=None):
-    g, ds, anatomy = anatomy_data_structure(root(1), anatomy_component(preset))
-    segment = int(ds.entity_ids("SubOrgan")[0])
-    height = float(np.asarray(ds.get("length"))[0]) * 1.0E6
-    run = legacy_section(template_organ(anatomy, g, segment), barriers=BARRIERS, height=height)
-    ds.register("barrier", np.ones(ds.n_nodes()), location="node")
-    mecha = legacy_options(MechaHydraulics(data_structure=ds))
+    mtg, data_structure, anatomy = anatomy_data_structure(root(1), anatomy_component(preset))
+    segment = int(data_structure.entity_ids("SubOrgan")[0])
+    height = float(np.asarray(data_structure.get("length"))[0]) * 1.0E6
+    run = legacy_section(template_organ(anatomy, mtg, segment), barriers=BARRIERS, height=height)
+    data_structure.register("barrier", np.ones(data_structure.n_nodes()), location="node")
+    mecha = legacy_options(MechaHydraulics(data_structure=data_structure))
     graph = run.network.graph
     position = {n: graph.nodes[n]["position"] for n in graph.nodes}
     folder = os.path.join(HERE, "outputs")
@@ -64,7 +64,7 @@ def main(preset=None):
         port = port_stage(mecha, segment, barrier)
         stage = run.stages[i]
         geo = mecha.section_geometries()[segment][2]
-        xy = np.zeros((ds.n_nodes(), 2))
+        xy = np.zeros((data_structure.n_nodes(), 2))
         xy[port["nodes"], 0], xy[port["nodes"], 1] = geo.x, geo.y
         net, e = port["net"], port["edges"]
         port_segments = np.stack([xy[net.a[e]], xy[net.b[e]]], axis=1)
@@ -99,7 +99,7 @@ def main(preset=None):
         axes[1, 1].scatter(xy[port["nodes"], 0], xy[port["nodes"], 1], c=port["psi"][port["nodes"]], s=1.5,
                            cmap="coolwarm_r", norm=psi_norm)
         fig.colorbar(sc, ax=axes[1, :2], label="ψ (hPa)", shrink=0.8)
-        legacy_id = np.empty(ds.n_nodes(), dtype=np.int64)
+        legacy_id = np.empty(data_structure.n_nodes(), dtype=np.int64)
         by_position = {tuple(position[n]): n for n in graph.nodes}
         legacy_id[port["nodes"]] = [by_position[tuple(p)] for p in xy[port["nodes"]]]
         d_psi = abs(port["psi"][port["nodes"]] - legacy_psi[legacy_id[port["nodes"]]])

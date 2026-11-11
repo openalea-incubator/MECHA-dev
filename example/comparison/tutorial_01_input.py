@@ -22,22 +22,22 @@ from openalea.granap.metafspm.library import template_by_index                  
 
 
 def main(source="granap"):
-    ds, mecha, _ = section(source)
+    data_structure, mecha, _ = section(source)
     legacy_options(mecha)
-    segment = int(ds.entity_ids("SubOrgan")[0])
-    organ = template_by_index(ds, int(ds.get("anatomy_template")[0])).organ
-    height = float(np.asarray(ds.get("length"))[0]) * 1.0E6
+    segment = int(data_structure.entity_ids("SubOrgan")[0])
+    organ = template_by_index(data_structure, int(data_structure.get("anatomy_template")[0])).organ
+    height = float(np.asarray(data_structure.get("length"))[0]) * 1.0E6
     run = legacy_section(organ, barriers=BARRIERS, height=height)
     port, legacy = {}, {}
     print(f"{source}: {'barrier':>8s} {'kr legacy':>12s} {'kr port':>12s} {'Kx legacy':>12s} {'Kx port':>12s}")
     for i, barrier in enumerate(BARRIERS):
-        ds.set("barrier", np.full(ds.n_nodes(), float(barrier)))
+        data_structure.set("barrier", np.full(data_structure.n_nodes(), float(barrier)))
         mecha()
         port[barrier] = plots.port_frame(mecha, segment)
         legacy[barrier] = legacy_frame(run, i, organ)
         Kx = float(np.ravel(run.stages[i]["Kx"])[0])
-        print(f"{'':{len(source) + 1}s} {barrier:8d} {run.stages[i]['kr']:12.6e} {ds.get('kr')[0]:12.6e} {Kx:12.6e} "
-              f"{ds.get('Kx')[0]:12.6e}")
+        print(f"{'':{len(source) + 1}s} {barrier:8d} {run.stages[i]['kr']:12.6e} {data_structure.get('kr')[0]:12.6e} {Kx:12.6e} "
+              f"{data_structure.get('Kx')[0]:12.6e}")
 
     folder = os.path.join(HERE, "outputs")
     os.makedirs(folder, exist_ok=True)

@@ -29,8 +29,8 @@ def needle_case():
 def test_diffusion_and_volumes(needle_case):
     """Every edge's diffusion conductance against the reactions' D (the same pairs; to 1e-15: its membranes'
     D_mem × L × h order), the volumes exactly."""
-    c, ds = needle_case, needle_case["ds"]
-    De = sum(np.asarray(ds.get(f"{kind}_diffusion_factor")) * d for kind, d in
+    c, data_structure = needle_case, needle_case["data_structure"]
+    De = sum(np.asarray(data_structure.get(f"{compartment_type}_diffusion_factor")) * d for compartment_type, d in
              (("apoplastic", D_APO), ("symplastic", D_PD), ("membrane", D_MEM)))[c["edges"]]
     D = c["reference"]["D"].tocsr()
     legacy = np.asarray(D[c["ends"][:, 0], c["ends"][:, 1]]).ravel()
@@ -39,14 +39,14 @@ def test_diffusion_and_volumes(needle_case):
     off.setdiag(0)
     off.eliminate_zeros()
     assert (De != 0).sum() == off.nnz // 2
-    volume = np.asarray(ds.get("node_volume"))[c["nodes"]]
+    volume = np.asarray(data_structure.get("node_volume"))[c["nodes"]]
     np.testing.assert_array_equal(volume[c["liquid"]], c["reference"]["volumes"][c["index"]][c["liquid"]])
 
 
 def test_sinks(needle_case):
     c = needle_case
     c["solutes"]()
-    sink = np.asarray(c["ds"].get("sucrose_sink"))[c["nodes"]] > 0
+    sink = np.asarray(c["data_structure"].get("sucrose_sink"))[c["nodes"]] > 0
     legacy = np.isin(c["index"], list(c["reference"]["bc"]))
     assert sink.sum() > 0 and np.array_equal(sink, legacy & c["liquid"])
 
@@ -108,10 +108,10 @@ def _difference(case, port, reference):
 def _sigma_case(case, groups, osmotic_term):
     """σ 0.7 for the reactions' solute on the cgroups *groups* (all: None) and for the port on the membranes whose
     cell is of these cgroups: the reactions' step and the port's sucrose."""
-    ds = case["ds"]
-    view = ds.to_graph_view()
-    cgroup, path = np.asarray(ds.get("cgroup")), np.asarray(ds.get("network_path"))
-    cell_end = np.where(np.asarray(ds.get("kind"))[view.tail] == 0, view.tail, view.head)
+    data_structure = case["data_structure"]
+    view = data_structure.to_graph_view()
+    cgroup, path = np.asarray(data_structure.get("cgroup")), np.asarray(data_structure.get("network_path"))
+    cell_end = np.where(np.asarray(data_structure.get("compartment_type"))[view.tail] == 0, view.tail, view.head)
     reference = legacy_reactions_step(case["organ"], d_apo=D_APO, d_pd=D_PD, d_mem=D_MEM, dt=DT,
                                       solute_sigma={g: 0.7 for g in (range(40) if groups is None else groups)},
                                       osmotic_term=osmotic_term)
@@ -138,8 +138,8 @@ def test_reviewed_differences(needle_case):
         r12   the air edges' flows kept: the air nodes (Dirichlet 0) as sugar sinks; negligible on this water state
     """
     c = needle_case
-    cells = c["nodes"][(np.asarray(c["ds"].get("kind"))[c["nodes"]] == 0) & c["liquid"]]
-    groups, counts = np.unique(np.asarray(c["ds"].get("cgroup"))[cells], return_counts=True)
+    cells = c["nodes"][(np.asarray(c["data_structure"].get("compartment_type"))[c["nodes"]] == 0) & c["liquid"]]
+    groups, counts = np.unique(np.asarray(c["data_structure"].get("cgroup"))[cells], return_counts=True)
     free = ~np.isin(groups, (4, 11, 12, 13))                     # nor the sinks'
     other = int(groups[free][np.argmax(counts[free])])
     differences = {"r1": _difference(c, *_sigma_case(c, None, osmotic_term=True)),

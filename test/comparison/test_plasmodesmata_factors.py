@@ -19,26 +19,26 @@ FACTORS = {"kpl_cortex_factor": ("cortex_factor", 0.5), "kpl_endo_in_factor": ("
 
 @pytest.mark.parametrize("barrier", (1,))
 def test_each_factor_where_develop_applies_it(case, barrier):
-    ds, g = case["ds"], case["g"]
+    data_structure, g = case["data_structure"], case["mtg"]
     run = legacy_section(template_organ(case["anatomy"], g, case["segment"]), barriers=(barrier,),
                          height=case["height"], kpl={key: value for key, value in FACTORS.values()})
-    if not ds.has("barrier"):
-        ds.register("barrier", np.ones(ds.n_nodes()), location="node")
-    ds.set("barrier", np.full(ds.n_nodes(), float(barrier)))
-    mecha = legacy_options(MechaHydraulics(data_structure=ds))
+    if not data_structure.has("barrier"):
+        data_structure.register("barrier", np.ones(data_structure.n_nodes()), location="node")
+    data_structure.set("barrier", np.full(data_structure.n_nodes(), float(barrier)))
+    mecha = legacy_options(MechaHydraulics(data_structure=data_structure))
     defaults = {name: np.array(getattr(mecha, name), copy=True) for name in FACTORS}
     try:                                     # the parameters are the shared case's: restored for the other tests
         for name, (_, value) in FACTORS.items():
             setattr(mecha, name, value)
         mecha()
-        K, net = np.asarray(ds.get("conductance")).copy(), mecha.network()
+        K, net = np.asarray(data_structure.get("conductance")).copy(), mecha.network()
     finally:
         for name, value in defaults.items():
             setattr(mecha, name, value)
-    nodes, edges = section_parts(ds)[case["segment"]]
+    nodes, edges = section_parts(data_structure)[case["segment"]]
     mecha_index = g.property("mecha_index")
-    legacy = {int(v): int(mecha_index[int(v)]) for v in ds.entity_ids("node")[nodes] if int(v) in mecha_index}
-    ids = np.asarray(ds.entity_ids("node"))
+    legacy = {int(v): int(mecha_index[int(v)]) for v in data_structure.entity_ids("node")[nodes] if int(v) in mecha_index}
+    ids = np.asarray(data_structure.entity_ids("node"))
     expected = {tuple(sorted(k)): v for k, v in run.stages[0]["edge_K"].items()
                 if run.network.graph.edges[k]["path"] == "plasmodesmata"}
     plasmodesmata = edges[net.path[edges] == PLASMODESMATA]

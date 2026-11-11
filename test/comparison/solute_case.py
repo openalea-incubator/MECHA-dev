@@ -19,30 +19,30 @@ DIFFUSIVITIES = dict(d_apo=D_APO, d_pd=D_PD, d_mem=D_MEM, dt=DT)
 
 def needle_case():
     """
-    dict(g, ds, organ, mecha, solutes, nodes, edges (the section's, DataStructure indices), index (each node's
+    dict(g, data_structure, organ, mecha, solutes, nodes, edges (the section's, DataStructure indices), index (each node's
     legacy index), ends (each edge's legacy ends), reference (the reactions' first step, from its mesophyll pulse),
     liquid (the section's liquid nodes), xy (the port's node positions), legacy_xy (by legacy index)).
     """
-    g, ds, anatomy = anatomy_data_structure(needle(), needle_anatomy_component())
-    segment = int(ds.entity_ids("SubOrgan")[0])
+    g, data_structure, anatomy = anatomy_data_structure(needle(), needle_anatomy_component())
+    segment = int(data_structure.entity_ids("SubOrgan")[0])
     organ = template_organ(anatomy, g, segment)
-    ds.register("barrier", np.ones(ds.n_nodes()), location="node")
-    mecha = legacy_options(MechaHydraulics(data_structure=ds))
+    data_structure.register("barrier", np.ones(data_structure.n_nodes()), location="node")
+    mecha = legacy_options(MechaHydraulics(data_structure=data_structure))
     for name, value in NEEDLE.items():
         setattr(mecha, name, value)
     mecha()
-    nodes, edges = section_parts(ds)[segment]
+    nodes, edges = section_parts(data_structure)[segment]
     geo = mecha.section_geometries()[segment][2]
     reference = legacy_reactions_step(organ, **DIFFUSIVITIES)
     net = reference["network"]
     mecha_index = g.property("mecha_index")
-    index = np.array([int(mecha_index[int(v)]) for v in ds.entity_ids("node")[nodes]])
+    index = np.array([int(mecha_index[int(v)]) for v in data_structure.entity_ids("node")[nodes]])
     index[geo.junction_order] = net.n_walls + np.arange(net.n_junctions)
-    local = np.full(ds.n_nodes(), -1, dtype=np.int64)
+    local = np.full(data_structure.n_nodes(), -1, dtype=np.int64)
     local[nodes] = np.arange(nodes.size)
-    view = ds.to_graph_view()
+    view = data_structure.to_graph_view()
     ends = np.c_[index[local[view.tail[edges]]], index[local[view.head[edges]]]]
-    solutes = MechaSolutes(data_structure=ds, time_step=DT * 86400.)
+    solutes = MechaSolutes(data_structure=data_structure, time_step=DT * 86400.)
     # the reactions branch's: no solute carried by the liquid boundary (doc/legacy.rst, d7)
     for name, value in dict(d_apoplast=D_APO, d_plasmodesmata=D_PD, d_membrane=D_MEM,
                             solute_boundary_advection=0.).items():
@@ -52,8 +52,8 @@ def needle_case():
     legacy_xy = np.zeros((graph.number_of_nodes(), 2))
     for node, data in graph.nodes(data=True):
         legacy_xy[legacy.indice[node]] = data["position"]
-    return dict(g=g, ds=ds, organ=organ, mecha=mecha, solutes=solutes, nodes=nodes, edges=edges, index=index,
-                ends=ends, reference=reference, liquid=np.asarray(ds.get("vapour_node"))[nodes] == 0,
+    return dict(mtg=g, data_structure=data_structure, organ=organ, mecha=mecha, solutes=solutes, nodes=nodes, edges=edges, index=index,
+                ends=ends, reference=reference, liquid=np.asarray(data_structure.get("vapour_node"))[nodes] == 0,
                 xy=np.c_[geo.x, geo.y], legacy_xy=legacy_xy)
 
 
@@ -65,31 +65,31 @@ def port_step(case, reference, starch=(0., 0.), source=None, sigma=None, c_start
     (d⁻¹), the source *source* (mol d⁻¹, per DataStructure node), the storage fractions *storage* (walls, cells) and
     the first-order loss *k_decay* (d⁻¹). Returns the section's sucrose and starch.
     """
-    ds, nodes, edges = case["ds"], case["nodes"], case["edges"]
-    flows, Q = reference["flows"], np.zeros(ds.n_edges())
+    data_structure, nodes, edges = case["data_structure"], case["nodes"], case["edges"]
+    flows, Q = reference["flows"], np.zeros(data_structure.n_edges())
     for e, (a, b) in zip(edges, case["ends"]):
         Q[e] = flows.get((a, b), -flows.get((b, a), 0.))
-    ds.set("flow", Q)
-    ds.set("reflection_coefficient", np.zeros(ds.n_edges()) if sigma is None else sigma)
+    data_structure.set("flow", Q)
+    data_structure.set("reflection_coefficient", np.zeros(data_structure.n_edges()) if sigma is None else sigma)
     for name, start in (("sucrose", reference["c0"] if c_start is None else c_start), ("starch", starch_start)):
-        values = np.zeros(ds.n_nodes())
+        values = np.zeros(data_structure.n_nodes())
         if start is not None:
             values[nodes] = np.asarray(start)[case["index"]]
-        ds.set(name, values)
-    ds.set("sucrose_source", np.zeros(ds.n_nodes()) if source is None else source)
+        data_structure.set(name, values)
+    data_structure.set("sucrose_source", np.zeros(data_structure.n_nodes()) if source is None else source)
     case["solutes"].k_starch_synthesis, case["solutes"].k_starch_degradation = starch
     case["solutes"].storage_fraction_wall, case["solutes"].storage_fraction_cell = storage
     case["solutes"].k_decay = k_decay
     case["solutes"]()
-    return np.asarray(ds.get("sucrose"))[nodes].copy(), np.asarray(ds.get("starch"))[nodes].copy()
+    return np.asarray(data_structure.get("sucrose"))[nodes].copy(), np.asarray(data_structure.get("starch"))[nodes].copy()
 
 
 def mesophyll_source(case, reference, increment):
     """The port's source (mol d⁻¹ per DataStructure node) equivalent to the reactions' photosynthetic increment
     *increment* (mol cm⁻³) in its mesophyll cells before the step: V increment / dt."""
     by_legacy = dict(zip(case["index"].tolist(), case["nodes"].tolist()))
-    source = np.zeros(case["ds"].n_nodes())
-    volume = np.asarray(case["ds"].get("node_volume"))
+    source = np.zeros(case["data_structure"].n_nodes())
+    volume = np.asarray(case["data_structure"].get("node_volume"))
     for i in reference["kinds"]["meso"]:
         source[by_legacy[i]] = volume[by_legacy[i]] * increment / DT
     return source

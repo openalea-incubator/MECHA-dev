@@ -34,7 +34,7 @@ BARRIERS = (1, 3)
 @pytest.fixture(scope="module", params=list(OPTIONS))
 def compared(case, request):
     spec = OPTIONS[request.param]
-    ds, g = case["ds"], case["g"]
+    data_structure, g = case["data_structure"], case["mtg"]
     cortex_parameters = Mecha._calculate_cortex_parameters
 
     def as_floats(self, *arguments, **keywords):                   # ME-44: its one-element arrays, as floats
@@ -47,13 +47,13 @@ def compared(case, request):
                              network_attributes=spec.get("network"))
     finally:
         Mecha._calculate_cortex_parameters = cortex_parameters
-    if not ds.has("barrier"):
-        ds.register("barrier", np.ones(ds.n_nodes()), location="node")
-    mecha = legacy_options(MechaHydraulics(data_structure=ds))
+    if not data_structure.has("barrier"):
+        data_structure.register("barrier", np.ones(data_structure.n_nodes()), location="node")
+    mecha = legacy_options(MechaHydraulics(data_structure=data_structure))
     defaults = {name: getattr(mecha, name) for name in spec["port"]}
-    nodes, edges = section_parts(ds)[case["segment"]]
+    nodes, edges = section_parts(data_structure)[case["segment"]]
     mecha_index = g.property("mecha_index")
-    legacy = np.array([int(mecha_index[int(v)]) for v in ds.entity_ids("node")[nodes]])
+    legacy = np.array([int(mecha_index[int(v)]) for v in data_structure.entity_ids("node")[nodes]])
     geo = mecha.section_geometries()[case["segment"]][2]
     by_position = {tuple(run.network.graph.nodes[j]["position"]): j
                    for j in range(run.network.n_walls, run.network.n_wall_junction)}
@@ -64,14 +64,14 @@ def compared(case, request):
         for name, value in spec["port"].items():
             setattr(mecha, name, value)
         for i, barrier in enumerate(BARRIERS):
-            ds.set("barrier", np.full(ds.n_nodes(), float(barrier)))
+            data_structure.set("barrier", np.full(data_structure.n_nodes(), float(barrier)))
             mecha()
-            stages[barrier] = dict(K=np.asarray(ds.get("conductance")).copy(), net=mecha.network(),
+            stages[barrier] = dict(K=np.asarray(data_structure.get("conductance")).copy(), net=mecha.network(),
                                    legacy=run.stages[i])
     finally:
         for name, value in defaults.items():
             setattr(mecha, name, value)
-        ds.set("barrier", np.ones(ds.n_nodes()))
+        data_structure.set("barrier", np.ones(data_structure.n_nodes()))
     return dict(nodes=nodes, edges=edges, legacy=legacy, stages=stages, option=request.param)
 
 

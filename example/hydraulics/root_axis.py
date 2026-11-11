@@ -12,9 +12,7 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 
-from openalea.metafspm.coupling.composite_wrapper import CompositeModel
-from openalea.metafspm.scene.population import Planting, planting
-from openalea.metafspm.scene.scene import Scene
+from openalea.metafspm import CompositeModel, Planting, planting, Scene
 
 from openalea.granap.metafspm.architectures import RootAxis
 from openalea.granap.metafspm.component import GranapAnatomy, junction_rules
@@ -45,17 +43,17 @@ def main():
                 "collar_condition": 1., "collar_psi": -5000., "uniform_soil_psi": SOIL_PSI,
                 **development_parameters(distances, BARRIERS)}               # the barriers by distance from the tip
     scene = Scene(planting([Planting()], RootHydraulics, scenario))
-    ds = scene.populations[0].data_structure
+    data_structure = scene.populations[0].data_structure
     mecha = scene.populations[0].instance.hydraulics
     scene.run()
 
     # per section, from the collar to the tip
-    from_collar = np.argsort(-np.asarray(ds.get("distance_from_tip"), dtype=float), kind="stable")
-    xylem = np.isin(ds.get("cgroup"), XYLEM_CGROUPS).astype(float)
-    psi_xylem = ds.map_to(ds.get("psi"), "node", "SubOrgan", "weighted_mean", weights=xylem)[from_collar]
-    barriers = ds.map_to(ds.get("barrier"), "node", "SubOrgan", "max").astype(int)[from_collar]
+    from_collar = np.argsort(-np.asarray(data_structure.get("distance_from_tip"), dtype=float), kind="stable")
+    xylem = np.isin(data_structure.get("cgroup"), XYLEM_CGROUPS).astype(float)
+    psi_xylem = data_structure.map_to(data_structure.get("psi"), "node", "SubOrgan", "weighted_mean", weights=xylem)[from_collar]
+    barriers = data_structure.map_to(data_structure.get("barrier"), "node", "SubOrgan", "max").astype(int)[from_collar]
     distance = (np.arange(N) + 0.5) * SEGMENT * 1e3                     # mm from the collar
-    uptake, kr, kr_eff = (np.asarray(ds.get(name))[from_collar] for name in ("uptake", "kr", "kr_effective"))
+    uptake, kr, kr_eff = (np.asarray(data_structure.get(name))[from_collar] for name in ("uptake", "kr", "kr_effective"))
     for i in range(N):
         print(f"section {i}: barrier {barriers[i]}, ψ xylem {psi_xylem[i]:8.1f} hPa, uptake {uptake[i]:.3e} cm3/d, "
               f"kr {kr[i]:.3e}, kr effective {kr_eff[i]:.3e} cm/hPa/d")
@@ -73,7 +71,7 @@ def main():
     for ax in top:
         for i, b in enumerate(barriers):
             ax.annotate(f"b{b}", (distance[i], 0.02), xycoords=("data", "axes fraction"), ha="center", fontsize=7)
-    segments = ds.entity_ids("SubOrgan")[from_collar]
+    segments = data_structure.entity_ids("SubOrgan")[from_collar]
     bottom = [fig.add_subplot(2, 3, 4 + k) for k in range(3)]
     for ax, i in zip(bottom, (0, N // 2, N - 1)):
         frame = plots.port_frame(mecha, int(segments[i]), psi="psi", flow="flow")

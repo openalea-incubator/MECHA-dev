@@ -10,14 +10,14 @@ from openalea.mecha.geometry import section_geometry, section_of, section_parts
 
 @pytest.fixture(scope="module")
 def both(case):
-    ds, g = case["ds"], case["g"]
-    nodes, edges = section_parts(ds)[case["segment"]]
-    section = section_of(ds, nodes, edges)
+    data_structure, g = case["data_structure"], case["mtg"]
+    nodes, edges = section_parts(data_structure)[case["segment"]]
+    section = section_of(data_structure, nodes, edges)
     geo = section_geometry(section)
     net = case["legacy"].network
     # legacy node id of each local node: walls and cells by GRANAP's MECHA index, the rebuilt junctions by position
     mecha_index = g.property("mecha_index")
-    vids = ds.entity_ids("node")[nodes]
+    vids = data_structure.entity_ids("node")[nodes]
     legacy = np.array([int(mecha_index[int(v)]) for v in vids])
     by_position = {tuple(net.graph.nodes[j]["position"]): j for j in range(net.n_walls, net.n_wall_junction)}
     for v in geo.junctions:

@@ -12,14 +12,14 @@ def default():
 
 
 def test_the_summary_is_the_components(default):
-    ds = default.data_structure
+    data_structure = default.data_structure
     summary = default.summary
-    assert summary["kr"] == ds.get("kr")[0]
+    assert summary["kr"] == data_structure.get("kr")[0]
     assert summary["kr_SI"] == pytest.approx(summary["kr"] * 1.1574074e-3, rel=1e-6)
     assert KR_TO_M_PER_S_PER_MPA == pytest.approx(1 / 864., rel=1e-12)
-    assert summary["uptake"] == ds.get("standard_uptake")[0]
+    assert summary["uptake"] == data_structure.get("standard_uptake")[0]
     # kr is the uptake per unit of surface (perimeter × section height) and of potential difference
-    height = ds.get("length")[0] * 100.
+    height = data_structure.get("length")[0] * 100.
     assert summary["kr"] == pytest.approx(summary["uptake"] / (summary["perimeter"] * height * 5000.), rel=1e-6)
     shares = summary[["cortex_wall_share", "cortex_membrane_share", "cortex_plasmodesmata_share"]]
     assert shares.sum() == pytest.approx(1.) and (shares >= 0).all()
@@ -68,8 +68,8 @@ def test_a_root_axis():
     assert table["xylem_potential"].iloc[0] == pytest.approx(-5000.)
     assert table["uptake"].iloc[1] > table["uptake"].iloc[0] > 0           # the Casparian strip alone lets more in
     assert abs(table["uptake"].iloc[2]) < 1e-12                             # the tip's xylem does not conduct yet
-    ds = table.attrs["scene"].populations[0].data_structure
-    np.testing.assert_allclose(table["uptake"], ds.get("uptake"))
+    data_structure = table.attrs["scene"].populations[0].data_structure
+    np.testing.assert_allclose(table["uptake"], data_structure.get("uptake"))
 
 
 def test_osmotic_potentials():
@@ -78,8 +78,8 @@ def test_osmotic_potentials():
     osmotic = dict(os_hetero=4, os_cortex=-8.3E3, osmotic_epi=-6.8E3, osmotic_endo=-4.8E3, osmotic_peri=-5.5E3,
                    osmotic_stele=-5.5E3, osmotic_left_soil=-1.5E3, osmotic_right_soil=-1.5E3)
     fresh = simulate(osmotic=osmotic, xylem_psi=-2.5E3)
-    ds = fresh.data_structure
-    tissue, potential = np.asarray(ds.get("tissue"), dtype=object), np.asarray(ds.get("osmotic_potential"))
+    data_structure = fresh.data_structure
+    tissue, potential = np.asarray(data_structure.get("tissue"), dtype=object), np.asarray(data_structure.get("osmotic_potential"))
     assert (potential[tissue == "epidermis"] == -6.8E3).all() and (potential[tissue == "stele"] == -5.5E3).all()
     salty = simulate(osmotic=dict(osmotic, osmotic_left_soil=-7.5E3, osmotic_right_soil=-7.5E3), xylem_psi=-2.5E3)
     assert salty.summary["uptake"] < fresh.summary["uptake"]
@@ -94,9 +94,9 @@ def test_an_incomplete_outer_cortex_layer():
     geo = list(section.hydraulics.section_geometries().values())[0][2]
     rank_to_row, _, _ = legacy_rows(geo.n_layer, geo.layer_dist)
     assert any(geo.n_layer[r] > 0 and np.isnan(rank_to_row[r]) for r in range(40, 50))
-    ds = section.data_structure
-    cortex = np.asarray(ds.get("tissue"), dtype=object) == "cortex"
-    assert cortex.sum() > 0 and np.isfinite(np.asarray(ds.get("osmotic_potential"))[cortex]).all()
+    data_structure = section.data_structure
+    cortex = np.asarray(data_structure.get("tissue"), dtype=object) == "cortex"
+    assert cortex.sum() > 0 and np.isfinite(np.asarray(data_structure.get("osmotic_potential"))[cortex]).all()
 
 
 def test_the_run_configuration_is_the_scenes():
@@ -116,18 +116,18 @@ def test_the_plant_summaries_weight_kr_by_the_root_surface(tmp_path):
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         table = simulate_root(barriers=(3, 1, 1), outputs=str(tmp_path))
-    ds = table.attrs["scene"].populations[0].data_structure
-    kr, surface = np.asarray(ds.get("kr")), np.asarray(ds.get("radial_surface"))
-    length = ds.map_to(np.asarray(ds.get("length")), "node", "SubOrgan", "mean")
-    assert surface == pytest.approx(np.asarray(ds.get("perimeter")) * length * 100.)    # cm × m -> cm2
+    data_structure = table.attrs["scene"].populations[0].data_structure
+    kr, surface = np.asarray(data_structure.get("kr")), np.asarray(data_structure.get("radial_surface"))
+    length = data_structure.map_to(np.asarray(data_structure.get("length")), "node", "SubOrgan", "mean")
+    assert surface == pytest.approx(np.asarray(data_structure.get("perimeter")) * length * 100.)    # cm × m -> cm2
     rows = pd.read_csv(next((tmp_path / "Plant").glob("*/summaries.csv")))
     measured = np.isfinite(kr)
     assert rows["kr"].iloc[-1] == pytest.approx(np.sum((kr * surface)[measured]) / np.sum(surface[measured]),
                                                 rel=1e-12)
-    sections = np.asarray(ds.get("section_length"))
+    sections = np.asarray(data_structure.get("section_length"))
     assert sections == pytest.approx(length * 100.)                                     # m -> cm
-    Kx = np.asarray(ds.get("Kx"))
+    Kx = np.asarray(data_structure.get("Kx"))
     assert rows["Kx"].iloc[-1] == pytest.approx(np.sum(Kx * sections) / np.sum(sections), rel=1e-12)
-    conductance = np.asarray(ds.get("soil_conductance"))                                 # in parallel: summed
+    conductance = np.asarray(data_structure.get("soil_conductance"))                                 # in parallel: summed
     assert rows["soil_conductance"].iloc[-1] == pytest.approx(conductance.sum(), rel=1e-12)
     assert not [w for w in caught if "without a declared weight" in str(w.message)]

@@ -13,9 +13,7 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 
-from openalea.metafspm.coupling.composite_wrapper import CompositeModel
-from openalea.metafspm.scene.population import Planting, planting
-from openalea.metafspm.scene.scene import Scene
+from openalea.metafspm import CompositeModel, Planting, planting, Scene
 
 from openalea.granap.metafspm.architectures import RootAxis
 from openalea.granap.metafspm.component import GranapAnatomy, junction_rules
@@ -43,23 +41,23 @@ def main():
     scenario = {"root_segments": [[RADIUS, SEGMENT, distance] for distance in distances],
                 **development_parameters(distances, BARRIERS)}               # the barriers by distance from the tip
     scene = Scene(planting([Planting()], RootHydraulics, scenario))
-    ds = scene.populations[0].data_structure
+    data_structure = scene.populations[0].data_structure
     mecha = scene.populations[0].instance.hydraulics
     scene.run()
 
-    segments = [int(s) for s in ds.entity_ids("SubOrgan")]
-    barriers = ds.map_to(ds.get("barrier"), "node", "SubOrgan", "max").astype(int)     # each section's
+    segments = [int(s) for s in data_structure.entity_ids("SubOrgan")]
+    barriers = data_structure.map_to(data_structure.get("barrier"), "node", "SubOrgan", "max").astype(int)     # each section's
     for i, segment in enumerate(segments):
-        print(f"segment {segment}: barrier {barriers[i]}, kr {ds.get('kr')[i]:.3e} cm/hPa/d, "
-              f"Kx {ds.get('Kx')[i]:.3e} cm4/hPa/d, uptake {ds.get('standard_uptake')[i]:.3e} cm3/d")
+        print(f"segment {segment}: barrier {barriers[i]}, kr {data_structure.get('kr')[i]:.3e} cm/hPa/d, "
+              f"Kx {data_structure.get('Kx')[i]:.3e} cm4/hPa/d, uptake {data_structure.get('standard_uptake')[i]:.3e} cm3/d")
 
     fig, axes = plt.subplots(2, len(segments), figsize=(5 * len(segments), 10), layout="constrained")
     norm = plt.Normalize(mecha.standard_psi_xylem, mecha.standard_psi_soil)
-    tip_first = np.argsort(np.asarray(ds.get("distance_from_tip"), dtype=float), kind="stable")
+    tip_first = np.argsort(np.asarray(data_structure.get("distance_from_tip"), dtype=float), kind="stable")
     for col, i in enumerate(tip_first):
         frame = plots.port_frame(mecha, segments[i])
         points = plots.psi_map(axes[0, col], frame, norm=norm,
-                               title=f"barrier {barriers[i]}: kr {ds.get('kr')[i]:.2e} cm hPa⁻¹ d⁻¹")
+                               title=f"barrier {barriers[i]}: kr {data_structure.get('kr')[i]:.2e} cm hPa⁻¹ d⁻¹")
         plots.pathway_breakdown(axes[1, col], frame, title=f"barrier {barriers[i]}: pathways of the radial flow")
     fig.colorbar(points, ax=axes[0], label="ψ (hPa)", shrink=0.8)
     folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")

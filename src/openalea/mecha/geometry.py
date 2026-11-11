@@ -3,7 +3,7 @@ MECHA's own geometry of a cross-section (doc/legacy.rst): the quantities the leg
 ``NetworkBuilder.populate_from_network``, computed from the section's network as the DataStructure holds it (GRANAP's
 columns, in mm), in MECHA's units (µm, cm) and with the legacy's summation orders, so that they are exact.
 
-    section = Section(kind, cgroup, tissue, x, y, wall_length, cell_area, a, b, path, length, dist)
+    section = Section(compartment_type, cgroup, tissue, x, y, wall_length, cell_area, a, b, path, length, dist)
     geometry = section_geometry(section)
 
 Nodes are the section's Compartments in the DataStructure's order (protoplasts, then walls, then junctions, each in
@@ -16,11 +16,11 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-PROTOPLAST, WALL, JUNCTION = 0, 1, 2                                     # GRANAP's kind
+PROTOPLAST, WALL, JUNCTION = 0, 1, 2                                     # GRANAP's compartment_type
 MEMBRANE, WALL_AIR, WALL_PATH, PLASMODESMATA, AIR_LINK = 0, 1, 2, 3, 4   # GRANAP's network_path
 STOMATAL = 6                     # a pore to its leaf organ's surface node (GRANAP)
-LEAF_SURFACE = 3                 # GRANAP's kind of a leaf organ's surface node
-SOIL_NODE = 4                    # GRANAP's kind of a root section's soil node (its one soil boundary)
+LEAF_SURFACE = 3                 # GRANAP's compartment_type of a leaf organ's surface node
+SOIL_NODE = 4                    # GRANAP's compartment_type of a root section's soil node (its one soil boundary)
 SOIL = 7                         # GRANAP's path of a border wall or junction to its section's soil node
 
 MM = 1000.                                                               # mm -> µm
@@ -44,7 +44,7 @@ SCLERENCHYMA_TYPES = ("sclerenchyma",)
 @dataclass
 class Section:
     """One section's network: node arrays (DataStructure order) and edge arrays (local node indices a, b)."""
-    kind: np.ndarray
+    compartment_type: np.ndarray
     cgroup: np.ndarray            # float, NaN on the apoplast
     tissue: np.ndarray            # object, None on the apoplast
     x: np.ndarray                 # mm
@@ -65,7 +65,7 @@ class SectionGeometry:
     walls: np.ndarray             # local nodes, in legacy order
     junctions: np.ndarray
     cells: np.ndarray             # local nodes, in cell order (cell id = position)
-    kind: np.ndarray              # GRANAP's kind per node
+    compartment_type: np.ndarray              # GRANAP's compartment_type per node
     cgroup: np.ndarray            # int per node (cells; -1 on the apoplast)
     tissue: np.ndarray
     x: np.ndarray                 # µm per node (junctions rounded to 1e-6 µm, as the legacy's rebuild)
@@ -122,8 +122,8 @@ def _sequential_sum(values) -> float:
 
 def _cgroups(section: Section) -> np.ndarray:
     """The legacy's integer cgroup of each cell (its type's group when the cgroup is missing), -1 on the apoplast."""
-    out = np.full(section.kind.size, -1, dtype=np.int64)
-    for v in np.flatnonzero(section.kind == PROTOPLAST):
+    out = np.full(section.compartment_type.size, -1, dtype=np.int64)
+    for v in np.flatnonzero(section.compartment_type == PROTOPLAST):
         c = section.cgroup[v]
         try:
             out[v] = int(c)
@@ -149,16 +149,16 @@ def _neighbour_keys(n_nodes, a, b, order_position, edges):
 
 def section_geometry(section: Section) -> SectionGeometry:
     s = section
-    n = s.kind.size
-    walls = np.flatnonzero(s.kind == WALL)
-    junctions = np.flatnonzero(s.kind == JUNCTION)
-    cells = np.flatnonzero(s.kind == PROTOPLAST)
+    n = s.compartment_type.size
+    walls = np.flatnonzero(s.compartment_type == WALL)
+    junctions = np.flatnonzero(s.compartment_type == JUNCTION)
+    cells = np.flatnonzero(s.compartment_type == PROTOPLAST)
     legacy_order = np.r_[walls, junctions, cells]
     position = np.empty(n, dtype=np.int64)
     position[legacy_order] = np.arange(n)
     cgroup = _cgroups(s)
     tissue = np.asarray(s.tissue, dtype=object)
-    is_cell = s.kind == PROTOPLAST
+    is_cell = s.compartment_type == PROTOPLAST
 
     # positions (µm); the rebuilt junctions are rounded to 6 decimals (Python's round, as the legacy)
     x, y = s.x * MM, s.y * MM
@@ -168,15 +168,15 @@ def section_geometry(section: Section) -> SectionGeometry:
     # membranes: each wall's count and lateral distance (Σ dist, in edge order)
     membrane = s.path == MEMBRANE
     m_edges = np.flatnonzero(membrane)
-    m_wall = np.where(s.kind[s.a[m_edges]] == WALL, s.a[m_edges], s.b[m_edges])
-    m_cell = np.where(s.kind[s.a[m_edges]] == WALL, s.b[m_edges], s.a[m_edges])
+    m_wall = np.where(s.compartment_type[s.a[m_edges]] == WALL, s.a[m_edges], s.b[m_edges])
+    m_cell = np.where(s.compartment_type[s.a[m_edges]] == WALL, s.b[m_edges], s.a[m_edges])
     edge_dist = s.dist * MM
     n_membranes = np.bincount(m_wall, minlength=n)
     lateral = np.zeros(n)
     np.add.at(lateral, m_wall, edge_dist[m_edges])
-    lateral[s.kind != WALL] = np.nan
+    lateral[s.compartment_type != WALL] = np.nan
 
-    one = (s.kind == WALL) & (n_membranes == 1)
+    one = (s.compartment_type == WALL) & (n_membranes == 1)
     membrane_cell = np.zeros(n, dtype=np.int64)
     membrane_cell[m_wall] = m_cell                                 # a cell of each wall (its only one if one)
     border_wall = one & (cgroup[membrane_cell] == 2)
@@ -184,11 +184,11 @@ def section_geometry(section: Section) -> SectionGeometry:
 
     # the wall edges to junctions, as rebuilt: kept when their wall has at least two junctions
     wall_edges = np.flatnonzero(s.path == WALL_PATH)
-    a_kind, b_kind = s.kind[s.a[wall_edges]], s.kind[s.b[wall_edges]]
+    a_kind, b_kind = s.compartment_type[s.a[wall_edges]], s.compartment_type[s.b[wall_edges]]
     to_junction = ((a_kind == WALL) & (b_kind == JUNCTION)) | ((a_kind == JUNCTION) & (b_kind == WALL))
     j_edges = wall_edges[to_junction]
-    j_wall = np.where(s.kind[s.a[j_edges]] == WALL, s.a[j_edges], s.b[j_edges])
-    j_junc = np.where(s.kind[s.a[j_edges]] == WALL, s.b[j_edges], s.a[j_edges])
+    j_wall = np.where(s.compartment_type[s.a[j_edges]] == WALL, s.a[j_edges], s.b[j_edges])
+    j_junc = np.where(s.compartment_type[s.a[j_edges]] == WALL, s.b[j_edges], s.a[j_edges])
     kept = np.bincount(j_wall, minlength=n)[j_wall] >= 2
     junction_edge = np.zeros(s.path.size, dtype=bool)
     junction_edge[j_edges[kept]] = True
@@ -204,7 +204,7 @@ def section_geometry(section: Section) -> SectionGeometry:
     wall_length = np.zeros(n)
     wall_length[walls] = s.wall_length[walls] * MM
     border_count = np.bincount(j_junc[border_wall[j_wall]], minlength=n)
-    border_junction = (s.kind == JUNCTION) & (border_count == 2)
+    border_junction = (s.compartment_type == JUNCTION) & (border_count == 2)
     quarter = np.zeros(n)
     np.add.at(quarter, j_junc[border_wall[j_wall]], wall_length[j_wall[border_wall[j_wall]]] / 4.)
     wall_length[border_junction] = quarter[border_junction]
@@ -271,7 +271,7 @@ def section_geometry(section: Section) -> SectionGeometry:
     ratios = _plasmodesmata_ratios(s, position, cgroup, np.asarray(intercellular, dtype=np.int64), outer, edge_length)
 
     return SectionGeometry(
-        legacy_order=legacy_order, walls=walls, junctions=junctions, cells=cells, kind=s.kind, cgroup=cgroup,
+        legacy_order=legacy_order, walls=walls, junctions=junctions, cells=cells, compartment_type=s.compartment_type, cgroup=cgroup,
         tissue=tissue,
         x=x, y=y, wall_length=wall_length, cell_area=s.cell_area * 1000 ** 2, lateral_distance=lateral,
         n_membranes=n_membranes, border_wall=border_wall, border_aerenchyma=border_aerenchyma,
@@ -295,7 +295,7 @@ def _ranks(s, cells, cgroup, x, y, x_grav, y_grav):
     and from the outer layer, the stele layers 50–61 from the pericycle (or endodermis). Its sweeps update in place,
     but within one sweep a cell's test never reads a rank given in the same sweep, so each sweep is computed at once.
     """
-    n = s.kind.size
+    n = s.compartment_type.size
     rank = np.full(n, -1, dtype=np.int64)
     c = cgroup[cells].copy()
     c[(c == 19) | (c == 20)] = 13
@@ -310,7 +310,7 @@ def _ranks(s, cells, cgroup, x, y, x_grav, y_grav):
     outer = 2 if present[1] == 0 else 1
 
     # the cells' cell neighbours (any path): a (cells × nodes) incidence, to test "rank r among the neighbours"
-    both = (s.kind[s.a] == PROTOPLAST) & (s.kind[s.b] == PROTOPLAST)
+    both = (s.compartment_type[s.a] == PROTOPLAST) & (s.compartment_type[s.b] == PROTOPLAST)
     u, v = s.a[both], s.b[both]
     row = np.empty(n, dtype=np.int64)
     row[cells] = np.arange(cells.size)
@@ -377,13 +377,13 @@ def _plasmodesmata_ratios(s, position, cgroup, intercellular, outer, edge_length
     cortex–endodermis), the plasmodesmata length over the length between non-intercellular cells, each summed over the
     cells in cell order and over their neighbours in networkx's order.
     """
-    n = s.kind.size
+    n = s.compartment_type.size
     pd_edges = np.flatnonzero(s.path == PLASMODESMATA)
     node, other, e = _neighbour_keys(n, s.a, s.b, position, pd_edges)
     interc = np.zeros(n, dtype=bool)
     interc[intercellular] = True
     gi, gj = cgroup[node], cgroup[other]
-    counted = np.isin(gi, (outer, 3, 4)) & ~interc[node] & (s.kind[node] == PROTOPLAST)
+    counted = np.isin(gi, (outer, 3, 4)) & ~interc[node] & (s.compartment_type[node] == PROTOPLAST)
     length = edge_length[e]
     interfaces = (((gi == outer) & (gj == 4)) | ((gi == 4) & (gj == outer)),      # disjoint: outer is 1 or 2
                   (gi == 4) & (gj == 4),
@@ -400,23 +400,23 @@ def _plasmodesmata_ratios(s, position, cgroup, intercellular, outer, edge_length
 
 AXIAL_JUNCTION = 5                                                       # GRANAP's junctions between sections
 
-NODE_VARIABLES = ("kind", "cgroup", "tissue", "section_x", "section_y", "wall_length", "cell_area")
+NODE_VARIABLES = ("compartment_type", "cgroup", "tissue", "section_x", "section_y", "wall_length", "cell_area")
 EDGE_VARIABLES = ("network_path", "edge_length", "edge_dist")
 
 
-def section_parts(ds, exclude=None) -> dict:
+def section_parts(data_structure, exclude=None) -> dict:
     """
     {SubOrgan vid: (nodes, edges)}: each section's Compartments (DataStructure indices, in order) and its own
     Connections (edge indices, in order; the axial junctions to the neighbouring sections excluded). A leaf organ's
-    surface node (kind 3) and its stomatal Connections (path 6) belong to the organ, not to a section (GRANAP); a
-    root section's soil node (kind 4) and its Connections (path 7) are its soil boundary, not its anatomy.
+    surface node (compartment_type 3) and its stomatal Connections (path 6) belong to the organ, not to a section (GRANAP); a
+    root section's soil node (compartment_type 4) and its Connections (path 7) are its soil boundary, not its anatomy.
     """
-    owner = ds.owner("SubOrgan").copy()
-    ids = ds.entity_ids("SubOrgan")
-    view = ds.to_graph_view()
-    path = np.asarray(ds.get("network_path"))
-    kind = np.asarray(ds.get("kind"))
-    owner[(kind == LEAF_SURFACE) | (kind == SOIL_NODE)] = -1
+    owner = data_structure.owner("SubOrgan").copy()
+    ids = data_structure.entity_ids("SubOrgan")
+    view = data_structure.to_graph_view()
+    path = np.asarray(data_structure.get("network_path"))
+    compartment_type = np.asarray(data_structure.get("compartment_type"))
+    owner[(compartment_type == LEAF_SURFACE) | (compartment_type == SOIL_NODE)] = -1
     if exclude is not None:                                   # e.g. the condensed sections: no cells here
         owner[np.asarray(exclude, dtype=bool)] = -1
     inner = (owner[view.tail] == owner[view.head]) & (path != AXIAL_JUNCTION) & (path != STOMATAL) & \
@@ -444,12 +444,12 @@ def local_index(nodes, targets) -> np.ndarray:
     return np.where(sorted_nodes[position] == targets, order[position], -1)
 
 
-def section_of(ds, nodes, edges) -> Section:
-    """The Section of the Compartments *nodes* and Connections *edges* of the DataStructure *ds*."""
-    view = ds.to_graph_view()
-    node = {name: np.asarray(ds.get(name))[nodes] for name in NODE_VARIABLES}
-    edge = {name: np.asarray(ds.get(name))[edges] for name in EDGE_VARIABLES}
-    return Section(kind=node["kind"].astype(np.int64), cgroup=node["cgroup"].astype(float), tissue=node["tissue"],
+def section_of(data_structure, nodes, edges) -> Section:
+    """The Section of the Compartments *nodes* and Connections *edges* of the DataStructure *data_structure*."""
+    view = data_structure.to_graph_view()
+    node = {name: np.asarray(data_structure.get(name))[nodes] for name in NODE_VARIABLES}
+    edge = {name: np.asarray(data_structure.get(name))[edges] for name in EDGE_VARIABLES}
+    return Section(compartment_type=node["compartment_type"].astype(np.int64), cgroup=node["cgroup"].astype(float), tissue=node["tissue"],
                    x=node["section_x"].astype(float), y=node["section_y"].astype(float),
                    wall_length=node["wall_length"].astype(float), cell_area=node["cell_area"].astype(float),
                    a=local_index(nodes, view.tail[edges]), b=local_index(nodes, view.head[edges]),
@@ -486,14 +486,14 @@ def template_section(template, compartment: int, connection: int) -> tuple:
         local = values(link, connections, -1.)
         return position[np.where((local >= 0) & (local < template.size), local, template.size).astype(np.int64)]
     tail, head = ends("n_id_a"), ends("n_id_b")
-    kind = values("kind", compartments, -1.)
-    inside = (kind != LEAF_SURFACE) & (kind != SOIL_NODE)
+    compartment_type = values("compartment_type", compartments, -1.)
+    inside = (compartment_type != LEAF_SURFACE) & (compartment_type != SOIL_NODE)
     path = values("network_path", connections, -1.)
     inner = (tail >= 0) & (head >= 0) & ~np.isin(path, (AXIAL_JUNCTION, STOMATAL, SOIL))
     inner &= inside[np.maximum(tail, 0)] & inside[np.maximum(head, 0)]
     nodes, edges = np.flatnonzero(inside), np.flatnonzero(inner)
     rows = compartments[nodes]
-    section = Section(kind=kind[nodes].astype(np.int64), cgroup=values("cgroup", rows),
+    section = Section(compartment_type=compartment_type[nodes].astype(np.int64), cgroup=values("cgroup", rows),
                       tissue=values("tissue", rows, None, object),
                       x=values("section_x", rows), y=values("section_y", rows),
                       wall_length=values("wall_length", rows), cell_area=values("cell_area", rows),

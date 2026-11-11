@@ -113,7 +113,7 @@ class Network:
     edge_lateral_distance: np.ndarray
     edge_dist: np.ndarray
     cgroup: np.ndarray            # int per node
-    kind: np.ndarray              # GRANAP's kind per node (-1: not in a section)
+    compartment_type: np.ndarray              # GRANAP's compartment_type per node (-1: not in a section)
     rank: np.ndarray
     intercellular: np.ndarray     # bool per node (the cell manager's, by tissue)
     passage: np.ndarray
@@ -154,7 +154,7 @@ def assemble(n_nodes: int, n_edges: int, geometries: list, phi_thick=None) -> Ne
         a=edges_full(-1, np.int64), b=edges_full(-1, np.int64), path=edges_full(-1, np.int64),
         in_section=edges_full(False, bool), junction_edge=edges_full(False, bool), edge_length=edges_full(np.nan),
         edge_lateral_distance=edges_full(np.nan), edge_dist=edges_full(np.nan), cgroup=nodes_full(-1, np.int64),
-        kind=nodes_full(-1, np.int64),
+        compartment_type=nodes_full(-1, np.int64),
         rank=nodes_full(-1, np.int64), intercellular=nodes_full(False, bool), passage=nodes_full(False, bool),
         sclerenchyma=nodes_full(False, bool),
         phi_thick=nodes_full(False, bool), wall_cells=nodes_full(-1, np.int64, (2,)),
@@ -169,7 +169,7 @@ def assemble(n_nodes: int, n_edges: int, geometries: list, phi_thick=None) -> Ne
         net.section_of_edge[edges] = i
         net.in_section[edges] = True
         net.cgroup[nodes] = geo.cgroup
-        net.kind[nodes] = geo.kind
+        net.compartment_type[nodes] = geo.compartment_type
         net.rank[nodes] = geo.cell_rank
         net.intercellular[nodes[geo.typed["intercellular"]]] = True
         net.passage[nodes[geo.typed["passage"]]] = True
@@ -205,10 +205,10 @@ def set_edge_ends(net: Network, tail, head, path) -> None:
 
 def set_wall_thickness(net: Network, wall_thickness) -> None:
     """Each wall's thickness (µm, GRANAP's), and each junction's: the mean of the walls it joins in its section."""
-    out = np.where(net.kind == WALL, wall_thickness, np.nan)
+    out = np.where(net.compartment_type == WALL, wall_thickness, np.nan)
     e = np.flatnonzero(net.junction_edge)
-    wall = np.where(net.kind[net.a[e]] == WALL, net.a[e], net.b[e])
-    junction = np.where(net.kind[net.a[e]] == WALL, net.b[e], net.a[e])
+    wall = np.where(net.compartment_type[net.a[e]] == WALL, net.a[e], net.b[e])
+    junction = np.where(net.compartment_type[net.a[e]] == WALL, net.b[e], net.a[e])
     total, count = np.zeros(out.size), np.zeros(out.size)
     np.add.at(total, junction, wall_thickness[wall])
     np.add.at(count, junction, 1.)
@@ -227,8 +227,8 @@ def _thickness(net: Network, P: dict, nodes) -> np.ndarray:
 def _shared_wall_thickness(net: Network, cell_a, cell_b) -> np.ndarray:
     """The thickness (µm) of the walls cells *cell_a* and *cell_b* share (their lengths' weighted mean; NaN where
     they share none, or where their thickness is unknown): the wall a plasmodesmata edge crosses."""
-    walls = np.flatnonzero((net.kind == WALL) & (net.wall_cells >= 0).all(axis=1) & np.isfinite(net.wall_thickness))
-    n = net.kind.size
+    walls = np.flatnonzero((net.compartment_type == WALL) & (net.wall_cells >= 0).all(axis=1) & np.isfinite(net.wall_thickness))
+    n = net.compartment_type.size
     low, high = np.sort(net.wall_cells[walls], axis=1).T
     keys, inverse = np.unique(low * n + high, return_inverse=True)
     if keys.size == 0:
@@ -313,7 +313,7 @@ def edge_conductances(net: Network, P: dict, barrier, height, factors: dict = No
     in_matrix = wall_edge | membrane | plasmodesmata
 
     # the wall end of wall and membrane edges, and its cells
-    a_is_wall = net.kind[net.a] == WALL
+    a_is_wall = net.compartment_type[net.a] == WALL
     wall_end = np.where(a_is_wall, net.a, net.b)
     other_end = np.where(a_is_wall, net.b, net.a)
     c0, c1 = net.wall_cells[wall_end, 0], net.wall_cells[wall_end, 1]
@@ -435,11 +435,11 @@ def soil_contact(net: Network, x_contact, junction_rule) -> np.ndarray:
     flagged = np.where(cells >= 0, net.soil_contact_cell[np.maximum(cells, 0)], False)
     contact |= net.border_wall & flagged.any(axis=1)
     e = np.flatnonzero(net.junction_edge)
-    wall_is_a = net.kind[net.a[e]] == WALL
+    wall_is_a = net.compartment_type[net.a[e]] == WALL
     wall, junction = np.where(wall_is_a, net.a[e], net.b[e]), np.where(wall_is_a, net.b[e], net.a[e])
     pairs = np.column_stack((np.repeat(junction, 2), cells[wall].reshape(-1)))
     pairs = np.unique(pairs[pairs[:, 1] >= 0], axis=0)                       # each (junction, cell) once
-    n = net.kind.size
+    n = net.compartment_type.size
     n_cells = np.bincount(pairs[:, 0], minlength=n)
     n_flagged = np.bincount(pairs[:, 0], weights=net.soil_contact_cell[pairs[:, 1]], minlength=n)
     rule = np.asarray(junction_rule, dtype=float) * np.ones(n)
@@ -579,20 +579,20 @@ def elongation_sink(net: Network, P: dict, barrier, relative_x) -> np.ndarray:
     """
     rate = np.asarray(P["elongation_midpoint_rate"], dtype=float) + \
         (np.asarray(relative_x, dtype=float) - 0.5) * np.asarray(P["elongation_side_rate_difference"], dtype=float)
-    thickness = _thickness(net, P, np.arange(net.kind.size))
-    walls = np.flatnonzero(net.kind == WALL)
+    thickness = _thickness(net, P, np.arange(net.compartment_type.size))
+    walls = np.flatnonzero(net.compartment_type == WALL)
     ends = net.wall_cells[walls]
     has = ends >= 0
     cell_of, wall_of = ends[has], np.repeat(walls, has.sum(axis=1))
-    n = net.kind.size
+    n = net.compartment_type.size
     perimeter = np.bincount(cell_of, weights=net.wall_length[wall_of], minlength=n)
     count = np.bincount(cell_of, minlength=n)
     mean_thickness = np.divide(np.bincount(cell_of, weights=thickness[wall_of], minlength=n), count,
                                out=np.zeros(n), where=count > 0)
     free_area = net.cell_area - perimeter * mean_thickness / 2
-    sink = np.where(net.kind == WALL,
+    sink = np.where(net.compartment_type == WALL,
                     net.wall_length * thickness / 2 * 1.0E-08 * rate * np.asarray(P["water_fraction_apoplast"]),
-                    np.where((net.kind == 0) & (free_area > 0),
+                    np.where((net.compartment_type == 0) & (free_area > 0),
                              free_area * 1.0E-08 * rate * np.asarray(P["water_fraction_symplast"]), 0.))
     return np.where((np.asarray(barrier) == 0) & (net.section_of_node >= 0), sink, 0.)
 
@@ -816,7 +816,7 @@ def vapour_conductances(net: Network, P: dict, height, pore_width, pore_depth, c
 
     e = np.flatnonzero(net.in_section & (net.path == WALL_AIR))
     if e.size:
-        a_is_wall = net.kind[net.a[e]] == WALL
+        a_is_wall = net.compartment_type[net.a[e]] == WALL
         wall_end[e] = np.where(a_is_wall, net.a[e], net.b[e])
         air_end[e] = np.where(a_is_wall, net.b[e], net.a[e])
         G = D[e] * (net.edge_length[e] * 1.0E-6 * height[e]) / (net.edge_dist[e] * 1.0E-6) * F[e]

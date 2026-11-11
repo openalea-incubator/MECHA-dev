@@ -16,21 +16,21 @@ def section(barrier=1., retag=None, preset=None, tissues=None, **parameters):
     """A one-segment root's conductances (and its network; GRANAP's *preset*, the monocot root by default), its cells'
     cgroups changed by *retag* ({old: new}) and their tissues by *tissues* ({old: new}) before the first call, the
     component's *parameters* set."""
-    g, ds, anatomy = anatomy_data_structure(root(1), anatomy_component(preset))
-    cgroup = np.asarray(ds.get("cgroup"), dtype=float).copy()
+    g, data_structure, anatomy = anatomy_data_structure(root(1), anatomy_component(preset))
+    cgroup = np.asarray(data_structure.get("cgroup"), dtype=float).copy()
     for old, new in (retag or {}).items():
         cgroup[cgroup == old] = new
-    ds.set("cgroup", cgroup)
-    tissue = np.asarray(ds.get("tissue"), dtype=object).copy()
+    data_structure.set("cgroup", cgroup)
+    tissue = np.asarray(data_structure.get("tissue"), dtype=object).copy()
     for old, new in (tissues or {}).items():
         tissue[tissue == old] = new
-    ds.set("tissue", tissue)
-    ds.register("barrier", np.full(ds.n_nodes(), float(barrier)), location="node")
-    mecha = MechaHydraulics(data_structure=ds)
+    data_structure.set("tissue", tissue)
+    data_structure.register("barrier", np.full(data_structure.n_nodes(), float(barrier)), location="node")
+    mecha = MechaHydraulics(data_structure=data_structure)
     for name, value in parameters.items():
         setattr(mecha, name, value)
     mecha()
-    return np.asarray(ds.get("conductance")).copy(), mecha.network()
+    return np.asarray(data_structure.get("conductance")).copy(), mecha.network()
 
 
 def cells_of(net, edges, groups):
@@ -73,7 +73,7 @@ def test_the_sclerenchyma_lignified_at_barrier_11():
     K8, net = section(barrier=8., tissues={"cortex": "sclerenchyma"})
     K11, _ = section(barrier=11., tissues={"cortex": "sclerenchyma"})
     walls = np.flatnonzero(net.in_section & net.junction_edge)
-    wall = np.where(np.isin(net.a[walls], np.flatnonzero(net.kind == 1)), net.a[walls], net.b[walls])
+    wall = np.where(np.isin(net.a[walls], np.flatnonzero(net.compartment_type == 1)), net.a[walls], net.b[walls])
     cells = net.wall_cells[wall]
     both = (cells >= 0).all(axis=1) & net.sclerenchyma[np.maximum(cells, 0)].all(axis=1)
     assert both.sum() > 0

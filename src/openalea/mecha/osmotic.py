@@ -5,8 +5,8 @@ coefficients of the membranes, of the legacy's scenarios (``Mecha.initialize_sce
 MechaHydraulics reads them as inputs (role "Solutes"): this component stands for a metabolism or solute model until
 one is coupled (the ``reaction`` branch), and gives the comparison with the legacy's osmotic scenarios.
 
-    presets = MechaOsmoticPresets(data_structure=ds)       # osmotic_potential (nodes), reflection_coefficient (edges)
-    mecha = MechaHydraulics(data_structure=ds)
+    presets = MechaOsmoticPresets(data_structure=data_structure)       # osmotic_potential (nodes), reflection_coefficient (edges)
+    mecha = MechaHydraulics(data_structure=data_structure)
 
 The legacy's rules, per membrane (wall i, cell j), from the cell's rank (and cgroup), the wall's neighbours, the
 section's barrier and the wall's position: its radial position relative to the endodermis (r_rel, from the legacy's
@@ -143,7 +143,7 @@ def relative_positions(geo, rank_to_row, distance):
     (``_cells_gdf['x']``), which the DataStructure does not carry; here, from the cells' positions (their polygons'
     centroids): x_rel differs by ~0.5 % (it only weighs a left-right soil profile).
     """
-    n = geo.kind.size
+    n = geo.compartment_type.size
     r_rel = np.full(n, np.nan)
     d_endo, d_epi, xylem80 = geo.layer_dist[3], geo.layer_dist[2], geo.xylem_80_percentile_distance
     endo_row = rank_to_row[3]
@@ -185,7 +185,7 @@ def wall_counts(geo):
     kept = geo.__dict__.get("_wall_counts")
     if kept is not None:
         return kept
-    n = geo.kind.size
+    n = geo.compartment_type.size
     interc = np.zeros(n, dtype=bool)
     interc[geo.typed["intercellular"]] = True
     passage = np.zeros(n, dtype=bool)
@@ -196,10 +196,10 @@ def wall_counts(geo):
         for c in geo.wall_cells[w]:
             if c < 0:
                 continue
-            g = geo.cgroup[c]
-            key = ("interc" if interc[c] else "xyl" if g in (13, 19, 20) else "passage" if passage[c] else
-                   "endo" if g == 3 else "stele" if g > 4 else "cortex" if g == 4 else "exo" if g == 1 else
-                   "epi" if g == 2 else None)
+            mtg = geo.cgroup[c]
+            key = ("interc" if interc[c] else "xyl" if mtg in (13, 19, 20) else "passage" if passage[c] else
+                   "endo" if mtg == 3 else "stele" if mtg > 4 else "cortex" if mtg == 4 else "exo" if mtg == 1 else
+                   "epi" if mtg == 2 else None)
             if key is not None:
                 counts[key][w] += 1
     geo.__dict__["_wall_counts"] = counts
@@ -287,10 +287,10 @@ def section_presets(geo, P, barrier, membranes, per_membrane=False):
     r_rel, x_rel = relative_positions(geo, rank_to_row, distance)
     counts = wall_counts(geo)
     vals, s_vals = tissue_values(P)
-    interc = np.zeros(geo.kind.size, dtype=bool)
+    interc = np.zeros(geo.compartment_type.size, dtype=bool)
     interc[geo.typed["intercellular"]] = True
     os_sieve = P["osmotic_sieve"]
-    psi_os = np.zeros(geo.kind.size)
+    psi_os = np.zeros(geo.compartment_type.size)
     sigma = np.zeros(len(membranes))
     wall_side = np.zeros(len(membranes))
     position = np.empty(geo.legacy_order.size, dtype=np.int64)
@@ -410,24 +410,24 @@ class MechaOsmoticPresets(MechaSections):
     sucrose_osmotic_potential: float = input_variable(**_doc("hPa", "the solutes' osmotic potential on the cells "
                                                                     "(−R T c; MechaSolutes, 0 without)"),
                                                       by="Solutes", default=0., scale=SCALES.Compartment,
-                                                      location="node", kind="NonInertialIntensive")
+                                                      location="node", kind="non_inertial_intensive")
     osmotic_potential: float = state_variable(**_doc("hPa", "osmotic potential of the protoplast or the wall's "
                                                             "solution (0: junctions, shoot sections)"),
                                               default=0., scale=SCALES.Compartment, location="node",
-                                              kind="NonInertialIntensive", weight="liquid_volume")
+                                              kind="non_inertial_intensive", weight="liquid_volume")
     reflection_coefficient: float = state_variable(**_doc("", "the membrane's reflection coefficient (0: other "
                                                               "edges, shoot sections)"),
                                                    default=0., scale=SCALES.Connection, location="edge",
-                                                   kind="NonInertialIntensive")
+                                                   kind="non_inertial_intensive")
 
     @rate(include_inactive=True)
-    def _osmotic_potential(self, kind, barrier, anatomy_template, sucrose_osmotic_potential, network_path) \
+    def _osmotic_potential(self, compartment_type, barrier, anatomy_template, sucrose_osmotic_potential, network_path) \
             -> tuple[np.ndarray, str, np.ndarray]:
         """The presets of every root section, each with its plant's parameters and its barrier, as the baseline; plus
         the solutes' −R T c on the cells (MechaSolutes: the reactions' baseline − R T c)."""
-        ds = self.data_structure
-        psi_os, sigma = np.zeros(ds.n_nodes()), np.zeros(ds.n_edges())
-        view = ds.to_graph_view()
+        data_structure = self.data_structure
+        psi_os, sigma = np.zeros(data_structure.n_nodes()), np.zeros(data_structure.n_edges())
+        view = data_structure.to_graph_view()
         path = np.asarray(network_path)
         barrier = np.asarray(barrier)
         table = self.parameter_table(type(self).declared_parameters(), "node")
@@ -438,7 +438,7 @@ class MechaOsmoticPresets(MechaSections):
                 continue
             e = edges[path[edges] == MEMBRANE]
             a, b = local_index(nodes, view.tail[e]), local_index(nodes, view.head[e])
-            wall_first = geo.kind[a] == 1
+            wall_first = geo.compartment_type[a] == 1
             membranes = np.c_[np.where(wall_first, a, b), np.where(wall_first, b, a)]
             v = nodes[0]
             P = {name: float(values[v]) for name, values in table.items()}

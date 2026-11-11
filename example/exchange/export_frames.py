@@ -29,7 +29,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OUTPUTS = os.path.join(HERE, "outputs")
 BARRIERS = (1, 3)
 # a log of the water: the compartments and their connections, their water potential, uptake and flows
-LOG = dict(scales=["Compartment"], variables=["tissue", "kind", "water_potential", "root_uptake", "flow"])
+LOG = dict(scales=["Compartment"], variables=["tissue", "compartment_type", "water_potential", "root_uptake", "flow"])
 
 
 def export(barriers=BARRIERS, outputs: str = OUTPUTS, options: dict = None) -> list:

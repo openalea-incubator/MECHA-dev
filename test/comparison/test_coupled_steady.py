@@ -29,32 +29,32 @@ SOLUTES = dict(solute_solve=2., d_apoplast=D_APO, d_plasmodesmata=D_PD, d_membra
 
 @pytest.fixture(scope="module")
 def both(case):
-    ds, g = case["ds"], case["g"]
-    if not ds.has("barrier"):
-        ds.register("barrier", np.ones(ds.n_nodes()), location="node")
-    ds.set("barrier", np.ones(ds.n_nodes()))
-    presets = MechaOsmoticPresets(data_structure=ds)
+    data_structure, g = case["data_structure"], case["mtg"]
+    if not data_structure.has("barrier"):
+        data_structure.register("barrier", np.ones(data_structure.n_nodes()), location="node")
+    data_structure.set("barrier", np.ones(data_structure.n_nodes()))
+    presets = MechaOsmoticPresets(data_structure=data_structure)
     for name, value in PRESETS.items():
         setattr(presets, name, value)
-    mecha = legacy_options(MechaHydraulics(data_structure=ds))
+    mecha = legacy_options(MechaHydraulics(data_structure=data_structure))
     mecha.standard_osmotic = 1.
-    solutes = MechaSolutes(data_structure=ds)
+    solutes = MechaSolutes(data_structure=data_structure)
     for name, value in SOLUTES.items():
         setattr(solutes, name, value)
-    nodes, _ = section_parts(ds)[case["segment"]]
-    cortex = nodes[np.asarray(ds.get("cgroup"))[nodes] == 4]
-    source = np.zeros(ds.n_nodes())
+    nodes, _ = section_parts(data_structure)[case["segment"]]
+    cortex = nodes[np.asarray(data_structure.get("cgroup"))[nodes] == 4]
+    source = np.zeros(data_structure.n_nodes())
     source[cortex] = PRODUCTION
-    ds.set("sucrose_source", source)
+    data_structure.set("sucrose_source", source)
     presets()
     mecha()
     solutes()
-    port = {name: np.asarray(ds.get(name))[nodes].copy() for name in ("sucrose", "coupled_psi", "sucrose_sink",
+    port = {name: np.asarray(data_structure.get(name))[nodes].copy() for name in ("sucrose", "coupled_psi", "sucrose_sink",
                                                                       "standard_psi")}
     geo = mecha.section_geometries()[case["segment"]][2]
     net = case["legacy"].network
     mecha_index = g.property("mecha_index")
-    index = np.array([int(mecha_index[int(v)]) for v in ds.entity_ids("node")[nodes]])
+    index = np.array([int(mecha_index[int(v)]) for v in data_structure.entity_ids("node")[nodes]])
     index[geo.junction_order] = net.n_walls + np.arange(net.n_junctions)
     x_cells = geo.x[geo.cells]
 
@@ -74,8 +74,8 @@ def both(case):
     solutes.solute_solve = 1.
     mecha.standard_osmotic = 0.
     for name in ("sucrose", "sucrose_source", "osmotic_potential", "sucrose_osmotic_potential"):
-        ds.set(name, np.zeros(ds.n_nodes()))
-    ds.set("reflection_coefficient", np.zeros(ds.n_edges()))
+        data_structure.set(name, np.zeros(data_structure.n_nodes()))
+    data_structure.set("reflection_coefficient", np.zeros(data_structure.n_edges()))
 
 
 def test_converged(both):
