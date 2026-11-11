@@ -253,15 +253,13 @@ def _grown(population) -> list:
 def test_growth_and_kinds_pass_the_topology_and_kinds_checks(monkeypatch):
     """The growing seedling (its sections lengthening: new kinds every day, the reduction's library patched with
     their sections in place of the former) under metafspm's checks: every patched structure-derived value equal to
-    its build (METAFSPM_CHECK_TOPOLOGY) and every kind evaluated equal to its evaluation alone in a fresh library
-    (METAFSPM_CHECK_ARCHETYPES); the results those of the unchecked run, bit for bit."""
-    from openalea.metafspm.data_structure import mpg as mpg_module
+    its build and every kind evaluated equal to its evaluation alone in a fresh library (Compute(checks={"topology",
+    "archetypes"})); the results those of the unchecked run, bit for bit."""
     counter = _Counter(monkeypatch)
     unchecked = _grown(_seedling(0.1))
     assert len(set(counter.keys)) > 2                                  # kinds evaluated as the sections grow
-    monkeypatch.setattr(mpg_module, "_CHECK_TOPOLOGY", True)
-    monkeypatch.setenv("METAFSPM_CHECK_ARCHETYPES", "1")
-    checked = _grown(_seedling(0.1))
+    with Compute(checks={"topology", "archetypes"}).limits():
+        checked = _grown(_seedling(0.1))
     for (uptake, leaf), (checked_uptake, checked_leaf) in zip(unchecked, checked):
         np.testing.assert_array_equal(uptake, checked_uptake)
         assert leaf == checked_leaf
