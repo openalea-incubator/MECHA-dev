@@ -194,7 +194,7 @@ def simulate(parameters: dict = None, anatomy: dict = None, barrier: float = 1.,
     *osmotic* ({name: value} of MECHA's osmotic presets, MechaOsmoticPresets: os_hetero, osmotic_epi, os_cortex,
     osmotic_left_soil...), the cells', walls' and soil's osmotic potentials act across the membranes (their reflection
     coefficients); *soil_psi* and *xylem_psi* are then their pressure potentials. With *outputs* (a folder), the run is
-    saved there: run.json (its status, timing and versions), scenario.json (the parameters it ran with),
+    saved there: run.json (its status, timing and provenance), scenario.json (the parameters it ran with),
     Plant/<model>/summaries.csv (the section's state variables) and frames.fspm.zip (the section before and after its
     solve, encoding3d frames: the frames folder packed at the end, the archive checked, then the folder removed;
     openalea.encoding3d.read reads them, e.g. frames.fspm.zip/frame_000001.glb).
