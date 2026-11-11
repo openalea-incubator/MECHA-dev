@@ -76,6 +76,8 @@ def test_plant_problem_mass_balance_and_bounds(four):
     collar = data_structure.get("collar_node_condition") == 1
     assert collar.any() and (owner[collar] == 0).all()
     np.testing.assert_allclose(psi[collar], mecha.collar_psi)
+    assert (data_structure.get("collar_potential")[collar] == mecha.collar_psi).all()
+    assert (data_structure.get("collar_inflow") == 0).all()
     assert psi.min() >= mecha.collar_psi - 1e-6 and psi.max() <= SOIL + 1e-6
     outflow = np.asarray(data_structure.to_graph_view().incidence @ flow).reshape(-1)             # out of each node, along its edges
     extracted = -outflow[collar].sum()                                         # what the collar takes
@@ -98,6 +100,8 @@ def test_neumann_collar():
     g, data_structure, mecha = _root(2, collar_condition=2., collar_flow=1e-3)
     assert (data_structure.get("collar_node_condition")[data_structure.get("collar_node_condition") > 0] == 2).all()
     assert data_structure.get("uptake").sum() == pytest.approx(1e-3, rel=1e-9)
+    inflow = data_structure.get("collar_inflow")
+    assert inflow.sum() == pytest.approx(-1e-3, rel=1e-12) and (data_structure.get("collar_potential") == 0).all()
 
 
 def test_elongation_sink_drawn_from_the_soil():

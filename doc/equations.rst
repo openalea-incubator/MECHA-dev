@@ -226,8 +226,10 @@ enter only with ``standard_osmotic`` 1.
 
 **The plant problem** (``_plant_problem``): every section's edges and the xylem junctions; the soil as a Robin term
 with ``soil_psi`` (an input); at the collar, on the vessels of each root system's first section (``_collar_node_condition``),
-the potential ``collar_psi`` (``collar_condition`` 1) or the flow ``collar_flow`` split as the vessels' Poiseuille
-conductances, :math:`q_v = -Q_\text{collar}\,A_v^2 / \sum A^2` (``collar_condition`` 2); each leaf organ's
+the potential ``collar_psi`` (``collar_condition`` 1: a Dirichlet condition, the node variable ``collar_potential``, hPa)
+or the flow ``collar_flow`` split as the vessels' Poiseuille conductances,
+:math:`q_v = -Q_\text{collar}\,A_v^2 / \sum A^2` (``collar_condition`` 2: a Neumann inflow, the node variable
+``collar_inflow``, cm3 d-1); each leaf organ's
 transpiration :math:`E` as a Neumann outflow at its leaf-surface node, :math:`q = -E` (a leaf organ: any organ
 its anatomy gave a leaf surface, whatever its label: GRANAP's leaves, Adel's blades and sheaths alike). The soil
 ``soil_boundary`` ``"per_node"`` acts on the contact nodes, which a reduced root section eliminates (it keeps its

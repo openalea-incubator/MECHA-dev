@@ -634,13 +634,14 @@ class MechaHydraulics(MechaSections):
     collar_node_condition: float = state_variable(**_doc("", "the collar condition of the node: 1 potential, 2 flow (0: none)"),
                                         default=0., scale=SCALES.Compartment, location="node",
                                         kind="descriptor")
-    # its unit is the potential's (collar_node_condition 1, the condition MECHA's simulations and RootSystemConductance use);
-    # where collar_node_condition is 2 the boundary's value is an inflow, in cm3 d-1 (unit_comment)
-    collar_value: float = state_variable(**{**_doc("hPa", "the collar's potential (collar_node_condition 1), or the node's inflow "
-                                                          "(collar_node_condition 2, negative: water leaving the root)"),
-                                            "unit_comment": "cm3 d-1 where collar_node_condition is 2 (an inflow)"},
-                                         default=0., scale=SCALES.Compartment, location="node",
-                                         kind="descriptor")
+    collar_potential: float = state_variable(**_doc("hPa", "the potential prescribed at a collar node (collar_node_condition 1: "
+                                                           "collar_psi; 0 elsewhere)"),
+                                             default=0., scale=SCALES.Compartment, location="node",
+                                             kind="descriptor")       # a prescribed value, no mean over the others
+    collar_inflow: float = state_variable(**_doc("cm3 d-1", "the flow prescribed into a collar node (collar_node_condition 2: its "
+                                                            "share of collar_flow, negative: water leaving the root; 0 elsewhere)"),
+                                          default=0., scale=SCALES.Compartment, location="node",
+                                          kind="extensive")
 
     # ── State variables: the solutions, and the sections' results ──
     standard_psi: float = state_variable(**_doc("hPa", "water potential, in its section's standard problem (its "
@@ -1114,11 +1115,12 @@ class MechaHydraulics(MechaSections):
 
     @rate(include_inactive=True)
     def _collar_node_condition(self, compartment_type, cgroup, cell_area, collar_condition, collar_psi, collar_flow) \
-            -> tuple[np.ndarray, str, np.ndarray]:
+            -> tuple[np.ndarray, str, np.ndarray, str, np.ndarray]:
         """
         The collar condition (Q-G2) on the xylem vessels of each root system's first section (a segment without a
-        parent): the collar's potential (collar_condition 1), or the flow collar_flow leaving the root, split among
-        the vessels as their Poiseuille conductances (∝ area², collar_condition 2).
+        parent): the collar's potential collar_psi (collar_condition 1: collar_potential), or the flow collar_flow
+        leaving the root, split among the vessels as their Poiseuille conductances (∝ area², collar_condition 2:
+        collar_inflow).
         """
         data_structure = self.data_structure
         first = np.isin(data_structure.entity_ids("SubOrgan"), list(self.section_roles()[0]))
@@ -1128,9 +1130,9 @@ class MechaHydraulics(MechaSections):
         with np.errstate(divide="ignore", invalid="ignore"):
             share = squared / data_structure.map_to(data_structure.map_to(squared, "node", "SubOrgan", "sum"), "SubOrgan", "node", "broadcast")
         kinds = np.where((condition == 1) | (condition == 2), condition, 0.)
-        values = np.select([condition == 1, condition == 2], [np.asarray(collar_psi, dtype=float),
-                                                              -np.asarray(collar_flow, dtype=float) * share], 0.)
-        return kinds, "collar_value", values
+        potential = np.where(condition == 1, np.asarray(collar_psi, dtype=float), 0.)
+        inflow = np.where(condition == 2, -np.asarray(collar_flow, dtype=float) * share, 0.)
+        return kinds, "collar_potential", potential, "collar_inflow", inflow
 
     # ── The standard problem: each section alone, MECHA's definition of kr (Q-M5) ──
     # tol (cm3 d-1): the pinned walls' penalty puts their residuals' round-off at ~1e-9; the systems are linear,
@@ -1210,8 +1212,10 @@ class MechaHydraulics(MechaSections):
                             weight="plant_soil_conductance", field="psi")
         soil_nodes = boundary_set(where={"soil_node_condition": ">0"}, condition_variable="soil_node_condition", value="soil_psi",
                                   weight="soil_bulk_conductance", field="psi")
-        collar = boundary_set(where={"collar_node_condition": ">0"}, condition_variable="collar_node_condition", value="collar_value", weight=0.,
-                              field="psi")
+        collar_potentials = boundary_set(where={"collar_node_condition": "==1"}, condition="dirichlet", value="collar_potential",
+                                         field="psi")
+        collar_inflows = boundary_set(where={"collar_node_condition": "==2"}, condition="neumann", value="collar_inflow",
+                                      field="psi")
         leaf_surfaces = boundary_set(where={"surface_inflow": "<0"}, condition="neumann", value="surface_inflow",
                                      field="psi")
 
