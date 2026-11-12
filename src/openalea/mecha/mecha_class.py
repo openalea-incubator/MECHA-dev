@@ -710,6 +710,7 @@ class Mecha:
         if nodes is None:
             nodes = self._collect_evaporating_wall_nodes()
         self._air_wall_bc = {'nodes': list(nodes), 'psi_air': float(psi_air)}
+        self.distributed_flow_air = None   # Dirichlet and Neumann air BC are exclusive
         return list(nodes)
 
     def _apply_air_wall_bc(self, matrix_W, rhs):
@@ -735,6 +736,65 @@ class Mecha:
             rhs_flat[idx] -= k_air * psi_air
         rhs[:] = rhs_flat.reshape(rhs.shape)
         bc['k_air'] = k_air
+
+    # ── Air-space Neumann BC (prescribed transpiration flux) ──────────────────
+    def _collect_air_space_nodes(self) -> list:
+        """Air-space cell node ids (mesophyll lacunae + sub-stomatal chambers)
+        connected to the vapour network (``wall_air`` / ``air_link`` edges)."""
+        g = self.network.graph
+        nwj = self.network.n_wall_junction
+        nodes = []
+        for cid in range(self.network.n_cells):
+            nd = nwj + cid
+            if nd not in g or not self.network.is_wall_air_cell(nd):
+                continue
+            if any(e.get('path') in ('wall_air', 'air_link') for e in g[nd].values()):
+                nodes.append(nd)
+        return nodes
+
+    def _distribute_transpiration_flow(self, flow_total: float,
+                                       nodes: list = None) -> list:
+        """Distribute an outward transpiration flux over the air spaces (Neumann BC).
+
+        Needle counterpart of :meth:`_distribute_xylem_flow`: the total flux is
+        split proportionally to the air-space cross-section areas and imposed as
+        a nodal outflow on each air-space cell.  Replaces any Dirichlet air BC
+        registered with :meth:`set_air_wall_bc`.
+
+        Parameters
+        ----------
+        flow_total : float
+            Total water flux [cm³/d] leaving the tissue through the air spaces
+            (> 0 = transpiration), same units as ``distributed_flow_xyl``.
+        nodes : list, optional
+            Air-space cell node ids; defaults to :meth:`_collect_air_space_nodes`.
+
+        Returns
+        -------
+        list
+            The air-space node ids carrying the flux.
+        """
+        if nodes is None:
+            nodes = self._collect_air_space_nodes()
+        if not nodes:
+            raise ValueError("No air-space cells found for the transpiration Neumann BC.")
+        nwj = self.network.n_wall_junction
+        areas = np.array([self.network.cell_areas[nd - nwj] for nd in nodes], dtype=float)
+        self._air_wall_bc = None
+        self.distributed_flow_air = {
+            'nodes': list(nodes),
+            'flows': float(flow_total) * areas / areas.sum(),   # cm³/d per node
+            'total': float(flow_total),
+        }
+        return list(nodes)
+
+    def _apply_air_flux_bc(self, rhs) -> None:
+        """Add the registered air-space outflows to ``rhs`` (rhs_i = outflow at i)."""
+        bc = getattr(self, 'distributed_flow_air', None)
+        if not bc:
+            return
+        for node, q in zip(bc['nodes'], bc['flows']):
+            rhs[self.indice[node]] += q
 
 
     @staticmethod
@@ -1179,6 +1239,7 @@ class Mecha:
                     psi_air = air_bc['psi_air']
                     for node in air_bc['nodes']:
                         rhs[self.indice[node]] -= k_air * psi_air
+                self._apply_air_flux_bc(rhs)
 
                 # Critical check for NaNs in rhs before soil BC
                 if np.any(np.isnan(rhs)):
@@ -1368,6 +1429,7 @@ class Mecha:
             matrix_W = matrix_W.tolil()
             self._apply_air_wall_bc(matrix_W, rhs)
             matrix_W = matrix_W.tocsr()
+        self._apply_air_flux_bc(rhs)
         # Solve system
         solution, verification_1 = self.solve(matrix = matrix_W, rhs = rhs, sparse_matrix = self.general.sparse_matrix)
 

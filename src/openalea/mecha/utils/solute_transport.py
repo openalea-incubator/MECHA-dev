@@ -706,6 +706,43 @@ class SoluteTransport:
         """Node volumes (cm³) for all n_total nodes (delegates to shared geometry)."""
         return self._geometry.node_volumes(i_maturity)
 
+    def _distribute_assimilates(self, flux_total: float, cell_ids,
+                                i_maturity: int = 0) -> np.ndarray:
+        """Distribute a total assimilate influx evenly over the source cells.
+
+        Solute counterpart of :meth:`Mecha._distribute_xylem_flow`: the total
+        production rate is split proportionally to cell volume, so every source
+        cell receives the same volumetric flux density [mol cm⁻³ d⁻¹].
+
+        Parameters
+        ----------
+        flux_total : float
+            Total production rate [mol/d] (> 0 = source).
+        cell_ids : iterable of int
+            Source cell ids (0-based, e.g. mesophyll cells).
+        i_maturity : int
+            Maturity stage used for the node volumes.
+
+        Returns
+        -------
+        ndarray, shape (n_size,)
+            Nodal source vector s [mol/d].  Pass as ``rhs`` to a transient
+            :meth:`solve` / ``solve_coupled`` (C dc/dt = T c + s); use ``-s``
+            for a steady-state solve.
+        """
+        s = np.zeros(self._matrix_size)
+        cell_ids = np.asarray(list(cell_ids), dtype=int)
+        if cell_ids.size == 0 or flux_total == 0.0:
+            return s
+        nwj = self.n_wall_junction
+        nodes = nwj + cell_ids
+        vols = self._compute_node_volumes(i_maturity)[nodes]
+        idx = cell_ids if self.mode == 'sym' else nodes
+        if self.mode == 'apo':
+            raise ValueError("Assimilate sources live in cells; not available in 'apo' mode.")
+        s[idx] = float(flux_total) * vols / vols.sum()
+        return s
+
     def build_capacitance(self, i_maturity: int) -> sp.csr_matrix:
         """
         Diagonal storage matrix C/dt for Crank-Nicolson.

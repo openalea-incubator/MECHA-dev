@@ -58,6 +58,23 @@ from openalea.mecha.calibration.forward_model import rh_to_water_potential
 # Gas constant used by MECHA for van't Hoff Ψ_os = −R·T·c  [hPa cm³ mol⁻¹ K⁻¹].
 _R_HPA = 8.314e4
 
+_SEC_PER_DAY = 86400.0
+_V_WATER = 18.015          # cm³/mol  molar volume of liquid water (M_w / ρ_w)
+_C_PER_SUCROSE = 12        # C atoms per sucrose (C12H22O11)
+
+
+def transpiration_to_flow(E: float, area_m2: float) -> float:
+    """E [mmol m⁻² s⁻¹] → total liquid water flux [cm³/d] over ``area_m2``."""
+    return E * 1e-3 * _V_WATER * _SEC_PER_DAY * area_m2
+
+
+def assimilation_to_sucrose(A: float, area_m2: float) -> float:
+    """A [µmol CO₂ m⁻² s⁻¹] → sucrose production [mol/d] over ``area_m2``.
+
+    Upper bound: all fixed carbon is assumed to end up as sucrose.
+    """
+    return A * 1e-6 / _C_PER_SUCROSE * _SEC_PER_DAY * area_m2
+
 # Default base plasmodesmata frequency (Fplxheight); 
 # the whole per-interface density profile is a ratio to this.
 _FPLXHEIGHT_BASE = 8.0e5
@@ -72,15 +89,19 @@ class SimParams:
 
     # ---- Water boundary conditions (Dirichlet) -------------------------------
     psi_xyl: float = -200.0        # hPa  xylem water potential (supply)
-    air_mode: str = 'psi'          # 'psi' | 'rh'
+    air_mode: str = 'psi'          # 'psi' | 'rh' | 'flux' (Neumann)
     psi_atm: float = -1.0e4        # hPa  air-space water potential (air_mode='psi')
     rh_air: float = 0.99           # -    air-space RH in (0, 1]  (air_mode='rh')
+    # air_mode='flux': transpiration E leaves through the air spaces (Neumann).
+    transpiration_E: Optional[float] = None  # mmol m⁻² s⁻¹
+    # Surface area [m²] E and A refer to; None → outer perimeter × slice height.
+    ref_area: Optional[float] = None
 
     # ---- Solute diffusivities / membrane reflection (PER-INSTANCE) -----------
     d_pd: float = 5.0e-1           # cm²/d  plasmodesmatal diffusivity
     d_apo: float = 0.1             # cm²/d  apoplastic wall diffusivity
     d_mem: float = 1.0e-6          # cm²/d  passive transmembrane diffusivity
-    sigma_sucrose: float = 0.7     # -      membrane reflection coefficient
+    sigma_sucrose: float = 0.85     # -      membrane reflection coefficient
 
     # ---- Plasmodesmata density (base Fplxheight frequency) -------------------
     # Absolute base PD frequency factor (Fplxheight); None → use the anatomy's
@@ -499,14 +520,32 @@ class NeedleSimulation:
         self._log(f"  mesophyll={len(meso)}  phloem-loading={len(self.phloem_loading_ids)}"
                   f"  xylem={len(xylem)}  air={len(airspace)}")
 
+    def _reference_area(self) -> float:
+        """Needle surface area [m²] the per-area fluxes E and A refer to."""
+        if self.params.ref_area is not None:
+            return float(self.params.ref_area)
+        perimeter = self.mecha.network._cells_gdf.geometry.union_all().exterior.length   # µm
+        height = float(self.mecha.geometry.maturity_stages[self.params.i_mat].get('height'))  # µm
+        return perimeter * height * 1e-12
+
     def _resolve_air_bc(self) -> None:
         p = self.params
+        if p.air_mode == 'flux':
+            if p.transpiration_E is None:
+                raise ValueError("air_mode='flux' requires transpiration_E.")
+            self.ref_area = self._reference_area()
+            self.psi_air = None
+            self.flow_air = transpiration_to_flow(p.transpiration_E, self.ref_area)
+            self.mecha._distribute_transpiration_flow(self.flow_air)
+            self._log(f"  Air Neumann BC E={p.transpiration_E} mmol/m²/s → "
+                      f"{self.flow_air:.3e} cm³/d over {self.ref_area:.3e} m²")
+            return
         if p.air_mode == 'rh':
             self.psi_air = rh_to_water_potential(p.rh_air, p.t_kelvin)
         elif p.air_mode == 'psi':
             self.psi_air = p.psi_atm
         else:
-            raise ValueError(f"air_mode must be 'psi' or 'rh', got {p.air_mode!r}.")
+            raise ValueError(f"air_mode must be 'psi', 'rh' or 'flux', got {p.air_mode!r}.")
         self.mecha.set_air_wall_bc(self.psi_air)
         self._log(f"  Air BC Ψ_air={self.psi_air:.1f} hPa ({p.air_mode})")
 
@@ -1021,6 +1060,17 @@ class NeedleDiurnalSimulation(NeedleDynamicSimulation):
         ids = list(self.phloem_loading_ids) + list(self.xylem_cell_ids)
         return self.nwj + np.array(sorted(set(ids)), dtype=int)
 
+    def _set_water_drive(self, f_t: float) -> None:
+        """Diurnal air BC (never fully off — floors at params.f_baseline)."""
+        self.mecha.set_air_wall_bc(self.psi_air * f_t)
+
+    def _sucrose_source(self, c: np.ndarray, meso_nodes: np.ndarray,
+                        g_t: float) -> np.ndarray:
+        """Photosynthetic input: injects c_photo·g(t) into the mesophyll in place
+        and returns the (zero) nodal source vector [mol/d] for the solve."""
+        c[meso_nodes] += self.params.c_photo * g_t
+        return np.zeros(self.st._matrix_size)
+
     def run(self) -> SimResult:
         p = self.params
         nwj, n_cells = self.nwj, self.n_cells
@@ -1069,13 +1119,9 @@ class NeedleDiurnalSimulation(NeedleDynamicSimulation):
             f_t = float(f_transpiration(t, p.period, p.f_phase, p.f_baseline))
             g_t = float(g_photosynthesis(t, p.period, p.g_phase))
 
-            # Diurnal air BC (never fully off — floors at p.f_baseline).
-            self.mecha.set_air_wall_bc(self.psi_air * f_t)
-            # Photosynthetic injection: ADD c_photo·g(t) to the mesophyll each
-            # step (free interior nodes, no Dirichlet pin), so sucrose can
-            # accumulate above c_pulse when production outpaces export.
+            self._set_water_drive(f_t)
             bc_step = self.bc
-            c[meso_nodes] += p.c_photo * g_t
+            src = self._sucrose_source(c, meso_nodes, g_t)
 
             manager.set_osmotic_from_concentration(
                 c[nwj: nwj + n_cells], nwj, p.t_kelvin, psi_os_baseline)
@@ -1086,11 +1132,12 @@ class NeedleDiurnalSimulation(NeedleDynamicSimulation):
                 c, c_sta = self.mst.solve_coupled(
                     h=p.h_idx, i_maturity=p.i_mat, i_scenario=p.i_sce,
                     c_prev=[c, c_sta], boundary_conditions=[bc_step, None],
+                    rhs=[src, None],
                     theta=p.theta, operators=p.ops, scheme=p.scheme)
             else:
                 c = self.st.solve(
                     h=p.h_idx, i_maturity=p.i_mat, i_scenario=p.i_sce,
-                    rhs=rhs0.copy(), boundary_conditions=bc_step,
+                    rhs=src, boundary_conditions=bc_step,
                     c_prev=c, theta=p.theta, operators=p.ops, scheme=p.scheme)
 
             T = self.st.spatial_operator(
@@ -1144,6 +1191,58 @@ class NeedleDiurnalSimulation(NeedleDynamicSimulation):
             water_flux_total=(j_w_ts[-1] if j_w_ts else None),
             extras=extras,
         )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Diurnal Neumann scenario: prescribed transpiration E and assimilation A
+# ══════════════════════════════════════════════════════════════════════════════
+@dataclass(frozen=True)
+class DiurnalFluxParams(DiurnalParams):
+    """Diurnal needle transport driven by gas-exchange fluxes (Neumann BCs).
+
+    * Water: E(t) = transpiration_E·f(t) leaves through the air spaces
+      (mesophyll lacunae + sub-stomatal chambers), split by air-space area.
+    * Sucrose: A(t) = assimilation_A·g(t), converted to sucrose (12 C / sucrose,
+      all fixed C → sucrose: upper bound) and spread evenly per mesophyll volume.
+
+    E and A refer to ``ref_area`` (default: outer needle perimeter × slice height).
+    The xylem keeps its Dirichlet ``psi_xyl`` so the potential level is defined.
+    """
+
+    _simulation_class_name: str = field(default='NeedleDiurnalFluxSimulation',
+                                        init=False, repr=False, compare=False)
+    air_mode: str = 'flux'
+    transpiration_E: float = 1.0      # mmol m⁻² s⁻¹  peak (midday) transpiration
+    assimilation_A: float = 5.0       # µmol m⁻² s⁻¹  peak (midday) CO₂ assimilation
+    label: str = 'diurnal_flux'
+
+
+class NeedleDiurnalFluxSimulation(NeedleDiurnalSimulation):
+    """``NeedleDiurnalSimulation`` with Neumann water and sucrose drivers."""
+
+    mode = 'dynamic'
+
+    def _set_water_drive(self, f_t: float) -> None:
+        self.mecha._distribute_transpiration_flow(self.flow_air * f_t)
+
+    def _sucrose_source(self, c: np.ndarray, meso_nodes: np.ndarray,
+                        g_t: float) -> np.ndarray:
+        p = self.params
+        q_suc = assimilation_to_sucrose(p.assimilation_A * g_t, self.ref_area)
+        return self.st._distribute_assimilates(q_suc, self.meso_cell_ids, p.i_mat)
+
+    def run(self) -> SimResult:
+        res = super().run()
+        p = self.params
+        f = res.extras['f_drive']
+        g = res.extras['g_drive']
+        res.extras['E'] = p.transpiration_E * f                  # mmol m⁻² s⁻¹
+        res.extras['A'] = p.assimilation_A * g                   # µmol m⁻² s⁻¹
+        res.extras['j_w_target'] = self.flow_air * f             # cm³/d
+        res.extras['j_s_source'] = np.asarray(
+            [assimilation_to_sucrose(p.assimilation_A * gi, self.ref_area) for gi in g])  # mol/d
+        res.extras['ref_area'] = np.asarray(self.ref_area)       # m²
+        return res
 
 
 # ══════════════════════════════════════════════════════════════════════════════
