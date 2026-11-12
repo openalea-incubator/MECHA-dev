@@ -5,7 +5,7 @@ Performance
 Two kinds of figures are given here. The first sections are the timings recorded while porting, with the commit that
 recorded them: single runs from October 2026, not benchmarks; the machine is not recorded, and no profiling script is
 kept in the repository. They are historical records of the code of their time. The last section, "In metafspm's use
-case 1 (November 2026)", gives the figures measured on metafspm's use case 1 (``examples/use_case_1/benchmark.py`` in
+case 1 (November 2026)", gives the figures measured on metafspm's use case 1 (``test/benchmarks/use_case_1/benchmark.py`` in
 metafspm) during metafspm's release optimisation, each with its date, its commits and the scene it was measured on.
 
 
@@ -101,7 +101,7 @@ Options affecting speed
 In metafspm's use case 1 (November 2026)
 ========================================
 
-Measured with metafspm's ``examples/use_case_1/benchmark.py`` (``--variability 1``) during metafspm's release
+Measured with metafspm's ``test/benchmarks/use_case_1/benchmark.py`` (``--variability 1``) during metafspm's release
 optimisation, on the development laptop (14 processors), each run alone under an 8 GB memory bound. Every change below
 gave the same results as the code before it, bit for bit on every step compared, except where stated. Each phase
 measured its before and after on the same day; the machine's speed varied by a few per cent from day to day, so figures
