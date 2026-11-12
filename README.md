@@ -91,7 +91,7 @@ and of the whole plant), `MechaSolutes` (solutes, diffusion and reactions), `Mec
 presets). GRANAP's component writes every section's network into the plant graph, and MECHA's components read it
 from there. The plant problem declares its water conserved (`PLANT_WATER`, metafspm's `graph_system(conserved=)`:
 nothing held, in from the soil, out by the organs' transpiration and to the elongating cells): a Scene's
-`conservation.csv` gives its balance at every step, its residual the plant's imbalance.
+`summaries/conservation.csv` gives its balance at every step, its residual the plant's imbalance.
 
 ### Developer tutorials
 

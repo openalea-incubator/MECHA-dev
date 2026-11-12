@@ -120,7 +120,7 @@ def test_the_plant_summaries_weight_kr_by_the_root_surface(tmp_path):
     kr, surface = np.asarray(data_structure.get("kr")), np.asarray(data_structure.get("radial_surface"))
     length = data_structure.map_to(np.asarray(data_structure.get("length")), "node", "SubOrgan", "mean")
     assert surface == pytest.approx(np.asarray(data_structure.get("perimeter")) * length * 100.)    # cm × m -> cm2
-    rows = pd.read_csv(next((tmp_path / "Plant").glob("*/summaries.csv")))
+    rows = pd.read_csv(next((tmp_path / "summaries" / "Plant").glob("*/summaries.csv")))
     measured = np.isfinite(kr)
     assert rows["kr"].iloc[-1] == pytest.approx(np.sum((kr * surface)[measured]) / np.sum(surface[measured]),
                                                 rel=1e-12)
