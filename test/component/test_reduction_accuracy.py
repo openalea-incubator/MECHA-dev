@@ -256,7 +256,8 @@ def test_growth_and_kinds_pass_the_topology_and_kinds_checks(monkeypatch):
     its build and every kind evaluated equal to its evaluation alone in a fresh library (Compute(checks={"topology",
     "archetypes"})); the results those of the unchecked run, bit for bit."""
     counter = _Counter(monkeypatch)
-    unchecked = _grown(_seedling(0.1))
+    with Compute().limits():                                           # the same thread limits as the checked run
+        unchecked = _grown(_seedling(0.1))
     assert len(set(counter.keys)) > 2                                  # kinds evaluated as the sections grow
     with Compute(checks={"topology", "archetypes"}).limits():
         checked = _grown(_seedling(0.1))
