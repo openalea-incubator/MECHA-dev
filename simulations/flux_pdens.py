@@ -4,7 +4,7 @@ flux_pdens.py
 Parameter sweep: plasmodesmata density (pm_den) × total transpiration water flux
 (Q_tot, driven by the air ↔ xylem water-potential difference).
 
-Grid: 10 × 10 = 100 experiments, each a DynamicParams run of exactly 200 steps.
+Grid: 10 × 10 = 100 experiments, each a TimeStepping run of exactly 200 steps.
 Output metric: cumulative solute mass transported to sink [pmol] after 200 steps.
 
 Axes
@@ -21,7 +21,7 @@ pm_den calibration
 ------------------
 The PD conductance has two contributions: (1) the sucrose diffusion constant
 (``d_pd``, fixed here) and (2) the PD *geometry*, whose density term is the base
-``Fplxheight`` frequency.  ``pm_den`` sets that base frequency: in
+``Fplxheight`` frequency.  ``Anatomy.pm_den`` sets that base frequency: in
 ``NeedleSimulation._build_network`` the whole per-interface ``fplxheight_map`` is
 rescaled by ``pm_den / 8.0E5`` so the default per-interface profile is preserved
 and ``pm_den == 8.0E5`` reproduces the anatomy defaults exactly.  Because
@@ -58,7 +58,8 @@ os.makedirs(_OUT_DIR, exist_ok=True)
 
 sys.path.insert(0, _SCRIPT_DIR)   # so 'import needle' finds the sibling file
 
-from needle import DynamicParams, run_experiments
+from needle import (Anatomy, DirichletBC, Experiment, JFNK, Solute, TimeStepping,
+                    run_experiments)
 
 # ── Sweep definition ──────────────────────────────────────────────────────────
 N       = 10
@@ -84,20 +85,21 @@ PSI_AIR_ABS  = np.logspace(np.log10(500),  np.log10(30000), N)  # |ψ_air| hPa
 PSI_AIR_VALUES = -PSI_AIR_ABS                                    # hPa (negative)
 
 # ── Build 100 parameter sets (row-major: outer = pm_den, inner = psi_air) ─────
+# Free 50 µM mesophyll impulse draining into phloem loading + xylem; no early stop.
+BASE = Experiment(
+    solute=Solute(d_pd=D_PD),
+    dynamics=TimeStepping(dt=0.1, max_steps=200, c0_meso=50.0e-6),
+    coupling=JFNK(),
+)
 params_grid = [
-    DynamicParams(
-        seed=SEED,
-        psi_xyl=PSI_XYL,
-        air_mode='psi',
-        psi_atm=psi_atm,
-        d_pd=D_PD,
-        pm_den=pm_den,
-        max_steps=200,
-        sink_fraction=float('inf'),   # disable early stop; always run 200 steps
-        label=f'pmden{pm_den:.2e}_psiair{abs(psi_atm):.0f}',
+    BASE.replace(
+        label=f'pmden{pm_den:.2e}_psiair{abs(psi_air):.0f}',
+        anatomy=Anatomy(seed=SEED, pm_den=pm_den),
+        bc=DirichletBC(psi_xyl=PSI_XYL, air='psi', psi_air=psi_air,
+                       sinks=('phloem_loading', 'xylem')),
     )
     for pm_den in PM_DEN_VALUES
-    for psi_atm in PSI_AIR_VALUES
+    for psi_air in PSI_AIR_VALUES
 ]
 
 

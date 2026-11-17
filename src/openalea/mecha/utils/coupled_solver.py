@@ -114,6 +114,190 @@ def _snapshot_psi_os(manager) -> np.ndarray:
     ])
 
 
+def _jfnk_fixed_point(g, q0, c_scale, bc_cell_val, f_tol, maxiter,
+                      inner_maxiter, line_search, rdiff,
+                      verbose=False, note=""):
+    """Solve q = g(q) on cell concentrations with newton_krylov.
+
+    Unknown and residual are scaled by ``c_scale`` (see the JFNK notes in
+    coupled_water_solute_solve); cells in ``bc_cell_val`` are pinned.
+    Returns (q, n_newton, converged).
+    """
+    def _pin(q):
+        for cid, c_val in bc_cell_val.items():
+            q[cid] = c_val
+        return q
+
+    eval_count = [0]
+
+    def _residual(x_flat):
+        eval_count[0] += 1
+        q_in = _pin((x_flat * c_scale).copy())
+        F = (g(q_in) - q_in) / c_scale
+        for cid in bc_cell_val:
+            F[cid] = 0.0
+        if verbose:
+            print(f"[coupled_solver]{note} JFNK residual eval {eval_count[0]:3d}: "
+                  f"‖F‖={np.linalg.norm(F):.4e}  q_max={np.max(np.abs(q_in)):.4e}")
+        return F
+
+    iter_box = [0]
+
+    def _callback(x_cur, f_cur):
+        iter_box[0] += 1
+        if verbose:
+            print(f"[coupled_solver]{note} Newton iter {iter_box[0]:3d}: "
+                  f"‖F‖={np.linalg.norm(f_cur):.4e}")
+
+    f_tol_scaled = max(f_tol / c_scale, 1e-12)
+    x0 = _pin(np.asarray(q0, dtype=float).copy()) / c_scale
+    try:
+        x_sol = newton_krylov(
+            _residual, x0, f_tol=f_tol_scaled, maxiter=maxiter,
+            inner_maxiter=inner_maxiter, line_search=line_search,
+            rdiff=rdiff, callback=_callback, verbose=False)
+        converged = True
+    except NoConvergence as exc:
+        # newton_krylov raises with the best iterate in exc.args[0].
+        x_sol = np.asarray(exc.args[0]).ravel()
+        converged = False
+        if verbose:
+            print(f"[coupled_solver]{note} JFNK did NOT converge "
+                  f"(‖F‖ still > f_tol={f_tol_scaled:.2e}).")
+    q = _pin(np.asarray(x_sol, dtype=float).ravel() * c_scale)
+    return q, iter_box[0], converged
+
+
+def coupled_implicit_step(
+    mecha,
+    st,
+    c_prev: np.ndarray,
+    T: float,
+    psi_os_baseline: np.ndarray,
+    boundary_conditions: dict = None,
+    rhs: np.ndarray = None,
+    i_scenario: int = 1,
+    i_maturity: int = 0,
+    h: int = 0,
+    theta: float = 1.0,
+    operators: str = 'T',
+    scheme: str = 'sg',
+    method: str = 'picard',
+    tol: float = 1.0,
+    max_iter: int = 12,
+    relaxation: float = 1.0,
+    jfnk_f_tol: float = None,
+    jfnk_maxiter: int = None,
+    jfnk_inner_maxiter: int = 30,
+    jfnk_line_search: str = 'armijo',
+    jfnk_rdiff: float = 1e-3,
+    transport_step=None,
+    verbose: bool = False,
+) -> tuple:
+    """Advance ONE physical time step with implicit water–solute coupling.
+
+    Solves c^{n+1} = g(c^{n+1}) where g(q) sets Ψ_os = baseline − R·T·q on the
+    cells, re-solves hydraulics, and takes one θ-step of transport from the
+    fixed ``c_prev`` = c^n. Unlike coupled_water_solute_solve(time_stepping=True)
+    c^n is never advanced inside the iteration, so the result is a genuine
+    single step of length dt.
+
+    Parameters
+    ----------
+    c_prev : ndarray
+        Field at t^n (transport-vector layout of ``st``). Also the initial guess.
+    psi_os_baseline : ndarray, shape (n_cells,)
+        Background Ψ_os onto which the van't Hoff term is added.
+    method : 'picard' | 'jfnk'
+        'picard': fixed-point iteration q ← ω·g(q) + (1−ω)·q.
+        'jfnk'  : newton_krylov on F(q) = g(q) − q (cell-only unknown).
+        ``max_iter=1`` with 'picard' reproduces the explicit (lagged) coupling.
+    tol : float
+        [hPa] Picard stops when R·T·max|Δq_cells| < tol; JFNK default f_tol is
+        tol / (R·T).
+    transport_step : callable or None
+        ``transport_step() -> c_new`` replacing the default
+        ``st.solve(c_prev=c_prev, ...)`` (e.g. a multi-solute block solve whose
+        extra species the caller captures). It must always step from t^n.
+
+    Returns
+    -------
+    c_new : ndarray
+        Transport field of the last coupling evaluation; the hydraulic state in
+        ``mecha`` is consistent with it to within ``tol``.
+    n_iter : int
+        Picard iterations or Newton iterations.
+    converged : bool
+    """
+    if method not in ('picard', 'jfnk'):
+        raise ValueError(f"method must be 'picard' or 'jfnk'; got {method!r}.")
+    if method == 'jfnk' and not _HAVE_NEWTON_KRYLOV:
+        raise ImportError("method='jfnk' requires scipy.optimize.newton_krylov.")
+    if not (0.0 < relaxation <= 1.0):
+        raise ValueError(f"relaxation must be in (0, 1]; got {relaxation!r}.")
+
+    nwj = mecha.network.n_wall_junction
+    n_cells = mecha.network.n_cells
+    manager = mecha.network.cell_manager
+    RT = 8.314e4 * T
+    sym = st.mode == 'sym'
+    if rhs is None:
+        rhs = np.zeros(st._matrix_size)
+
+    def _cells_of(vec):
+        return vec if sym else vec[nwj: nwj + n_cells]
+
+    if transport_step is None:
+        def transport_step():
+            return st.solve(
+                h=h, i_maturity=i_maturity, i_scenario=i_scenario,
+                rhs=rhs.copy(), boundary_conditions=boundary_conditions,
+                c_prev=c_prev, theta=theta, operators=operators, scheme=scheme)
+
+    last = [None]
+
+    def g(q_cells):
+        manager.set_osmotic_from_concentration(q_cells, nwj, T, psi_os_baseline)
+        mecha.water_flux(h=h, use_stored_psi_os=True, verbose=False)
+        last[0] = transport_step()
+        return _cells_of(last[0]).copy()
+
+    bc_cell_val = {}
+    for node_id, c_val in (boundary_conditions or {}).items():
+        cid = node_id - nwj
+        if 0 <= cid < n_cells:
+            bc_cell_val[cid] = float(c_val)
+
+    q = _cells_of(np.asarray(c_prev, dtype=float)).copy()
+
+    if method == 'picard':
+        converged = False
+        n_iter = 0
+        for n_iter in range(1, max_iter + 1):
+            q_new = g(q)
+            delta = RT * float(np.max(np.abs(q_new - q))) if q.size else 0.0
+            if verbose:
+                print(f"[coupled_step] Picard {n_iter:3d}: Δψ_os_max = {delta:.3e} hPa")
+            q = q_new if relaxation == 1.0 else relaxation * q_new + (1.0 - relaxation) * q
+            if delta < tol:
+                converged = True
+                break
+        if relaxation < 1.0:
+            g(q)
+        return last[0], n_iter, converged
+
+    bc_mag = max((abs(v) for v in bc_cell_val.values()), default=0.0)
+    c_scale = max(bc_mag, float(np.max(np.abs(q))) if q.size else 0.0, 10.0 * tol / RT)
+    f_tol = jfnk_f_tol if jfnk_f_tol is not None else tol / RT
+    q, n_iter, converged = _jfnk_fixed_point(
+        g, q, c_scale, bc_cell_val, f_tol,
+        maxiter=jfnk_maxiter if jfnk_maxiter is not None else max_iter,
+        inner_maxiter=jfnk_inner_maxiter, line_search=jfnk_line_search,
+        rdiff=jfnk_rdiff, verbose=verbose, note=" [step]")
+    g(q)
+    return last[0], n_iter, converged
+
+
 def coupled_water_solute_solve(
     mecha,
     st,
@@ -406,12 +590,7 @@ def coupled_water_solute_solve(
             c_prev_ts[0] = c_new.copy()
         return c_new
 
-    # Boundary cell mask: cell_ids that carry a Dirichlet BC (pinned in Newton).
-    bc_cell_ids = set()
-    for node_id in (boundary_conditions or {}):
-        cid = node_id - nwj
-        if 0 <= cid < n_cells:
-            bc_cell_ids.add(cid)
+    # Dirichlet cells (pinned in Newton).
     bc_cell_val = {}
     for node_id, c_val in (boundary_conditions or {}).items():
         cid = node_id - nwj
@@ -423,11 +602,6 @@ def coupled_water_solute_solve(
     # reads back the new cell concentrations. Walls/junctions are slaved to the
     # transport solve, so they need not be Newton unknowns.
     full_field = [None]
-
-    def _reimpose_bc_cells(q):
-        for cid, c_val in bc_cell_val.items():
-            q[cid] = c_val
-        return q
 
     def _apply_step_cells(q_cells, lam):
         """Reduced coupling map on CELL concentrations only.
@@ -518,63 +692,19 @@ def coupled_water_solute_solve(
                 c_scale = 1.0
 
             f_tol = jfnk_f_tol if jfnk_f_tol is not None else default_f_tol
-            # Interpret f_tol in scaled units (‖F/c_scale‖).
-            f_tol_scaled = max(f_tol / c_scale, 1e-12)
-            n_newton = jfnk_maxiter if jfnk_maxiter is not None else max_iter
-            eval_count = [0]
-
-            def _residual(x_flat):
-                eval_count[0] += 1
-                q_in = _reimpose_bc_cells((x_flat * c_scale).copy())
-                g = _apply_step_cells(q_in, lam)
-                F = (g - q_in) / c_scale        # scaled cell residual
-                for cid in bc_cell_ids:
-                    F[cid] = 0.0                # Dirichlet cells pinned to 0
-                if verbose:
-                    print(
-                        f"[coupled_solver]{stage_note} JFNK residual eval "
-                        f"{eval_count[0]:3d}: ‖F‖={np.linalg.norm(F):.4e}  "
-                        f"q_max={np.max(np.abs(q_in)):.4e}"
-                    )
-                return F
-
-            iter_box = [0]
-
-            def _callback(x_cur, f_cur):
-                iter_box[0] += 1
-                if verbose:
-                    print(
-                        f"[coupled_solver]{stage_note} Newton iter "
-                        f"{iter_box[0]:3d}: ‖F‖={np.linalg.norm(f_cur):.4e}"
-                    )
-
-            x0 = _reimpose_bc_cells(q_used.copy()) / c_scale
-            try:
-                x_sol = newton_krylov(
-                    _residual, x0,
-                    f_tol=f_tol_scaled,
-                    maxiter=n_newton,
-                    inner_maxiter=jfnk_inner_maxiter,
-                    line_search=jfnk_line_search,
-                    rdiff=jfnk_rdiff,
-                    callback=_callback,
-                    verbose=False,
-                )
-                stage_converged = True
-            except NoConvergence as exc:
-                # newton_krylov raises with the best iterate in exc.args[0].
-                x_sol = np.asarray(exc.args[0]).ravel()
-                stage_converged = False
-                if verbose:
-                    print(f"[coupled_solver]{stage_note} JFNK did NOT converge "
-                          f"(‖F‖ still > f_tol={f_tol_scaled:.2e}).")
+            q_final, n_newton_done, stage_converged = _jfnk_fixed_point(
+                lambda q: _apply_step_cells(q, lam), q_used, c_scale,
+                bc_cell_val, f_tol,
+                maxiter=jfnk_maxiter if jfnk_maxiter is not None else max_iter,
+                inner_maxiter=jfnk_inner_maxiter,
+                line_search=jfnk_line_search, rdiff=jfnk_rdiff,
+                verbose=verbose, note=stage_note)
 
             # Realize the accepted cell solution: run one final coupling step so
             # the model state (hydraulics, full transport field) is consistent.
-            q_final = _reimpose_bc_cells(np.asarray(x_sol).ravel() * c_scale)
             _apply_step_cells(q_final, lam)
             c_used = full_field[0]
-            total_iters += iter_box[0]
+            total_iters += n_newton_done
 
         else:
             # ── Plain Picard (optionally under-relaxed) ──────────────────────

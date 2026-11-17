@@ -1,44 +1,40 @@
 """
 diurnal.py
 ==========
-Diurnal (day/night) needle scenario.  All logic lives in ``needle.py``;
-this module is the runnable entry point.
+Diurnal (day/night) needle scenario with Dirichlet drivers.
 
-Configuration (per specification):
-    d_pd    = 0.1 * 5.2e-6 * 86400  cm²/d
-    PSI_XYL = -200 hPa
-    PSI_AIR = -1e3 * f(t)  hPa   (diurnally modulated, peaks at noon)
-    c_meso  = 50e-6 * g(t)  mol/cm³  (photosynthetic source, daytime only)
+    Ψ_xyl = −200 hPa
+    Ψ_air = −1e3 · f(t) hPa              (peaks at noon, night floor 0.1)
+    mesophyll += 5e-6 · g(t) mol/cm³     per step (photosynthesis, daytime only)
 
-Measured outputs: j_w, j_s, j_s/j_w  — see post_sim.diurnal_flux_plot.
+Measured outputs: j_w, j_s, j_s/j_w — see post_sim.diurnal_flux_plot.
 """
 
 import os
-from needle import (
-    _OUT_DIR,
-    DiurnalParams,
-    GeometryBase,
-    NeedleDiurnalSimulation,
-    SimResult,
-    get_geometry_base,
-)
+
+from needle import (_OUT_DIR, D_PD_SUCROSE, Anatomy, DirichletBC, Diurnal,
+                    Experiment, JFNK, NeedleSimulation, Solute, TimeStepping)
 from post_sim import diurnal_flux_plot
 
-
-def run_diurnal(params: DiurnalParams = None,
-                geometry: GeometryBase = None,
-                verbose: bool = False) -> SimResult:
-    params   = params   or DiurnalParams(seed=42)
-    geometry = geometry or get_geometry_base(params.seed)
-    return NeedleDiurnalSimulation(params, geometry, verbose=verbose).run()
+EXPERIMENT = Experiment(
+    label='diurnal',
+    anatomy=Anatomy(seed=42),
+    solute=Solute(d_pd=D_PD_SUCROSE),
+    bc=DirichletBC(
+        psi_xyl=-200.0, air='psi', psi_air=-1.0e3, c_photo=5.0e-6,
+        sinks=('phloem_loading', 'xylem'),
+        diurnal=Diurnal(period=1.0, f_baseline=0.1),
+    ),
+    dynamics=TimeStepping(dt=1.0 / 24.0, max_steps=48),
+    coupling=JFNK(),               # NoCoupling() | Picard() | JFNK()
+    starch=None,
+)
 
 
 if __name__ == '__main__':
-    SEED   = 42
-    params = DiurnalParams(seed=SEED, label='diurnal', max_steps=48)
-    res    = run_diurnal(params)
+    res = NeedleSimulation(EXPERIMENT, verbose=True).run()
     print(res.summary())
-    stem = os.path.join(_OUT_DIR, f"needle_{res.params['label']}")
+    stem = os.path.join(_OUT_DIR, f"needle_{EXPERIMENT.label}")
     res.save(stem + '.npz')
     diurnal_flux_plot(res, stem + '_fluxes.png')
     print(f"Saved: {stem}_fluxes.png")

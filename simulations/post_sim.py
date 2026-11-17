@@ -12,7 +12,8 @@ post-processing step run one result at a time.
 Entry points
 ------------
 ``concentration_gif(res, path)``   transient cell concentration field (GIF)
-``peclet_gif(res, path)``          per-bond local Péclet field (GIF)
+``flow_network_plot(res, path, quantity)``  per-link arrows: 'solute' | 'water' | 'peclet'
+``flow_network_gif(res, path, quantity)``   same, animated over the stored snapshots
 ``mass_balance_plot(res, path)``   interior mass / mass-to-sink vs. time
 ``diurnal_flux_plot(res, path)``   j_w, j_s, j_s/j_w (+ starch) time series
 ``starch_comparison_plot(results, path)``  k_f × k_r sweep overlay
@@ -133,9 +134,10 @@ def anatomy_plot(res: SimResult, path: str) -> str:
 # ══════════════════════════════════════════════════════════════════════════════
 # Field-map GIF (concentration)
 # ══════════════════════════════════════════════════════════════════════════════
-def _render_cell_field_gif(gdf, concentration, node_of_cell, times, frac_to_sink,
+def _render_cell_field_gif(gdf, concentration, node_of_cell, times, series,
                            path, max_frames=150, fps=12, cmap='plasma',
-                           title='', cbar_label='', scale=1.0):
+                           title='', cbar_label='', scale=1.0,
+                           series_label='', series_unit='', series_scale=1.0):
     plt = _import_mpl()
     from matplotlib.animation import FuncAnimation, PillowWriter
 
@@ -145,7 +147,7 @@ def _render_cell_field_gif(gdf, concentration, node_of_cell, times, frac_to_sink
     idx = list(range(0, n, stride))
     if idx[-1] != n - 1:
         idx.append(n - 1)
-    vmax = float(np.nanpercentile(frames[-1] * scale, 99)) or 1.0
+    vmax = float(np.nanpercentile(frames[-1][node_of_cell] * scale, 99)) or 1.0
 
     gdf = gdf.copy()
     fig, ax = plt.subplots(figsize=(9, 7))
@@ -160,55 +162,13 @@ def _render_cell_field_gif(gdf, concentration, node_of_cell, times, frac_to_sink
         ax.set_aspect('equal', 'box')
         ax.set_xlabel('x (µm)'); ax.set_ylabel('y (µm)')
         t = '' if times is None else f't = {times[fi]:.3f} d'
-        s = ('' if frac_to_sink is None
-             else f'   |   to sink: {frac_to_sink[fi]*1e12:.4f} pmol')
+        s = ('' if series is None
+             else f'   |   {series_label}: {series[fi]*series_scale:.4g} {series_unit}'.rstrip())
         ax.set_title(f'{title}\n{t}{s}')
         return ax.collections
 
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(0.0, vmax))
     fig.colorbar(sm, ax=ax, label=cbar_label)
-    anim = FuncAnimation(fig, _draw, frames=len(idx), blit=False)
-    anim.save(path, writer=PillowWriter(fps=fps))
-    plt.close(fig)
-    return path
-
-
-def _render_peclet_gif(pe_segments, peclet, times, path, max_frames=150, fps=12):
-    plt = _import_mpl()
-    from matplotlib.animation import FuncAnimation, PillowWriter
-    from matplotlib.collections import LineCollection
-
-    frames = peclet if peclet.ndim == 2 else peclet[None, :]
-    n = frames.shape[0]
-    stride = max(1, n // max_frames)
-    idx = list(range(0, n, stride))
-    if idx[-1] != n - 1:
-        idx.append(n - 1)
-
-    finite = frames[np.isfinite(frames) & (frames > 0)]
-    vmin = float(np.percentile(finite, 1)) if finite.size else 1e-3
-    vmax = float(np.percentile(finite, 99)) if finite.size else 1.0
-    xs = pe_segments[:, :, 0]; ys = pe_segments[:, :, 1]
-
-    fig, ax = plt.subplots(figsize=(9, 7))
-    norm = plt.matplotlib.colors.LogNorm(vmin=max(vmin, 1e-6), vmax=max(vmax, 1e-3))
-
-    def _draw(k):
-        fi = idx[k]
-        ax.clear()
-        lc = LineCollection(pe_segments, cmap='coolwarm', norm=norm)
-        lc.set_array(np.clip(frames[fi], 1e-6, None))
-        lc.set_linewidth(0.8)
-        ax.add_collection(lc)
-        ax.set_xlim(xs.min(), xs.max()); ax.set_ylim(ys.min(), ys.max())
-        ax.set_aspect('equal', 'box')
-        ax.set_xlabel('x (µm)'); ax.set_ylabel('y (µm)')
-        t = '' if times is None else f't = {times[fi]:.3f} d'
-        ax.set_title(f'Per-bond local Péclet |A_edge|/D_edge\n{t}')
-        return [lc]
-
-    sm = plt.cm.ScalarMappable(cmap='coolwarm', norm=norm)
-    fig.colorbar(sm, ax=ax, label='local Péclet (log)')
     anim = FuncAnimation(fig, _draw, frames=len(idx), blit=False)
     anim.save(path, writer=PillowWriter(fps=fps))
     plt.close(fig)
@@ -228,6 +188,8 @@ def concentration_gif(res: SimResult, path: str, max_frames: int = 150,
         res.times, res.frac_to_sink, path,
         max_frames=max_frames, fps=fps, cmap=cmap,
         title='Needle sucrose transport', cbar_label='c (µM sucrose)', scale=1e6,
+        series_label=res.sink_label, series_unit=res.sink_unit,
+        series_scale=res.sink_scale,
     )
 
 
@@ -246,13 +208,161 @@ def starch_concentration_gif(res: SimResult, path: str, max_frames: int = 150,
     )
 
 
-def peclet_gif(res: SimResult, path: str, max_frames: int = 150,
-               fps: int = 12) -> str:
-    """Render the per-bond local Péclet field of a dynamic run as a GIF."""
-    if res.mode != 'dynamic':
-        raise ValueError("peclet_gif is only defined for dynamic runs.")
-    return _render_peclet_gif(res.pe_segments, res.peclet, res.times, path,
-                              max_frames=max_frames, fps=fps)
+# ══════════════════════════════════════════════════════════════════════════════
+# Per-link network arrows (solute flux / water flux / Péclet)
+# ══════════════════════════════════════════════════════════════════════════════
+# quantity → (extras key, label, unit)
+_FLOW_QUANTITIES = {
+    'solute': ('edge_solute', 'Sucrose flux', 'mol d⁻¹'),
+    'water':  ('edge_water',  'Water flux',   'cm³ d⁻¹'),
+    'peclet': ('edge_peclet', 'Local Péclet (1−σ)F/D_e', '–'),
+}
+_BG = '#0d0d1a'
+
+
+def _flow_series(res: SimResult, quantity: str):
+    """(segments, path codes, snapshot times, (n_snap,E) signed values) for a quantity."""
+    if quantity not in _FLOW_QUANTITIES:
+        raise ValueError(f"quantity must be one of {tuple(_FLOW_QUANTITIES)}; got {quantity!r}")
+    key = _FLOW_QUANTITIES[quantity][0]
+    seg, code, vals = (res.get_extra('edge_segments'), res.get_extra('edge_path'),
+                       res.get_extra(key))
+    if seg is None or code is None or vals is None:
+        raise ValueError(f"SimResult has no per-link snapshots ('{key}'); re-run the simulation.")
+    vals = np.atleast_2d(np.asarray(vals, dtype=float))
+    t = res.get_extra('edge_t')
+    return seg, np.asarray(code), (np.zeros(len(vals)) if t is None else np.asarray(t)), vals
+
+
+def _resolve_scale(filter_links: bool, tol_decades: float, log_decades):
+    """(tol, span): drop links below ref_max·10^-tol; log width span (0 → linear)."""
+    tol = float(tol_decades) if filter_links else None
+    if log_decades is None:
+        log_decades = tol if tol else 4.0
+    return tol, float(log_decades)
+
+
+def _keep_mask(vals, ref_max, tol):
+    a = np.abs(np.nan_to_num(vals, nan=0.0))
+    if ref_max <= 0.0:
+        return np.zeros(a.shape, dtype=bool)
+    return a > (ref_max * 10.0 ** (-tol) if tol is not None else 0.0)
+
+
+def _draw_flow_frame(ax, seg, code, vals, ref_max, tol, log_decades, title):
+    """Draw one snapshot: width/alpha ∝ |value| / ref_max, arrow = sign (u→v if > 0)."""
+    from needle import EDGE_PATHS
+    from openalea.mecha.utils.network_export import _draw_edge_vectors
+
+    a = np.abs(np.nan_to_num(vals, nan=0.0))
+    keep = _keep_mask(vals, ref_max, tol)
+    if ref_max <= 0.0:
+        mag = np.zeros_like(a)
+    elif log_decades:
+        mag = np.clip(1.0 + np.log10(np.maximum(a, 1e-300) / ref_max) / log_decades, 0.0, 1.0)
+    else:
+        mag = np.clip(a / ref_max, 0.0, 1.0)
+
+    path_data = {pt: [] for pt in EDGE_PATHS}
+    # Kept links at the bottom of the window get mag≈0; floor them so they still draw.
+    for k in np.nonzero(keep)[0]:
+        u, v = seg[k]
+        src, dst = (u, v) if vals[k] >= 0 else (v, u)
+        path_data[EDGE_PATHS[int(code[k])]].append((src, dst, max(float(mag[k]), 1e-3)))
+
+    ax.set_facecolor(_BG)
+    ax.set_aspect('equal')
+    _draw_edge_vectors(ax, path_data, seg.reshape(-1, 2))
+    ax.set_title(title, color='white', fontsize=11)
+
+
+def _flow_title(quantity, t, vals, code, ref_max, tol, log_decades):
+    from needle import EDGE_PATHS
+    _, label, unit = _FLOW_QUANTITIES[quantity]
+    a = np.abs(np.nan_to_num(vals, nan=0.0))
+    scale = f"log {log_decades:g} dec" if log_decades else "linear"
+    shown = int(_keep_mask(vals, ref_max, tol).sum())
+    filt = f", |·| > 1e-{tol:g}·max" if tol is not None else ""
+    head = (f"{label} [{unit}] – links, t = {t:.2f} d   (ref max = {ref_max:.2e}, {scale})\n"
+            f"shown {shown} of {a.size} links{filt}")
+    if quantity == 'peclet':
+        fin = np.isfinite(vals)
+        stats = "   ".join(
+            f"{pt}: |Pe|>1 in {100*np.mean(a[(code == i) & fin] > 1):.0f}%"
+            for i, pt in enumerate(EDGE_PATHS) if np.any((code == i) & fin))
+    else:
+        stats = "   ".join(f"Σ|·| {pt}: {a[code == i].sum():.2e}"
+                           for i, pt in enumerate(EDGE_PATHS))
+    return f"{head}\n{stats}"
+
+
+def flow_network_plot(res: SimResult, path: Optional[str] = None,
+                      quantity: str = 'solute', step: int = -1, ax=None,
+                      filter_links: bool = True, tol_decades: float = 2.0,
+                      log_decades: Optional[float] = None) -> Optional[str]:
+    """Per-link arrows on apo / membrane / PD links, styled like MECHA's ``plot_flow_network``.
+
+    ``quantity``: 'solute' (sucrose flux), 'water' (volume flux) or 'peclet'
+    (signed local Péclet). ``step`` indexes the stored snapshots (``extras['edge_t']``).
+    ``filter_links`` drops links with |value| ≤ max·10^-``tol_decades``.
+    ``log_decades``: log width span; None → ``tol_decades`` (4 if unfiltered), 0 → linear.
+    Output format follows the extension of ``path`` ('.pdf' keeps arrows as vectors).
+    """
+    plt = _import_mpl()
+    seg, code, times, series = _flow_series(res, quantity)
+    vals = series[step]
+    ref_max = float(np.nanmax(np.abs(vals))) if np.isfinite(vals).any() else 0.0
+    tol, span = _resolve_scale(filter_links, tol_decades, log_decades)
+
+    own_fig = ax is None
+    if own_fig:
+        fig, ax = plt.subplots(figsize=(12, 12), facecolor=_BG)
+    _draw_flow_frame(ax, seg, code, vals, ref_max, tol, span,
+                     _flow_title(quantity, float(times[step]), vals, code, ref_max, tol, span))
+    if own_fig:
+        fig.tight_layout()
+        if path is not None:
+            fig.savefig(path, dpi=150, bbox_inches='tight', facecolor=_BG)
+        plt.close(fig)
+    return path
+
+
+def flow_network_gif(res: SimResult, path: str, quantity: str = 'solute',
+                     max_frames: int = 60, fps: int = 4,
+                     filter_links: bool = True, tol_decades: float = 2.0,
+                     log_decades: Optional[float] = None) -> str:
+    """Animate the per-link snapshots of ``quantity`` (one frame per stored snapshot).
+
+    Width/alpha and the filter share ONE reference (max over all frames), so frames
+    are comparable. Filter/scale options as in ``flow_network_plot``.
+    """
+    plt = _import_mpl()
+    from matplotlib.animation import FuncAnimation, PillowWriter
+
+    seg, code, times, series = _flow_series(res, quantity)
+    n = series.shape[0]
+    stride = max(1, n // max_frames)
+    idx = list(range(0, n, stride))
+    if idx[-1] != n - 1:
+        idx.append(n - 1)
+    finite = np.abs(series[np.isfinite(series)])
+    ref_max = float(finite.max()) if finite.size else 0.0
+    tol, span = _resolve_scale(filter_links, tol_decades, log_decades)
+
+    fig, ax = plt.subplots(figsize=(10, 10), facecolor=_BG)
+
+    def _draw(k):
+        fi = idx[k]
+        ax.clear()
+        _draw_flow_frame(ax, seg, code, series[fi], ref_max, tol, span,
+                         _flow_title(quantity, float(times[fi]), series[fi], code,
+                                     ref_max, tol, span))
+        return []
+
+    anim = FuncAnimation(fig, _draw, frames=len(idx), blit=False)
+    anim.save(path, writer=PillowWriter(fps=fps), savefig_kwargs={'facecolor': _BG})
+    plt.close(fig)
+    return path
 
 
 def mass_balance_plot(res: SimResult, path: str) -> str:
@@ -266,8 +376,10 @@ def mass_balance_plot(res: SimResult, path: str) -> str:
     ax1.set_xlabel('t (d)'); ax1.set_ylabel('interior solute mass (pmol)', color='b')
     ax1.tick_params(axis='y', labelcolor='b')
     ax2 = ax1.twinx()
-    ax2.plot(res.times, np.asarray(res.frac_to_sink) * 1e12, 'r--', label='to sink')
-    ax2.set_ylabel('cumulative mass to sink (pmol)', color='r')
+    ax2.plot(res.times, np.asarray(res.frac_to_sink) * res.sink_scale, 'r--',
+             label=res.sink_label)
+    unit = f' ({res.sink_unit})' if res.sink_unit else ''
+    ax2.set_ylabel(f'{res.sink_label}{unit}', color='r')
     ax2.tick_params(axis='y', labelcolor='r')
     fig.suptitle('Solute mass balance')
     fig.tight_layout()
@@ -294,8 +406,8 @@ def diurnal_flux_plot(res: SimResult, path: str) -> str:
     with np.errstate(divide='ignore', invalid='ignore'):
         ratio = np.where(np.abs(j_w) > 0, j_s / j_w, np.nan)
 
-    period  = float(res.params.get('period', 1.0))
-    g_phase = float(res.params.get('g_phase', 0.0))
+    period  = float(res.param('period', 1.0))
+    g_phase = float(res.param('g_phase', 0.0))
 
     n_panels = 4 if m_s is not None else 3
     fig, axes = plt.subplots(n_panels, 1, figsize=(9, 3 * n_panels), sharex=True)
@@ -363,8 +475,8 @@ def diel_starch_plot(res: SimResult, path: str) -> str:
     with np.errstate(divide='ignore', invalid='ignore'):
         ratio = np.where(np.abs(j_w) > 0, j_s / j_w, np.nan)
 
-    period  = float(res.params.get('period', 1.0))
-    g_phase = float(res.params.get('g_phase', 0.0))
+    period  = float(res.param('period', 1.0))
+    g_phase = float(res.param('g_phase', 0.0))
 
     fig, axes = plt.subplots(5, 1, figsize=(9, 14), sharex=True)
     ax_k, ax_jw, ax_js, ax_st, ax_rat = axes
@@ -427,8 +539,8 @@ def starch_comparison_plot(results: list[SimResult], path: str) -> str:
     fig, axes = plt.subplots(4, 1, figsize=(10, 12), sharex=True)
     ax_jw, ax_js, ax_st, ax_rat = axes
 
-    period  = float(results[0].params.get('period', 1.0))
-    g_phase = float(results[0].params.get('g_phase', 0.0))
+    period  = float(results[0].param('period', 1.0))
+    g_phase = float(results[0].param('g_phase', 0.0))
 
     def _night_bands(ax, t):
         tt = np.linspace(t[0], t[-1], 2000)
@@ -446,8 +558,9 @@ def starch_comparison_plot(results: list[SimResult], path: str) -> str:
         m_s = np.asarray(m_s) if m_s is not None else np.zeros_like(j_s)
         with np.errstate(divide='ignore', invalid='ignore'):
             ratio = np.where(np.abs(j_w) > 0, j_s / j_w, np.nan)
-        kf  = res.params.get('k_starch_syn', 0.0)
-        kr  = res.params.get('k_starch_deg', 0.0)
+        starch = res.params.get('starch') or {}
+        kf  = starch.get('k_syn', res.params.get('k_starch_syn', 0.0))
+        kr  = starch.get('k_deg', res.params.get('k_starch_deg', 0.0))
         lbl = f"k_f={kf:.1f}, k_r={kr:.1f}"
 
         for ax in axes:

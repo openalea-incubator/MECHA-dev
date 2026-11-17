@@ -551,10 +551,6 @@ def _plot_edge_vector_property(obj: Any, prop_name: str, unit: str = '', **kwarg
     Performance: uses ``LineCollection`` and ``ax.quiver`` (vectorised) instead
     of one ``ax.annotate`` call per edge, giving ~100× speedup on large graphs.
     """
-    from matplotlib.collections import LineCollection
-    from matplotlib.colors import to_rgba
-    from matplotlib.lines import Line2D
-
     graph = obj.network.graph
     pos   = nx.get_node_attributes(graph, 'position')
 
@@ -668,15 +664,45 @@ def _plot_edge_vector_property(obj: Any, prop_name: str, unit: str = '', **kwarg
         color='white', fontsize=13,
     )
 
-    # Background nodes (one call)
     node_xy = np.array([pos.get(n, (0.0, 0.0)) for n in graph.nodes()])
-    if node_xy.size:
+    _draw_edge_vectors(ax, path_data, node_xy)
+
+    show_plot = kwargs.get('show_plot', True)
+    if save_path is not None:
+        plt.tight_layout()
+        plt.savefig(save_path, dpi=150, bbox_inches='tight', facecolor='#0d0d1a')
+        print(f"Saved → {save_path}")
+    elif show_plot:
+        plt.tight_layout()
+        plt.show()
+
+
+def _draw_edge_vectors(ax, path_data: Dict[str, list], node_xy: Optional[np.ndarray] = None,
+                       head_frac: float = 0.4, head_aspect: float = 0.7) -> None:
+    """Draw per-path-type edge arrows on ``ax``.
+
+    ``path_data`` maps a path type (key of ``_PATH_COLORS``) to a list of
+    ``(src_xy, dst_xy, mag)`` with ``mag`` in [0, 1]; the arrow points src→dst.
+    Heads are triangles of length ``head_frac`` × link length, capped at
+    ``head_frac`` × the median link length (width × ``head_aspect``), so short
+    wall links still get a head and long links don't get oversized ones.
+    Needs no live graph, so it also renders stored (offline) edge data.
+    """
+    from matplotlib.collections import LineCollection, PolyCollection
+    from matplotlib.colors import to_rgba
+    from matplotlib.lines import Line2D
+
+    if node_xy is not None and len(node_xy):
         ax.scatter(node_xy[:, 0], node_xy[:, 1],
                    s=2, c='#333355', alpha=0.3, linewidths=0)
 
+    all_L = [np.hypot(d[0] - s[0], d[1] - s[1])
+             for entries in path_data.values() for s, d, _ in entries]
+    h_cap = head_frac * float(np.median(all_L)) if all_L else 0.0
+
     legend_handles = []
     for path_type, hex_color in _PATH_COLORS.items():
-        entries = path_data[path_type]
+        entries = path_data.get(path_type, [])
         if not entries:
             legend_handles.append(
                 Line2D([0], [0], color=hex_color, lw=2, label=_PATH_LABELS[path_type])
@@ -699,22 +725,25 @@ def _plot_edge_vector_property(obj: Any, prop_name: str, unit: str = '', **kwarg
         lc = LineCollection(segs, colors=colors_arr, linewidths=lwidths, zorder=2)
         ax.add_collection(lc)
 
-        # -- Arrowheads via quiver (one call for all edges of this type) --
-        mid = 0.85 * srcs + 0.15 * dsts            # arrow base near dst
-        dx  = dsts[:, 0] - srcs[:, 0]
-        dy  = dsts[:, 1] - srcs[:, 1]
-        # Scale arrow length to 0 so only the head shows
-        ax.quiver(
-            mid[:, 0], mid[:, 1], dx, dy,
-            color=hex_color,
-            alpha=np.clip(alphas, 0, 1).mean(),    # one global alpha for quiver
-            angles='xy', scale_units='xy',
-            scale=8.0,                             # tune for arrow head size
-            width=0.002,
-            headwidth=5, headlength=5,
-            headaxislength=4,
-            zorder=3,
-        )
+        # -- Arrowheads: filled triangles sized per link (quiver collapses short links to dots) --
+        vec = dsts - srcs
+        L = np.hypot(vec[:, 0], vec[:, 1])
+        ok = L > 0
+        u = np.zeros_like(vec)
+        u[ok] = vec[ok] / L[ok, None]
+        n = np.stack([-u[:, 1], u[:, 0]], axis=1)
+        h = np.minimum(head_frac * L, h_cap)       # head length, centred on the link midpoint
+        mid = 0.5 * (srcs + dsts)
+        tip = mid + 0.5 * h[:, None] * u
+        base = mid - 0.5 * h[:, None] * u
+        half_w = 0.5 * head_aspect * h
+        tris = np.stack([tip,
+                         base + half_w[:, None] * n,
+                         base - half_w[:, None] * n], axis=1)[ok]
+        face = np.tile(rgba, (len(mags), 1))
+        face[:, 3] = 0.5 + 0.5 * mags
+        ax.add_collection(PolyCollection(tris, facecolors=face[ok], edgecolors='none',
+                                         zorder=3))
 
         legend_handles.append(
             Line2D([0], [0], color=hex_color, lw=2, label=_PATH_LABELS[path_type])
@@ -726,15 +755,6 @@ def _plot_edge_vector_property(obj: Any, prop_name: str, unit: str = '', **kwarg
 
     # Auto-scale axes to data (LineCollection doesn't do this automatically)
     ax.autoscale_view()
-
-    show_plot = kwargs.get('show_plot', True)
-    if save_path is not None:
-        plt.tight_layout()
-        plt.savefig(save_path, dpi=150, bbox_inches='tight', facecolor='#0d0d1a')
-        print(f"Saved → {save_path}")
-    elif show_plot:
-        plt.tight_layout()
-        plt.show()
 
 
 def plot_K_network(obj, **kwargs):

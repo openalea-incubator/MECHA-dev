@@ -175,6 +175,49 @@ class SoluteTransport:
         # exclude any edge with an air-cell endpoint from D/A/T. Empty for roots.
         self._air_nodes: frozenset = self._collect_air_nodes()
 
+        # Effective solute-only reflection σ_x on every edge entering a xylem cell:
+        # scales both diffusion and advective carry by (1 − σ_x). Hydraulics untouched.
+        sx = diffusion_params.get('sigma_xylem')
+        self.sigma_xylem = None if sx is None else float(sx)
+        self._xylem_nodes: frozenset = (self._collect_xylem_nodes()
+                                        if self.sigma_xylem is not None else frozenset())
+
+    def _collect_xylem_nodes(self) -> frozenset:
+        """Full-network node ids of xylem cells (canonical cgroup 13)."""
+        graph = self.network.graph
+        nwj = self.n_wall_junction
+        return frozenset(
+            self.indice[nwj + cid] for cid in range(self.n_cells)
+            if (nwj + cid) in graph
+            and _cgroup_canonical(int(graph.nodes[nwj + cid].get('cgroup', -1))) == 13)
+
+    def _xylem_carry(self, i: int, j: int) -> float:
+        """(1 − σ_x) for an edge with exactly one xylem endpoint, else None."""
+        if self.sigma_xylem is None:
+            return None
+        if (i in self._xylem_nodes) != (j in self._xylem_nodes):
+            return 1.0 - self.sigma_xylem
+        return None
+
+    def _apply_xylem_block(self, D: sp.csr_matrix) -> sp.csr_matrix:
+        """Scale xylem-entry off-diagonals of D by (1 − σ_x), keeping row sums 0."""
+        if self.sigma_xylem is None or not self._xylem_nodes:
+            return D
+        coo = D.tocoo()
+        rows, cols, vals = [], [], []
+        for r, c, v in zip(coo.row, coo.col, coo.data):
+            if r == c:
+                continue
+            f = self._xylem_carry(int(r), int(c))
+            if f is not None:
+                rows.append(r); cols.append(c); vals.append((f - 1.0) * v)
+        if not rows:
+            return D
+        n = D.shape[0]
+        delta = coo_matrix((vals, (rows, cols)), shape=(n, n)).tocsr()
+        delta = delta - sp.diags(np.asarray(delta.sum(axis=1)).ravel(), format='csr')
+        return (D + delta).tocsr()
+
     def _collect_air_nodes(self) -> frozenset:
         """Full-network node ids of mesophyll air spaces (vapour-only cells).
 
@@ -307,6 +350,7 @@ class SoluteTransport:
 
         if self.D_mem > 0.0 and self.mode != 'apo':
             D = D + self._build_membrane_diffusion(i_maturity)
+        D = self._apply_xylem_block(D)
 
         nwj = self.n_wall_junction
         if self.mode == 'apo':
@@ -441,6 +485,9 @@ class SoluteTransport:
                 factor = 1.0 - self._edge_sigma(src, tgt, is_mem, is_pd, cell_node)
             else: # need to check for pd
                 factor = 1.0
+            fx = self._xylem_carry(src, tgt)
+            if fx is not None:
+                factor = fx
 
             if F > 0.0:   # src is upstream
                 for r, c, v in ((src, src, -F * factor),
@@ -652,6 +699,9 @@ class SoluteTransport:
                 factor = 1.0 - self._edge_sigma(i, j, is_mem, is_pd, cell_node)
             else: # need to check for pd
                 factor = 1.0
+            fx = self._xylem_carry(i, j)
+            if fx is not None:
+                factor = fx
 
             _emit(i, j, De, F * factor)
 
