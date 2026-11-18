@@ -67,8 +67,17 @@ _C_PER_SUCROSE = 12        # C atoms per sucrose (C12H22O11)
 # the whole per-interface density profile is a ratio to this.
 _FPLXHEIGHT_BASE = 8.0e5
 
-# Sucrose plasmodesmatal diffusivity: 0.1 × 5.2e-6 cm²/s × 86400 s/d → cm²/d.
-D_PD_SUCROSE = 0.1 * 5.2e-6 * 86400.0
+# Sucrose diffusion in water @ 25 C: 5.2e-6 cm²/s × 86400 s/d → cm²/d.
+DIFF_SUCROSE = 5.2e-6 * 86400.0
+
+# Sucrose plasmodesmatal diffusivity
+D_PD_SUCROSE = 0.1 * DIFF_SUCROSE
+
+# Sucrose plasmodesmatal diffusivity
+D_APO_SUCROSE = 0.8 * DIFF_SUCROSE
+
+# Sucrose membrane diffusivity
+D_MEM_SUCROSE = 0.3 * DIFF_SUCROSE
 
 
 def transpiration_to_flow(E: float, area_m2: float) -> float:
@@ -156,8 +165,8 @@ class Solute:
     """Sucrose transport properties and discretisation."""
 
     d_pd: float = D_PD_SUCROSE     # cm²/d  plasmodesmatal diffusivity
-    d_apo: float = 0.1             # cm²/d  apoplastic wall diffusivity
-    d_mem: float = 1.0e-6          # cm²/d  passive transmembrane diffusivity
+    d_apo: float = D_APO_SUCROSE   # cm²/d  apoplastic wall diffusivity
+    d_mem: float = D_MEM_SUCROSE   # cm²/d  passive transmembrane diffusivity
     sigma: float = 0.97            # -      membrane reflection coefficient
     # Effective xylem reflection (solute only; 1 → xylem impermeable).
     sigma_xylem: Optional[float] = None
@@ -256,11 +265,11 @@ class DirichletBC(BoundaryConditions):
     per-step injection ``c_photo``·g(t) into the (free) mesophyll.
     """
 
-    air: str = 'psi'               # 'psi' | 'rh'
-    psi_air: float = -1.0e4        # hPa  (air='psi')
-    rh_air: float = 0.99           # -    (air='rh')
+    air: str = 'psi'                # 'psi' | 'rh'
+    psi_air: float = -1.0e4         # hPa  (air='psi')
+    rh_air: float = 0.99            # -    (air='rh')
     c_meso: Optional[float] = None  # mol/cm³  hold mesophyll at this value
-    c_photo: float = 0.0           # mol/cm³  per-step mesophyll increment at g=1
+    c_photo: float = 0.0            # mol/cm³  per-step mesophyll increment at g=1
 
     def setup(self, sim):
         super().setup(sim)
@@ -310,17 +319,17 @@ class NeumannBC(BoundaryConditions):
     def setup(self, sim):
         super().setup(sim)
         sim.ref_area = sim.reference_area(self.ref_area)
-        sim.flow_air = transpiration_to_flow(self.transpiration_E, sim.ref_area)
-        sim.mecha._distribute_transpiration_flow(sim.flow_air)
+        sim.flow_trans = transpiration_to_flow(self.transpiration_E, sim.ref_area)
+        sim.mecha._distribute_transpiration_flow(sim.flow_trans)
         sim._log(f"  Air Neumann BC E={self.transpiration_E} mmol/m²/s → "
-                 f"{sim.flow_air:.3e} cm³/d over {sim.ref_area:.3e} m²")
+                 f"{sim.flow_trans:.3e} cm³/d over {sim.ref_area:.3e} m²")
 
     def drive(self, sim, t):
         if self.diurnal is not None:
-            sim.mecha._distribute_transpiration_flow(sim.flow_air * self.f(t))
+            sim.mecha._distribute_transpiration_flow(sim.flow_trans * self.f(t))
 
     def target_flow(self, sim, t):
-        return sim.flow_air * self.f(t)
+        return sim.flow_trans * self.f(t)
 
     def _production(self, sim, t: Optional[float]) -> float:
         g = 1.0 if t is None else self.g(t)
@@ -678,7 +687,7 @@ class NeedleSimulation:
         self.exp = exp
         self.verbose = verbose
         self.geometry = geometry or get_geometry_base(exp.anatomy.seed)
-        self.psi_air = self.flow_air = self.ref_area = None
+        self.psi_air = self.flow_trans = self.ref_area = None
 
         self._build_network()
         self._classify_tissue()

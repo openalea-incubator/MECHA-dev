@@ -583,3 +583,36 @@ def starch_comparison_plot(results: list[SimResult], path: str) -> str:
     fig.savefig(path, dpi=150, bbox_inches='tight')
     plt.close(fig)
     return path
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Assimilation/Export budget plots
+# ══════════════════════════════════════════════════════════════════════════════
+
+def budget_plot(res, path: str) -> str:
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    e, t = res.extras, res.times
+    fig, ax = plt.subplots(3, 1, figsize=(8, 9), sharex=True)
+    ax[0].plot(t, e['q_prod'] * 1e9, 'k--', label='production')
+    ax[0].plot(t, e['j_s'] * 1e9, label='export (total)')
+    ax[0].plot(t, e['j_strasburger'] * 1e9, label='→ Strasburger')
+    ax[0].plot(t, e['j_phloem'] * 1e9, label='→ sieve cells')
+    ax[0].set_ylabel('sucrose flux [nmol/d]')
+    ax[0].legend()
+    ax[1].plot(t, e['ratio_inst'], label='instantaneous')
+    ax[1].plot(t, e['ratio_cum'], label='cumulative')
+    ax[1].axhline(1.0, color='k', lw=0.5)
+    ax[1].set_ylabel('export / production [-]')
+    ax[1].legend()
+    ax[2].plot(t, res.interior_mass * 1e9)
+    ax[2].set_ylabel('stored sucrose [nmol]')
+    ax[2].set_xlabel('time [d]')
+    fig.suptitle(f"E={res.param('transpiration_E')} mmol/m²/s, "
+                 f"A={res.param('assimilation_A')} µmol/m²/s, "
+                 f"coupling={res.params.get('coupling', {}).get('type', '?')}")
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    return path

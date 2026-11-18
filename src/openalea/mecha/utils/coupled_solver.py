@@ -1,78 +1,9 @@
-"""
-coupled_solver.py
+"""Iterative coupling of MECHA water flow and solute transport.
 
-Iterative coupling between MECHA's hydraulic solver and solute-transport solver.
+Cell Ψ_os = baseline − R·T·c (van't Hoff) feeds back into the hydraulic solve.
+Outer solvers: Picard (optionally under-relaxed) or JFNK (newton_krylov).
 
-The coupling loop:
-  1. Solve water flow (mecha.water_flux) with current osmotic potentials.
-  2. Solve solute transport (SoluteTransport.solve) to obtain concentrations.
-  3. Convert concentrations to osmotic potentials via van't Hoff and write them
-     onto HydraulicCell objects (HydraulicCellManager.set_osmotic_from_concentration).
-  4. Re-solve water flow with the updated cell osmotic potentials.
-  5. Repeat until max |Δψ_total| < tol.
-
-Convergence criterion
----------------------
-Convergence is measured on the total water potential ψ_total = ψ_p − σ·ψ_os,
-not on ψ_os alone.  This is the physically motivated choice because ψ_total is
-the driving force for water flow; converging on ψ_os alone would be either
-over-conservative (large Δψ_os but small Δψ_total) or insufficient (ψ_os
-plateaued while ψ_p still drifts).
-
-Known limitation — isosmotic cancellation
------------------------------------------
-The criterion has a blind spot: if ψ_p and σ·ψ_os drift in exact opposition
-(Δψ_p ≈ −Δ(σ·ψ_os) at every cell), their sum Δψ_total ≈ 0 even though neither
-component has equilibrated.  This is not a pathological edge case — it is the
-normal isosmotic-flow regime where turgor and osmotic potential co-vary to keep
-ψ_total nearly constant while both individually change.
-In such cases the solver reports converged=True at a state that is
-not a genuine fixed point.
-
-The optional component_tol parameter guards against this: when set, after
-the Δψ_total criterion fires the solver additionally checks max|Δψ_p| and
-max|Δψ_os| separately and emits a UserWarning if either exceeds component_tol.
-This does not prevent convergence from being reported — it is a diagnostic
-that alerts the caller to inspect the component potentials.
-
-Cells where psi_total / psi_p / psi_os is None (air spaces, isolated nodes)
-contribute nan to the snapshots and are excluded from nanmax.
-
-Architecture notes
-------------------
-- Scenario 0 has no osmotic term (built by solve_W / HydraulicMatrixBuilder
-  without rhs_o) and is therefore not coupled here. i_scenario must be >= 1.
-- Wall-node osmotic potentials (soil / xylem external boundaries) are always
-  taken from the scenario dict; only cell-node psi_os values are updated from
-  concentrations.
-- The use_stored_psi_os=True flag on water_flux / initialize_scenarios preserves
-  concentration-derived psi_os values across the reset_hydraulic_properties()
-  call that occurs at the start of each solve_W.
-- The baseline psi_os (captured from the scenario dict after the initial
-  water_flux) represents unknown background solutes. The dynamic van't Hoff
-  term from the transport solve is added on top rather than replacing it.
-- An optional under-relaxation factor (relaxation ∈ (0, 1]) damps the
-  concentration feedback (c_used = ω·c_new + (1−ω)·c_prev). The bare Picard
-  iteration (ω=1) can limit-cycle or diverge under operators='T' with strong
-  osmotic drives; ω < 1 stabilises it at the cost of more iterations.  Dirichlet
-  BC values are re-imposed exactly after relaxation so they are never damped.
-
-Solver choice — Picard vs JFNK
-------------------------------
-Two outer solvers are available via ``method``:
-
-- ``method='picard'`` (default): the classic fixed-point iteration described
-  above, optionally under-relaxed. Cheap per iteration but only converges when
-  the fixed-point map g(c) is a contraction.
-
-- ``method='jfnk'``: Jacobian-Free Newton–Krylov. Instead of iterating the map
-  it drives the residual F(c) = g(c) − c to zero with Newton's method, using
-  ``scipy.optimize.newton_krylov``. Newton converges quadratically
-  near the root and — crucially — does NOT require g to be a contraction, so it
-  reaches the fixed point where Picard blows up. Each residual evaluation
-  performs one full transport + hydraulic solve; a line search globalizes the
-  step (part of the scipy method). The continuation schedule still wraps the JFNK solve to
-  ramp the osmotic drive from an easy value up to full strength.
+See docs/CoupledSolver.md for the full description and usage examples.
 """
 
 import warnings
@@ -117,10 +48,8 @@ def _snapshot_psi_os(manager) -> np.ndarray:
 def _jfnk_fixed_point(g, q0, c_scale, bc_cell_val, f_tol, maxiter,
                       inner_maxiter, line_search, rdiff,
                       verbose=False, note=""):
-    """Solve q = g(q) on cell concentrations with newton_krylov.
+    """Solve q = g(q) with newton_krylov on x = q / c_scale; BC cells pinned.
 
-    Unknown and residual are scaled by ``c_scale`` (see the JFNK notes in
-    coupled_water_solute_solve); cells in ``bc_cell_val`` are pinned.
     Returns (q, n_newton, converged).
     """
     def _pin(q):
@@ -194,40 +123,9 @@ def coupled_implicit_step(
     transport_step=None,
     verbose: bool = False,
 ) -> tuple:
-    """Advance ONE physical time step with implicit water–solute coupling.
+    """Advance one time step dt from fixed ``c_prev`` with implicit coupling.
 
-    Solves c^{n+1} = g(c^{n+1}) where g(q) sets Ψ_os = baseline − R·T·q on the
-    cells, re-solves hydraulics, and takes one θ-step of transport from the
-    fixed ``c_prev`` = c^n. Unlike coupled_water_solute_solve(time_stepping=True)
-    c^n is never advanced inside the iteration, so the result is a genuine
-    single step of length dt.
-
-    Parameters
-    ----------
-    c_prev : ndarray
-        Field at t^n (transport-vector layout of ``st``). Also the initial guess.
-    psi_os_baseline : ndarray, shape (n_cells,)
-        Background Ψ_os onto which the van't Hoff term is added.
-    method : 'picard' | 'jfnk'
-        'picard': fixed-point iteration q ← ω·g(q) + (1−ω)·q.
-        'jfnk'  : newton_krylov on F(q) = g(q) − q (cell-only unknown).
-        ``max_iter=1`` with 'picard' reproduces the explicit (lagged) coupling.
-    tol : float
-        [hPa] Picard stops when R·T·max|Δq_cells| < tol; JFNK default f_tol is
-        tol / (R·T).
-    transport_step : callable or None
-        ``transport_step() -> c_new`` replacing the default
-        ``st.solve(c_prev=c_prev, ...)`` (e.g. a multi-solute block solve whose
-        extra species the caller captures). It must always step from t^n.
-
-    Returns
-    -------
-    c_new : ndarray
-        Transport field of the last coupling evaluation; the hydraulic state in
-        ``mecha`` is consistent with it to within ``tol``.
-    n_iter : int
-        Picard iterations or Newton iterations.
-    converged : bool
+    Returns (c_new, n_iter, converged). See docs/CoupledSolver.md.
     """
     if method not in ('picard', 'jfnk'):
         raise ValueError(f"method must be 'picard' or 'jfnk'; got {method!r}.")
@@ -324,153 +222,10 @@ def coupled_water_solute_solve(
     continuation_steps=None,
     verbose: bool = False,
 ) -> tuple:
-    """Iteratively solve water flow and solute transport until convergence.
+    """Solve the coupled water–solute steady state (or pseudo-time march).
 
-    Parameters
-    ----------
-    mecha : Mecha
-        Fully initialised Mecha instance. ``water_flux()`` should not have been
-        called yet — this function calls it on the first iteration.
-    st : SoluteTransport
-        Configured SoluteTransport instance.  Must use mode='sym' or 'full'.
-        Should correspond to the same h / i_maturity / i_scenario.
-    T : float
-        Temperature [K].  R = 8.314e4 [hPa cm³ mol⁻¹ K⁻¹] is used internally.
-    boundary_conditions : dict {node_id: c_value}
-        Dirichlet BCs for the transport solver.
-    rhs : ndarray, optional
-        Transport RHS vector. Defaults to zeros (pure BC-driven steady state).
-    i_scenario : int
-        Scenario index to couple (must be >= 1).
-    i_maturity : int
-        Maturity stage index.
-    h : int
-        Hydraulic configuration index.
-    tol : float
-        Convergence tolerance on max |Δψ_total| [hPa]. Default 10 hPa.
-        Cells with psi_total=None are excluded from the maximum.
-    max_iter : int
-        Maximum outer iterations.
-    operators : str
-        Which spatial operators to pass to SoluteTransport.solve:
-          'T' (default)  full advection-diffusion (D + A)
-          'D'            diffusion only — stable for stiff osmotic flows;
-                         use this when osmotic-driven advection dominates and
-                         makes the transport matrix ill-conditioned.
-          'A'            advection only
-    component_tol : float or None
-        If not None, a secondary diagnostic tolerance [hPa] checked *after* the
-        Δψ_total criterion fires (converged=True). If max|Δψ_p| or max|Δψ_os|
-        exceeds component_tol a UserWarning is emitted describing the
-        isosmotic-cancellation situation: ψ_p and σ·ψ_os drifted in opposition
-        so their sum appeared converged while each individually had not
-        equilibrated. Default None (no component check).
-    relaxation : float
-        Under-relaxation factor ω ∈ (0, 1] applied to the concentration field
-        that drives the osmotic feedback. Default 1.0 (no relaxation — pure
-        Picard iteration). Each outer iteration mixes the freshly solved
-        concentration with the previous one:
-
-            c_used = ω · c_new + (1 − ω) · c_prev
-
-        Values ω < 1 damp the solute → osmotic → water feedback and can break
-        the limit cycle / divergence that the bare Picard scheme exhibits under
-        operators='T' with strong osmotic drives (e.g. stiff Casparian
-        gradients). Typical stabilising values are ω ≈ 0.3–0.7. The Dirichlet
-        BC nodes are re-imposed exactly after relaxation so boundary values are
-        never damped. The convergence check is performed on the relaxed state.
-    scheme : str
-        Advection discretization forwarded to SoluteTransport.solve:
-          'upwind' (default)  first-order upwind (stable only for Pe ≲ 2)
-          'sg'                Scharfetter–Gummel exponentially-fitted flux;
-                              unconditionally non-oscillatory at any Pe. This
-                              is the recommended way to make operators='T'
-                              usable under strong osmotic membrane fluxes that
-                              otherwise make the upwind steady operator ill-posed.
-    time_stepping : bool
-        When True the transport solve is advanced as an implicit-Euler pseudo-
-        time step instead of a direct steady solve: each outer iteration passes
-        the previous concentration field as c_prev to SoluteTransport.solve and
-        marches [C/dt − θT] c_new = C/dt c_old + rhs. Implicit Euler (theta=1)
-        is oscillation-free at ANY Peclet number (unlike the direct steady solve
-        of D + A), so this is suggestion (1): march to steady state under
-        advection instead of solving it in one shot. Requires
-        st.capacitance_params to define 'dt'. The outer coupling convergence
-        criterion (Δψ_total) is unchanged: the loop terminates when both the
-        pseudo-time march and the osmotic feedback have settled.
-    theta : float
-        Time-integration parameter used only when time_stepping=True. Default
-        1.0 (implicit Euler, unconditionally non-oscillatory). 0.5 gives
-        Crank–Nicolson (2nd order but may oscillate at Pe > 2; 
-        probably irrelevant if SG is used).
-    method : str
-        Outer solver for the coupled fixed point:
-          'picard'  (default)  plain fixed-point iteration c ← g(c) with optional
-                    under-relaxation ω. Cheap per step but only converges when
-                    g is a contraction. Under strong osmotic feedback the map is
-                    repelling (spectral radius > 1) and Picard diverges.
-          'jfnk'    Jacobian-Free Newton–Krylov: drive the residual
-                    F(c) = g(c) − c to zero with scipy.optimize.newton_krylov.
-                    The Jacobian action is approximated by finite differences and
-                    the Newton system is solved with GMRES, so no matrix is ever
-                    assembled. Converges without requiring g to be a contraction,
-                    reaching the fixed point where Picard blows up. ``relaxation``
-                    is ignored (Newton globalizes with a line search instead).
-    jfnk_f_tol : float or None
-        Absolute residual tolerance ‖F(c)‖ for newton_krylov. When None a value
-        is derived from ``tol`` and the R·T scaling so that a converged residual
-        corresponds roughly to Δψ_total ≈ tol. Ignored unless method='jfnk'.
-    jfnk_maxiter : int or None
-        Maximum Newton iterations for newton_krylov. When None defaults to
-        ``max_iter``. Ignored unless method='jfnk'.
-    jfnk_inner_maxiter : int
-        Maximum inner Krylov (GMRES) iterations per Newton step. Default 30.
-        Ignored unless method='jfnk'.
-    jfnk_line_search : str or None
-        Globalization strategy passed to newton_krylov ('armijo' default,
-        'wolfe', or None to disable). Ignored unless method='jfnk'.
-    jfnk_rdiff : float
-        Relative step size for the finite-difference Jacobian-vector products
-        (newton_krylov's ``rdiff``).  The coupling map g is a noisy black box
-        (each evaluation is a full transport + hydraulic solve), so the default
-        sqrt(eps) probe is too small and yields a near-zero Jacobian that stalls
-        GMRES.  Default 1e-3 gives a clean directional derivative for this map.
-        Ignored unless method='jfnk'.
-    continuation_steps : sequence of float or None
-        Homotopy schedule on the concentration-derived osmotic drive.  Each
-        entry λ ∈ (0, 1] scales the dynamic van't Hoff term (Ψ_os = baseline
-        − λ·R·T·c) for one continuation STAGE; stages run in order, each solved
-        to ``tol`` by the inner loop and warm-started from the previous stage's
-        concentration field. This ramps a hard, divergent full-strength problem
-        (λ=1) up from an easy one (small λ), which stabilizes the cold start.
-        Example: [0.25, 0.5, 1.0].  None or [1.0] (default) → no continuation
-        (single stage at full strength). ``max_iter`` applies PER stage.
-    verbose : bool
-        Print per-iteration diagnostics when True. Includes Δψ_p and Δψ_os
-        alongside Δψ_total when component_tol is set, so cancellation is visible
-        in the per-iteration log even before the warning fires.
-
-    Returns
-    -------
-    c : ndarray
-        Final concentration field used for the osmotic update. With
-        relaxation < 1 this is the relaxed (mixed) field, not the raw transport
-        solution.
-    n_iter : int
-        Number of outer iterations performed (Newton iterations for JFNK, as
-        reported by the solver callback; Picard iterations otherwise).
-    converged : bool
-        True when the solver reached its tolerance. For Picard this is
-        |Δψ_total|_max < tol; for JFNK it is ‖F(c)‖ < jfnk_f_tol. See the
-        component_tol note above for the isosmotic-cancellation caveat.
-
-    Raises
-    ------
-    ValueError
-        If i_scenario < 1, st.mode is not 'sym' or 'full', relaxation is not
-        in (0, 1], or method is not 'picard'/'jfnk'.
-    ImportError
-        If method='jfnk' but scipy.optimize.newton_krylov is unavailable.
+    Picard converges on max|Δψ_total| < tol [hPa]; JFNK on ‖F‖ < jfnk_f_tol.
+    Returns (c, n_iter, converged). See docs/CoupledSolver.md for parameters.
     """
     if i_scenario < 1:
         raise ValueError(
@@ -525,8 +280,7 @@ def coupled_water_solute_solve(
     # ── Iteration 0: initial hydraulic solve from scenario dict ──────────────
     mecha.water_flux(h=h)
 
-    # Baseline osmotic potentials represent solutes not tracked by the transport
-    # solver (unknown background contributors). The dynamic solve adds on top.
+    # Background Ψ_os from untracked solutes; the van't Hoff term is added on top.
     psi_os_baseline = np.array([
         cell.psi_os if cell.psi_os is not None else 0.0
         for cell in manager
@@ -537,9 +291,7 @@ def coupled_water_solute_solve(
         psi_p_prev  = _snapshot_psi_p(manager)
         psi_os_prev = _snapshot_psi_os(manager)
 
-    # Index map for re-imposing Dirichlet BCs exactly after relaxation / mixing.
-    # In 'sym' mode the transport vector is cell-indexed (node_id - nwj);
-    # in 'full' mode it spans the whole network (node_id directly).
+    # 'sym' vectors are cell-indexed (node_id - nwj); 'full' use node_id.
     bc_idx_val = []
     for node_id, c_val in (boundary_conditions or {}).items():
         idx = node_id - nwj if st.mode == 'sym' else node_id
@@ -561,16 +313,7 @@ def coupled_water_solute_solve(
     c_prev_ts = [None]    # boxed so the closure below can update it in place
 
     def _apply_step(c_field, lam):
-        """One coupling half-step: set Ψ_os from c_field, re-solve hydraulics,
-        solve transport, and return the fresh concentration g(c_field).
-
-        This is the fixed-point map g used by BOTH Picard and JFNK. It sets the
-        cell osmotic potentials from the *input* field (van't Hoff, scaled by the
-        continuation λ), re-solves the water flux with those potentials
-        (use_stored_psi_os preserves them across reset_hydraulic_properties), and
-        then solves the transport operator on the updated flow to produce the new
-        concentration field.
-        """
+        """Fixed-point map g: Ψ_os from c_field → water_flux → transport."""
         c_cells = _cells_of(c_field)
         manager.set_osmotic_from_concentration(
             c_cells * lam if lam != 1.0 else c_cells, nwj, T, psi_os_baseline)
@@ -597,24 +340,11 @@ def coupled_water_solute_solve(
         if 0 <= cid < n_cells:
             bc_cell_val[cid] = float(c_val)
 
-    # Last full transport field — the reduced (cell-only) Newton map slots the
-    # candidate cell concentrations into this field, runs one coupling step, and
-    # reads back the new cell concentrations. Walls/junctions are slaved to the
-    # transport solve, so they need not be Newton unknowns.
+    # Last full transport field; wall/junction values are slaved to transport.
     full_field = [None]
 
     def _apply_step_cells(q_cells, lam):
-        """Reduced coupling map on CELL concentrations only.
-
-        Given a cell-concentration vector q (length n_cells), set Ψ_os from it,
-        re-solve hydraulics + transport, and return the new cell-concentration
-        vector g(q). This is the physically minimal fixed point: the osmotic
-        feedback flows solely through the cell nodes, so the ~11k wall/junction
-        nodes need not be Newton unknowns. Doing so shrinks the Jacobian ~6×
-        and removes the non-participating wall rows that otherwise dominate the
-        residual norm and stall GMRES.
-        """
-        # Build the full field to drive the osmotic update: cell slice = q.
+        """Reduced map g(q) on cell concentrations only (Newton unknown)."""
         if st.mode == 'sym':
             c_field = q_cells
         else:
@@ -626,9 +356,7 @@ def coupled_water_solute_solve(
         full_field[0] = c_new.copy()
         return _cells_of(c_new).copy()
 
-    # Residual scale for JFNK: ‖F‖ in concentration units. A converged Δψ_total
-    # of ~tol hPa corresponds to Δc ≈ tol / (σ·R·T). Use R·T (σ≤1) as a
-    # conservative scale so f_tol is not looser than the requested ψ tolerance.
+    # Δψ ≈ σ·R·T·Δc with σ ≤ 1, so tol / (R·T) is a conservative f_tol.
     RT = 8.314e4 * T
     default_f_tol = tol / RT if RT > 0 else tol
 
@@ -637,16 +365,13 @@ def coupled_water_solute_solve(
     total_iters = 0
     n_stages = len(lambda_schedule)
 
-    # ── Continuation stages: ramp λ on the dynamic osmotic drive ─────────────
-    # Ψ_os = baseline − λ·R·T·c. Early low-λ stages are converge faster than the
-    # harder high-λ stages; a single stage λ=1 is the no-continuation default.
+    # ── Continuation stages: Ψ_os = baseline − λ·R·T·c ───────────────────────
     for i_stage, lam in enumerate(lambda_schedule):
         stage_note = (f" [stage {i_stage + 1}/{n_stages}, λ={lam:.3g}]"
                       if n_stages > 1 else "")
         stage_converged = False
 
-        # Warm start: first stage cold-starts from the initial transport solve;
-        # later stages reuse the previous stage's converged field.
+        # Later stages warm-start from the previous stage.
         if c_used is None:
             c_used = st.solve(
                 h=h, i_maturity=i_maturity, i_scenario=i_scenario,
@@ -656,34 +381,10 @@ def coupled_water_solute_solve(
             )
             if time_stepping:
                 c_prev_ts[0] = c_used.copy()
-        # Seed the full-field buffer so the reduced cell map has proper wall
-        # values to slot the candidate cell concentrations into.
         full_field[0] = np.asarray(c_used).copy()
 
         if method == 'jfnk':
-            # ── Jacobian-Free Newton–Krylov (reduced, cell-only unknown) ──────
-            # Newton drives the residual F(q) = g(q) − q to zero, where q is the
-            # CELL-concentration vector (length n_cells) — NOT the full field.
-            # Three design choices make this matrix-free solve tractable:
-            #
-            #  (1) Reduced unknown. The osmotic feedback flows solely through the
-            #      cell nodes (Ψ_os = −R·T·q). The ~11k wall/junction nodes are
-            #      slaved to the transport solve and carry no independent
-            #      feedback, so including them only inflates the residual norm
-            #      with non-participating rows and stalls GMRES. Solving on the
-            #      cells alone shrinks the Jacobian ~6× and conditions it far
-            #      better.
-            #  (2) State scaling. Concentrations are O(1e-5) mol cm⁻³ while the
-            #      van't Hoff coupling multiplies them by R·T ≈ 2.5e7 to form
-            #      Ψ_os. newton_krylov sizes its finite-difference probe from
-            #      ‖x‖, so on the raw O(1e-5) field the probe is ~1e-13 and, after
-            #      R·T amplification, changes Ψ_os below hydraulic-solver noise →
-            #      the Jacobian looks like zero. We solve for x = q / c_scale
-            #      (O(1)) and unscale inside the residual.
-            #  (3) Residual scaling. F is returned in scaled units so ‖F‖ and
-            #      f_tol are dimensionless and comparable to x.
-            #
-            # Dirichlet cells are pinned (residual ≡ 0) so Newton never moves them.
+            # ── JFNK on cell concentrations, scaled to O(1) ───────────────────
             q_used = _cells_of(c_used).copy()
             bc_mag = max((abs(v) for v in bc_cell_val.values()), default=0.0)
             c_scale = bc_mag if bc_mag > 0 else float(
@@ -700,14 +401,13 @@ def coupled_water_solute_solve(
                 line_search=jfnk_line_search, rdiff=jfnk_rdiff,
                 verbose=verbose, note=stage_note)
 
-            # Realize the accepted cell solution: run one final coupling step so
-            # the model state (hydraulics, full transport field) is consistent.
+            # Final evaluation leaves mecha/st consistent with q_final.
             _apply_step_cells(q_final, lam)
             c_used = full_field[0]
             total_iters += n_newton_done
 
         else:
-            # ── Plain Picard (optionally under-relaxed) ──────────────────────
+            # ── Picard, optionally under-relaxed ─────────────────────────────
             for _ in range(max_iter):
                 total_iters += 1
                 c = _apply_step(c_used, lam)
@@ -762,8 +462,7 @@ def coupled_water_solute_solve(
                             )
                     break
 
-        # Full convergence is only meaningful at the final (λ=1) stage; earlier
-        # stages just need to be close enough to warm-start the next.
+        # Only the final stage determines convergence.
         if i_stage == n_stages - 1:
             converged = stage_converged
 
@@ -777,6 +476,4 @@ def coupled_water_solute_solve(
         note = f" ({', '.join(notes)})"
         print(f"[coupled_solver] {status} after {total_iters} iteration(s){note}.")
 
-    # Return the field that actually drove the final osmotic update so the
-    # caller's concentrations are consistent with the converged psi_os.
     return c_used, total_iters, converged

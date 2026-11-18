@@ -17,16 +17,16 @@ import os
 
 import numpy as np
 
-from needle import (_OUT_DIR, D_PD_SUCROSE, Anatomy, Experiment, JFNK, NeumannBC,
+from needle import (_OUT_DIR, D_PD_SUCROSE, D_APO_SUCROSE, Anatomy, Experiment, JFNK, NeumannBC,
                     NoCoupling, Picard, SimResult, Solute, TimeStepping, run_experiments)
-from post_sim import concentration_gif, flow_network_gif
+from post_sim import concentration_gif, flow_network_gif, anatomy_plot, budget_plot
 
-COUPLINGS = {'none': NoCoupling(), 'picard': Picard(), 'jfnk': JFNK()}
+#COUPLINGS = {'none': NoCoupling(), 'picard': Picard(), 'jfnk': JFNK()}
 
 EXPERIMENT = Experiment(
-    label='flux_budget',
+    label='flux_budget_xyopen',
     anatomy=Anatomy(seed=42),
-    solute=Solute(d_pd=D_PD_SUCROSE, sigma_xylem=1.0),
+    solute=Solute(d_pd=D_PD_SUCROSE, d_apo=D_APO_SUCROSE, sigma_xylem=0.0),
     bc=NeumannBC(
         psi_xyl=-200.0,
         transpiration_E=1.7,       # mmol m⁻² s⁻¹
@@ -35,42 +35,11 @@ EXPERIMENT = Experiment(
         sinks=('strasburger', 'phloem'),
     ),
     dynamics=TimeStepping(
-        dt=1.0 / 24.0, max_steps=24 * 30,
-        balance_tol=1.0e-2, balance_window=1.0,
+        dt=2.0 / 24.0, max_steps=24 * 20,
+        balance_tol=1.0e-3, balance_window=2.0,
     ),
-    coupling=COUPLINGS['jfnk'],
+    coupling=Picard(max_iter=20),
 )
-
-
-def budget_plot(res, path: str) -> str:
-    import matplotlib
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
-
-    e, t = res.extras, res.times
-    fig, ax = plt.subplots(3, 1, figsize=(8, 9), sharex=True)
-    ax[0].plot(t, e['q_prod'] * 1e9, 'k--', label='production')
-    ax[0].plot(t, e['j_s'] * 1e9, label='export (total)')
-    ax[0].plot(t, e['j_strasburger'] * 1e9, label='→ Strasburger')
-    ax[0].plot(t, e['j_phloem'] * 1e9, label='→ sieve cells')
-    ax[0].set_ylabel('sucrose flux [nmol/d]')
-    ax[0].legend()
-    ax[1].plot(t, e['ratio_inst'], label='instantaneous')
-    ax[1].plot(t, e['ratio_cum'], label='cumulative')
-    ax[1].axhline(1.0, color='k', lw=0.5)
-    ax[1].set_ylabel('export / production [-]')
-    ax[1].legend()
-    ax[2].plot(t, res.interior_mass * 1e9)
-    ax[2].set_ylabel('stored sucrose [nmol]')
-    ax[2].set_xlabel('time [d]')
-    fig.suptitle(f"E={res.param('transpiration_E')} mmol/m²/s, "
-                 f"A={res.param('assimilation_A')} µmol/m²/s, "
-                 f"coupling={res.params.get('coupling', {}).get('type', '?')}")
-    fig.tight_layout()
-    fig.savefig(path, dpi=150)
-    plt.close(fig)
-    return path
-
 
 if __name__ == '__main__':
     RUN_SIMULATION = False    # False: skip the march, re-plot from the stored .npz
@@ -99,7 +68,8 @@ if __name__ == '__main__':
     TOL_DECADES = 2.0        # hide links below max·10^-TOL_DECADES
 
     print(f"Saved: {budget_plot(res, f'{stem}_budget.{FIG_FMT}')}")
-    print(f"Saved: {concentration_gif(res, stem + '_sucrose.gif', max_frames=120, fps=10)}")
-    for quantity, tag in (('solute', 'sucrose_flow'), ('water', 'water_flow'), ('peclet', 'peclet')):
-        print(f"Saved: {res.plot_flow_network(f'{stem}_{tag}.{FIG_FMT}', quantity=quantity, tol_decades=TOL_DECADES)}")
-        print(f"Saved: {flow_network_gif(res, f'{stem}_{tag}.gif', quantity=quantity, tol_decades=TOL_DECADES)}")
+    #print(f"Saved: {concentration_gif(res, stem + '_sucrose.gif', max_frames=120, fps=10)}")
+    #print(f"Saved: {anatomy_plot(res, f'{stem}_anatomy.{FIG_FMT}')}")
+    #for quantity, tag in (('solute', 'sucrose_flow'), ('water', 'water_flow'), ('peclet', 'peclet')):
+    #    print(f"Saved: {res.plot_flow_network(f'{stem}_{tag}.{FIG_FMT}', quantity=quantity, tol_decades=TOL_DECADES)}")
+    #    print(f"Saved: {flow_network_gif(res, f'{stem}_{tag}.gif', quantity=quantity, tol_decades=TOL_DECADES)}")
