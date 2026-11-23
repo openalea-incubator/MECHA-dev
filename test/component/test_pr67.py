@@ -1,27 +1,34 @@
 """
 What PR #67 (fix/GranapAPI, 7c4ed4f) adds to MECHA, in the port (doc/legacy.rst, d12 on; devplan §31), where the
 comparisons with the legacy do not reach: the walls lining air spaces and their check, a needle's protected air
-spaces left out; the suberin of passage cells on their membranes (GRANAP's sections have none).
+spaces left out; the suberin of passage cells on their membranes (GRANAP's sections have none); the dead
+sclerenchyma's draw and the smaller of two cells' plasmodesmata factors (E4).
 """
 import numpy as np
 import pytest
 
 from openalea.mecha.component import MechaHydraulics
 from openalea.mecha.conductance import air_space_lining_walls, root_air_spaces
-from openalea.mecha.geometry import MEMBRANE, WALL
+from openalea.mecha.geometry import MEMBRANE, PLASMODESMATA, WALL
 
 from plants import anatomy_data_structure, needle, needle_anatomy_component, root
 
 
-def section(barrier=1., architecture=None, anatomy=None, passage=False, **parameters):
+def section(barrier=1., architecture=None, anatomy=None, passage=False, sclerenchyma=False, living_cell=None,
+            **parameters):
     """A one-segment root's (or *architecture*'s, its *anatomy*'s) conductances and network, the component's
-    *parameters* set; with *passage*, every other endodermal cell a passage cell (its tissue)."""
+    *parameters* set; with *passage*, every other endodermal cell a passage cell (its tissue); with *sclerenchyma*, the
+    cortex sclerenchyma; *living_cell*: the input's value on every node."""
     arguments = (architecture or root(1),) + ((anatomy,) if anatomy is not None else ())
     g, data_structure, _ = anatomy_data_structure(*arguments)
+    tissue = np.asarray(data_structure.get("tissue"), dtype=object).copy()
     if passage:
-        tissue = np.asarray(data_structure.get("tissue"), dtype=object).copy()
         tissue[np.flatnonzero(tissue == "endodermis")[::2]] = "passage"
-        data_structure.set("tissue", tissue)
+    if sclerenchyma:
+        tissue[tissue == "cortex"] = "sclerenchyma"
+    data_structure.set("tissue", tissue)
+    if living_cell is not None:
+        data_structure.register("living_cell", np.full(data_structure.n_nodes(), float(living_cell)), location="node")
     data_structure.register("barrier", np.full(data_structure.n_nodes(), float(barrier)), location="node")
     mecha = MechaHydraulics(data_structure=data_structure)
     for name, value in parameters.items():
@@ -94,3 +101,43 @@ def test_suberin_on_the_endodermis_membranes_and_passage_cells():
     np.testing.assert_array_equal(K2[open_], K1[open_])
     assert (K2[cut] < 1e-6 * K1[cut]).all()
     np.testing.assert_array_equal(K2[cortical], K1[cortical])
+
+
+def _plasmodesmata_between(net, kinds):
+    """The plasmodesmata between two cells of *kinds* (a pair of bool arrays per node), either way round."""
+    pd = np.flatnonzero(net.in_section & (net.path == PLASMODESMATA))
+    first, second = kinds
+    return pd[(first[net.a[pd]] & second[net.b[pd]]) | (second[net.a[pd]] & first[net.b[pd]])]
+
+
+def test_dead_sclerenchyma():
+    """The cortex retagged sclerenchyma, at barrier 11: round(0.8 n) of its n cells dead, the same at every call, others
+    with another seed; a plasmodesma takes the smaller of its two cells' factors (a dead cell's closed, two living cells'
+    0.05, not 0.05²; E4), the product with sclerenchyma_plasmodesmata_rule 2; at barrier 8, or with every cell given
+    living, none dead."""
+    K8, net8, _ = section(barrier=8., sclerenchyma=True)
+    K, net, mecha = section(barrier=11., sclerenchyma=True)
+    scl = net.sclerenchyma
+    n = int(scl.sum())
+    assert n > 0 and int((scl & ~net.living_cell).sum()) == int(round(0.8 * n))
+    np.testing.assert_array_equal(mecha.network().living_cell, net.living_cell)
+    _, other, _ = section(barrier=11., sclerenchyma=True, sclerenchyma_seed=1.)
+    assert (other.living_cell != net.living_cell).any()
+    living, dead = scl & net.living_cell, scl & ~net.living_cell
+    open_ = _plasmodesmata_between(net, (living, living))
+    closed = _plasmodesmata_between(net, (dead, scl | ~scl))
+    mixed = _plasmodesmata_between(net, (living, ~scl))
+    mixed = mixed[K8[mixed] > 0]
+    assert open_.size and closed.size and mixed.size
+    np.testing.assert_allclose(K[open_] / K8[open_], 0.05, rtol=1e-14)
+    np.testing.assert_allclose(K[mixed] / K8[mixed], 0.05, rtol=1e-14)
+    assert (K[closed] == 0.).all()
+    K_product, _, _ = section(barrier=11., sclerenchyma=True, sclerenchyma_plasmodesmata_rule=2.)
+    np.testing.assert_allclose(K_product[open_] / K8[open_], 0.05 ** 2, rtol=1e-14)
+    plasmodesmata = net8.in_section & (net8.path == PLASMODESMATA)
+    K8_plain, _, _ = section(barrier=8.)
+    np.testing.assert_array_equal(K8[plasmodesmata], K8_plain[plasmodesmata])     # barrier 8: no dead fibres
+    K_living, net_living, _ = section(barrier=11., sclerenchyma=True, living_cell=1.)
+    assert net_living.living_cell.all()
+    conducting = closed[K8[closed] > 0]
+    np.testing.assert_allclose(K_living[conducting] / K8[conducting], 0.05, rtol=1e-14)

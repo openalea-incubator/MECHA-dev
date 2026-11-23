@@ -14,6 +14,7 @@ MECHA's main parameters, with their default values. MECHA works in centimetres, 
 | `kw_suberin_in`, `kw_suberin_out` | the same across suberized walls | 10⁻¹⁶ cm² hPa⁻¹ d⁻¹ |
 | `kw_casparian_exodermis`, `kw_suberin_exodermis` | the exodermis' own Casparian strip and suberin, when they differ from the endodermis' | the endodermis' (`kw_casparian`; `kw_suberin_out`, `kw_suberin_in`) |
 | `kw_phi_thickening_fraction`, `kw_sclerenchyma_fraction` | the walls of φ-thickened cortex cells and of lignified sclerenchyma (barrier 11), as a fraction of `kw` (`kw_phi_thickening`, `kw_sclerenchyma`: a value of their own instead) | 0.01, 0.1 |
+| `sclerenchyma_dead_fraction`, `sclerenchyma_plasmodesmata_factor` | at barrier 11, the fraction of the sclerenchyma's fibres that are dead (their plasmodesmata closed; drawn, `sclerenchyma_seed`, unless the input `living_cell` gives them) and the plasmodesmata left to the living ones | 0.8, 0.05 |
 | `thickness` | the cell walls' thickness when one value is used for all (`thickness_source` 1; by default each GRANAP wall has its own) | 1.5 µm |
 | `kaqp_endo_factor`, `kaqp_exo_factor`, `kaqp_cortex_factor`, `kaqp_stele_factor` | a tissue's aquaporin activity relative to `kaqp` | 1 |
 | `ratio_cortex` | the cortex's aquaporin activity at its innermost walls over its outermost | 1 (uniform) |

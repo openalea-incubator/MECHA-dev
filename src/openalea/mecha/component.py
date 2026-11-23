@@ -259,6 +259,12 @@ class MechaHydraulics(MechaSections):
                                                          "x_contact (MECHA's Contactrange: a root partly in contact)"),
                                               by="Soil", default=0., scale=SCALES.Compartment, location="node",
                                               kind="descriptor")
+    living_cell: float = input_variable(**_doc("", "a sclerenchyma cell (a fibre) at barrier 11: 1 living, its "
+                                                 "plasmodesmata at sclerenchyma_plasmodesmata_factor; 0 dead, its "
+                                                 "plasmodesmata closed (NaN: drawn, sclerenchyma_dead_fraction of "
+                                                 "each section's)"),
+                                        by="Anatomy", default=float("nan"), scale=SCALES.Compartment, location="node",
+                                        kind="descriptor")
     measured_axial_conductivity: float = input_variable(**_doc("cm4 hPa-1 d-1", "a xylem vessel's or phloem conduit's "
                                                                "measured specific axial conductance, its conductance "
                                                                "× its length (MECHA's Kax_source 2, its K_xyl and "
@@ -338,6 +344,16 @@ class MechaHydraulics(MechaSections):
                                    "original uses it for the axial plasmodesmata of 3D sections)", 1.0)
     kpl_cambium_stele_factor: float = _p("adim", "plasmodesmata aperture factor between the stele and the cambium (the "
                                                  "legacy's rules only)", 1.0)
+    sclerenchyma_dead_fraction: float = _p("adim", "the fraction of each section's sclerenchyma cells that are dead at "
+                                                   "barrier 11 (their plasmodesmata closed; exactly, rounded), drawn "
+                                                   "where living_cell is NaN (PR #67's)", 0.8)
+    sclerenchyma_plasmodesmata_factor: float = _p("adim", "the plasmodesmata factor of a living sclerenchyma cell at "
+                                                          "barrier 11 (apoptotic fibres; PR #67's)", 0.05)
+    sclerenchyma_seed: float = _p("", "the seed of the dead sclerenchyma cells' draw (metafspm's random streams: the "
+                                      "same cells whatever the processes)", 0.)
+    sclerenchyma_plasmodesmata_rule: float = _p("", "a plasmodesma between two sclerenchyma cells: 1 the smaller of "
+                                                    "their factors (a dead cell's plasmodesmata closed), 2 their product "
+                                                    "(PR #67's, for the comparisons: doc/legacy.rst, d17)", 1.)
     x_contact: float = _p("µm", "the border walls at x >= x_contact are in contact with the soil", -15E9)
     contact_junction_rule: float = _p("", "a border junction between protoplasts in contact (soil_contact_cell) is in "
                                           "contact: 1 when all its cells are (develop's), 2 when any is (the reactions "
@@ -763,7 +779,41 @@ class MechaHydraulics(MechaSections):
         net.soil_contact_cell = (np.asarray(data_structure.get("soil_contact_cell"), dtype=float) > 0) & (net.compartment_type == 0)
         net.measured_axial_conductivity = np.where(net.compartment_type == 0, np.asarray(data_structure.get("measured_axial_conductivity"),
                                                                              dtype=float), np.nan)
+        net.living_cell = self._living_cells(net, layers)
         return net
+
+    def _living_cells(self, net, P_node) -> np.ndarray:
+        """
+        Per node, False for a dead sclerenchyma cell: the living_cell input where given, else drawn: in each section,
+        round(sclerenchyma_dead_fraction × its drawn cells) of them dead, those with the smallest uniform draws
+        (metafspm's random streams, keyed by sclerenchyma_seed and the cell's id: the same cells whatever the order or
+        the processes).
+        """
+        data_structure = self.data_structure
+        given = np.asarray(data_structure.get("living_cell"), dtype=float)
+        living = ~(given == 0.)
+        drawn = np.flatnonzero(net.sclerenchyma & np.isnan(given))
+        if drawn.size == 0:
+            return living
+        ids = np.asarray(data_structure.entity_ids("node"))[drawn]
+        seeds = np.asarray(P_node["sclerenchyma_seed"], dtype=float)[drawn]
+        draw = np.empty(drawn.size)
+        for seed in np.unique(seeds):
+            mine = seeds == seed
+            draw[mine] = data_structure.random("uniform", stream="MechaHydraulics.dead_sclerenchyma", ids=ids[mine],
+                                               seed=int(seed))
+        section = net.section_of_node[drawn]
+        order = np.lexsort((draw, section))                         # by section, then by draw
+        first = np.searchsorted(section[order], section[order])
+        rank = np.arange(drawn.size) - first                        # each cell's rank in its section's draws
+        count = np.bincount(section, minlength=section.max() + 1)
+        fraction = np.zeros(count.size)
+        fraction[section] = np.asarray(P_node["sclerenchyma_dead_fraction"], dtype=float)[drawn]
+        dead_count = np.rint(np.minimum(fraction, 1.) * count)
+        dead = np.zeros(drawn.size, dtype=bool)
+        dead[order] = rank < dead_count[section[order]]
+        living[drawn[dead]] = False
+        return living
 
     def cortex_gradient(self, geometries: dict, height_by_node, P_node) -> tuple:
         """Per node: (a_cortex, b_cortex) of its section, from its plant's parameters and its height."""
@@ -778,7 +828,7 @@ class MechaHydraulics(MechaSections):
     @rate(include_inactive=True, memo=True)
     def _conductance(self, network_path, barrier, length, anatomy_template, leaf_transpiration, stomatal_aperture,
                      pore_width, pore_depth, compartment_type, cell_area, wall_thickness, soil_contact_cell,
-                     measured_axial_conductivity) \
+                     measured_axial_conductivity, living_cell) \
             -> tuple[np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,
                      str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str,
                      np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,

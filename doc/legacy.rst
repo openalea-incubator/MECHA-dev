@@ -1007,6 +1007,20 @@ What ``develop`` (945b2be) adds to the refactored legacy, and the behaviours fou
      - adopted (E2), without a second rule (``_membrane_wall_kw``, vectorised). Every conductance, the matrix and the
        solution the legacy's at barrier 3, both roots (``test_conductance.py``), at every barrier code
        (``test_develop_barriers.py``), with every barrier value distinct; passage cells in ``test_pr67.py``
+   * - d17
+     - dead sclerenchyma at barrier 11 (on by default, its comment's "0 / 1 to switch off" contradicting its defaults):
+       ``scl_dead_fraction`` (0.8) of the sclerenchyma cells, an exact count drawn by ``numpy.random.default_rng(
+       scl_seed)`` over the cells sorted by id (the draw depends on their numbering), have no plasmodesmata, the others
+       ``scl_pd_factor`` (0.05) of them; a plasmodesma × the **product** of its two cells' factors, so that one between
+       two living fibres gets 0.05² (U1, a legacy problem: the plasmodesma is shared, one factor is meant); the dead
+       cells keep their membranes and aquaporins
+     - ported with one factor per plasmodesma (E4): the smaller of its two cells' (a dead cell's plasmodesmata closed),
+       ``sclerenchyma_plasmodesmata_rule`` 1; 2 reproduces the product (``LEGACY_OPTIONS``). ``sclerenchyma_dead_fraction``,
+       ``sclerenchyma_plasmodesmata_factor``, ``sclerenchyma_seed``; the cells drawn per section from metafspm's random
+       streams (by the cell's id: the same whatever the order or the processes), or given by the input ``living_cell``
+       (1 living, 0 dead; NaN drawn). The legacy given the port's draw: every conductance bit for bit, the monocot
+       root's cortex retagged sclerenchyma (``test_sclerenchyma.py``); the draw, the rule and the input in
+       ``test_pr67.py``. The membranes of dead cells are kept, as the legacy's
 
 
 Constants

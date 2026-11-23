@@ -128,6 +128,7 @@ class Network:
     intercellular: np.ndarray     # bool per node (the cell manager's, by tissue)
     passage: np.ndarray
     sclerenchyma: np.ndarray      # bool per node (by tissue)
+    living_cell: np.ndarray       # bool per node: False a dead sclerenchyma cell (set by the component; True elsewhere)
     phi_thick: np.ndarray
     wall_cells: np.ndarray        # (n, 2) global nodes, -1
     distance_center_grav: np.ndarray
@@ -166,7 +167,7 @@ def assemble(n_nodes: int, n_edges: int, geometries: list, phi_thick=None) -> Ne
         edge_lateral_distance=edges_full(np.nan), edge_dist=edges_full(np.nan), cgroup=nodes_full(-1, np.int64),
         compartment_type=nodes_full(-1, np.int64),
         rank=nodes_full(-1, np.int64), intercellular=nodes_full(False, bool), passage=nodes_full(False, bool),
-        sclerenchyma=nodes_full(False, bool),
+        sclerenchyma=nodes_full(False, bool), living_cell=nodes_full(True, bool),
         phi_thick=nodes_full(False, bool), wall_cells=nodes_full(-1, np.int64, (2,)),
         distance_center_grav=nodes_full(np.nan), x=nodes_full(np.nan), y=nodes_full(np.nan), cell_area=nodes_full(0.), wall_thickness=nodes_full(np.nan), wall_length=nodes_full(0.),
         border_wall=nodes_full(False, bool), border_junction=nodes_full(False, bool),
@@ -476,6 +477,7 @@ def edge_conductances(net: Network, P: dict, barrier, height, factors: dict = No
     coefficient, distance = plasmodesmata_spatial_coefficients(net, P, e)
     both_xylem = np.isin(net.cgroup[net.a[e]], XYLEM_CGROUPS) & np.isin(net.cgroup[net.b[e]], XYLEM_CGROUPS)
     temp_factor = np.where(both_xylem, temp_factor, temp_factor * coefficient)
+    temp_factor = temp_factor * _sclerenchyma_plasmodesmata(net, P, e, b)
     K[e] = kpl * temp_factor
     if factors is not None:
         # the crossed wall's thickness with thickness_source 2 (its own), MECHA's one value with 1 or without it
@@ -729,6 +731,23 @@ def section_matrix(net: Network, K, in_matrix, soil, axial, nodes, edges):
     cols = np.r_[i, j, i, j, np.arange(nodes.size), np.arange(nodes.size)]
     data = np.r_[-k, k, k, -k, -soil[nodes], -axial[nodes]]
     return coo_matrix((data, (rows, cols)), shape=(nodes.size, nodes.size)).tocsr()
+
+
+def _sclerenchyma_plasmodesmata(net: Network, P: dict, e, b) -> np.ndarray:
+    """
+    Per plasmodesmata edge *e*, the factor of the sclerenchyma at the barrier codes SCLERENCHYMA_LIGNIFIED (PR #67's
+    dead fibres): a cell's 0 when dead (net.living_cell), sclerenchyma_plasmodesmata_factor when living, 1 for the
+    other cells; a plasmodesma takes the smaller of its two cells' (sclerenchyma_plasmodesmata_rule 1: a dead cell's
+    plasmodesmata closed) or their product (2, PR #67's, for the comparisons: doc/legacy.rst, d17).
+    """
+    living = np.asarray(P["sclerenchyma_plasmodesmata_factor"], dtype=float)[e]
+
+    def cell_factor(nodes):
+        return np.where(net.sclerenchyma[nodes], np.where(net.living_cell[nodes], living, 0.), 1.)
+    factor_a, factor_b = cell_factor(net.a[e]), cell_factor(net.b[e])
+    product = np.asarray(P["sclerenchyma_plasmodesmata_rule"], dtype=float)[e] == 2
+    combined = np.where(product, factor_a * factor_b, np.minimum(factor_a, factor_b))
+    return np.where(np.isin(b, SCLERENCHYMA_LIGNIFIED), combined, 1.)
 
 
 def _harmonic(t1, t2):

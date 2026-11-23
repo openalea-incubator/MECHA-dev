@@ -115,9 +115,13 @@ quantity
 
 .. math::
 
-   N_p = F_{ij}\,10^{-4}\,\ell_e \cdot \alpha_{ij} \cdot c_k \cdot f_\text{endo} \cdot s_{ij},
+   N_p = F_{ij}\,10^{-4}\,\ell_e \cdot \alpha_{ij} \cdot c_k \cdot f_\text{endo} \cdot s_{ij} \cdot z_{ij},
 
 :math:`F_{ij}` the interface's frequency × height (cm⁻¹, ``fplxheight_*``), :math:`\alpha_{ij}` its aperture factor,
+:math:`z_{ij}` the sclerenchyma's at :math:`b = 11` (``_sclerenchyma_plasmodesmata``): a dead fibre's 0, a living one's
+``sclerenchyma_plasmodesmata_factor``, any other cell's 1, the plasmodesma the smaller of its two cells'
+(``sclerenchyma_plasmodesmata_rule`` 1; 2 their product, the legacy's); the dead fibres given by ``living_cell`` or
+drawn, ``sclerenchyma_dead_fraction`` of each section's (rounded),
 :math:`s_{ij}` the aperture by the distance to the soil contact (``pd_spatial_profile``; 1 by default, and between two
 xylem cells): with :math:`d` the plasmodesma's mean end distance to the section's soil-contact walls and junctions
 along its graph (Euclidean edge lengths: ``contact_distance``), :math:`u = (d - d_\min)/(d_\max - d_\min)` over the

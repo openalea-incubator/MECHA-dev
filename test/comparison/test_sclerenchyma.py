@@ -1,13 +1,16 @@
 """
 The sclerenchyma at barrier 11 (PR #67), on the monocot root whose cortex is retagged sclerenchyma in both (the port's
-tissue, the legacy's cell type): its lignified walls at kw_sclerenchyma_fraction × kw (doc/legacy.rst, d13), every
-wall and membrane conductance the legacy's, bit for bit.
+tissue, the legacy's cell type): its lignified walls at kw_sclerenchyma_fraction × kw (doc/legacy.rst, d13), its dead
+cells' plasmodesmata closed and its living cells' at sclerenchyma_plasmodesmata_factor (d17: the legacy given the
+port's draw, and its product of the two cells' factors, sclerenchyma_plasmodesmata_rule 2); every conductance the
+legacy's, bit for bit.
 """
 import numpy as np
 import pytest
 
 from openalea.mecha.component import MechaHydraulics
-from openalea.mecha.geometry import MEMBRANE, section_parts
+from openalea.mecha.geometry import MEMBRANE, PLASMODESMATA, section_parts
+from openalea.mecha.legacy.utils.hydraulic_solver import HydraulicMatrixBuilder
 
 from legacy_run import legacy_options, legacy_section
 from plants import anatomy_data_structure, root, template_organ
@@ -40,12 +43,27 @@ def compared():
     tissue[cortex] = "sclerenchyma"
     data_structure.set("tissue", tissue)
     retagged = [int(mecha_index[int(node_ids[v])]) for v in cortex]
-    run = legacy_section(template_organ(anatomy, g, segment), barriers=(BARRIER,), height=height,
-                         edit_network=_to_sclerenchyma(retagged))
     data_structure.register("barrier", np.full(data_structure.n_nodes(), float(BARRIER)), location="node")
     mecha = legacy_options(MechaHydraulics(data_structure=data_structure))
     mecha()
     K, net = np.asarray(data_structure.get("conductance")).copy(), mecha.network()
+    # the port's draw given to the legacy: {cell id: its plasmodesmata factor} (dead 0)
+    factor = float(mecha.sclerenchyma_plasmodesmata_factor)
+    nodes_scl = cortex[net.sclerenchyma[cortex]]
+    draw = {int(mecha_index[int(node_ids[v])]): (factor if net.living_cell[v] else 0.) for v in nodes_scl}
+    build = HydraulicMatrixBuilder._build_scl_pd_factors
+
+    def the_ports_draw(builder, kpl_config, barrier):
+        if barrier != BARRIER:
+            return {}
+        offset = builder.network.n_wall_junction
+        return {node - offset: value for node, value in draw.items()}
+    HydraulicMatrixBuilder._build_scl_pd_factors = the_ports_draw
+    try:
+        run = legacy_section(template_organ(anatomy, g, segment), barriers=(BARRIER,), height=height,
+                             edit_network=_to_sclerenchyma(retagged))
+    finally:
+        HydraulicMatrixBuilder._build_scl_pd_factors = build
     nodes, edges = section_parts(data_structure)[segment]
     legacy = np.array([int(mecha_index[int(v)]) for v in node_ids[nodes]])
     geo = mecha.section_geometries()[segment][2]
@@ -60,7 +78,7 @@ def compared():
     in_matrix = np.array([e for e in edges if key(e) in expected])
     assert in_matrix.size == len(expected)
     return dict(K=K, net=net, in_matrix=in_matrix, legacy_K=np.array([expected[key(e)] for e in in_matrix]),
-                mecha=mecha)
+                mecha=mecha, draw=draw)
 
 
 def test_walls_and_membranes(compared):
@@ -70,3 +88,13 @@ def test_walls_and_membranes(compared):
     membranes = net.path[in_matrix] == MEMBRANE
     for chosen in (walls, membranes):
         np.testing.assert_array_equal(compared["K"][in_matrix[chosen]], compared["legacy_K"][chosen])
+
+
+def test_plasmodesmata_of_dead_and_living_sclerenchyma(compared):
+    """The port's draw (sclerenchyma_dead_fraction 0.8 of the cells dead, exactly) given to the legacy, with its
+    product of the two cells' factors: every plasmodesma the legacy's, bit for bit."""
+    net, in_matrix, draw = compared["net"], compared["in_matrix"], compared["draw"]
+    dead = sum(value == 0. for value in draw.values())
+    assert dead == int(round(0.8 * len(draw)))
+    plasmodesmata = net.path[in_matrix] == PLASMODESMATA
+    np.testing.assert_array_equal(compared["K"][in_matrix[plasmodesmata]], compared["legacy_K"][plasmodesmata])
