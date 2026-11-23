@@ -5,7 +5,8 @@ The legacy MECHA on a GRANAP section: the reference the port is compared with.
     run.network            the legacy NetworkBuilder (its derived geometry: cell_ranks, distance_center_grav, ...)
     run.mecha              the legacy Mecha
     run.stages[i]          per maturity stage: barrier, solution, matrix_W, Kmb, rhs (soil), edge K and Q (keys: the
-                           graph's (u, v), Q from u to v), kr, Kx
+                           graph's (u, v), Q from u to v), edge_t_wall (the walls' total thickness, with its lamella
+                           model), kr, Kx
 
 The organ is GRANAP's (the main package, generating into its MPG); the legacy reads it through GRANAP's legacy
 exports (its networkx graph, cell GeoDataFrame and cell list), as before the port.
@@ -20,9 +21,10 @@ from openalea.mecha.legacy import InData, Mecha, NetworkBuilder
 # The port's options that reproduce the legacy where it departs from the original MECHA:
 # its plasmodesmata rules and its aperture factors' defaults, its prescribed xylem boundary, its one wall thickness,
 # its membrane floor (ME-33), its axial penalty conductances (ME-32: develop's 1.0), its product of two sclerenchyma
-# cells' plasmodesmata factors (d17)
+# cells' plasmodesmata factors (d17), its lamella model's wall half at kw on every membrane (d19)
 LEGACY_OPTIONS = dict(plasmodesmata_rules=2., kpl_PCC_factor=0., kpl_PST_factor=0., standard_axial_source=2.,
                       thickness_source=1., membrane_floor=2., k_xyl=1.0, k_sieve=1.0, sclerenchyma_plasmodesmata_rule=2.,
+                      lamella_wall_half=2.,
                       standard_psi_sieve=float("nan"))    # the legacy's default without BCs.xml: no phloem boundary
 
 
@@ -94,8 +96,11 @@ def _legacy_section(organ, barriers, height, h, kpl, hydraulic, edit_network, ho
         graph = network.graph
         edge_K = {(int(u), int(v)): float(attrs["K"]) for u, v, attrs in graph.edges(data=True) if "K" in attrs}
         edge_Q = {(int(u), int(v)): float(attrs["Q"]) for u, v, attrs in graph.edges(data=True) if "Q" in attrs}
+        edge_t_wall = {(int(u), int(v)): float(attrs["t_wall"]) for u, v, attrs in graph.edges(data=True)
+                       if "t_wall" in attrs}
         stage = dict(barrier=barrier, solution=np.asarray(solution).reshape(-1), matrix_W=matrix_W.copy(),
                      Kmb=np.asarray(Kmb).copy(), rhs=np.asarray(rhs).copy(), edge_K=edge_K, edge_Q=edge_Q,
+                     edge_t_wall=edge_t_wall,
                      kr=float(mecha.kr_tot[i, 0]))
         if barrier > 0:                                      # the legacy's Kx fails for barrier 0 (§2 e)
             _, stage["Kx"] = mecha.calculate_axial_conductance(i)

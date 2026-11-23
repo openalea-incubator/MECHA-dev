@@ -76,6 +76,43 @@ parallel, :math:`k_w \leftarrow \tfrac12 (k_w + k_\text{septa})`, ``kw_septa`` <
 each wall's own (``thickness_source`` 2, GRANAP's; ``thickness`` where a wall has none) or one value for every wall
 (``thickness_source`` 1, ``thickness``). Last, :math:`K_w` × the wall's ``wall_conductivity_factor`` (a node input, 1).
 
+**The suberin lamella model** (``suberin_model`` 1, PR #67's; 0 by default: suberin is the conductivity of the wall
+half next to the membrane, below). A wall between two cells is a stack of layers, tertiary | secondary | primary walls
+and middle lamella | secondary | tertiary. The middle layer has the thickness :math:`p` (``primary_wall_thickness``;
+NaN: the wall's own :math:`t`) and the conductivity :math:`k_\text{mid}` the rules above give the wall (a band's
+between two endodermal or two exodermal cells, the sclerenchyma's, else ``kw``). Each suberized or lignified side
+:math:`i` adds a secondary layer of thickness :math:`s` (``secondary_wall_thickness``; NaN: :math:`t/3`) and
+conductivity :math:`k_i` (``suberin_lamella``): an endodermal cell's (not a passage cell's), at the barrier codes
+suberizing the endodermis (2, 3, 4, 8, 11), ``kw_suberin_out`` toward the cortex, ``kw_suberin_in`` toward the stele,
+``kw_suberin_radial`` (NaN: ``kw_suberin_out``) toward another endodermal cell; an exodermal cell's, at the codes
+suberizing the exodermis (6, 8, 10, 11), ``kw_suberin_exodermis`` (NaN: ``kw_suberin_out`` toward the epidermis,
+``kw_suberin_in`` toward the cortex or another exodermal cell); a fibre's lignified wall at :math:`b = 11`,
+``kw_sclerenchyma``. The endodermis' tertiary layer, of thickness :math:`\tau` (``tertiary_wall_thickness``), lies
+behind the lamella of its faces toward the stele and the endodermis only (U-shaped). Along the wall, the middle and
+secondary layers conduct in parallel and the tertiary layers do not:
+
+.. math::
+
+   k_w = \frac{s_a k_a + p\,k_\text{mid} + s_b k_b}{t_c}, \qquad t_c = p + s_a + s_b, \qquad
+   K_w = k_w \, 10^{-4}\, \frac{(L_w + h)\,t_c - t_c^2}{\ell_e},
+
+before the septa's and the air-space lining rules (the state ``wall_layer_conductivity``; ``wall_thickness_total`` is
+:math:`t_c + \tau_a + \tau_b`). Across a suberized face, the membrane is in series with its half of the middle layer,
+its lamella and its tertiary layer:
+
+.. math::
+
+   K_m = \left( \frac{p/2 \cdot 10^{-4}}{k_\text{half}} + \frac{s \cdot 10^{-4}}{k_i} + \frac{\tau \cdot 10^{-4}}{k_w}
+   + \frac{1}{k_{mb} + k_{aqp}} \right)^{-1} 10^{-8}\,(h + d_e)\,\ell_e,
+
+the four resistances the states ``membrane_wall_half_resistance``, ``membrane_lamella_resistance``,
+``membrane_tertiary_resistance`` and ``membrane_resistance`` (hPa d cm⁻¹; the tertiary layer at ``kw``; a fibre's
+membranes have no lamella). The suberin being the lamella's, :math:`k_\text{half}` is the wall's own value (the band's
+between two cells of the layer, else ``kw``); a face without a lamella (a passage cell's, any other cell's) keeps the
+membrane formula and the :math:`k_w` below (``lamella_wall_half`` 1; 2, the legacy's: ``kw`` in the wall half of every
+membrane, :doc:`legacy` d19). The plasmodesmata are unchanged: their length does not follow the layers (they sit in
+pits, Clarkson et al. 1971).
+
 **Membranes** (wall–cell edges), the wall's half thickness in series with the membrane:
 
 .. math::

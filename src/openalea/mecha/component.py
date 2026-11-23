@@ -295,6 +295,33 @@ class MechaHydraulics(MechaSections):
     kw_suberin_exodermis: float = _p("cm2 hPa-1 d-1", "conductivity of the exodermis' suberin, both faces (PR #67's "
                                                       "Sub_exo; NaN: kw_suberin_out toward the epidermis, kw_suberin_in "
                                                       "toward the cortex)", float("nan"))
+    suberin_model: float = _p("", "the suberin of the endodermis and the exodermis: 0 a conductivity of the wall half "
+                                  "in series with their membranes (MECHA's); 1 a lamella, a secondary layer of its "
+                                  "own thickness (secondary_wall_thickness) and conductivity (kw_suberin_out, "
+                                  "kw_suberin_in, kw_suberin_radial; the exodermis' kw_suberin_exodermis) on each "
+                                  "suberized face, in series with its membrane and in parallel along its wall, with "
+                                  "an endodermal tertiary layer behind it (tertiary_wall_thickness; PR #67's "
+                                  "suberin_model 'lamella')", 0.)
+    kw_suberin_radial: float = _p("cm2 hPa-1 d-1", "conductivity of the endodermis' suberin lamella on its radial "
+                                                   "faces, toward another endodermal cell (suberin_model 1; PR #67's "
+                                                   "Sub; NaN: kw_suberin_out). The exodermis' radial faces take its "
+                                                   "inner value", float("nan"))
+    primary_wall_thickness: float = _p("µm", "thickness of a wall's middle layer, its two cells' primary walls and "
+                                             "their middle lamella (suberin_model 1; NaN: the wall's own thickness)",
+                                       float("nan"))
+    secondary_wall_thickness: float = _p("µm", "thickness of the secondary layer of a wall's suberized or lignified "
+                                               "side, added to its middle layer: a suberin lamella, a fibre's "
+                                               "lignified wall at barrier 11 (suberin_model 1; NaN: a third of the "
+                                               "wall's own thickness)", float("nan"))
+    tertiary_wall_thickness: float = _p("µm", "thickness of the endodermis' tertiary layer, behind the suberin lamella "
+                                              "of its faces toward the stele and the endodermis (U-shaped; "
+                                              "suberin_model 1): in series with the membrane at kw, not conducting "
+                                              "along the wall", 0.)
+    lamella_wall_half: float = _p("", "with suberin_model 1, the wall half in series with a membrane: 1 its own "
+                                      "conductivity (a suberized face's: its wall's, the suberin being the lamella's; "
+                                      "any other face's as with suberin_model 0: a passage cell's kw_passage, a band's "
+                                      "value), 2 kw on every membrane (PR #67's, for the comparisons: doc/legacy.rst, "
+                                      "d19)", 1.)
     kw_lignin: float = _p("cm2 hPa-1 d-1", "conductivity of the exodermis' lignin cap (barrier 9, its walls with the "
                                            "epidermis)", 1.00E-16)
     kw_phi_thickening: float = _p("cm2 hPa-1 d-1", "conductivity of the walls between two φ-thickened cells of a cortex "
@@ -504,6 +531,42 @@ class MechaHydraulics(MechaSections):
                                                                 "plasmodesmata; 0 on the edges MECHA leaves out)"),
                                         default=0., scale=SCALES.Connection, location="edge",
                                         kind="non_inertial_intensive")
+    # the layers the walls' and the membranes' conductances are made of (intermediate states of _conductance)
+    wall_layer_conductivity: float = state_variable(**_doc("cm2 hPa-1 d-1", "a wall edge's conductivity along the "
+                                                           "wall, its layers in parallel: its rules' value; with "
+                                                           "suberin_model 1 the thickness-weighted mean of its middle "
+                                                           "layer and its sides' secondary layers; the mean of its "
+                                                           "hydrated and desiccated halves where it lines an air "
+                                                           "space (0 on the other edges)"),
+                                                    default=0., scale=SCALES.Connection, location="edge",
+                                                    kind="non_inertial_intensive")
+    wall_thickness_total: float = state_variable(**_doc("µm", "a wall edge's thickness: its wall's, or with "
+                                                              "suberin_model 1 its middle layer, its secondary layers "
+                                                              "and its tertiary layers (NaN on the other edges)"),
+                                                 default=float("nan"), scale=SCALES.Connection, location="edge",
+                                                 kind="descriptor")
+    membrane_wall_half_resistance: float = state_variable(**_doc("hPa d cm-1", "a membrane edge's path, in series: "
+                                                                 "the resistance of its half of the (primary) wall, "
+                                                                 "half thickness / conductivity; the edge's "
+                                                                 "conductance is its surface / the sum of the four "
+                                                                 "resistances, unless cut to the membrane floor (0 "
+                                                                 "on the other edges)"),
+                                                          default=0., scale=SCALES.Connection, location="edge",
+                                                          kind="non_inertial_intensive")
+    membrane_lamella_resistance: float = state_variable(**_doc("hPa d cm-1", "a membrane edge's path: the resistance "
+                                                               "of its face's suberin lamella, secondary thickness / "
+                                                               "the lamella's conductivity (0 without a lamella)"),
+                                                        default=0., scale=SCALES.Connection, location="edge",
+                                                        kind="non_inertial_intensive")
+    membrane_tertiary_resistance: float = state_variable(**_doc("hPa d cm-1", "a membrane edge's path: the resistance "
+                                                                "of the endodermal tertiary layer, its thickness / kw "
+                                                                "(0 without one)"),
+                                                         default=0., scale=SCALES.Connection, location="edge",
+                                                         kind="non_inertial_intensive")
+    membrane_resistance: float = state_variable(**_doc("hPa d cm-1", "a membrane edge's path: the resistance of the "
+                                                       "membrane itself, 1 / (kmb + its aquaporins')"),
+                                                default=0., scale=SCALES.Connection, location="edge",
+                                                kind="non_inertial_intensive")
     # The conductances to a boundary and the inflows are extensive: in parallel, a plant's is their sum
     soil_conductance: float = state_variable(**_doc("cm3 hPa-1 d-1", "conductance between a border wall or junction "
                                                                      "and the soil (0 elsewhere)"),
@@ -844,11 +907,14 @@ class MechaHydraulics(MechaSections):
             -> tuple[np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,
                      str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str,
                      np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,
+                     str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,
                      str, np.ndarray, str, np.ndarray, str, np.ndarray]:
         """
         Every edge's conductance, and the boundary conductances of the nodes (soil, axial), from MECHA's geometry,
         the segments' barriers and heights (their lengths), and the plants' parameters; the standard problem's
         boundary potentials (the axial boundary only where its potential is given: not at barrier 0 by default).
+        Its intermediate states: the layers the walls' and the membranes' conductances are made of (the walls' in
+        parallel, the membranes' path in series).
         Computed again only when one of these, the parameters, the settings or the structure changed (memo=True).
         """
         return self._conductance_values(network_path, barrier, length, anatomy_template, leaf_transpiration,
@@ -867,8 +933,9 @@ class MechaHydraulics(MechaSections):
         P_edge["a_cortex"], P_edge["b_cortex"] = a_cortex[tail], b_cortex[tail]
         barrier_node = np.asarray(barrier)
         self._check_desiccated_walls(net, P_edge, barrier_node[tail], list(geometries))
-        factors = {}
-        K, in_matrix = edge_conductances(net, P_edge, barrier_node[tail], height_node[tail], factors=factors)
+        factors, layers = {}, {}
+        K, in_matrix = edge_conductances(net, P_edge, barrier_node[tail], height_node[tail], factors=factors,
+                                         layers=layers)
         soil, axial, _ = boundary_terms(net, P_node, barrier_node, height_node)
         axial_psi = np.where(barrier_node > 0, P_node["standard_psi_xylem"], P_node["standard_psi_sieve"])
         tip_flow = (barrier_node == 0) & np.isfinite(P_node["standard_sieve_flow"])  # the protophloem's flow instead
@@ -941,7 +1008,13 @@ class MechaHydraulics(MechaSections):
                 "symplastic_diffusion_factor", np.where(in_matrix, factors["symplastic"], 0.),
                 "membrane_diffusion_factor", np.where(in_matrix, factors["membrane"], 0.),
                 "node_volume", volume, "liquid_volume", liquid,
-                "contact_distance", factors["contact_distance"])
+                "contact_distance", factors["contact_distance"],
+                "wall_layer_conductivity", layers["wall_layer_conductivity"],
+                "wall_thickness_total", layers["wall_thickness_total"],
+                "membrane_wall_half_resistance", layers["membrane_wall_half_resistance"],
+                "membrane_lamella_resistance", layers["membrane_lamella_resistance"],
+                "membrane_tertiary_resistance", layers["membrane_tertiary_resistance"],
+                "membrane_resistance", layers["membrane_resistance"])
 
     def _check_heights(self, height_node) -> None:
         """A section's anatomy needs a length: at zero height, its walls and membranes conduct nothing (their

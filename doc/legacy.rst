@@ -1033,6 +1033,33 @@ What ``develop`` (945b2be) adds to the refactored legacy, and the behaviours fou
        factors by tissue and on every third wall, barriers 1 and 3, both roots (``test_cell_and_wall_factors.py``); U5 in
        ``test_pr67.py``. The wall factor acts along the wall only (its wall edges), as the legacy's: not on the wall
        half in series with its membranes nor on its soil term
+   * - d19
+     - the suberin lamella model (``suberin_model='lamella'``, off by default): a wall between two cells is tertiary |
+       secondary | primary walls and middle lamella | secondary | tertiary; a suberized side's secondary layer
+       (``sec_wall_thickness``, a third of the wall's thickness by default; ``kw_lam_endo_out``, ``_in``, ``_rad``:
+       ``Sub_out``, ``Sub_in``, ``Sub``; ``kw_lam_exo_*``: ``Sub_exo``; a fibre's ``kw_scler``) is added to the middle
+       layer (``prim_wall_thickness``, the wall's by default) and conducts in parallel with it; the endodermis'
+       tertiary layer (``tert_wall_thickness``, on its faces toward the stele and the endodermis, not in passage
+       cells) only thickens the wall (``t_wall``); a suberized cell's membrane in series with its half of the middle
+       layer, its lamella and its tertiary layer (at ``kw``). In that mode the wall half of **every** membrane takes
+       ``kw`` (U9, a legacy problem): the passage cells lose ``kw_passage`` (at barrier 3 they are not suberized at
+       all), the endodermis' and the exodermis' radial faces lose their band, the unsuberized layers' membranes (the
+       endodermis at barrier 1, the exodermis at barriers 4, 5, 7, 9) too, and the cortex's and the needle's keys are
+       dropped. ``sec_wall_thickness`` may be a dict by cell type
+     - ported: ``suberin_model`` (0, 1), ``primary_wall_thickness``, ``secondary_wall_thickness`` (NaN: the wall's
+       thickness, a third of it), ``tertiary_wall_thickness`` (0), ``kw_suberin_radial`` (NaN: ``kw_suberin_out``; the
+       legacy's ``Sub``); ``conductance.suberin_lamella`` (a face's lamella), the layers in ``edge_conductances``,
+       their intermediate states on the edges: ``wall_layer_conductivity``, ``wall_thickness_total``,
+       ``membrane_wall_half_resistance``, ``membrane_lamella_resistance``, ``membrane_tertiary_resistance``,
+       ``membrane_resistance``. The wall half of a membrane keeps its own value (``lamella_wall_half`` 1): a
+       suberized face's the wall's (its band's between two cells of the layer, the suberin being the lamella's), any
+       other face's as without the model (a passage cell's ``kw_passage``); 2 reproduces the legacy's ``kw``
+       (``LEGACY_OPTIONS``). One secondary thickness per plant (per tissue once GRANAP gives it, E6). With the inner,
+       outer and radial lamellae, the bands and the exodermis' values distinct, at barriers 3, 8, 11, both roots, two
+       sets of thicknesses: every edge conductance and ``t_wall`` bit for bit, the matrix to 4 ulp, the solution to
+       10⁻¹²; the monocot root's cortex retagged sclerenchyma at barrier 11, its walls and membranes bit for bit
+       (``test_suberin_lamella.py``); the faces, the layers, the passage cells and the two wall-half rules in
+       ``test_pr67.py`` (the legacy's ``test_suberin_semantics.py``)
 
 
 Constants

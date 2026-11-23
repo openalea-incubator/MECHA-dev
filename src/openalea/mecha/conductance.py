@@ -45,6 +45,10 @@ _EXODERMIS_SOURCES = {"exodermis_casparian": ("kw_casparian_exodermis", "kw_casp
                       "exodermis_suberin_in": ("kw_suberin_exodermis", "kw_suberin_in")}
 # the barrier codes lignifying every wall of a sclerenchyma cell (develop's kw_scler)
 SCLERENCHYMA_LIGNIFIED = (11,)
+# the barrier codes suberizing the endodermis and the exodermis: where their cells have a suberin lamella
+# (suberin_model 1; PR #67's kw_lam_endo_*, kw_lam_exo_*)
+ENDODERMIS_SUBERIZED = (2, 3, 4, 8, 11)
+EXODERMIS_SUBERIZED = (6, 8, 10, 11)
 # a wall's interface (its two cells' cgroups, sorted) -> the kw key acting on the wall itself
 # (HydraulicMatrixBuilder._WALL_KW_KEYS): the bands, the cortex's, the needle's; suberin (kw_endo_cortex,
 # kw_endo_peri, kw_exo_epi, kw_exo_cortex, kw_passage) acts on the membrane of the cell owning it (_membrane_wall_kw:
@@ -294,6 +298,16 @@ def wall_configuration(barrier, P) -> dict:
     config["kw_scler"] = np.where(np.isin(codes, SCLERENCHYMA_LIGNIFIED), sclerenchyma, np.nan)
     meso_hypo = np.asarray(P["kw_meso_hypo"], dtype=float)
     config["kw_meso_hypo"] = np.where(np.isfinite(meso_hypo), meso_hypo, np.asarray(P["kw"], dtype=float))
+    # the suberin lamellae (suberin_model 1), per face, where the barrier code suberizes the layer (NaN: no lamella)
+    endodermis, exodermis = np.isin(codes, ENDODERMIS_SUBERIZED), np.isin(codes, EXODERMIS_SUBERIZED)
+    suberin_out = np.asarray(P["kw_suberin_out"], dtype=float)
+    radial = np.asarray(P["kw_suberin_radial"], dtype=float)
+    config["lamella_endodermis_out"] = np.where(endodermis, suberin_out, np.nan)
+    config["lamella_endodermis_in"] = np.where(endodermis, np.asarray(P["kw_suberin_in"], dtype=float), np.nan)
+    config["lamella_endodermis_radial"] = np.where(endodermis, np.where(np.isfinite(radial), radial, suberin_out),
+                                                   np.nan)
+    config["lamella_exodermis_out"] = np.where(exodermis, sources["exodermis_suberin_out"], np.nan)
+    config["lamella_exodermis_in"] = np.where(exodermis, sources["exodermis_suberin_in"], np.nan)
     return config
 
 
@@ -329,6 +343,43 @@ def _membrane_wall_kw(owner, n_endo, n_exo, n_stele, n_epi, passage, wall_kw, su
     return np.select([owner == 3, owner == 1], [endodermis, exodermis], wall_kw)
 
 
+def suberin_lamella(net: Network, cell, other, sub: dict) -> tuple:
+    """
+    (conductivity, tertiary): per face of a cell (*cell*: its node) toward the other cell of its wall (*other*: its
+    node, -1: none), its suberin lamella's conductivity (NaN: the face has none) and whether a tertiary layer lies
+    behind it (*sub*: the wall configuration; suberin_model 1, PR #67's _side_layer_kw and _tert_thickness). An
+    endodermal cell, not a passage cell, where the barrier code suberizes the endodermis: toward the cortex
+    kw_suberin_out, toward the stele kw_suberin_in, toward another endodermal cell kw_suberin_radial; the tertiary
+    layer is U-shaped, on its faces toward the stele and the endodermis only. An exodermal cell, where the code
+    suberizes the exodermis: toward the epidermis its outer value, toward the cortex or another exodermal cell its
+    inner value. No lamella toward any other tissue, nor on a border wall.
+    """
+    own = net.cgroup[cell]
+    toward = np.where(other >= 0, net.cgroup[np.maximum(other, 0)], -1)
+    none = np.full(np.shape(cell), np.nan)
+    endodermis = np.select([toward == 4, toward > 4, toward == 3],
+                           [sub["lamella_endodermis_out"], sub["lamella_endodermis_in"],
+                            sub["lamella_endodermis_radial"]], none)
+    exodermis = np.select([toward == 2, toward == 4, toward == 1],
+                          [sub["lamella_exodermis_out"], sub["lamella_exodermis_in"], sub["lamella_exodermis_in"]],
+                          none)
+    conductivity = np.select([(own == 3) & ~net.passage[cell], own == 1], [endodermis, exodermis], none)
+    tertiary = (own == 3) & np.isfinite(conductivity) & ((toward > 4) | (toward == 3))
+    return conductivity, tertiary
+
+
+def _layer_thicknesses(P: dict, e, thickness) -> tuple:
+    """(primary, secondary, tertiary) thicknesses (µm) of the walls of the edges *e*, of own thickness *thickness*:
+    the primary walls and middle lamella (primary_wall_thickness; NaN: the wall's own), a suberized side's secondary
+    layer (secondary_wall_thickness; NaN: a third of the wall's own) and an endodermal tertiary layer
+    (tertiary_wall_thickness)."""
+    primary = np.asarray(P["primary_wall_thickness"], dtype=float)[e]
+    secondary = np.asarray(P["secondary_wall_thickness"], dtype=float)[e]
+    return (np.where(np.isfinite(primary), primary, thickness),
+            np.where(np.isfinite(secondary), secondary, thickness / 3.0),
+            np.asarray(P["tertiary_wall_thickness"], dtype=float)[e])
+
+
 def root_air_spaces(net: Network) -> np.ndarray:
     """Per node, a root air space: an intercellular cell (by tissue) not joined to its walls by wall_air edges (a
     needle's protected air space is: GRANAP's protect_topology, the legacy's is_wall_air_cell)."""
@@ -358,7 +409,7 @@ def air_space_lining_walls(net: Network, P: dict, barrier) -> np.ndarray:
     return wall_edge & (n_air == 1) & (barrier > 0) & ~septum
 
 
-def edge_conductances(net: Network, P: dict, barrier, height, factors: dict = None):
+def edge_conductances(net: Network, P: dict, barrier, height, factors: dict = None, layers: dict = None):
     """
     (K, in_matrix): the conductance of every edge (cm³ hPa⁻¹ d⁻¹), and whether the legacy's matrix has it (its wall,
     membrane and plasmodesmata edges; not the wall_air and air_link edges, legacy i, nor the wall edges its junction
@@ -369,6 +420,12 @@ def edge_conductances(net: Network, P: dict, barrier, height, factors: dict = No
     xylem-pieces septa 1e-16; the membranes of mature vessels: 1e-4 × wall length × height / thickness), "symplastic"
     (plasmodesmata: pd_section × their quantity / the crossed wall's thickness × 1e-4), "membrane" (every membrane: length × height
     × 1e-4 / dist), each to be multiplied by its diffusivity (cm² d⁻¹).
+
+    With *layers* (a dict), the layers the conductances are made of are written in it, per edge: on the wall edges
+    "wall_layer_conductivity" (cm² hPa⁻¹ d⁻¹: the wall's conductivity along itself, its layers in parallel) and
+    "wall_thickness_total" (µm: its conducting layers and its tertiary layers; NaN elsewhere); on the membranes, the
+    resistances in series of their path (hPa d cm⁻¹; 0 elsewhere): "membrane_wall_half_resistance",
+    "membrane_lamella_resistance", "membrane_tertiary_resistance", "membrane_resistance".
     """
     n = net.path.size
     K = np.zeros(n)
@@ -414,6 +471,32 @@ def edge_conductances(net: Network, P: dict, barrier, height, factors: dict = No
     # a wall of a sclerenchyma cell, lignified at the barrier codes SCLERENCHYMA_LIGNIFIED (develop's barrier 11)
     sclerenchyma = (count(net.sclerenchyma)[e] > 0) & np.isfinite(sub["kw_scler"])
     kw_val = np.where(sclerenchyma, sub["kw_scler"], kw_val)
+    # the suberin lamella model (suberin_model 1; HydraulicMatrixBuilder._lamella_wall_kw): a wall between two cells
+    # is its primary walls and middle lamella (the conductivity above) with the secondary layer of each suberized or
+    # lignified side added, in parallel along the wall; the tertiary layers do not conduct along it
+    lamella_model = np.asarray(P["suberin_model"], dtype=float) == 1
+    primary, secondary, tertiary = _layer_thicknesses(P, e, t)
+    total_thickness = t
+    if lamella_model[e].any():
+        two_cells = lamella_model[e] & (n_cells[e] == 2)
+        layer_kw, layer_thickness, tertiary_thickness, has_layers = [], [], [], False
+        for cell, other in ((c0s[e], c1s[e]), (c1s[e], c0s[e])):
+            suberin, has_tertiary = suberin_lamella(net, cell, other, sub)
+            side_kw = np.where(net.sclerenchyma[cell], sub["kw_scler"], suberin)   # a fibre's lignified secondary wall
+            has_layer = two_cells & np.isfinite(side_kw)
+            layer_kw.append(np.where(has_layer, side_kw, 0.))
+            layer_thickness.append(np.where(has_layer, secondary, 0.))
+            tertiary_thickness.append(np.where(has_layer & has_tertiary, tertiary, 0.))
+            has_layers = has_layers | has_layer
+        conducting = primary + layer_thickness[0] + layer_thickness[1]
+        layered = has_layers & (conducting > 0) & ~ghost
+        with np.errstate(divide="ignore", invalid="ignore"):
+            parallel = (layer_thickness[0] * layer_kw[0] + primary * kw_val
+                        + layer_thickness[1] * layer_kw[1]) / conducting
+        kw_val = np.where(layered, parallel, kw_val)
+        temp = np.where(layered, 1.0E-04 * ((net.edge_lateral_distance[e] + h) * conducting - _pow2(conducting))
+                        / net.edge_length[e], temp)
+        total_thickness = np.where(layered, conducting + tertiary_thickness[0] + tertiary_thickness[1], t)
     kw_val = np.where(ghost, sub["kw_septa"], kw_val)
     # a wall lining a root air space: its hydrated half (kw_val) and its desiccated half (kw_septa) in parallel
     lining = air_space_lining_walls(net, P, barrier)[e]
@@ -427,6 +510,11 @@ def edge_conductances(net: Network, P: dict, barrier, height, factors: dict = No
             factors[name] = np.zeros(n)
         temp_factor = np.where(ghost & (n_interc < 2), 1.0E-16, kw_val / kw[e]) * wall_factor
         factors["apoplastic"][e] = temp * temp_factor
+    if layers is not None:
+        layers["wall_layer_conductivity"] = np.zeros(n)
+        layers["wall_layer_conductivity"][e] = kw_val
+        layers["wall_thickness_total"] = np.full(n, np.nan)
+        layers["wall_thickness_total"][e] = total_thickness
 
     # ── membranes (HydraulicMatrixBuilder._fill_membrane) ──
     e = np.flatnonzero(membrane)
@@ -448,16 +536,45 @@ def edge_conductances(net: Network, P: dict, barrier, height, factors: dict = No
     n_exo = count(net.cgroup == 1)[e]
     n_stele = count(net.cgroup > 4)[e]
     sub = {key: values[e] for key, values in kw_config.items()}
+    wall_kw = _select(interface[e], _WALL_KW_INTERFACES, sub, kw[e])
     kw_val = _membrane_wall_kw(cg, n_endo, n_exo, n_stele, count(net.cgroup == 2)[e], count(net.passage)[e] > 0,
-                               _select(interface[e], _WALL_KW_INTERFACES, sub, kw[e]), sub)
+                               wall_kw, sub)
     barrier_interface = (n_endo >= 2) | (n_exo >= 2) | ((n_stele > 0) & (n_endo > 0))
     t = thickness[e]
     kmb = np.asarray(P["kmb"], dtype=float)[e]
     aquaporins = kaqp_curr * net.aquaporin_factor[cell]                # the cell's own factor (PR #67's)
-    with np.errstate(divide="ignore"):
-        K_mb = 1 / (1 / (kw_val / (t / 2 * 1.0E-04)) + 1 / (kmb + aquaporins)) * 1.0E-08 * (height[e]
-                                                                                          + net.edge_dist[e]) * net.edge_length[e]
-    K_mb = np.where(kw_val == 0.0, 0.0, K_mb)
+    # the suberin lamella model (suberin_model 1): a suberized face's membrane is in series with its half of the
+    # primary wall, its lamella and, on an endodermal cell's faces toward the stele and the endodermis, its tertiary
+    # layer (at kw). The suberin is then the lamella's, not the wall half's: that half takes the wall's own value
+    # (lamella_wall_half 1; 2: kw on every membrane of the section, suberized or not, the legacy's)
+    lamella_model = np.asarray(P["suberin_model"], dtype=float)[e] == 1
+    other_cell = np.where(n_cells[e] == 2, np.where(c0[e] == cell, c1[e], c0[e]), -1)
+    lamella_kw, has_tertiary = suberin_lamella(net, cell, other_cell, sub)
+    suberized = lamella_model & np.isfinite(lamella_kw) & ~net.sclerenchyma[cell]
+    primary, secondary, tertiary = _layer_thicknesses(P, e, t)
+    legacy_wall_half = lamella_model & (np.asarray(P["lamella_wall_half"], dtype=float)[e] == 2)
+    kw_val = np.where(legacy_wall_half, kw[e], np.where(suberized, wall_kw, kw_val))
+    half_thickness = np.where(suberized, primary / 2, t / 2)
+    lamella_kw = np.where(suberized, lamella_kw, 1.)
+    lamella_thickness = np.where(suberized, secondary, 0.)
+    tertiary_thickness = np.where(suberized & has_tertiary, tertiary, 0.)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        wall_half_resistance = (half_thickness * 1.0E-04) / kw_val
+        lamella_resistance = (lamella_thickness * 1.0E-04) / lamella_kw
+        tertiary_resistance = (tertiary_thickness * 1.0E-04) / kw[e]
+        membrane_resistance = 1 / (kmb + aquaporins)
+        conductivity = np.where(suberized, 1 / (wall_half_resistance + lamella_resistance + tertiary_resistance
+                                                 + membrane_resistance),
+                                1 / (1 / (kw_val / (half_thickness * 1.0E-04)) + membrane_resistance))
+        K_mb = conductivity * 1.0E-08 * (height[e] + net.edge_dist[e]) * net.edge_length[e]
+    K_mb = np.where((kw_val == 0.0) | (lamella_kw == 0.0), 0.0, K_mb)
+    if layers is not None:
+        for name, resistance in (("membrane_wall_half_resistance", wall_half_resistance),
+                                 ("membrane_lamella_resistance", lamella_resistance),
+                                 ("membrane_tertiary_resistance", tertiary_resistance),
+                                 ("membrane_resistance", membrane_resistance)):
+            layers[name] = np.zeros(n)
+            layers[name][e] = resistance
     # no aquaporin activity outside the barriers (the tissue's, before the cell's factor: a cell whose aquaporins are
     # off keeps kmb): 1e-16 (an air-filled intercellular space, the original's);
     # membrane_floor 2: only where kmb is 0 too (the reactions branch's and develop's)
