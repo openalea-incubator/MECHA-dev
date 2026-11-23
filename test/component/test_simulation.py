@@ -43,7 +43,7 @@ def test_parameters_table():
 
 
 def test_the_arguments_act(default):
-    assert simulate({"kw": 2.4e-5}).summary["kr"] < default.summary["kr"]
+    assert simulate({"kw": 2.4e-5, "kw_septa": 1.2e-5}).summary["kr"] < default.summary["kr"]    # kw_septa below kw
     assert simulate(barrier=3).summary["kr"] < default.summary["kr"]
     dicot = simulate(anatomy={"preset": "for_dicot_root"})
     assert dicot.summary["perimeter"] > default.summary["perimeter"]
