@@ -68,8 +68,8 @@ def test_develop_companion_cells_in_the_original_rules():
 
 def test_the_sclerenchyma_lignified_at_barrier_11():
     """The cortex retagged sclerenchyma: at barrier 11 (barrier 8 and the sclerenchyma's walls lignified), the walls
-    between two of its cells take kw_lignin instead of kw (barrier 8's cortex-cortex); without sclerenchyma,
-    barrier 11 is barrier 8."""
+    between two of its cells take kw_sclerenchyma_fraction × kw instead of kw (barrier 8's cortex-cortex; PR #67's
+    0.1), or kw_sclerenchyma when given; without sclerenchyma, barrier 11 is barrier 8."""
     K8, net = section(barrier=8., tissues={"cortex": "sclerenchyma"})
     K11, _ = section(barrier=11., tissues={"cortex": "sclerenchyma"})
     walls = np.flatnonzero(net.in_section & net.junction_edge)
@@ -78,7 +78,9 @@ def test_the_sclerenchyma_lignified_at_barrier_11():
     both = (cells >= 0).all(axis=1) & net.sclerenchyma[np.maximum(cells, 0)].all(axis=1)
     assert both.sum() > 0
     mecha = MechaHydraulics
-    np.testing.assert_allclose(K11[walls[both]] / K8[walls[both]], mecha.kw_lignin / mecha.kw, rtol=1e-13)
+    np.testing.assert_allclose(K11[walls[both]] / K8[walls[both]], mecha.kw_sclerenchyma_fraction, rtol=1e-13)
+    given, _ = section(barrier=11., tissues={"cortex": "sclerenchyma"}, kw_sclerenchyma=3.0E-6)
+    np.testing.assert_allclose(given[walls[both]] / K8[walls[both]], 3.0E-6 / mecha.kw, rtol=1e-13)
     untouched = ~(cells >= 0).any(axis=1) | ~net.sclerenchyma[np.maximum(cells, 0)].any(axis=1)
     np.testing.assert_array_equal(K11[walls[untouched]], K8[walls[untouched]])
     plain8, _ = section(barrier=8.)

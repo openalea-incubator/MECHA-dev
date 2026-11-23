@@ -965,6 +965,14 @@ What ``develop`` (945b2be) adds to the refactored legacy, and the behaviours fou
        in the conductances too, as in the volumes (the legacy: its junction's mean on its wall edges; GRANAP gives
        every wall one). Every edge conductance and soil term bit for bit at barriers 0, 1, 3, both roots
        (``test_wall_thickness.py``)
+   * - d13
+     - the φ-thickened walls at 0.01 ``kw`` (``LIG_PHI_KW_FRACTION``; a ``<phi_thick>`` value overrides it), the
+       sclerenchyma's lignified walls (barrier 11) at 0.1 ``kw`` (``LIG_SCL_KW_FRACTION``; ``Lig_scl`` overrides it):
+       both were the lignin value, 10⁻¹⁶
+     - adopted (E3): ``kw_phi_thickening``, ``kw_sclerenchyma`` (NaN by default) and their fractions of ``kw``,
+       ``kw_phi_thickening_fraction`` 0.01, ``kw_sclerenchyma_fraction`` 0.1; ``kw_lignin`` is the lignin cap's only.
+       Bit for bit: the φ cases and a given value (``test_hydraulic_options.py``), the monocot root's cortex retagged
+       sclerenchyma at barrier 11 (``test_sclerenchyma.py``); the given value in ``test_develop_additions.py``
 
 
 Constants

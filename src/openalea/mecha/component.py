@@ -272,7 +272,17 @@ class MechaHydraulics(MechaSections):
     kw_casparian: float = _p("cm2 hPa-1 d-1", "wall conductivity across a Casparian strip", 1.00E-16)
     kw_suberin_in: float = _p("cm2 hPa-1 d-1", "conductivity of suberized walls, inner face", 1.00E-16)
     kw_suberin_out: float = _p("cm2 hPa-1 d-1", "conductivity of suberized walls, outer face", 1.00E-16)
-    kw_lignin: float = _p("cm2 hPa-1 d-1", "conductivity of lignified walls (lignin cap, phi thickenings)", 1.00E-16)
+    kw_lignin: float = _p("cm2 hPa-1 d-1", "conductivity of the exodermis' lignin cap (barrier 9, its walls with the "
+                                           "epidermis)", 1.00E-16)
+    kw_phi_thickening: float = _p("cm2 hPa-1 d-1", "conductivity of the walls between two φ-thickened cells of a cortex "
+                                                   "layer (NaN: kw_phi_thickening_fraction x kw)", float("nan"))
+    kw_phi_thickening_fraction: float = _p("adim", "the φ-thickened walls' conductivity as a fraction of kw (PR #67's, "
+                                                   "where kw_phi_thickening is NaN)", 0.01)
+    kw_sclerenchyma: float = _p("cm2 hPa-1 d-1", "conductivity of every wall of a sclerenchyma cell, lignified at barrier "
+                                                 "11 (NaN: kw_sclerenchyma_fraction x kw)", float("nan"))
+    kw_sclerenchyma_fraction: float = _p("adim", "the lignified sclerenchyma's walls' conductivity as a fraction of kw "
+                                                 "(PR #67's: fibre walls stay permeable to water; where kw_sclerenchyma "
+                                                 "is NaN)", 0.1)
     thickness_source: float = _p("", "the walls' thickness: 1 one value for every wall (thickness, MECHA's), 2 each "
                                      "wall's own (wall_thickness, GRANAP's; a junction's: the mean of its walls')", 2.)
     thickness: float = _p("µm", "cell wall thickness, every wall's (thickness_source 1, MECHA's)", 1.5)

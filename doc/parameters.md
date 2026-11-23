@@ -12,6 +12,7 @@ MECHA's main parameters, with their default values. MECHA works in centimetres, 
 | `kpl` | the conductance of one plasmodesma (the channels joining neighbouring cells) | 5.3 × 10⁻¹² cm³ hPa⁻¹ d⁻¹ |
 | `kw_casparian` | the walls' conductivity across a Casparian strip (nearly 0: a barrier) | 10⁻¹⁶ cm² hPa⁻¹ d⁻¹ |
 | `kw_suberin_in`, `kw_suberin_out` | the same across suberized walls | 10⁻¹⁶ cm² hPa⁻¹ d⁻¹ |
+| `kw_phi_thickening_fraction`, `kw_sclerenchyma_fraction` | the walls of φ-thickened cortex cells and of lignified sclerenchyma (barrier 11), as a fraction of `kw` (`kw_phi_thickening`, `kw_sclerenchyma`: a value of their own instead) | 0.01, 0.1 |
 | `thickness` | the cell walls' thickness when one value is used for all (`thickness_source` 1; by default each GRANAP wall has its own) | 1.5 µm |
 | `kaqp_endo_factor`, `kaqp_exo_factor`, `kaqp_cortex_factor`, `kaqp_stele_factor` | a tissue's aquaporin activity relative to `kaqp` | 1 |
 | `ratio_cortex` | the cortex's aquaporin activity at its innermost walls over its outermost | 1 (uniform) |

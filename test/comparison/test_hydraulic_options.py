@@ -1,8 +1,8 @@
 """
 The hydraulic options away from their defaults, against the legacy: φ-thickenings (n_phi_layers, phi_type: the inner,
-outer or middle cortex), the cortex's aquaporin gradient (ratio_cortex), the tissues' aquaporin factors, the xylem
+outer or middle cortex; their walls at kw_phi_thickening_fraction × kw, PR #67's, or at kw_phi_thickening), the cortex's aquaporin gradient (ratio_cortex), the tissues' aquaporin factors, the xylem
 pieces' septa (xylem_pieces), other wall and membrane conductivities (kw, kmb, kaqp). Every edge conductance bit for
-bit, at barriers 1 and 3. The legacy's cortex gradient on GRANAP's path is a one-element array, which the numpy of
+bit, at barriers 0, 1 and 3. The legacy's cortex gradient on GRANAP's path is a one-element array, which the numpy of
 this environment refuses as a float (doc/legacy.rst, ME-44): the comparison gives it its value.
 """
 import numpy as np
@@ -22,13 +22,15 @@ OPTIONS = {
     "phi_inner": dict(port=dict(n_phi_layers=1., phi_type=1.), network=dict(n_phi_layers=1, phi_type=1)),
     "phi_outer": dict(port=dict(n_phi_layers=2., phi_type=2.), network=dict(n_phi_layers=2, phi_type=2)),
     "phi_middle": dict(port=dict(n_phi_layers=1., phi_type=3.), network=dict(n_phi_layers=1, phi_type=3)),
+    "phi_value": dict(port=dict(n_phi_layers=1., phi_type=1., kw_phi_thickening=2.0E-6),
+                      network=dict(n_phi_layers=1, phi_type=1), hydraulic=dict(kw_phi_thick=[2.0E-6])),
     "ratio_cortex": dict(port=dict(ratio_cortex=0.4), hydraulic=dict(ratio_cortex=0.4)),
     "aquaporin_factors": dict(port=dict(kaqp=6.0E-4, **{f"kaqp_{k}": v for k, v in KAQP.items()}),
                               hydraulic=dict(kaqp=[dict(value=6.0E-4, **KAQP)])),
     "xylem_pieces": dict(port=dict(xylem_pieces=1.), geometry=dict(xylem_pieces=True)),
     "conductivities": dict(port=dict(kw=3.0E-4, kmb=5.0E-5), hydraulic=dict(kw=[3.0E-4], kmb=5.0E-5)),
 }
-BARRIERS = (1, 3)
+BARRIERS = (0, 1, 3)
 
 
 @pytest.fixture(scope="module", params=list(OPTIONS))

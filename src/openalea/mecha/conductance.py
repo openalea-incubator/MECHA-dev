@@ -21,7 +21,7 @@ from openalea.mecha.postprocess import VISCOSITY_PHLOEM, VISCOSITY_XYLEM, poiseu
 # kw per barrier code (HydraulicData.get_wall_conductivities): each key's source parameter
 _KW_KEYS = ("kw_endo_endo", "kw_exo_exo", "kw_exo_epi", "kw_exo_cortex", "kw_cortex_cortex", "kw_endo_peri",
             "kw_endo_cortex", "kw_passage")
-_KW_CONFIGS = {   # barrier: sources of _KW_KEYS (kw_septa is always kw_septa, kw_phi_thick always the lignin value)
+_KW_CONFIGS = {   # barrier: sources of _KW_KEYS (kw_septa is always kw_septa, kw_phi_thick always the φ walls')
     0: ("kw", "kw", "kw", "kw", "kw", "kw", "kw", "kw"),
     1: ("kw_casparian", "kw", "kw", "kw", "kw", "kw", "kw", "kw"),
     2: ("kw_casparian", "kw", "kw", "kw", "kw", "kw_suberin_in", "kw_suberin_out", "kw"),
@@ -37,8 +37,8 @@ _KW_CONFIGS = {   # barrier: sources of _KW_KEYS (kw_septa is always kw_septa, k
     11: ("kw_casparian", "kw_casparian", "kw_suberin_out", "kw_suberin_in", "kw", "kw_suberin_in", "kw_suberin_out",
          "kw"),
 }
-# the barrier codes lignifying every wall of a sclerenchyma cell (develop's kw_scler), and its source
-_KW_SCLER_CONFIGS = {11: "kw_lignin"}
+# the barrier codes lignifying every wall of a sclerenchyma cell (develop's kw_scler)
+SCLERENCHYMA_LIGNIFIED = (11,)
 # a wall's interface (its two cells' cgroups, sorted) -> its kw key (HydraulicData.interface_kw_key_map)
 _KW_INTERFACES = {(3, 3): "kw_endo_endo", (3, 4): "kw_endo_cortex", (3, 5): "kw_endo_peri", (3, 11): "kw_endo_peri",
                   (3, 12): "kw_endo_peri", (3, 13): "kw_endo_peri", (3, 16): "kw_endo_peri", (3, 22): "kw_endo_peri",
@@ -259,15 +259,21 @@ def _per_code(codes, table: dict, P: dict, key_index: int) -> np.ndarray:
     return out
 
 
+def _value_or_fraction(value, fraction, kw) -> np.ndarray:
+    """A lignified wall's conductivity: its own *value* where given, else *fraction* × kw (NaN: not given)."""
+    value = np.asarray(value, dtype=float)
+    return np.where(np.isfinite(value), value, np.asarray(fraction, dtype=float) * kw)
+
+
 def wall_configuration(barrier, P) -> dict:
     """{kw key: per entity value}: the wall conductivities of each entity's barrier code."""
     codes = np.asarray(barrier).astype(np.int64)
     config = {key: _per_code(codes, _KW_CONFIGS, P, i) for i, key in enumerate(_KW_KEYS)}
     config["kw_septa"] = np.asarray(P["kw_septa"], dtype=float)
-    config["kw_phi_thick"] = np.asarray(P["kw_lignin"], dtype=float)
-    config["kw_scler"] = np.full(codes.size, np.nan)
-    for code, source in _KW_SCLER_CONFIGS.items():
-        config["kw_scler"] = np.where(codes == code, np.asarray(P[source], dtype=float), config["kw_scler"])
+    kw = np.asarray(P["kw"], dtype=float)
+    config["kw_phi_thick"] = _value_or_fraction(P["kw_phi_thickening"], P["kw_phi_thickening_fraction"], kw)
+    sclerenchyma = _value_or_fraction(P["kw_sclerenchyma"], P["kw_sclerenchyma_fraction"], kw)
+    config["kw_scler"] = np.where(np.isin(codes, SCLERENCHYMA_LIGNIFIED), sclerenchyma, np.nan)
     meso_hypo = np.asarray(P["kw_meso_hypo"], dtype=float)
     config["kw_meso_hypo"] = np.where(np.isfinite(meso_hypo), meso_hypo, np.asarray(P["kw"], dtype=float))
     return config
@@ -342,7 +348,7 @@ def edge_conductances(net: Network, P: dict, barrier, height, factors: dict = No
     sub = {key: values[e] for key, values in kw_config.items()}
     kw_val = _select(interface[e], _KW_INTERFACES, sub, kw[e])
     kw_val = np.where(phi, sub["kw_phi_thick"], kw_val)
-    # a wall of a sclerenchyma cell, lignified at the barrier codes defining kw_scler (develop's barrier 11)
+    # a wall of a sclerenchyma cell, lignified at the barrier codes SCLERENCHYMA_LIGNIFIED (develop's barrier 11)
     sclerenchyma = (count(net.sclerenchyma)[e] > 0) & np.isfinite(sub["kw_scler"])
     kw_val = np.where(sclerenchyma, sub["kw_scler"], kw_val)
     kw_val = np.where(has_passage, sub["kw_passage"], kw_val)

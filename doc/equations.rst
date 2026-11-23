@@ -63,8 +63,10 @@ Conductances (``conductance.edge_conductances``)
 with :math:`k_w` (cm² hPa⁻¹ d⁻¹) chosen by rules (``wall_configuration``, ``_select``): the interface of the wall's
 two cells (exodermis, epidermis–exodermis, exodermis–cortex, cortex–cortex, endodermis, endodermis–cortex,
 endodermis–stele), each of which the barrier code sets to ``kw`` or to a barrier value (``kw_casparian``,
-``kw_suberin_in``, ``kw_suberin_out``, ``kw_lignin``; the table is in :doc:`legacy`); then ``kw_lignin`` between two
-φ-thickened cells of the same rank, ``kw_lignin`` for every wall of a sclerenchyma cell at :math:`b = 11`,
+``kw_suberin_in``, ``kw_suberin_out``, ``kw_lignin`` the exodermis' lignin cap; the table is in :doc:`legacy`); then
+``kw_phi_thickening`` (NaN: ``kw_phi_thickening_fraction`` × ``kw``, 0.01) between two φ-thickened cells of the same
+rank, ``kw_sclerenchyma`` (NaN: ``kw_sclerenchyma_fraction`` × ``kw``, 0.1) for every wall of a sclerenchyma cell at
+:math:`b = 11`,
 ``kw_passage`` next to a passage cell, ``kw_septa`` for a wall with two
 intercellular cells at :math:`b > 0` and, with ``xylem_pieces``, :math:`K_w = 10^{-16}` for a wall between two xylem
 cells (a vessel's septa). The thickness :math:`t` is each wall's own (``thickness_source`` 2, GRANAP's; ``thickness``
