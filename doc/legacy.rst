@@ -1105,6 +1105,18 @@ What ``develop`` (945b2be) adds to the refactored legacy, and the behaviours fou
        and its derivative in ``test_pr67.py``, the coupled Jacobian against finite differences with a band's σ in
        ``test_coupled_steady_component.py``. A φ-thickened wall is never a band in either (the φ cells are cortex
        cells)
+   * - d22
+     - a diagnostic of the solute leaving through the Dirichlet nodes (``SoluteTransport.boundary_flux``, PR #67's
+       ee39a85 E): :math:`(T c)_i` on the held nodes, :math:`T` the operator before the Dirichlet rows replace theirs
+       (transport, loss, liquid boundary; positive: the solute leaves), the storage not counted; a method called after
+       a solve, per node or summed
+     - ported: ``held_solute_flux`` (MechaSolutes, mol d⁻¹, a node state, 0 off the held nodes): on every node of
+       ``fixed_sucrose`` and every sink, :math:`S + I c_b - L(c, s)` at the step's end (the balance the Dirichlet row
+       replaces, its storage not counted; the coupled steady state's own flows with ``solute_solve`` 2), written
+       each step. Against ``boundary_flux`` per node: after one Scharfetter–Gummel step on the standard flows (the
+       sinks at 0) and at the steady state with the epidermis held at 1 (upwind, without and with ``k_decay``), both
+       roots, to 10⁻¹¹ of its range (``test_standard_solutes.py``); at the coupled steady state, the sinks' inflow
+       node by node (``test_coupled_steady_component.py``)
 
 
 Constants

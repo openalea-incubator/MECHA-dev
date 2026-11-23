@@ -150,8 +150,9 @@ class MechaSolutes(MechaSections):
     """
     Sucrose and starch in the liquid network of the sections. Inputs: MechaHydraulics' water flows,
     diffusion factors and volumes, the membranes' reflection coefficients (the "Osmotic" role: MechaOsmoticPresets),
-    the photosynthetic sources (role "Photosynthesis"). Outputs: the concentrations, and the sucrose's osmotic
-    potential −R T c on the cells (the presets add it to their baseline).
+    the photosynthetic sources (role "Photosynthesis"). Outputs: the concentrations, the sucrose's osmotic
+    potential −R T c on the cells (the presets add it to their baseline), and the sucrose leaving through the held
+    nodes (held_solute_flux).
     """
     # ── Inputs ──
     flow: float = input_variable(**_doc("cm3 d-1", "the water's flow along the edge (MechaHydraulics' plant problem)"),
@@ -390,6 +391,14 @@ class MechaSolutes(MechaSections):
     sucrose_osmotic_potential: float = state_variable(**_doc("hPa", "−R T c on the cells (van't Hoff; 0 elsewhere)"),
                                                       default=0., scale=SCALES.Compartment, location="node",
                                                       kind="non_inertial_intensive", weight="liquid_volume")
+    held_solute_flux: float = state_variable(**_doc("mol d-1", "the net sucrose flux leaving the liquid network "
+                                                               "through a held node (fixed_sucrose, the sinks) at "
+                                                               "the step's end: what its reservoir takes to hold it "
+                                                               "(negative: gives); its transport, reactions, loss and "
+                                                               "liquid boundary, its storage not counted (develop's "
+                                                               "SoluteTransport.boundary_flux); 0 elsewhere"),
+                                             default=0., scale=SCALES.Compartment, location="node",
+                                             kind="non_inertial_extensive")
 
     @rate(include_inactive=True)
     def _tail_weight(self, compartment_type, flow, standard_flow, reflection_coefficient, apoplastic_diffusion_factor,
@@ -504,6 +513,33 @@ class MechaSolutes(MechaSections):
         T = np.asarray(solute_temperature, dtype=float)
         cells = (np.asarray(compartment_type) == 0) & (np.asarray(vapour_node) == 0)
         return np.where(cells, -GAS_CONSTANT * T * np.asarray(sucrose, dtype=float), 0.)
+
+    @totalstate(include_inactive=True)
+    def _held_solute_flux(self, sucrose, starch, sucrose_sink, tail_weight, head_weight, synthesis_rate,
+                          degradation_rate, decay_rate, boundary_outflow, boundary_source, sucrose_source,
+                          coupled_node, coupled_flow, diffusion_conductance, carried_fraction, upwind_edge, water_edge,
+                          boundary_concentration) -> np.ndarray:
+        """On the held nodes, the balance their Dirichlet rows replace, with its sign changed: S + b − L(c, s) at the
+        step's end (the weights of the coupled steady state's flows on its sections, without starch there)."""
+        view = self.data_structure.to_graph_view()
+        B = view.incidence
+        sucrose, starch = np.asarray(sucrose, dtype=float), np.asarray(starch, dtype=float)
+        coupled = np.asarray(coupled_node) > 0
+        coupled_edge = coupled[view.tail]
+        coupled_tail, coupled_head = edge_weights(np.asarray(diffusion_conductance, dtype=float),
+                                                  np.asarray(carried_fraction) * np.asarray(coupled_flow, dtype=float),
+                                                  np.asarray(upwind_edge) > 0)
+        a = np.where(coupled_edge, coupled_tail, tail_weight)
+        b = np.where(coupled_edge, coupled_head, head_weight)
+        q = a * sucrose[view.tail] - b * sucrose[view.head]
+        coupled_outflow, coupled_inflow = liquid_boundary_exchange(B, coupled_flow, np.asarray(water_edge) > 0,
+                                                                   np.isfinite(boundary_concentration))
+        outflow = np.where(coupled, coupled_outflow, boundary_outflow)
+        inflow = np.where(coupled, coupled_inflow * np.nan_to_num(boundary_concentration), boundary_source)
+        reactions = np.where(coupled, 0., np.asarray(synthesis_rate) * sucrose - np.asarray(degradation_rate) * starch)
+        balance = (np.asarray(B @ q).reshape(-1) + reactions + (np.asarray(decay_rate) + outflow) * sucrose
+                   - sucrose_source - inflow)
+        return np.where(np.asarray(sucrose_sink) > 0, -balance, 0.)
 
     @graph_system(node_unknowns=["sucrose", "starch"], solver="newton", transient=True, max_iterations=3, absolute_tolerance=1e-14,
                   schedule_as="state", where={"liquid_node": ">0"})

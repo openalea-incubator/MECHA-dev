@@ -4,7 +4,8 @@ The solutes on a root section's standard problem (MechaSolutes with solute_flows
 the cortex and the left half's walls, the sinks (phloem, xylem) at 0; in the apoplast or the symplast only
 (solute_pathway, its modes 'apo' and 'sym'); upwind (solute_scheme 2) and Crank–Nicolson (solute_theta 0.5); the
 steady state on the standard flows with held sources (solute_solve 3, fixed_sucrose, solute_sinks 0: develop's
-tutorial 04, its epidermis at 1 and a first-order loss); its operators 'D' and 'A' alone (diffusion only, advection
+tutorial 04, its epidermis at 1 and a first-order loss) and the sucrose leaving through the held nodes
+(held_solute_flux, the legacy's ``boundary_flux``); its operators 'D' and 'A' alone (diffusion only, advection
 only), which the port gives with no water flow or no diffusivities.
 Develop's Scharfetter–Gummel operator has no liquid boundary (its ``conserve_boundary`` enters only the upwind
 operator, doc/legacy.rst d9): solute_boundary_advection 0 there.
@@ -93,6 +94,25 @@ def test_standard_solute_flux(root_case):
     np.testing.assert_allclose(sucrose, reference, rtol=0, atol=1e-11 * abs(reference).max())
 
 
+def test_held_solute_flux_after_a_step(root_case):
+    """The sucrose leaving through the sinks after one Scharfetter–Gummel step (held_solute_flux): the legacy's
+    ``boundary_flux`` on its step's concentrations, per node, to 1e-11 of its range; 0 on the other nodes."""
+    from openalea.mecha.legacy.utils.solute_transport import SoluteTransport
+    sucrose, sink = port_step(root_case, solute_boundary_advection=0.)
+    flux = np.asarray(root_case["data_structure"].get("held_solute_flux"))[root_case["nodes"]]
+    index = root_case["index"]
+    concentrations = np.empty(index.size)
+    concentrations[index] = legacy_step(root_case, sink, conserve_boundary=False)
+    transport = SoluteTransport(root_case["run"].mecha, {"apo_wall": D_APO, "plasmodesmata": D_PD, "membrane": D_MEM,
+                                                         "conserve_boundary": False}, capacitance_params=None,
+                                mode="full")
+    reference = transport.boundary_flux(concentrations, index[sink], h=0, i_maturity=0, i_scenario=0, scheme="sg",
+                                        per_node=True)
+    assert abs(reference).max() > 0
+    np.testing.assert_allclose(flux[sink], reference, rtol=0, atol=1e-11 * abs(reference).max())
+    np.testing.assert_array_equal(flux[~sink], 0.)
+
+
 @pytest.mark.parametrize("mode, pathway", [("apo", 2.), ("sym", 3.)])
 def test_pathways(root_case, mode, pathway):
     """In the apoplast (walls and junctions) or the symplast (cells) only: their nodes' sucrose to 1e-11 of the
@@ -144,6 +164,14 @@ def test_steady_state_with_held_sources(root_case, k_decay):
                                 boundary_conditions={int(i): 1.0 for i in index[epidermis]}, scheme="upwind")[index]
     assert reference.min() < 0.5
     np.testing.assert_allclose(sucrose, reference, rtol=0, atol=1e-11)
+    # the sucrose the held epidermis gives the network (held_solute_flux < 0): the legacy's boundary_flux
+    flux = np.asarray(data_structure.get("held_solute_flux"))[nodes]
+    legacy_flux = transport.boundary_flux(transport.solve(h=0, i_maturity=0, i_scenario=0, rhs=np.zeros(index.size),
+                                                          boundary_conditions={int(i): 1.0 for i in index[epidermis]},
+                                                          scheme="upwind"),
+                                          index[epidermis], per_node=True)
+    assert legacy_flux.min() < 0
+    np.testing.assert_allclose(flux[epidermis], legacy_flux, rtol=0, atol=1e-11 * abs(legacy_flux).max())
 
 
 @pytest.mark.parametrize("operators", ["D", "A"])

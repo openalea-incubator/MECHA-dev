@@ -2,7 +2,8 @@
 The coupled steady state of the water and the sucrose (MechaSolutes' solute_solve 2): its analytic Jacobian against
 finite differences of its balances, with the liquid boundary (solute_boundary_advection 1), in both schemes, without
 and with a Casparian band's reflection coefficient on its wall edges; and the
-solve's conservation: at steady state the sucrose produced leaves through the sinks and the liquid boundary.
+solve's conservation: at steady state the sucrose produced leaves through the sinks (held_solute_flux) and the liquid
+boundary.
 """
 import inspect
 
@@ -94,5 +95,10 @@ def test_steady_state_conserves_the_sucrose(section):
     leaving = into_sinks + (outflow * c)[~sink].sum()
     produced = np.asarray(data_structure.get("sucrose_source")).sum()
     assert c.max() > 0 and leaving == pytest.approx(produced, rel=1e-9)
+    # held_solute_flux: the same sucrose, node by node, on the coupled state's flows
+    held = np.asarray(data_structure.get("held_solute_flux"))
+    np.testing.assert_allclose(held[sink], -np.asarray(B @ q).reshape(-1)[sink], rtol=1e-12,
+                               atol=1e-12 * abs(held).max())
+    assert not held[~sink].any() and held[sink].sum() > 0
     assert abs(np.asarray(data_structure.get("coupled_psi")) - np.asarray(data_structure.get("standard_psi"))).max() > 1e-3
     solutes.solute_solve = 1.

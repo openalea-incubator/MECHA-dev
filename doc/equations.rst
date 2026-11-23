@@ -596,6 +596,13 @@ water leaving as vapour is an edge of that sum, so it leaves its solute behind. 
 (van 't Hoff, ``_sucrose_osmotic_potential``) is :math:`\pi_c = -R\,T\,c` with :math:`R = 8.314 \times 10^4` hPa cm³
 mol⁻¹ K⁻¹, which the next water solve reads.
 
+**The flux through the held nodes** (``held_solute_flux``, mol d⁻¹; develop's ``boundary_flux``): a node held at a
+concentration (``fixed_sucrose``, the sinks) has no balance of its own, its reservoir taking or giving what holds it.
+That flux is the balance its Dirichlet row replaces, with its sign changed, at the step's end and without the storage
+term: :math:`S + I\,c_b - \big(\sum J + k_\text{syn} V c - k_\text{deg} V s + k_\text{decay} V c + O\,c\big)`;
+positive, the sucrose leaves the network there (a sink); negative, it enters (a source held at a concentration). At a
+steady state, the held nodes' fluxes and the liquid boundary's carry away the sources.
+
 **The coupled steady state** (``solute_solve`` 2, ``_steady_coupled``; the reactions' ``coupled_water_solute_solve``):
 each root section's standard problem with the osmotic drives of :math:`\pi_c = \pi_{c,0} - R T c` on its cells
 (:math:`\pi_0` the presets' potential without the sucrose's, ``osmotic_baseline``), and the steady sucrose on that
