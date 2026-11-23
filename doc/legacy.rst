@@ -950,7 +950,8 @@ What ``develop`` (945b2be) adds to the refactored legacy, and the behaviours fou
      - ported (2026-10-28): ``soil_contact_cell`` (a protoplast's input, 1 in contact), ``contact_junction_rule`` (1
        all, develop's, by default; 2 any); a junction's cells those of the walls it joins (the legacy's
        ``junction_wall_cell``, without its first-three truncation, which only an inner junction of four cells meets).
-       Soil terms bit for bit, solution to 10⁻¹² against both legacies (``test_soil_contact_cells.py``)
+       Soil terms bit for bit against both legacies, the solution to 10⁻¹² against ``develop``'s (the reactions
+       branch's predates PR #67's walls lining air spaces, d15) (``test_soil_contact_cells.py``)
    * - d11
      - ``SoluteTransport.solve`` with ``boundary_conditions`` (any nodes held at a concentration: its tutorials hold
        the epidermis at 1, with no sink) and without a time step (its steady state, ``T c = −s``), one species

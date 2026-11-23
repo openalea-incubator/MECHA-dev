@@ -3,7 +3,8 @@ A section partly in contact with the soil by its cells (MECHA's Contactrange, th
 border walls of the listed protoplasts, and the border junctions whose cells all are listed (develop's
 ``_contact_nodes``) or any is (the reactions branch's ``_apply_soil_boundary``). The port's soil_contact_cell and
 contact_junction_rule give the legacy's soil terms bit for bit and its solution to 1e-12, on the left half of the
-epidermis with x_contact beyond the section.
+epidermis with x_contact beyond the section. The reactions branch's solution is not compared: it predates PR #67's
+walls lining air spaces and membrane floor (doc/legacy.rst, d15), which the port adopted without a switch (E1).
 """
 import numpy as np
 import pytest
@@ -59,5 +60,7 @@ def test_contact_by_cells(case, rule, package):
     border = geo.border_wall | geo.border_junction
     reference_soil[border] = -np.asarray(stage["rhs"]).reshape(-1)[index[border]]                # the legacy's rhs_s: −K of the soil
     np.testing.assert_array_equal(soil[nodes], reference_soil)
+    if package is legacy_reactions:
+        return
     reference = stage["solution"][index]
     np.testing.assert_allclose(psi[nodes], reference, rtol=0, atol=1e-12 * abs(reference).max())
