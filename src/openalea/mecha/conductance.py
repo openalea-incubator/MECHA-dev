@@ -26,17 +26,23 @@ _KW_CONFIGS = {   # barrier: sources of _KW_KEYS (kw_septa is always kw_septa, k
     1: ("kw_casparian", "kw", "kw", "kw", "kw", "kw", "kw", "kw"),
     2: ("kw_casparian", "kw", "kw", "kw", "kw", "kw_suberin_in", "kw_suberin_out", "kw"),
     3: ("kw_casparian", "kw", "kw", "kw", "kw", "kw_suberin_in", "kw_suberin_out", "kw_suberin_in"),
-    4: ("kw_casparian", "kw_casparian", "kw", "kw", "kw", "kw_suberin_in", "kw_suberin_out", "kw_suberin_in"),
-    5: ("kw_casparian", "kw_casparian", "kw", "kw", "kw", "kw", "kw", "kw"),
-    6: ("kw_casparian", "kw_casparian", "kw_suberin_out", "kw_suberin_in", "kw", "kw", "kw", "kw"),
-    7: ("kw", "kw_casparian", "kw", "kw", "kw", "kw", "kw", "kw"),
-    8: ("kw_casparian", "kw_casparian", "kw_suberin_out", "kw_suberin_in", "kw", "kw_suberin_in", "kw_suberin_out",
+    4: ("kw_casparian", "exodermis_casparian", "kw", "kw", "kw", "kw_suberin_in", "kw_suberin_out", "kw_suberin_in"),
+    5: ("kw_casparian", "exodermis_casparian", "kw", "kw", "kw", "kw", "kw", "kw"),
+    6: ("kw_casparian", "exodermis_casparian", "exodermis_suberin_out", "exodermis_suberin_in", "kw", "kw", "kw",
         "kw"),
-    9: ("kw_casparian", "kw_casparian", "kw_lignin", "kw", "kw", "kw", "kw", "kw"),
-    10: ("kw", "kw_casparian", "kw_suberin_out", "kw_suberin_in", "kw", "kw", "kw", "kw"),
-    11: ("kw_casparian", "kw_casparian", "kw_suberin_out", "kw_suberin_in", "kw", "kw_suberin_in", "kw_suberin_out",
-         "kw"),
+    7: ("kw", "exodermis_casparian", "kw", "kw", "kw", "kw", "kw", "kw"),
+    8: ("kw_casparian", "exodermis_casparian", "exodermis_suberin_out", "exodermis_suberin_in", "kw", "kw_suberin_in",
+        "kw_suberin_out", "kw"),
+    9: ("kw_casparian", "exodermis_casparian", "kw_lignin", "kw", "kw", "kw", "kw", "kw"),
+    10: ("kw", "exodermis_casparian", "exodermis_suberin_out", "exodermis_suberin_in", "kw", "kw", "kw", "kw"),
+    11: ("kw_casparian", "exodermis_casparian", "exodermis_suberin_out", "exodermis_suberin_in", "kw",
+         "kw_suberin_in", "kw_suberin_out", "kw"),
 }
+# the exodermis' own barrier values (PR #67's Casp_exo, Sub_exo), the endodermis' where NaN: {source: (parameter,
+# fallback)}
+_EXODERMIS_SOURCES = {"exodermis_casparian": ("kw_casparian_exodermis", "kw_casparian"),
+                      "exodermis_suberin_out": ("kw_suberin_exodermis", "kw_suberin_out"),
+                      "exodermis_suberin_in": ("kw_suberin_exodermis", "kw_suberin_in")}
 # the barrier codes lignifying every wall of a sclerenchyma cell (develop's kw_scler)
 SCLERENCHYMA_LIGNIFIED = (11,)
 # a wall's interface (its two cells' cgroups, sorted) -> its kw key (HydraulicData.interface_kw_key_map)
@@ -68,8 +74,11 @@ FPLXHEIGHT = {(1, 1): 8.0E5, (2, 2): 8.0E5, (1, 2): 1.08E6, (1, 4): 2.28E6, (4, 
               (3, 22): 1.08E6, (5, 22): 1.08E6, (11, 22): 1.2E6, (12, 22): 1.2E6, (13, 22): 6.4E5, (22, 22): 1.0E6}
 FPLXHEIGHT_LEGACY_DEFAULT = 8.0E5
 # the legacy's aperture factors per interface (develop's interface_kpl_factor_map, its keys fixed: doc/legacy.rst,
-# d2); an interface not listed has factor 1
+# d2; PR #67's exodermis and epidermis factors); an interface not listed has factor 1, a pair of factors their
+# harmonic mean
 KPL_FACTOR_INTERFACES = {(4, 4): "kpl_cortex_factor", (12, 12): "kpl_PCC_factor", (11, 11): "kpl_PST_factor",
+                         (1, 1): "kpl_exodermis_factor", (2, 2): "kpl_epidermis_factor",
+                         (1, 2): ("kpl_epidermis_factor", "kpl_exodermis_factor"), (1, 4): "kpl_exodermis_factor",
                          (3, 5): "kpl_endo_in_factor", (3, 16): "kpl_endo_in_factor", (3, 4): "kpl_endo_out_factor",
                          (5, 12): "kpl_PPP_factor", (12, 13): "kpl_PPP_factor", (11, 12): "kpl_PCC_factor",
                          (11, 16): "kpl_PST_factor", (11, 13): "kpl_PST_factor", (5, 11): "kpl_PST_factor",
@@ -78,8 +87,9 @@ KPL_FACTOR_INTERFACES = {(4, 4): "kpl_cortex_factor", (12, 12): "kpl_PCC_factor"
 
 def barrier_wall_sources() -> dict:
     """{barrier code: {wall key: the parameter its conductivity comes from}}: which walls each of MECHA's maturity
-    codes cuts (kw_casparian, kw_suberin_in, kw_suberin_out, kw_lignin) and which keep kw (the legacy's
-    HydraulicData.get_wall_conductivities; kw_septa always kw_septa)."""
+    codes cuts (kw_casparian, kw_suberin_in, kw_suberin_out, kw_lignin; the exodermis' exodermis_casparian,
+    exodermis_suberin_out, exodermis_suberin_in: kw_casparian_exodermis, kw_suberin_exodermis, or the endodermis'
+    where NaN) and which keep kw (the legacy's HydraulicData.get_wall_conductivities; kw_septa always kw_septa)."""
     return {code: dict(zip(_KW_KEYS, sources)) for code, sources in _KW_CONFIGS.items()}
 
 
@@ -268,7 +278,11 @@ def _value_or_fraction(value, fraction, kw) -> np.ndarray:
 def wall_configuration(barrier, P) -> dict:
     """{kw key: per entity value}: the wall conductivities of each entity's barrier code."""
     codes = np.asarray(barrier).astype(np.int64)
-    config = {key: _per_code(codes, _KW_CONFIGS, P, i) for i, key in enumerate(_KW_KEYS)}
+    sources = dict(P)
+    for source, (parameter, fallback) in _EXODERMIS_SOURCES.items():
+        own = np.asarray(P[parameter], dtype=float)
+        sources[source] = np.where(np.isfinite(own), own, np.asarray(P[fallback], dtype=float))
+    config = {key: _per_code(codes, _KW_CONFIGS, sources, i) for i, key in enumerate(_KW_KEYS)}
     config["kw_septa"] = np.asarray(P["kw_septa"], dtype=float)
     kw = np.asarray(P["kw"], dtype=float)
     config["kw_phi_thick"] = _value_or_fraction(P["kw_phi_thickening"], P["kw_phi_thickening_fraction"], kw)
@@ -683,7 +697,11 @@ def _plasmodesmata_legacy(net: Network, e, P, b):
     for (i, j), value in FPLXHEIGHT.items():
         fplx[code == i * 1000 + j] = value
     base_area = fplx * 1.0E-04 * net.edge_length[e]
-    factors = {name: np.asarray(P[name], dtype=float)[e] for name in set(KPL_FACTOR_INTERFACES.values())}
+    def resolved(key):                                      # a factor, or a pair's harmonic mean
+        if isinstance(key, tuple):
+            return _harmonic(*(np.asarray(P[name], dtype=float)[e] for name in key))
+        return np.asarray(P[key], dtype=float)[e]
+    factors = {key: resolved(key) for key in set(KPL_FACTOR_INTERFACES.values())}
     factor = _select(code, KPL_FACTOR_INTERFACES, factors, np.ones(e.size))
     with np.errstate(divide="ignore", invalid="ignore"):
         aperture = np.where(gi == gj, factor, 2.0 * factor / (factor + 1.0))
@@ -714,7 +732,9 @@ def _plasmodesmata_original(net: Network, e, P, b):
     """
     The original MECHA's plasmodesmata (its radial rules, first match wins): quantity × aperture per edge *e*, then
     × endo_in_factor on the stelar side of the endodermis (both cells endodermis or stele: the wall they share is in
-    the original's rows up to the endodermis'), × endo_out_factor on the cortical side. The cgroups of its newer
+    the original's rows up to the endodermis'), × endo_out_factor on the cortical side. PR #67's exodermis and
+    epidermis factors enter as the original's others: f between two cells of the tissue, the harmonic mean of the
+    two sides' factors across an interface (1 for a tissue without one). The cgroups of its newer
     CellSet versions are read as it does (19, 20: xylem; 21: pericycle), and develop's companion cells 24 and 26 as
     companion cells (12).
     """
@@ -738,6 +758,8 @@ def _plasmodesmata_original(net: Network, e, P, b):
     ppp = _phloem_pole_pericycle(net, np.flatnonzero(net.in_section & (net.path == PLASMODESMATA)))
     t_ppp = np.where(ppp[net.a[e]] | ppp[net.b[e]], param("kpl_PPP_factor"), 1.0)
     t_cortex, t_pcc = param("kpl_cortex_factor"), param("kpl_PCC_factor")
+    t_exo, t_epi = param("kpl_exodermis_factor"), param("kpl_epidermis_factor")
+    t_outer = np.select([outer == 1, outer == 2], [t_exo, t_epi], 1.0)        # the outer layer's (PR #67's factors)
     interc = net.intercellular[net.a[e]] | net.intercellular[net.b[e]]
     stele = (5, 13)
     added = np.zeros(e.size, dtype=bool)
@@ -752,9 +774,11 @@ def _plasmodesmata_original(net: Network, e, P, b):
         (np.isfinite(param("kw_meso_hypo")) & pair(2, 4), 0.0),      # the needle's lignified (2, 4) walls
         ((param("xylem_pieces") > 0) & (gi == 13) & (gj == 13), 10000 * param("fplxheight_default") * length),
         ((b > 0) & ((gi == 13) | (gj == 13)), 0.0),
-        (pair(2, 1), param("fplxheight_epi_exo") * length),
+        (pair(2, 1), _harmonic(t_epi, t_exo) * param("fplxheight_epi_exo") * length),
+        (pair(1, 1), t_exo * param("fplxheight_default") * length),
+        (pair(2, 2), t_epi * param("fplxheight_default") * length),
         ((np.minimum(gi, gj) == np.minimum(outer, 4)) & (np.maximum(gi, gj) == np.maximum(outer, 4)) & (outer != 4),
-         _harmonic(t_cortex, 1.0) * param("fplxheight_outer_cortex") * length * concentrated[:, 0]),
+         _harmonic(t_cortex, t_outer) * param("fplxheight_outer_cortex") * length * concentrated[:, 0]),
         (pair(4, 4), t_cortex * param("fplxheight_cortex_cortex") * length * concentrated[:, 1]),
         (pair(3, 4), _harmonic(t_cortex, 1.0) * param("fplxheight_cortex_endo") * length * concentrated[:, 2]),
         (pair(3, 3), param("fplxheight_endo_endo") * length),

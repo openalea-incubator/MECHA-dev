@@ -973,6 +973,18 @@ What ``develop`` (945b2be) adds to the refactored legacy, and the behaviours fou
        ``kw_phi_thickening_fraction`` 0.01, ``kw_sclerenchyma_fraction`` 0.1; ``kw_lignin`` is the lignin cap's only.
        Bit for bit: the φ cases and a given value (``test_hydraulic_options.py``), the monocot root's cortex retagged
        sclerenchyma at barrier 11 (``test_sclerenchyma.py``); the given value in ``test_develop_additions.py``
+   * - d14
+     - the exodermis' own barrier values (``kw_barrier``'s ``Casp_exo``, ``Sub_exo``: its Casparian strip at barriers
+       4–11, its suberin, one value for both faces, at 6, 8, 10, 11; the endodermis' where absent) and its plasmodesmata
+       factors ``exo_factor`` (exodermis–exodermis, exodermis–cortex) and ``epi_factor`` (epidermis–epidermis), their
+       harmonic mean across the epidermis–exodermis interface (1 by default)
+     - ``kw_casparian_exodermis``, ``kw_suberin_exodermis`` (NaN: ``kw_casparian``; ``kw_suberin_out`` toward the
+       epidermis, ``kw_suberin_in`` toward the cortex), ``kpl_exodermis_factor``, ``kpl_epidermis_factor`` (1) in
+       ``plasmodesmata_rules`` 2 as the legacy's map; in the original rules (E5) as its other factors: f between two
+       cells of the tissue, the harmonic mean of the two sides' factors across an interface (the outer layer–cortex
+       one with the cortex's). Bit for bit: every barrier value distinct at barriers 4, 6–11
+       (``test_develop_barriers.py``), the factors (``test_plasmodesmata_factors.py``); both rules'
+       ratios in ``test_develop_additions.py``
 
 
 Constants

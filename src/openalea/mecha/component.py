@@ -272,6 +272,11 @@ class MechaHydraulics(MechaSections):
     kw_casparian: float = _p("cm2 hPa-1 d-1", "wall conductivity across a Casparian strip", 1.00E-16)
     kw_suberin_in: float = _p("cm2 hPa-1 d-1", "conductivity of suberized walls, inner face", 1.00E-16)
     kw_suberin_out: float = _p("cm2 hPa-1 d-1", "conductivity of suberized walls, outer face", 1.00E-16)
+    kw_casparian_exodermis: float = _p("cm2 hPa-1 d-1", "wall conductivity across the exodermis' Casparian strip "
+                                                        "(PR #67's Casp_exo; NaN: kw_casparian)", float("nan"))
+    kw_suberin_exodermis: float = _p("cm2 hPa-1 d-1", "conductivity of the exodermis' suberin, both faces (PR #67's "
+                                                      "Sub_exo; NaN: kw_suberin_out toward the epidermis, kw_suberin_in "
+                                                      "toward the cortex)", float("nan"))
     kw_lignin: float = _p("cm2 hPa-1 d-1", "conductivity of the exodermis' lignin cap (barrier 9, its walls with the "
                                            "epidermis)", 1.00E-16)
     kw_phi_thickening: float = _p("cm2 hPa-1 d-1", "conductivity of the walls between two φ-thickened cells of a cortex "
@@ -320,6 +325,11 @@ class MechaHydraulics(MechaSections):
                                           "cortex-cortex, cortex-endodermis)", 1.0)
     kpl_endo_in_factor: float = _p("adim", "plasmodesmata factor on the stelar side of the endodermis", 1.0)
     kpl_endo_out_factor: float = _p("adim", "plasmodesmata factor on the cortical side of the endodermis", 1.0)
+    kpl_exodermis_factor: float = _p("adim", "plasmodesmata aperture factor of the exodermis (exodermis-exodermis; "
+                                             "across its interfaces with the epidermis and the cortex)", 1.0)
+    kpl_epidermis_factor: float = _p("adim", "plasmodesmata aperture factor of the epidermis (epidermis-epidermis; "
+                                             "across its interfaces with the exodermis, and with the cortex without "
+                                             "an exodermis in the original rules)", 1.0)
     kpl_PPP_factor: float = _p("adim", "plasmodesmata aperture factor of the phloem-pole pericycle", 1.0)
     kpl_PCC_factor: float = _p("adim", "plasmodesmata aperture factor of the companion cells", 1.0)
     kpl_PST_factor: float = _p("adim", "plasmodesmata aperture factor of the sieve tubes (the legacy's rules only; the "

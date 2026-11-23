@@ -86,3 +86,22 @@ def test_the_sclerenchyma_lignified_at_barrier_11():
     plain8, _ = section(barrier=8.)
     plain11, _ = section(barrier=11.)
     np.testing.assert_array_equal(plain11, plain8)
+
+
+@pytest.mark.parametrize("rules", (1., 2.))
+def test_the_exodermis_and_epidermis_factors(rules):
+    """PR #67's plasmodesmata factors of the exodermis and the epidermis, in both rules (E5): f between two cells of
+    the tissue, across the exodermis-epidermis interface the two factors' harmonic mean h (rules 1; rules 2: 2h /
+    (h + 1), the legacy's map), across the exodermis-cortex interface 2f / (f + 1)."""
+    exodermis, epidermis = 0.5, 0.8
+    K1, net = section(plasmodesmata_rules=rules)
+    K, _ = section(plasmodesmata_rules=rules, kpl_exodermis_factor=exodermis, kpl_epidermis_factor=epidermis)
+    pd = np.flatnonzero(net.in_section & (net.path == PLASMODESMATA) & (K1 > 0))
+    mean = 2 * exodermis * epidermis / (exodermis + epidermis)
+    expected = {((1,), (1,)): exodermis, ((2,), (2,)): epidermis,
+                ((1,), (2,)): mean if rules == 1. else 2 * mean / (mean + 1),
+                ((1,), (4,)): 2 * exodermis / (exodermis + 1)}
+    for groups, ratio in expected.items():
+        edges = cells_of(net, pd, groups)
+        assert edges.size, groups
+        np.testing.assert_allclose(K[edges] / K1[edges], ratio, rtol=1e-14, err_msg=str(groups))

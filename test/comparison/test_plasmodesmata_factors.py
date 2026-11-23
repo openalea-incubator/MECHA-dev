@@ -1,6 +1,7 @@
 """
 The legacy's plasmodesmata rules (plasmodesmata_rules 2) are develop's fixed factor map (doc/legacy.rst, d2): with
-every factor its own value, the port's plasmodesmata conductances are the legacy's, edge by edge and bit for bit.
+every factor its own value (PR #67's exodermis and epidermis factors too, d14), the port's plasmodesmata conductances
+are the legacy's, edge by edge and bit for bit.
 """
 import numpy as np
 import pytest
@@ -14,7 +15,8 @@ from plants import template_organ
 # {the port's parameter: (the key the legacy's solver reads, the value)}
 FACTORS = {"kpl_cortex_factor": ("cortex_factor", 0.5), "kpl_endo_in_factor": ("endo_in_factor", 0.7),
            "kpl_endo_out_factor": ("endo_out_factor", 0.8), "kpl_PPP_factor": ("phloem_pericycle_pole_factor", 0.6),
-           "kpl_PCC_factor": ("phloem_companion_cell_factor", 0.3), "kpl_PST_factor": ("phloem_sieve_tube_factor", 0.4)}
+           "kpl_PCC_factor": ("phloem_companion_cell_factor", 0.3), "kpl_PST_factor": ("phloem_sieve_tube_factor", 0.4),
+           "kpl_exodermis_factor": ("exo_factor", 0.9), "kpl_epidermis_factor": ("epi_factor", 0.65)}
 
 
 @pytest.mark.parametrize("barrier", (1,))
@@ -47,4 +49,4 @@ def test_each_factor_where_develop_applies_it(case, barrier):
     np.testing.assert_array_equal(K[plasmodesmata], [expected[k] for k in keys])
     graph = run.network.graph
     interfaces = {tuple(sorted((graph.nodes[a]["cgroup"], graph.nodes[b]["cgroup"]))) for a, b in keys}
-    assert {(4, 4), (3, 4), (3, 16)} <= interfaces                  # the factors were exercised
+    assert {(4, 4), (3, 4), (3, 16), (1, 1), (1, 2), (1, 4), (2, 2)} <= interfaces       # the factors were exercised

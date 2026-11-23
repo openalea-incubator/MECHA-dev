@@ -142,3 +142,52 @@ def test_plasmodesmata_by_distance_to_the_soil(case, profile):
     np.testing.assert_allclose([K[e] for e in pd], [expected[key(e)] for e in pd], rtol=1e-12)
     coefficients = [graph.edges[key(e)]["pd_spatial_coef"] for e in pd]
     assert min(coefficients) < 0.7 and max(coefficients) == 1.0           # the profile spans c_dry to c_wet
+
+
+EXODERMIS_BARRIERS = (4, 6, 7, 8, 9, 10, 11)
+# {the port's parameter: value}, and the legacy's kw_barrier entry giving the same (PR #67's Casp_exo, Sub_exo)
+BARRIER_VALUES = dict(kw_casparian=1.0E-9, kw_suberin_in=2.0E-9, kw_suberin_out=3.0E-9, kw_lignin=4.0E-9,
+                      kw_casparian_exodermis=5.0E-9, kw_suberin_exodermis=6.0E-9)
+LEGACY_BARRIER_VALUES = {"value": 1.0E-16, "Casp": 1.0E-9, "Sub": 3.0E-9, "Sub_in": 2.0E-9, "Sub_out": 3.0E-9,
+                         "Lig": 4.0E-9, "Casp_exo": 5.0E-9, "Sub_exo": 6.0E-9}
+
+
+def test_exodermis_own_values(case):
+    """PR #67's exodermis values (kw_casparian_exodermis, kw_suberin_exodermis) and every barrier value distinct, at
+    the barrier codes with an exodermis: every conductance the legacy's, bit for bit (doc/legacy.rst, d14)."""
+    data_structure, g = case["data_structure"], case["mtg"]
+    run = legacy_section(template_organ(case["anatomy"], g, case["segment"]), barriers=EXODERMIS_BARRIERS,
+                         height=case["height"], hydraulic=dict(kw_barrier_elems=[LEGACY_BARRIER_VALUES]))
+    if not data_structure.has("barrier"):
+        data_structure.register("barrier", np.ones(data_structure.n_nodes()), location="node")
+    mecha = legacy_options(MechaHydraulics(data_structure=data_structure))
+    nodes, edges = section_parts(data_structure)[case["segment"]]
+    mecha_index = g.property("mecha_index")
+    legacy = np.array([int(mecha_index[int(v)]) for v in data_structure.entity_ids("node")[nodes]])
+    geo = mecha.section_geometries()[case["segment"]][2]
+    graph = run.network.graph
+    by_position = {tuple(graph.nodes[j]["position"]): j for j in range(run.network.n_walls, run.network.n_wall_junction)}
+    for v in geo.junctions:
+        legacy[v] = by_position[(geo.x[v], geo.y[v])]
+    defaults = {name: np.array(getattr(mecha, name), copy=True) for name in BARRIER_VALUES}
+    stages = {}
+    try:                                     # the parameters are the shared case's: restored for the other tests
+        for name, value in BARRIER_VALUES.items():
+            setattr(mecha, name, value)
+        for i, barrier in enumerate(EXODERMIS_BARRIERS):
+            data_structure.set("barrier", np.full(data_structure.n_nodes(), float(barrier)))
+            mecha()
+            stages[barrier] = (np.asarray(data_structure.get("conductance")).copy(), mecha.network(), run.stages[i])
+    finally:
+        for name, value in defaults.items():
+            setattr(mecha, name, value)
+        data_structure.set("barrier", np.ones(data_structure.n_nodes()))
+    for barrier, (K, net, reference) in stages.items():
+        local = np.full(net.cgroup.size, -1, dtype=np.int64)
+        local[nodes] = np.arange(nodes.size)
+        expected = {tuple(sorted(k)): v for k, v in reference["edge_K"].items()}
+        key = lambda e: tuple(sorted((int(legacy[local[net.a[e]]]), int(legacy[local[net.b[e]]]))))   # noqa: E731
+        in_matrix = [e for e in edges if key(e) in expected]
+        assert len(in_matrix) == len(expected)
+        np.testing.assert_array_equal([K[e] for e in in_matrix], [expected[key(e)] for e in in_matrix],
+                                      err_msg=f"barrier {barrier}")

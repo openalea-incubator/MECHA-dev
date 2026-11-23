@@ -63,7 +63,7 @@ Conductances (``conductance.edge_conductances``)
 with :math:`k_w` (cm² hPa⁻¹ d⁻¹) chosen by rules (``wall_configuration``, ``_select``): the interface of the wall's
 two cells (exodermis, epidermis–exodermis, exodermis–cortex, cortex–cortex, endodermis, endodermis–cortex,
 endodermis–stele), each of which the barrier code sets to ``kw`` or to a barrier value (``kw_casparian``,
-``kw_suberin_in``, ``kw_suberin_out``, ``kw_lignin`` the exodermis' lignin cap; the table is in :doc:`legacy`); then
+``kw_casparian_exodermis`` and ``kw_suberin_exodermis`` on the exodermis' interfaces, NaN: the endodermis', ``kw_suberin_in``, ``kw_suberin_out``, ``kw_lignin`` the exodermis' lignin cap; the table is in :doc:`legacy`); then
 ``kw_phi_thickening`` (NaN: ``kw_phi_thickening_fraction`` × ``kw``, 0.01) between two φ-thickened cells of the same
 rank, ``kw_sclerenchyma`` (NaN: ``kw_sclerenchyma_fraction`` × ``kw``, 0.1) for every wall of a sclerenchyma cell at
 :math:`b = 11`,
@@ -118,13 +118,15 @@ d_\min)/L}` (profile 2), :math:`c_w`, :math:`c_d`, :math:`L` the parameters ``pd
 :math:`c_k` the concentration above at the cortical interfaces. With ``plasmodesmata_rules`` 1 (the original MECHA's,
 ``_plasmodesmata_original``), first match wins: none at an intercellular space (:math:`b > 0`), ``10000`` ×
 ``fplxheight_default`` between the pieces of one vessel (``xylem_pieces``), none to mature xylem; the factors
-(``kpl_cortex_factor``, ``kpl_PPP_factor`` on the phloem-pole pericycle, ``kpl_PCC_factor``) enter as
+(``kpl_cortex_factor``, ``kpl_PPP_factor`` on the phloem-pole pericycle, ``kpl_PCC_factor``,
+``kpl_exodermis_factor``, ``kpl_epidermis_factor``) enter as
 :math:`\alpha = f` between two cells of the factor's type and as the harmonic mean :math:`2 f_1 f_2 / (f_1 + f_2)`
 (with 1 for the other side) across interfaces; then :math:`f_\text{endo}` is ``kpl_endo_in_factor`` when both cells are
 endodermis or stele (or the section has no xylem), ``kpl_endo_out_factor`` otherwise. With ``plasmodesmata_rules`` 2
 (the legacy's, ``_plasmodesmata_legacy``), the legacy's frequency table, :math:`\alpha = f` or :math:`2f/(f + 1)` from
 ``develop``'s factor map (``conductance.KPL_FACTOR_INTERFACES``: the cortex's, the endodermis' inner and outer, PPP,
-PCC, PST and ``kpl_cambium_stele_factor``, each at its interfaces; doc/legacy.rst, d2), 10000 × the frequency between
+PCC, PST, ``kpl_cambium_stele_factor``, the exodermis' and the epidermis' (their harmonic mean between the two), each
+at its interfaces; doc/legacy.rst, d2, d14), 10000 × the frequency between
 any two xylem cells, and no :math:`f_\text{endo}`.
 
 **Soil and axial boundary terms** (``conductance.boundary_terms``), per node: a border wall and a border junction at
