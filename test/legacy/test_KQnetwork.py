@@ -40,10 +40,10 @@ def _build_mecha():
     data = OrganInputData.for_root()
     data.set_value("aerenchyma", "aerenchyma_proportion", 0.5)
     data.set_value("aerenchyma", "n_files", 10)
-    # smoothness as one value first: the validator checks it against the tissues at each assignment
     data.set_value("inter_cellular_spaces", "smoothness", 0.05)
     data.set_value("inter_cellular_spaces", "tissue", ["cortex"])
-    root = RootAnatomy(data)
+    root = RootAnatomy(data, seed=0)
+    root.generate_cells()
     _ = root.export_to_adjencymatrix()
 
     default_input = InData()

@@ -10,12 +10,11 @@ import matplotlib.pyplot as plt
 
 
 def test_osmotic():
+    # Root anatomy without aerenchyma, prepared for mecha
     data = OrganInputData.for_root()
     data.set_value("aerenchyma", "aerenchyma_proportion", 0.0)
-    root = RootAnatomy(data)
-    
-    # Generated a root anatomy without aerenchyma
-    # prepare granap data structure for mecha
+    root = RootAnatomy(data, seed=0)
+    root.generate_cells()
     root.export_to_adjencymatrix()
 
     # prepare default inputs for mecha
