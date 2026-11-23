@@ -21,10 +21,11 @@ from openalea.mecha.legacy import InData, Mecha, NetworkBuilder
 # The port's options that reproduce the legacy where it departs from the original MECHA:
 # its plasmodesmata rules and its aperture factors' defaults, its prescribed xylem boundary, its one wall thickness,
 # its membrane floor (ME-33), its axial penalty conductances (ME-32: develop's 1.0), its product of two sclerenchyma
-# cells' plasmodesmata factors (d17), its lamella model's wall half at kw on every membrane (d19)
+# cells' plasmodesmata factors (d17), its lamella model's wall half at kw on every membrane (d19),
+# its membrane_pd's surface (d20)
 LEGACY_OPTIONS = dict(plasmodesmata_rules=2., kpl_PCC_factor=0., kpl_PST_factor=0., standard_axial_source=2.,
                       thickness_source=1., membrane_floor=2., k_xyl=1.0, k_sieve=1.0, sclerenchyma_plasmodesmata_rule=2.,
-                      lamella_wall_half=2.,
+                      lamella_wall_half=2., membrane_surface_rule=2.,
                       standard_psi_sieve=float("nan"))    # the legacy's default without BCs.xml: no phloem boundary
 
 
@@ -393,14 +394,17 @@ def legacy_fractions(organ, barrier, height=200.0):
 
 def legacy_standard_solute_flux(run, c_prev, boundary_conditions, d_apo=0.1, d_pd=0.5, d_mem=1e-6, dt=0.1,
                                 mode="full", theta=1.0, scheme="sg", operators="T", conserve_boundary=True,
-                                rhs=None):
+                                rhs=None, membrane_pd=None):
     """
     One solute step of the legacy's ``Mecha.standard_solute_flux`` on *run* (a legacy_section's, its first maturity
     stage's standard problem: its scenario 0's edge flows), from *c_prev* (every node, by legacy index) with the
     Dirichlet *boundary_conditions* {legacy index: c}; *dt* None: its steady state. Returns the concentrations of its
-    *mode*'s nodes (the apoplast's: walls and junctions; the symplast's: the cells).
+    *mode*'s nodes (the apoplast's: walls and junctions; the symplast's: the cells). *membrane_pd*: its membranes'
+    permeabilities from their structure, dict(lipid=, aqp=) (cm d⁻¹), in place of *d_mem*.
     """
     params = {"apo_wall": d_apo, "plasmodesmata": d_pd, "membrane": d_mem, "conserve_boundary": conserve_boundary}
+    if membrane_pd is not None:
+        params["membrane_pd"] = membrane_pd
     nwj = run.network.n_wall_junction
     c_prev = {"full": c_prev, "apo": c_prev[:nwj], "sym": c_prev[nwj:]}[mode]
     size = c_prev.size

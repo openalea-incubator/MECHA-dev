@@ -363,6 +363,11 @@ class MechaHydraulics(MechaSections):
     membrane_floor: float = _p("", "a membrane without aquaporin activity outside the barriers (an air-filled "
                                    "intercellular space): 1 cut (1e-16, the original MECHA's), 2 cut only where kmb is "
                                    "0 too (the reactions branch's and develop's, for the comparisons)", 1.)
+    membrane_surface_rule: float = _p("", "a membrane's surface for the solutes' permeabilities "
+                                          "(membrane_permeation_surface): 1 its length × the height (the membrane "
+                                          "diffusion factor's), 2 its length × (the height + its distance to the "
+                                          "cell's centre), none on an intercellular cell (PR #67's membrane_pd, for "
+                                          "the comparisons: doc/legacy.rst, d20)", 1.)
     kpl: float = _p("cm3 hPa-1 d-1", "conductance of one plasmodesma", 5.3E-12)
     plasmodesmata_rules: float = _p("", "the plasmodesmata's rules: 1 the original MECHA's, 2 the refactored legacy's "
                                         "(develop's factor map; for the comparison with it, doc/legacy.rst)", 1.)
@@ -650,6 +655,18 @@ class MechaHydraulics(MechaSections):
                                                              "height / distance)"),
                                                       default=0., scale=SCALES.Connection, location="edge",
                                                       kind="non_inertial_intensive")
+    membrane_permeation_surface: float = state_variable(**_doc("cm2", "× a membrane's permeability to a solute (cm "
+                                                               "d-1): its solute conductance; the membrane's surface, "
+                                                               "its length × the height (membrane_surface_rule)"),
+                                                        default=0., scale=SCALES.Connection, location="edge",
+                                                        kind="non_inertial_intensive")
+    lamella_diffusion_resistance: float = state_variable(**_doc("cm", "/ the apoplastic diffusivity: the resistance to "
+                                                                "a solute of a membrane's suberin lamella "
+                                                                "(suberin_model 1), in series with the membrane's "
+                                                                "permeability: its thickness / its conductivity "
+                                                                "relative to kw (0 without a lamella)"),
+                                                         default=0., scale=SCALES.Connection, location="edge",
+                                                         kind="non_inertial_intensive")
     node_volume: float = state_variable(**_doc("cm3", "the node's volume: a wall's length × height × thickness, a "
                                                       "junction's half, a protoplast's area × height; on a reduced "
                                                       "section's kept node, plus the eliminated nodes' it condenses"),
@@ -908,7 +925,7 @@ class MechaHydraulics(MechaSections):
                      str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str,
                      np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,
                      str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,
-                     str, np.ndarray, str, np.ndarray, str, np.ndarray]:
+                     str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray]:
         """
         Every edge's conductance, and the boundary conductances of the nodes (soil, axial), from MECHA's geometry,
         the segments' barriers and heights (their lengths), and the plants' parameters; the standard problem's
@@ -990,7 +1007,7 @@ class MechaHydraulics(MechaSections):
         K = np.where(soil_links, soil[view.head] if node_mode else 0., K)
         plant_soil = np.zeros_like(soil) if node_mode else soil
         soil_node_condition = np.where(compartment_type == SOIL_NODE, 3. if self.soil_boundary == "node_robin" else 1., 0.)
-        for name in ("apoplastic", "symplastic", "membrane"):
+        for name in ("apoplastic", "symplastic", "membrane", "permeation_surface", "lamella_diffusion_resistance"):
             factors[name] = np.where(soil_links, 0., factors[name])
         volume = self._node_volumes(net, P_node, height_node, compartment_type)
         volume, liquid = self._condensed_volumes(volume, np.where(vapour | surface | (compartment_type == SOIL_NODE), 0., volume),
@@ -1007,6 +1024,8 @@ class MechaHydraulics(MechaSections):
                 "apoplastic_diffusion_factor", np.where(in_matrix, factors["apoplastic"], 0.),
                 "symplastic_diffusion_factor", np.where(in_matrix, factors["symplastic"], 0.),
                 "membrane_diffusion_factor", np.where(in_matrix, factors["membrane"], 0.),
+                "membrane_permeation_surface", np.where(in_matrix, factors["permeation_surface"], 0.),
+                "lamella_diffusion_resistance", np.where(in_matrix, factors["lamella_diffusion_resistance"], 0.),
                 "node_volume", volume, "liquid_volume", liquid,
                 "contact_distance", factors["contact_distance"],
                 "wall_layer_conductivity", layers["wall_layer_conductivity"],

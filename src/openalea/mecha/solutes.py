@@ -125,6 +125,23 @@ def edge_weights(De, F, upwind=False):
     return a, b
 
 
+def membrane_permeation(lipid, aquaporin, aquaporin_factor, lamella_resistance, d_apoplast) -> np.ndarray:
+    """
+    The membranes' permeability to the solute from their structure (cm d⁻¹; NaN where neither *lipid* nor *aquaporin*,
+    the permeabilities through the bilayer and through the aquaporins, is given: the diffusivity's path): P = lipid +
+    aquaporin × the cell's *aquaporin_factor*, in series with the suberin lamella where the face has one, of
+    permeability *d_apoplast* / *lamella_resistance* (the walls' diffusivity over the lamella's thickness, as its
+    conductivity relative to kw): 1 / (1 / P + lamella_resistance / d_apoplast) (PR #67's membrane_pd).
+    """
+    lipid, aquaporin = np.asarray(lipid, dtype=float), np.asarray(aquaporin, dtype=float)
+    given = np.isfinite(lipid) | np.isfinite(aquaporin)
+    permeability = np.nan_to_num(lipid) + np.nan_to_num(aquaporin) * aquaporin_factor
+    with np.errstate(divide="ignore", invalid="ignore"):
+        in_series = 1. / (1. / permeability + lamella_resistance / d_apoplast)
+    permeability = np.where(permeability > 0, np.where(lamella_resistance > 0, in_series, permeability), 0.)
+    return np.where(given, permeability, np.nan)
+
+
 @dataclass
 class MechaSolutes(MechaSections):
     """
@@ -150,6 +167,17 @@ class MechaSolutes(MechaSections):
     membrane_diffusion_factor: float = input_variable(**_doc("cm", "MechaHydraulics'"), by="Hydraulics",
                                                       default=0., scale=SCALES.Connection, location="edge",
                                                       kind="non_inertial_intensive")
+    membrane_permeation_surface: float = input_variable(**_doc("cm2", "MechaHydraulics'"), by="Hydraulics",
+                                                        default=0., scale=SCALES.Connection, location="edge",
+                                                        kind="non_inertial_intensive")
+    lamella_diffusion_resistance: float = input_variable(**_doc("cm", "MechaHydraulics'"), by="Hydraulics",
+                                                         default=0., scale=SCALES.Connection, location="edge",
+                                                         kind="non_inertial_intensive")
+    aquaporin_factor: float = input_variable(**_doc("adim", "a protoplast's aquaporin activity relative to its "
+                                                            "tissue's (MechaHydraulics' input: the aquaporins' share "
+                                                            "of its membranes' permeability)"),
+                                             by="Regulation", default=1., scale=SCALES.Compartment, location="node",
+                                             kind="non_inertial_intensive")
     node_volume: float = input_variable(**_doc("cm3", "MechaHydraulics'"), by="Hydraulics", default=0.,
                                         scale=SCALES.Compartment, location="node",
                                         kind="non_inertial_extensive")
@@ -213,7 +241,20 @@ class MechaSolutes(MechaSections):
     # ── Parameters (per plant) ──
     d_apoplast: float = _p("cm2 d-1", "sucrose's diffusivity in the walls", 0.1)
     d_plasmodesmata: float = _p("cm2 d-1", "sucrose's diffusivity through the plasmodesmata", 0.5)
-    d_membrane: float = _p("cm2 d-1", "sucrose's passive diffusivity across the membranes", 1.0E-6)
+    d_membrane: float = _p("cm2 d-1", "sucrose's passive diffusivity across the membranes (over the distance from the "
+                                      "wall to the cell's centre; replaced by the membranes' permeability where "
+                                      "membrane_lipid_permeability or membrane_aquaporin_permeability is given)",
+                           1.0E-6)
+    membrane_lipid_permeability: float = _p("cm d-1", "the membranes' permeability to sucrose through their lipid "
+                                                      "bilayer: with membrane_aquaporin_permeability, a membrane's "
+                                                      "permeability is this + the aquaporins' × its cell's "
+                                                      "aquaporin_factor, in series with its suberin lamella's "
+                                                      "(suberin_model 1), × its surface (PR #67's membrane_pd; NaN: "
+                                                      "0 with the aquaporins' given, else d_membrane's path)",
+                                            float("nan"))
+    membrane_aquaporin_permeability: float = _p("cm d-1", "the membranes' permeability to sucrose through their "
+                                                          "aquaporins, at aquaporin_factor 1 (NaN: 0 with the lipids' "
+                                                          "given, else d_membrane's path)", float("nan"))
     k_starch_synthesis: float = _p("d-1", "the cells' sucrose → starch rate", 0.)
     k_starch_degradation: float = _p("d-1", "the cells' starch → sucrose rate", 0.)
     c_sink: float = _p("mol cm-3", "the sucrose concentration of the sinks (phloem loading, xylem)", 0.)
@@ -347,7 +388,9 @@ class MechaSolutes(MechaSections):
 
     @rate(include_inactive=True)
     def _tail_weight(self, compartment_type, flow, standard_flow, reflection_coefficient, apoplastic_diffusion_factor,
-                     symplastic_diffusion_factor, membrane_diffusion_factor, node_volume, vapour_node, cgroup, tissue,
+                     symplastic_diffusion_factor, membrane_diffusion_factor, membrane_permeation_surface,
+                     lamella_diffusion_resistance, aquaporin_factor, membrane_lipid_permeability,
+                     membrane_aquaporin_permeability, node_volume, vapour_node, cgroup, tissue,
                      network_path, osmotic_potential, sucrose_osmotic_potential, in_standard_problem, standard_psi,
                      coupled_psi, fixed_sucrose, d_apoplast, d_plasmodesmata, d_membrane, k_starch_synthesis,
                      k_starch_degradation, c_sink, solute_boundary_advection, c_boundary, storage_fraction_wall,
@@ -365,7 +408,9 @@ class MechaSolutes(MechaSections):
         view = data_structure.to_graph_view()
         tail = view.tail
         P_edge = {name: np.asarray(values, dtype=float)[tail] for name, values in
-                  (("d_apoplast", d_apoplast), ("d_plasmodesmata", d_plasmodesmata), ("d_membrane", d_membrane))}
+                  (("d_apoplast", d_apoplast), ("d_plasmodesmata", d_plasmodesmata), ("d_membrane", d_membrane),
+                   ("membrane_lipid_permeability", membrane_lipid_permeability),
+                   ("membrane_aquaporin_permeability", membrane_aquaporin_permeability))}
         P_node = {name: np.asarray(values, dtype=float) for name, values in (
             ("k_starch_synthesis", k_starch_synthesis), ("k_starch_degradation", k_starch_degradation),
             ("c_sink", c_sink), ("solute_boundary_advection", solute_boundary_advection), ("c_boundary", c_boundary),
@@ -386,9 +431,15 @@ class MechaSolutes(MechaSections):
         along = np.select([edge_pathway == 2, edge_pathway == 3], [path == WALL_PATH, path == PLASMODESMATA],
                           np.isin(path, (WALL_PATH, MEMBRANE, PLASMODESMATA)))
         on_liquid = liquid[view.tail] & liquid[view.head] & along
+        cell_end = np.where(compartment_type[view.tail] == 0, view.tail, view.head)
+        permeation = membrane_permeation(P_edge["membrane_lipid_permeability"],
+                                         P_edge["membrane_aquaporin_permeability"],
+                                         np.asarray(aquaporin_factor, dtype=float)[cell_end],
+                                         np.asarray(lamella_diffusion_resistance, dtype=float), P_edge["d_apoplast"])
         De = (np.asarray(apoplastic_diffusion_factor) * P_edge["d_apoplast"]
               + np.asarray(symplastic_diffusion_factor) * P_edge["d_plasmodesmata"]
-              + np.asarray(membrane_diffusion_factor) * P_edge["d_membrane"])
+              + np.where(np.isfinite(permeation), permeation * np.asarray(membrane_permeation_surface),
+                         np.asarray(membrane_diffusion_factor) * P_edge["d_membrane"]))
         carried = np.where(path == MEMBRANE, 1.0 - np.asarray(reflection_coefficient, dtype=float), 1.0)
         a, b = edge_weights(np.where(on_liquid, De, 0.), np.where(on_liquid, np.asarray(flow) * carried, 0.), upwind)
         fixed = np.asarray(fixed_sucrose, dtype=float)

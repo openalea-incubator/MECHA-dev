@@ -1060,6 +1060,25 @@ What ``develop`` (945b2be) adds to the refactored legacy, and the behaviours fou
        10⁻¹²; the monocot root's cortex retagged sclerenchyma at barrier 11, its walls and membranes bit for bit
        (``test_suberin_lamella.py``); the faces, the layers, the passage cells and the two wall-half rules in
        ``test_pr67.py`` (the legacy's ``test_suberin_semantics.py``)
+   * - d20
+     - the membranes' permeability to the solute from their structure (``diffusion_params['membrane_pd']``, a scalar
+       or ``dict(lipid=, aqp=)``, cm d⁻¹; off by default), replacing the diffusivity ``D_mem``: :math:`P = P_l + P_a
+       f_\text{aqp}` (the cell's aquaporin factor), in series with the lamella of a suberized face (``suberin_model
+       'lamella'``), :math:`P_\text{lam} = D_\text{wall}\,(k_\text{lam} / k_w) / s`. Its conductance is :math:`P_\text{eff}`
+       × the **hydraulic** membrane surface, :math:`(h + d_e)\,\ell_e`, where the ``D_mem`` path's is :math:`h\,\ell_e`
+       (over :math:`d_e`), and it has none on the intercellular cells (every air space, by cell type), where the
+       ``D_mem`` path and the advection leave out the vapour air spaces only (7c4ed4f's ``_air_nodes``) (U6, a legacy
+       problem: two surfaces and two sets of air cells for one membrane)
+     - ported: ``membrane_lipid_permeability``, ``membrane_aquaporin_permeability`` (MechaSolutes; NaN by default:
+       ``d_membrane``'s path; one alone: the other 0), ``solutes.membrane_permeation``; the aquaporin factor is the
+       node input ``aquaporin_factor`` (d18), the lamella's resistance and the surface MechaHydraulics' edge states
+       ``lamella_diffusion_resistance`` and ``membrane_permeation_surface``. The surface is the one of the port's
+       other membrane term, length × height, on the same membranes (those between liquid nodes);
+       ``membrane_surface_rule`` 2 reproduces the legacy's surface and its intercellular cells
+       (``LEGACY_OPTIONS``). One Scharfetter–Gummel step on the standard flows at barrier 3, the aquaporin factors by
+       tissue, without and with the lamella model, both roots: every node's sucrose to 10⁻¹¹ of the range
+       (``test_membrane_permeability.py``); the permeability, the surface's two rules and the lamella's resistance
+       in ``test_pr67.py``. The tertiary layer and the wall half do not resist the solutes there, as the legacy's
 
 
 Constants

@@ -518,6 +518,24 @@ plasmodesmata's quantity and aperture as above, :math:`t` the thickness of the w
 ``thickness_source`` 2, ``thickness`` with 1); :math:`f_\text{mem} = \ell_e h \, 10^{-4} / d_e` on every membrane; :math:`D_\text{apo}`, :math:`D_\text{pd}`, :math:`D_\text{mem}` the diffusivities
 (cm² d⁻¹).
 
+**The membranes' permeability from their structure** (``membrane_permeation``, PR #67's ``membrane_pd``): where
+``membrane_lipid_permeability`` :math:`P_l` or ``membrane_aquaporin_permeability`` :math:`P_a` (cm d⁻¹) is given
+(NaN by default; one alone: the other 0), the membranes' term :math:`f_\text{mem} D_\text{mem}` is replaced by
+
+.. math::
+
+   P_\text{eff}\,S_m, \qquad P = P_l + P_a\,f_\text{aqp}, \qquad
+   P_\text{eff} = \left( \frac{1}{P} + \frac{R_\text{lam}}{D_\text{apo}} \right)^{-1}, \qquad
+   R_\text{lam} = \frac{s \cdot 10^{-4}}{k_i / \text{kw}}, \qquad S_m = \ell_e h \, 10^{-8},
+
+:math:`f_\text{aqp}` the cell's ``aquaporin_factor`` (the node input acting on its membranes' :math:`k_{aqp}`),
+:math:`R_\text{lam}` the resistance of a suberized face's lamella (``suberin_model`` 1: its thickness :math:`s` over
+its conductivity :math:`k_i` relative to ``kw``, a wall's diffusivity scaled as its water conductivity;
+``lamella_diffusion_resistance``, 0 without a lamella), :math:`S_m` the membrane's surface
+(``membrane_permeation_surface``: that of :math:`f_\text{mem}`, which is :math:`S_m / (d_e\,10^{-4})`;
+``membrane_surface_rule`` 2, the legacy's: :math:`\ell_e (h + d_e)\,10^{-8}`, none on an intercellular cell,
+:doc:`legacy` d20). :math:`P_\text{eff} = 0` where :math:`P = 0` or the lamella is impermeable.
+
 **Advection** by the water's flow :math:`F = Q` (the plant problem's; the standard problem's with ``solute_flows`` 2,
 the legacy's ``standard_solute_flux``), :math:`F = (1 - \sigma)\,Q` on the membranes,
 with the Scharfetter–Gummel scheme (``edge_weights``): with :math:`P = F / D_e` and :math:`B(x) = x/(e^x - 1)`

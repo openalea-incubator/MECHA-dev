@@ -326,3 +326,45 @@ def test_lamella_of_the_sclerenchyma():
     np.testing.assert_allclose(layers["wall_layer_conductivity"][walls][between & ~lining], 0.1 * float(mecha.kw), rtol=1e-14)
     membranes, _, _, cell, _ = _membrane_faces(net)
     assert (layers["membrane_lamella_resistance"][membranes][net.sclerenchyma[cell]] == 0).all()
+
+
+# ── The membranes' permeability to the solutes from their structure (doc/legacy.rst, d20) ──
+def test_membrane_permeation():
+    """P = P_lipid + P_aqp × the cell's aquaporin factor, in series with the lamella (the walls' diffusivity / its
+    resistance); NaN where neither permeability is given (d_membrane's path); one of them alone: the other 0; a closed
+    membrane or an impermeable lamella: 0."""
+    from openalea.mecha.solutes import membrane_permeation
+    nan = float("nan")
+    lipid = np.array([nan, 2.0E-3, 2.0E-3, nan, 2.0E-3, 2.0E-3, 0.0])
+    aquaporin = np.array([nan, nan, 5.0E-3, 5.0E-3, 5.0E-3, 5.0E-3, 0.0])
+    factor = np.array([1., 1., 0.5, 2., 0.5, 0.5, 1.])
+    resistance = np.array([0., 0., 0., 0., 4., np.inf, 4.])
+    permeation = membrane_permeation(lipid, aquaporin, factor, resistance, 0.1)
+    assert np.isnan(permeation[0])
+    np.testing.assert_allclose(permeation[1:], [2.0E-3, 4.5E-3, 1.0E-2, 1. / (1. / 4.5E-3 + 4. / 0.1), 0., 0.],
+                               rtol=1e-15)
+
+
+def test_membrane_permeation_surface_and_lamella_resistance():
+    """A membrane's surface for the permeabilities is its length × the height, as the membrane diffusion factor's;
+    membrane_surface_rule 2 (the legacy's, U6): length × (height + distance), none on an intercellular cell. A
+    suberized face's lamella resists the solutes as its thickness / its conductivity relative to kw."""
+    _, net, mecha = section(barrier=3., **LAMELLA)
+    data_structure = mecha.data_structure
+    surface = np.asarray(data_structure.get("membrane_permeation_surface")).copy()
+    resistance = np.asarray(data_structure.get("lamella_diffusion_resistance")).copy()
+    factor = np.asarray(data_structure.get("membrane_diffusion_factor")).copy()
+    membranes, own, toward, cell, _ = _membrane_faces(net)
+    height = float(np.asarray(data_structure.get("length"))[0]) * 1.0E6
+    length, distance = net.edge_length[membranes], net.edge_dist[membranes]
+    np.testing.assert_allclose(surface[membranes], length * height * 1.0E-8, rtol=1e-15)
+    np.testing.assert_allclose(surface[membranes], factor[membranes] * distance * 1.0E-4, rtol=1e-14)
+    assert (surface[np.setdiff1d(np.arange(surface.size), membranes)] == 0).all()
+    outer = (own == 3) & (toward == 4)
+    np.testing.assert_allclose(resistance[membranes][outer], SECONDARY * 1.0E-4 / (5.0E-9 / float(mecha.kw)), rtol=1e-14)
+    assert (resistance[membranes][own != 3] == 0).all()
+    _, _, legacy = section(barrier=3., **dict(LAMELLA, membrane_surface_rule=2.))
+    legacy_surface = np.asarray(legacy.data_structure.get("membrane_permeation_surface"))[membranes]
+    air = net.intercellular[cell]
+    assert air.sum() > 0 and (legacy_surface[air] == 0).all() and (surface[membranes][air] > 0).all()
+    np.testing.assert_allclose(legacy_surface[~air], (length * (height + distance) * 1.0E-8)[~air], rtol=1e-15)

@@ -419,7 +419,11 @@ def edge_conductances(net: Network, P: dict, barrier, height, factors: dict = No
     terms of HydraulicMatrixBuilder and SoluteTransport): "apoplastic" (walls: temp × their kw ratio, the
     xylem-pieces septa 1e-16; the membranes of mature vessels: 1e-4 × wall length × height / thickness), "symplastic"
     (plasmodesmata: pd_section × their quantity / the crossed wall's thickness × 1e-4), "membrane" (every membrane: length × height
-    × 1e-4 / dist), each to be multiplied by its diffusivity (cm² d⁻¹).
+    × 1e-4 / dist), each to be multiplied by its diffusivity (cm² d⁻¹); and, for the membranes' permeabilities
+    (MechaSolutes' membrane_lipid_permeability, membrane_aquaporin_permeability), "permeation_surface" (cm²: each
+    membrane's surface, length × height; membrane_surface_rule 2, the legacy's: length × (height + dist), none on an
+    intercellular cell) and "lamella_diffusion_resistance" (cm, / the apoplastic diffusivity: the resistance of a
+    suberized face's lamella to the solutes, its thickness / its conductivity relative to kw; 0 without a lamella).
 
     With *layers* (a dict), the layers the conductances are made of are written in it, per edge: on the wall edges
     "wall_layer_conductivity" (cm² hPa⁻¹ d⁻¹: the wall's conductivity along itself, its layers in parallel) and
@@ -506,7 +510,7 @@ def edge_conductances(net: Network, P: dict, barrier, height, factors: dict = No
     wall_factor = net.wall_conductivity_factor[wall_end[e]]           # a wall's own factor, along it (PR #67's)
     K[e] = K_wall * wall_factor
     if factors is not None:
-        for name in ("apoplastic", "symplastic", "membrane"):
+        for name in ("apoplastic", "symplastic", "membrane", "permeation_surface", "lamella_diffusion_resistance"):
             factors[name] = np.zeros(n)
         temp_factor = np.where(ghost & (n_interc < 2), 1.0E-16, kw_val / kw[e]) * wall_factor
         factors["apoplastic"][e] = temp * temp_factor
@@ -589,6 +593,13 @@ def edge_conductances(net: Network, P: dict, barrier, height, factors: dict = No
         vessel = xylem & (b > 0)
         factors["apoplastic"][e] = np.where(vessel, 1.0E-04 * (net.wall_length[wall] * height[e]) / t, 0.)
         factors["membrane"][e] = net.edge_length[e] * height[e] * 1e-4 / net.edge_dist[e]
+        legacy_surface = np.asarray(P["membrane_surface_rule"], dtype=float)[e] == 2
+        factors["permeation_surface"][e] = np.where(
+            legacy_surface, np.where(net.intercellular[cell], 0., (height[e] + net.edge_dist[e]) * net.edge_length[e] * 1e-8),
+            net.edge_length[e] * height[e] * 1e-8)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            factors["lamella_diffusion_resistance"][e] = np.where(
+                lamella_thickness > 0, (lamella_thickness * 1e-4) / (lamella_kw / kw[e]), 0.)
 
     # ── plasmodesmata ──
     e = np.flatnonzero(plasmodesmata)
