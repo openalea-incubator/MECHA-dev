@@ -236,8 +236,24 @@ osmotic term). Along an edge from node :math:`i` to node :math:`j`, the flow (``
 
    Q_{ij} = K_{ij}\left[(\psi_i - \psi_j) + \sigma_{ij}\,(\pi_i - \pi_j)\right],
 
-:math:`\pi` the osmotic potentials, :math:`\sigma` the membranes' reflection coefficients (0 on walls and
-plasmodesmata); :math:`\sigma(\pi_i - \pi_j)` is the edge's osmotic drive (``_osmotic_drive``). Each node's balance
+:math:`\pi` the osmotic potentials, :math:`\sigma` the membranes' reflection coefficients (0 on plasmodesmata, and
+on walls except a Casparian band's, below); :math:`\sigma(\pi_i - \pi_j)` is the edge's osmotic drive
+(``_osmotic_drive``).
+
+**A Casparian band's reflection coefficient** (``sigma_casparian_endodermis``, ``sigma_casparian_exodermis``; PR
+#67): a wall between two endodermal cells (two exodermal cells), at a barrier code with that band, reflects the
+solutes along its two wall edges, wall :math:`w` to junction :math:`n`. A junction holds no solution of its own: in
+the drive, and only there, its osmotic potential is the mean of the :math:`N_n` walls it joins
+(``junction_wall_mean``, the matrix :math:`M`: :math:`\tilde\pi = M\pi`, the identity on the other nodes),
+
+.. math::
+
+   Q_{wn} = K_{wn}\left[(\psi_w - \psi_n) + \sigma_w\,(\pi_w - \tilde\pi_n)\right], \qquad
+   \tilde\pi_n = \frac{1}{N_n}\sum_{w' \ni n} \pi_{w'},
+
+so that the balances' derivative in the osmotic potentials is :math:`B\,\mathrm{diag}(K\sigma)\,B^\top M`
+(``_osmotic_jacobian``, a reduction's osmotic inputs). ``osmotic_potential`` and the water potentials
+:math:`\psi + \pi` keep the junctions' own value. Each node's balance
 (``_balance``) is
 
 .. math::
@@ -473,7 +489,9 @@ radius of the cell layers, as shares of the walls, membranes and plasmodesmata.
 Osmotic presets (``osmotic``)
 =============================
 
-``MechaOsmoticPresets`` writes :math:`\pi` (cells and walls) and :math:`\sigma` (membranes) on root sections
+``MechaOsmoticPresets`` writes :math:`\pi` (cells and walls) and :math:`\sigma` (membranes; the Casparian bands'
+wall edges, ``casparian_bands``: ``sigma_casparian_endodermis`` at the barrier codes 1–6, 8, 9, 11,
+``sigma_casparian_exodermis`` at 4–11, found by the wall's two cells and the code, whatever ``kw_casparian``) on root sections
 (``presets_sections`` 2: on every section). Per membrane (wall :math:`i`, cell :math:`j`), in the walls' order
 (``section_presets``), the cell takes its tissue's value (``tissue_values``: ``os_hetero`` 0 ``os_cortex`` everywhere,
 1 and 2 tabulated profiles with cortex layers c1–c8, 3 the cortex at ``os_cortex`` and the stele at −5000 hPa, 4 one
@@ -537,7 +555,8 @@ its conductivity :math:`k_i` relative to ``kw``, a wall's diffusivity scaled as 
 :doc:`legacy` d20). :math:`P_\text{eff} = 0` where :math:`P = 0` or the lamella is impermeable.
 
 **Advection** by the water's flow :math:`F = Q` (the plant problem's; the standard problem's with ``solute_flows`` 2,
-the legacy's ``standard_solute_flux``), :math:`F = (1 - \sigma)\,Q` on the membranes,
+the legacy's ``standard_solute_flux``), :math:`F = (1 - \sigma)\,Q` on the membranes and on a Casparian band's
+wall edges (``carried_fraction``),
 with the Scharfetter–Gummel scheme (``edge_weights``): with :math:`P = F / D_e` and :math:`B(x) = x/(e^x - 1)`
 (``bernoulli``), the solute's flow from tail to head is
 
@@ -588,7 +607,9 @@ water's flows,
 
 one Newton system in :math:`(\psi, c)` (``coupled_psi``, ``sucrose``; no starch), from the standard problem's
 :math:`\psi`. Its Jacobian is analytic: :math:`\partial Q/\partial\psi = \mathrm{diag}(K) B^\top`,
-:math:`\partial Q/\partial c = -\mathrm{diag}(K\sigma) B^\top \mathrm{diag}(RT)`; the weights' derivatives in the
+:math:`\partial Q/\partial c = -\mathrm{diag}(K\sigma) B^\top \mathrm{diag}(RT)` (a Casparian band's drive is
+between walls and junctions, whose :math:`\pi` holds no sucrose term: ``osmotic_baseline`` carries the junctions'
+means); the weights' derivatives in the
 advective flow (``weight_derivatives``: :math:`-B'(-P)`, :math:`B'(P)` with ``bernoulli_derivative``; upwind, the
 indicators) and the boundary exchange's. Each balance is divided by its node's total conductance (``_row_scales``),
 so that the tolerance bounds the potentials (hPa) and the concentrations (µmol cm⁻³).

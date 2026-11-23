@@ -4,14 +4,16 @@ comparisons with the legacy do not reach: the walls lining air spaces and their 
 spaces left out; the suberin of passage cells on their membranes (GRANAP's sections have none); the dead
 sclerenchyma's draw and the smaller of two cells' plasmodesmata factors (E4); a cell without aquaporins keeping kmb (U5);
 the suberin lamella model's faces, layers and wall halves (suberin_model 1; U9), as the legacy's
-test_suberin_semantics.py.
+test_suberin_semantics.py; the Casparian bands' reflection coefficient (U4: a band found by its cells and the barrier
+code, whatever its conductivity), its drive with the junctions' means and its derivative in the osmotic potentials.
 """
 import numpy as np
 import pytest
 
 from openalea.mecha.component import MechaHydraulics
 from openalea.mecha.conductance import air_space_lining_walls, root_air_spaces
-from openalea.mecha.geometry import MEMBRANE, PLASMODESMATA, WALL
+from openalea.mecha.geometry import JUNCTION, MEMBRANE, PLASMODESMATA, WALL, WALL_PATH
+from openalea.mecha.osmotic import MechaOsmoticPresets
 
 from plants import anatomy_data_structure, needle, needle_anatomy_component, root
 
@@ -368,3 +370,107 @@ def test_membrane_permeation_surface_and_lamella_resistance():
     air = net.intercellular[cell]
     assert air.sum() > 0 and (legacy_surface[air] == 0).all() and (surface[membranes][air] > 0).all()
     np.testing.assert_allclose(legacy_surface[~air], (length * (height + distance) * 1.0E-8)[~air], rtol=1e-15)
+
+
+def _banded_section(barrier, sigma_endodermis=0.5, sigma_exodermis=0.3, **parameters):
+    """A one-segment root with the osmotic presets and the bands' reflection coefficients, the standard problem with
+    its osmotic terms, MechaHydraulics' *parameters* set: (DataStructure, hydraulics, each wall edge's wall's two
+    cells' cgroups (edges, 2), the wall edges)."""
+    g, data_structure, _ = anatomy_data_structure(root(1))
+    data_structure.register("barrier", np.full(data_structure.n_nodes(), float(barrier)), location="node")
+    presets = MechaOsmoticPresets(data_structure=data_structure)
+    presets.sigma_casparian_endodermis, presets.sigma_casparian_exodermis = sigma_endodermis, sigma_exodermis
+    mecha = MechaHydraulics(data_structure=data_structure)
+    mecha.standard_osmotic = 1.
+    for name, value in parameters.items():
+        setattr(mecha, name, value)
+    presets()
+    mecha()
+    net = mecha.network()
+    wall_edges = np.flatnonzero(net.path == WALL_PATH)
+    wall_end = np.where(net.compartment_type[net.a] == WALL, net.a, net.b)[wall_edges]
+    cells = net.wall_cells[wall_end]
+    groups = np.where(cells >= 0, net.cgroup[np.maximum(cells, 0)], -1)
+    return data_structure, mecha, groups, wall_edges
+
+
+@pytest.mark.parametrize("barrier, endodermis, exodermis", [(0, False, False), (1, True, False), (4, True, True),
+                                                            (7, False, True), (10, False, True)])
+def test_casparian_bands_found_by_their_cells_and_barrier(barrier, endodermis, exodermis):
+    """The bands' σ is on the wall edges of the walls between two endodermal cells (two exodermal cells) at the
+    barrier codes with that band, on no other edge, and also when the band conducts as a plain wall (kw_casparian =
+    kw, where PR #67 drops σ: U4)."""
+    kw = MechaHydraulics.__dataclass_fields__["kw"].default
+    data_structure, _, groups, wall_edges = _banded_section(barrier, kw_casparian=kw, kw_casparian_exodermis=kw)
+    sigma = np.asarray(data_structure.get("reflection_coefficient"))
+    between_endodermis, between_exodermis = (groups == 3).all(axis=1), (groups == 1).all(axis=1)
+    assert between_endodermis.sum() > 0 and between_exodermis.sum() > 0
+    expected = np.select([between_endodermis & endodermis, between_exodermis & exodermis], [0.5, 0.3], 0.)
+    np.testing.assert_array_equal(sigma[wall_edges], expected)
+    path = np.asarray(data_structure.get("network_path"))
+    assert (sigma[~np.isin(path, (MEMBRANE, WALL_PATH))] == 0).all()
+
+
+def test_casparian_band_drive():
+    """Along a band's wall edge the drive is σ × (the wall's π − the mean π of the walls its junction joins); the
+    junctions' own osmotic potential stays 0 and the water potential stays ψ + π; the standard flow is K (Δψ + the
+    drive). Without σ the drives are, bit for bit, σ (π_tail − π_head) of the nodes' own potentials."""
+    data_structure, _, _, wall_edges = _banded_section(3, kw_casparian=2.4E-5)
+    view = data_structure.to_graph_view()
+    kind = np.asarray(data_structure.get("compartment_type"))
+    pi, sigma = np.asarray(data_structure.get("osmotic_potential")), np.asarray(data_structure.get("reflection_coefficient"))
+    drive = np.asarray(data_structure.get("standard_osmotic_drive"))
+    walls_of = {}
+    for edge in wall_edges:
+        tail, head = int(view.tail[edge]), int(view.head[edge])
+        junction, wall = (tail, head) if kind[tail] == JUNCTION else (head, tail)
+        walls_of.setdefault(junction, []).append(wall)
+    banded = wall_edges[sigma[wall_edges] > 0]
+    assert banded.size > 0 and (pi[kind == JUNCTION] == 0).all()
+    differences = []
+    for edge in banded:
+        tail, head = int(view.tail[edge]), int(view.head[edge])
+        potential = {node: (np.mean(pi[walls_of[node]]) if kind[node] == JUNCTION else pi[node]) for node in (tail, head)}
+        assert drive[edge] == pytest.approx(0.5 * (potential[tail] - potential[head]), rel=1e-13, abs=1e-10)
+        differences.append(abs(potential[tail] - potential[head]))
+    assert max(differences) > 100.                       # hPa: the cortical and stelar walls' solutions differ
+    psi = np.asarray(data_structure.get("standard_psi"))
+    K = np.asarray(data_structure.get("conductance"))
+    np.testing.assert_allclose(np.asarray(data_structure.get("standard_flow"))[banded],
+                               (K * (psi[view.tail] - psi[view.head] + drive))[banded], rtol=1e-12)
+    np.testing.assert_array_equal(np.asarray(data_structure.get("standard_water_potential")), psi + pi)
+    plain, _, _, _ = _banded_section(3, sigma_endodermis=0., sigma_exodermis=0., kw_casparian=2.4E-5)
+    np.testing.assert_array_equal(np.asarray(plain.get("osmotic_potential")), pi)
+    plain_sigma = np.asarray(plain.get("reflection_coefficient"))
+    assert (plain_sigma[wall_edges] == 0).all()
+    np.testing.assert_array_equal(np.asarray(plain.get("standard_osmotic_drive")),
+                                  plain_sigma * (pi[view.tail] - pi[view.head]))
+    assert abs(np.asarray(plain.get("standard_psi")) - psi).max() > 1e-3
+
+
+def test_casparian_band_osmotic_jacobian():
+    """The plant problem's derivative in the osmotic potentials, B (K σ) Bᵀ M, against the difference of its balance's
+    osmotic term B K drive between two sets of potentials (linear: to round-off), the junctions' potentials among
+    them (they do not act: their walls' means do)."""
+    data_structure, mecha, _, _ = _banded_section(3, kw_casparian=2.4E-5)
+    view = data_structure.to_graph_view()
+    inner = MechaHydraulics._plant_problem._inner_cls
+    K = np.asarray(data_structure.get("conductance")) + np.asarray(data_structure.get("xylem_axial_conductance"))
+
+    class System:
+        graph_view = view
+    jacobian = inner._osmotic_jacobian(System(), np.asarray(data_structure.get("conductance")),
+                                       np.asarray(data_structure.get("xylem_axial_conductance")),
+                                       np.asarray(data_structure.get("reflection_coefficient")),
+                                       np.asarray(data_structure.get("compartment_type")),
+                                       np.asarray(data_structure.get("network_path")))
+
+    def osmotic_term(potential):
+        data_structure.set("osmotic_potential", potential)
+        mecha()
+        return np.asarray(view.incidence @ (K * np.asarray(data_structure.get("osmotic_drive")))).reshape(-1)
+    pi = np.asarray(data_structure.get("osmotic_potential")).copy()
+    change = np.random.default_rng(3).normal(0., 500., pi.size)
+    difference = osmotic_term(pi + change) - osmotic_term(pi)
+    assert abs(difference).max() > 0
+    np.testing.assert_allclose(jacobian @ change, difference, rtol=0, atol=1e-10 * abs(difference).max())

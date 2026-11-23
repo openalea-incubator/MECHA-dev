@@ -168,7 +168,8 @@ def legacy_osmotic(organ, barrier, height=200.0, scenario_zero=None, edit_networ
     reads some of scenario i_maturity's: doc/legacy.rst, h); *edit_network*: a function of its NetworkBuilder, called
     once the network is built; *hydraulic*: its HydraulicData's attributes to set ({name: value}); *before_solve*: a
     function of its Mecha, called before its scenarios are solved. Returns
-    dict(solution, psi_os {node: π}, sigma {(wall, cell): σ}, edge_Q {(u, v): Q}, total_flow, mecha (its Mecha,
+    dict(solution, psi_os {node: π}, sigma {(wall, cell): σ}, wall_sigma {(u, v): σ} (its wall edges with a
+    Casparian band's reflection coefficient, ``sigma_wall``), edge_Q {(u, v): Q}, total_flow, mecha (its Mecha,
     scenario 1 solved)).
     """
     organ.export_to_adjencymatrix()
@@ -199,7 +200,10 @@ def legacy_osmotic(organ, barrier, height=200.0, scenario_zero=None, edit_networ
         psi_os[wall], psi_os[cell] = w.psi_os, c.psi_os
         sigma[(wall, cell)] = mb.sigma
     edge_Q = {(int(u), int(v)): float(attrs["Q"]) for u, v, attrs in network.graph.edges(data=True) if "Q" in attrs}
+    wall_sigma = {(int(u), int(v)): float(attrs["sigma_wall"]) for u, v, attrs in network.graph.edges(data=True)
+                  if "sigma_wall" in attrs}
     return dict(solution=np.asarray(result["solution"]).reshape(-1), psi_os=psi_os, sigma=sigma, edge_Q=edge_Q,
+                wall_sigma=wall_sigma,
                 total_flow=float(np.asarray(mecha.total_flow[0][1]).reshape(-1)[0]), mecha=mecha)
 
 
@@ -394,10 +398,11 @@ def legacy_fractions(organ, barrier, height=200.0):
 
 def legacy_standard_solute_flux(run, c_prev, boundary_conditions, d_apo=0.1, d_pd=0.5, d_mem=1e-6, dt=0.1,
                                 mode="full", theta=1.0, scheme="sg", operators="T", conserve_boundary=True,
-                                rhs=None, membrane_pd=None):
+                                rhs=None, membrane_pd=None, i_scenario=0):
     """
     One solute step of the legacy's ``Mecha.standard_solute_flux`` on *run* (a legacy_section's, its first maturity
-    stage's standard problem: its scenario 0's edge flows), from *c_prev* (every node, by legacy index) with the
+    stage's standard problem: its scenario 0's edge flows; or a LegacyRun of a legacy_osmotic's network and mecha
+    with *i_scenario* 1: its osmotic scenario's), from *c_prev* (every node, by legacy index) with the
     Dirichlet *boundary_conditions* {legacy index: c}; *dt* None: its steady state. Returns the concentrations of its
     *mode*'s nodes (the apoplast's: walls and junctions; the symplast's: the cells). *membrane_pd*: its membranes'
     permeabilities from their structure, dict(lipid=, aqp=) (cm d⁻¹), in place of *d_mem*.
@@ -408,7 +413,7 @@ def legacy_standard_solute_flux(run, c_prev, boundary_conditions, d_apo=0.1, d_p
     nwj = run.network.n_wall_junction
     c_prev = {"full": c_prev, "apo": c_prev[:nwj], "sym": c_prev[nwj:]}[mode]
     size = c_prev.size
-    return run.mecha.standard_solute_flux(h=0, i_maturity=0, i_scenario=0, diffusion_params=params,
+    return run.mecha.standard_solute_flux(h=0, i_maturity=0, i_scenario=i_scenario, diffusion_params=params,
                                           capacitance_params=None if dt is None else {"dt": dt}, mode=mode,
                                           rhs=np.zeros(size) if rhs is None else rhs,
                                           boundary_conditions=boundary_conditions,
@@ -417,7 +422,8 @@ def legacy_standard_solute_flux(run, c_prev, boundary_conditions, d_apo=0.1, d_p
 
 
 def legacy_coupled(organ, barrier, sources, sinks, solute_sigma, height=200.0, d_apo=0.1, d_pd=0.5, d_mem=1e-6,
-                   temperature=298.15, tol=1e-10, max_iter=200, edit_network=None, cell_sigma=None, **overrides):
+                   temperature=298.15, tol=1e-10, max_iter=200, edit_network=None, cell_sigma=None, hydraulic=None,
+                   **overrides):
     """
     The legacy's steady coupled water and solute solve (``coupled_solver.coupled_water_solute_solve``, Picard,
     Scharfetter–Gummel) on its osmotic scenario 1 (the default scenario with *overrides*), one maturity stage: the
@@ -425,14 +431,16 @@ def legacy_coupled(organ, barrier, sources, sinks, solute_sigma, height=200.0, d
     *solute_sigma* {cgroup: σ}; its transport's psi_os held at 0 while solving, so that the osmotic flow its edge
     flows already carry is not added again (reactions r1); *cell_sigma* {legacy index: σ}: those cells' solute σ
     instead of their cgroup's (its σ is per cgroup, r3: each such cell is given its own cgroup while the transport is
-    solved, its diffusion matrix built before). Returns dict(c (every node, by legacy index), solution (its scenario
-    1's water), n_iter, converged).
+    solved, its diffusion matrix built before); *hydraulic*: its HydraulicData's attributes to set ({name: value}).
+    Returns dict(c (every node, by legacy index), solution (its scenario 1's water), n_iter, converged).
     """
     from openalea.mecha.legacy.utils.coupled_solver import coupled_water_solute_solve
     from openalea.mecha.legacy.utils.solute_transport import SoluteTransport
     organ.export_to_adjencymatrix()
     data = legacy_input()
     data.geometry.set_maturity_stages([barrier], height=[height])
+    for name, value in (hydraulic or {}).items():
+        setattr(data.hydraulic, name, value)
     scenario = dict(data.boundary.scenarios[0])
     scenario.update(overrides)
     data.boundary.add_scenario(scenario)

@@ -49,6 +49,12 @@ SCLERENCHYMA_LIGNIFIED = (11,)
 # (suberin_model 1; PR #67's kw_lam_endo_*, kw_lam_exo_*)
 ENDODERMIS_SUBERIZED = (2, 3, 4, 8, 11)
 EXODERMIS_SUBERIZED = (6, 8, 10, 11)
+# the barrier codes with a Casparian band between the cells of the endodermis and of the exodermis: those whose
+# configuration gives their walls (kw_endo_endo, kw_exo_exo) a Casparian source, whatever its value
+ENDODERMIS_CASPARIAN = tuple(code for code, sources in _KW_CONFIGS.items()
+                             if sources[_KW_KEYS.index("kw_endo_endo")] != "kw")
+EXODERMIS_CASPARIAN = tuple(code for code, sources in _KW_CONFIGS.items()
+                            if sources[_KW_KEYS.index("kw_exo_exo")] != "kw")
 # a wall's interface (its two cells' cgroups, sorted) -> the kw key acting on the wall itself
 # (HydraulicMatrixBuilder._WALL_KW_KEYS): the bands, the cortex's, the needle's; suberin (kw_endo_cortex,
 # kw_endo_peri, kw_exo_epi, kw_exo_cortex, kw_passage) acts on the membrane of the cell owning it (_membrane_wall_kw:

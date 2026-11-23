@@ -19,8 +19,11 @@ import numpy as np
 from openalea.metafspm.coupling.component import input_variable, state_variable
 from openalea.metafspm.solve.decorator import rate
 
-from openalea.mecha.component import SCALES, MechaSections, _doc, _p
-from openalea.mecha.geometry import MEMBRANE, local_index
+from openalea.mecha.component import SCALES, MechaSections, _bounded, _doc, _p
+from openalea.mecha.conductance import ENDODERMIS_CASPARIAN, EXODERMIS_CASPARIAN
+from openalea.mecha.geometry import MEMBRANE, WALL_PATH, local_index
+
+ENDODERMIS_BAND, EXODERMIS_BAND = 1, 2
 
 N_RANKS = 62
 
@@ -366,6 +369,21 @@ def section_presets(geo, P, barrier, membranes, per_membrane=False):
     return (psi_os, sigma, wall_side) if per_membrane else (psi_os, sigma)
 
 
+def casparian_bands(geo, barrier) -> np.ndarray:
+    """
+    Per local node, the Casparian band a wall is: ENDODERMIS_BAND between two endodermal cells, EXODERMIS_BAND between
+    two exodermal cells, where the section's *barrier* code has that band (ENDODERMIS_CASPARIAN, EXODERMIS_CASPARIAN);
+    0 elsewhere. Found by the wall's cells and the barrier code (PR #67's ``_wall_sigma`` tests the band's
+    conductivity against kw, and loses the band when they are equal: doc/legacy.rst, d21).
+    """
+    first, second = geo.wall_cells[:, 0], geo.wall_cells[:, 1]
+    between_two_cells = (first >= 0) & (second >= 0)
+    first_group, second_group = geo.cgroup[np.maximum(first, 0)], geo.cgroup[np.maximum(second, 0)]
+    endodermis = between_two_cells & (first_group == 3) & (second_group == 3) & (barrier in ENDODERMIS_CASPARIAN)
+    exodermis = between_two_cells & (first_group == 1) & (second_group == 1) & (barrier in EXODERMIS_CASPARIAN)
+    return np.select([endodermis, exodermis], [ENDODERMIS_BAND, EXODERMIS_BAND], 0)
+
+
 @dataclass
 class MechaOsmoticPresets(MechaSections):
     """
@@ -391,6 +409,14 @@ class MechaOsmoticPresets(MechaSections):
     osmotic_stele: float = _p("hPa", "the stele cells' osmotic potential (os_hetero 4)", -4.8E3)
     s_hetero: float = _p("", "the reflection coefficients: 0 uniform, 1 the stele's halved, 2 the cortex's halved", 0.)
     s_factor: float = _p("", "the membranes' reflection coefficient (× the s_hetero pattern)", 1.0)
+    sigma_casparian_endodermis: float = _bounded("adim", "the reflection coefficient of the endodermis' Casparian "
+                                                         "band, on the wall edges of the walls between two "
+                                                         "endodermal cells (barriers 1-6, 8, 9, 11); 0: none", 0.,
+                                                 0., 1., "a reflection coefficient")
+    sigma_casparian_exodermis: float = _bounded("adim", "the reflection coefficient of the exodermis' Casparian "
+                                                        "band, on the wall edges of the walls between two exodermal "
+                                                        "cells (barriers 4-11); 0: none", 0.,
+                                                0., 1., "a reflection coefficient")
     osmotic_left_soil: float = _p("hPa", "the soil solution's osmotic potential, left (or outer, symmetry 2) side",
                                   -0.5E3)
     osmotic_right_soil: float = _p("hPa", "the soil solution's osmotic potential, right (or inner) side", -0.5E3)
@@ -415,8 +441,9 @@ class MechaOsmoticPresets(MechaSections):
                                                             "solution (0: junctions, shoot sections)"),
                                               default=0., scale=SCALES.Compartment, location="node",
                                               kind="non_inertial_intensive", weight="liquid_volume")
-    reflection_coefficient: float = state_variable(**_doc("", "the membrane's reflection coefficient (0: other "
-                                                              "edges, shoot sections)"),
+    reflection_coefficient: float = state_variable(**_doc("", "the membrane's reflection coefficient; a Casparian "
+                                                              "band's on its wall edges (0: other edges, shoot "
+                                                              "sections)"),
                                                    default=0., scale=SCALES.Connection, location="edge",
                                                    kind="non_inertial_intensive")
 
@@ -424,7 +451,8 @@ class MechaOsmoticPresets(MechaSections):
     def _osmotic_potential(self, compartment_type, barrier, anatomy_template, sucrose_osmotic_potential, network_path) \
             -> tuple[np.ndarray, str, np.ndarray]:
         """The presets of every root section, each with its plant's parameters and its barrier, as the baseline; plus
-        the solutes' −R T c on the cells (MechaSolutes: the reactions' baseline − R T c)."""
+        the solutes' −R T c on the cells (MechaSolutes: the reactions' baseline − R T c). The Casparian bands'
+        reflection coefficients on their walls' wall edges (casparian_bands)."""
         data_structure = self.data_structure
         psi_os, sigma = np.zeros(data_structure.n_nodes()), np.zeros(data_structure.n_edges())
         view = data_structure.to_graph_view()
@@ -445,4 +473,9 @@ class MechaOsmoticPresets(MechaSections):
             os_local, sigma_local = section_presets(geo, P, int(barrier[v]), membranes)
             psi_os[nodes] = os_local
             sigma[e] = sigma_local
+            e = edges[path[edges] == WALL_PATH]
+            band = casparian_bands(geo, int(barrier[v]))
+            band = np.maximum(band[local_index(nodes, view.tail[e])], band[local_index(nodes, view.head[e])])
+            sigma[e] = np.select([band == ENDODERMIS_BAND, band == EXODERMIS_BAND],
+                                 [P["sigma_casparian_endodermis"], P["sigma_casparian_exodermis"]], 0.)
         return psi_os + np.asarray(sucrose_osmotic_potential, dtype=float), "reflection_coefficient", sigma

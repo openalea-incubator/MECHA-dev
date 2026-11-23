@@ -1,6 +1,7 @@
 """
 The coupled steady state of the water and the sucrose (MechaSolutes' solute_solve 2): its analytic Jacobian against
-finite differences of its balances, with the liquid boundary (solute_boundary_advection 1), in both schemes; and the
+finite differences of its balances, with the liquid boundary (solute_boundary_advection 1), in both schemes, without
+and with a Casparian band's reflection coefficient on its wall edges; and the
 solve's conservation: at steady state the sucrose produced leaves through the sinks and the liquid boundary.
 """
 import inspect
@@ -17,14 +18,19 @@ from plants import anatomy_data_structure, root
 PRODUCTION = 2e-13                                   # mol d-1 per cortex cell
 
 
-@pytest.fixture(scope="module")
-def section():
+@pytest.fixture(scope="module", params=(0., 0.5), ids=lambda sigma: f"band{sigma}")
+def section(request):
+    """A root section at barrier 1; with the endodermis' Casparian band reflecting (σ 0.5 on its wall edges, the band
+    leaky so that its flows count), or not."""
     g, data_structure, anatomy = anatomy_data_structure(root(1))
     data_structure.register("barrier", np.ones(data_structure.n_nodes()), location="node")
     presets = MechaOsmoticPresets(data_structure=data_structure)
     presets.s_factor = 0.5
+    presets.sigma_casparian_endodermis = request.param
     mecha = MechaHydraulics(data_structure=data_structure)
     mecha.standard_osmotic = 1.
+    if request.param:
+        mecha.kw_casparian = 2.4E-5
     solutes = MechaSolutes(data_structure=data_structure)
     data_structure.set("sucrose_source", np.where(np.asarray(data_structure.get("cgroup")) == 4, PRODUCTION, 0.))
     presets()

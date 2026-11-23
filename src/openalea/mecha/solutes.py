@@ -11,8 +11,9 @@ Per node and time step (dt, days): C V (c − c_prev) / dt = T c + K V c − k V
 (storage_fraction_wall, _cell; the reactions' C_wall, C_cell), k the first-order loss (k_decay; their k_deg), and
   T c        the Scharfetter–Gummel fluxes along the liquid edges: per edge, its diffusion conductance D_e (the
              apoplastic, symplastic and membrane factors of MechaHydraulics × their diffusivities) and its advective
-             flow F (the water's flow, × (1 − σ) on the membranes: Kedem–Katchalsky), P = F / D_e, the flow from tail
-             to head D_e (B(−P) c_tail − B(P) c_head), B(x) = x / (eˣ − 1); upwind where D_e = 0
+             flow F (the water's flow, × (1 − σ) on the membranes and on a Casparian band's wall edges:
+             Kedem–Katchalsky), P = F / D_e, the flow from tail to head D_e (B(−P) c_tail − B(P) c_head),
+             B(x) = x / (eˣ − 1); upwind where D_e = 0
   K          the sucrose ⇄ starch reaction (d⁻¹), in the cells only (Q-U4)
   s          the sources (sucrose_source, mol d⁻¹: photosynthesis), and the sinks (Dirichlet at c_sink): the
              phloem-loading cells (Strasburger cells, else phloem) and the xylem
@@ -33,7 +34,8 @@ from openalea.metafspm.coupling.component import input_variable, state_variable
 from openalea.metafspm.solve.decorator import (boundary_set, graph_jacobian, graph_output, graph_system, node_balance,
                                                 rate, totalstate)
 
-from openalea.mecha.component import SCALES, MechaSections, _doc, _p, _wall_air_flow, _wall_air_jacobian
+from openalea.mecha.component import (SCALES, MechaSections, _doc, _p, _wall_air_flow, _wall_air_jacobian,
+                                      junction_wall_mean)
 from openalea.mecha.geometry import AIR_LINK, MEMBRANE, PLASMODESMATA, STOMATAL, WALL_AIR, WALL_PATH, XYLEM_CGROUPS
 
 GAS_CONSTANT = 8.314E4          # hPa cm³ mol⁻¹ K⁻¹ (van't Hoff with c in mol cm⁻³: π in hPa)
@@ -91,7 +93,8 @@ def weight_derivatives(De, F, upwind=False):
 def coupled_flow(B, psi, sucrose, conductance, reflection_coefficient, osmotic_baseline, osmotic_slope,
                  air_tail_conductance, air_head_conductance, air_offset):
     """The water's flow along each edge at the potentials *psi* and the concentrations *sucrose*: K (Δψ + σ Δπ),
-    π = the baseline − R T c on the cells (osmotic_slope), plus the wall–air edges' linearised Kelvin flows."""
+    π = the baseline − R T c on the cells (osmotic_slope; the baseline of a junction the mean of its walls', for
+    the Casparian bands' wall edges), plus the wall–air edges' linearised Kelvin flows."""
     pi = osmotic_baseline - osmotic_slope * sucrose
     drop = np.asarray(B.T @ psi).reshape(-1) + reflection_coefficient * np.asarray(B.T @ pi).reshape(-1)
     return conductance * drop + _wall_air_flow(B, psi, air_tail_conductance, air_head_conductance, air_offset)
@@ -184,7 +187,8 @@ class MechaSolutes(MechaSections):
     vapour_node: float = input_variable(**_doc("", "1 on the air nodes (MechaHydraulics')"), by="Hydraulics",
                                         default=0., scale=SCALES.Compartment, location="node",
                                         kind="descriptor")
-    reflection_coefficient: float = input_variable(**_doc("", "the membrane's reflection coefficient"), by="Osmotic",
+    reflection_coefficient: float = input_variable(**_doc("", "the membrane's reflection coefficient, a Casparian "
+                                                              "band's on its wall edges"), by="Osmotic",
                                                    default=0., scale=SCALES.Connection, location="edge",
                                                    kind="non_inertial_intensive")
     osmotic_potential: float = input_variable(**_doc("hPa", "the nodes' osmotic potential (MechaOsmoticPresets': its "
@@ -323,8 +327,9 @@ class MechaSolutes(MechaSections):
                                                            "state"),
                                          default=0., scale=SCALES.Connection, location="edge",
                                          kind="non_inertial_intensive")
-    osmotic_baseline: float = state_variable(**_doc("hPa", "the osmotic potential without the sucrose's (its −R T c "
-                                                           "removed from the cells')"),
+    osmotic_baseline: float = state_variable(**_doc("hPa", "the osmotic potential driving the water without the "
+                                                           "sucrose's (its −R T c removed from the cells'; a "
+                                                           "junction's the mean of its walls')"),
                                              default=0., scale=SCALES.Compartment, location="node",
                                              kind="non_inertial_intensive", weight="liquid_volume")
     osmotic_slope: float = state_variable(**_doc("hPa cm3 mol-1", "R T on the liquid cells (π = baseline − R T c), 0 "
@@ -336,8 +341,8 @@ class MechaSolutes(MechaSections):
                                                   default=0., scale=SCALES.Connection, location="edge",
                                                   kind="non_inertial_intensive")
     carried_fraction: float = state_variable(**_doc("adim", "the fraction of the water's flow advecting the solute: "
-                                                            "1 − σ on the membranes, 1 on the other solutes' edges, 0 "
-                                                            "elsewhere"),
+                                                            "1 − σ on the membranes and the wall edges (a Casparian "
+                                                            "band's σ), 1 on the plasmodesmata, 0 elsewhere"),
                                              default=0., scale=SCALES.Connection, location="edge",
                                              kind="descriptor")
     upwind_edge: float = state_variable(**_doc("", "1 on the edges of the upwind scheme (solute_scheme 2)"),
@@ -440,7 +445,9 @@ class MechaSolutes(MechaSections):
               + np.asarray(symplastic_diffusion_factor) * P_edge["d_plasmodesmata"]
               + np.where(np.isfinite(permeation), permeation * np.asarray(membrane_permeation_surface),
                          np.asarray(membrane_diffusion_factor) * P_edge["d_membrane"]))
-        carried = np.where(path == MEMBRANE, 1.0 - np.asarray(reflection_coefficient, dtype=float), 1.0)
+        # the solvent drag (Kedem–Katchalsky): through a membrane, and along a Casparian band's wall edges
+        carried = np.where(np.isin(path, (MEMBRANE, WALL_PATH)), 1.0 - np.asarray(reflection_coefficient, dtype=float),
+                           1.0)
         a, b = edge_weights(np.where(on_liquid, De, 0.), np.where(on_liquid, np.asarray(flow) * carried, 0.), upwind)
         fixed = np.asarray(fixed_sucrose, dtype=float)
         held = np.isfinite(fixed)
@@ -463,8 +470,9 @@ class MechaSolutes(MechaSections):
                 # steady sucrose has no solution: water converging on a node without an exit)
                 "coupled_psi", np.where(coupled, np.asarray(standard_psi, dtype=float), np.asarray(coupled_psi)),
                 "coupled_node", coupled.astype(float), "solute_node", liquid.astype(float),
-                "osmotic_baseline", np.asarray(osmotic_potential, dtype=float)
-                - np.asarray(sucrose_osmotic_potential, dtype=float),
+                # a junction's: the mean of its walls' (the Casparian bands' drive, MechaHydraulics' _osmotic_drive)
+                "osmotic_baseline", junction_wall_mean(view, compartment_type, path)
+                @ (np.asarray(osmotic_potential, dtype=float) - np.asarray(sucrose_osmotic_potential, dtype=float)),
                 "osmotic_slope", np.where(cell, GAS_CONSTANT * P_node["solute_temperature"], 0.),
                 "diffusion_conductance", np.where(on_liquid, De, 0.),
                 "carried_fraction", np.where(on_liquid, carried, 0.), "upwind_edge", upwind.astype(float),

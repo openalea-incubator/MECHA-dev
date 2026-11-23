@@ -1079,6 +1079,32 @@ What ``develop`` (945b2be) adds to the refactored legacy, and the behaviours fou
        tissue, without and with the lamella model, both roots: every node's sucrose to 10⁻¹¹ of the range
        (``test_membrane_permeability.py``); the permeability, the surface's two rules and the lamella's resistance
        in ``test_pr67.py``. The tertiary layer and the wall half do not resist the solutes there, as the legacy's
+   * - d21
+     - a reflection coefficient on the Casparian bands (``HydraulicData.sigma_casp_endo``, ``sigma_casp_exo``, 0 by
+       default; ``_wall_sigma``, the wall edges' ``casp`` and ``sigma_wall``): along the two wall edges of a band
+       wall, :math:`Q = K(\Delta\psi + \sigma_w \Delta\pi)`, a junction's :math:`\pi` the mean of the walls it
+       joins (``_wall_edge_pi``); the solutes carried × :math:`(1 - \sigma_w)` there. A band is a wall between two
+       endodermal (exodermal) cells **whose conductivity is below** ``kw``: a band given ``kw`` (or more) silently
+       loses its σ (U4, a legacy problem: the band is an anatomical fact, not a value). The membranes' σ is an
+       attribute of the network's membrane objects, written by the last scenario initialised; without one, the water
+       takes 1 and the solutes 0 (U7, a legacy problem)
+     - ported: ``sigma_casparian_endodermis``, ``sigma_casparian_exodermis`` (MechaOsmoticPresets, 0 to 1, 0 by
+       default), written into ``reflection_coefficient`` on the bands' wall edges; a band is found by its two cells
+       and the section's barrier code (``osmotic.casparian_bands``; ``conductance.ENDODERMIS_CASPARIAN``: codes 1–6,
+       8, 9, 11; ``EXODERMIS_CASPARIAN``: 4–11), whatever its conductivity (U4 not reproduced: no comparison needs
+       it). The junctions' mean is the drive's only (``component.junction_wall_mean``, in ``_osmotic_drive``, in the
+       plant problem's derivative in the osmotic potentials, and in MechaSolutes' ``osmotic_baseline`` for the coupled
+       steady state); ``osmotic_potential`` and the water potentials keep the junctions' own. The solutes' carried
+       fraction is :math:`1 - \sigma` on the membranes and the wall edges. U7 has no counterpart: σ is an edge
+       variable of the DataStructure, written each step, the same for the water and the solutes. On the osmotic
+       scenario 1, σ 0.5 on the endodermal band at barrier 3 (the band at 10⁻¹⁶ and leaky, ``kw``/10) and 0.5, 0.3 on
+       both bands at barrier 8 (leaky), both roots: σ on every wall edge exactly, the solution and the flows to
+       10⁻¹², one Scharfetter–Gummel step on those flows to 10⁻¹¹ of the range; the coupled steady state (the legacy's
+       Picard iteration) at barrier 1 with a leaky band at σ 0.5: the sucrose to 10⁻¹¹, the water to 10⁻¹²
+       (``test_casparian_reflection.py``); the bands by cells and barrier with ``kw_casparian`` = ``kw``, the drive
+       and its derivative in ``test_pr67.py``, the coupled Jacobian against finite differences with a band's σ in
+       ``test_coupled_steady_component.py``. A φ-thickened wall is never a band in either (the φ cells are cortex
+       cells)
 
 
 Constants

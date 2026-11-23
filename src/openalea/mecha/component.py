@@ -12,7 +12,7 @@ Compartments, Connections and segments.
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.sparse import diags
+from scipy.sparse import csr_matrix, diags
 
 from openalea.metafspm.coupling.component import (FunctionalComponent, input_variable, parameter, setting,
                                                    state_variable)
@@ -25,8 +25,8 @@ from openalea.metafspm.solve.decorator import (boundary_set, declared_system, ex
 from openalea.mecha.conductance import (Network, air_space_lining_walls, assemble, boundary_terms, cortex_parameters,
                                        edge_conductances, elongation_sink, kelvin_alpha, set_edge_ends,
                                        set_wall_thickness, sieve_tube_terms, vapour_conductances)
-from openalea.mecha.geometry import (AXIAL_JUNCTION, LEAF_SURFACE, MEMBRANE, SOIL, SOIL_NODE, STOMATAL, XYLEM_CGROUPS,
-                                     AIR_LINK, WALL, WALL_AIR, local_index,
+from openalea.mecha.geometry import (AXIAL_JUNCTION, JUNCTION, LEAF_SURFACE, MEMBRANE, SOIL, SOIL_NODE, STOMATAL,
+                                     XYLEM_CGROUPS, AIR_LINK, WALL, WALL_AIR, WALL_PATH, local_index,
                                      phi_thick_cells,
                                      section_geometry, section_of, section_parts, template_section, template_values)
 from openalea.mecha.postprocess import (VISCOSITY_PHLOEM, VISCOSITY_XYLEM, axial_conductances, conduit_axial_conductances,
@@ -75,6 +75,25 @@ def _node_thickness(net, P_node):
     """Per node, the thickness its volume takes (µm): thickness_source 1 the plant's one value, 2 the node's own."""
     own = np.asarray(P_node["thickness_source"]) == 2
     return np.where(own & np.isfinite(net.wall_thickness), net.wall_thickness, np.asarray(P_node["thickness"], float))
+
+
+def junction_wall_mean(view, compartment_type, network_path) -> csr_matrix:
+    """
+    The matrix M (nodes × nodes) giving the osmotic potentials that drive the flows, M π: a wall junction holds no
+    solution of its own, so that along a Casparian band's wall edges (the only edges with a reflection coefficient
+    that reach a junction) it stands for the walls it joins: its row is 1 / n on the n walls its wall edges link it
+    to (PR #67's ``_wall_edge_pi``); every other node's row, and a junction's without a wall, is its own 1.
+    """
+    compartment_type, wall_edge = np.asarray(compartment_type), np.asarray(network_path) == WALL_PATH
+    tail_kind, head_kind = compartment_type[view.tail], compartment_type[view.head]
+    from_tail = wall_edge & (tail_kind == JUNCTION) & (head_kind == WALL)
+    from_head = wall_edge & (head_kind == JUNCTION) & (tail_kind == WALL)
+    junction = np.r_[view.tail[from_tail], view.head[from_head]]
+    wall = np.r_[view.head[from_tail], view.tail[from_head]]
+    n_walls = np.bincount(junction, minlength=view.n_nodes)
+    own = np.flatnonzero(n_walls == 0)
+    return csr_matrix((np.r_[1. / n_walls[junction], np.ones(own.size)], (np.r_[junction, own], np.r_[wall, own])),
+                      shape=(view.n_nodes, view.n_nodes))
 
 
 def _wall_air_flow(B, psi, tail_conductance, head_conductance, offset):
@@ -252,7 +271,8 @@ class MechaHydraulics(MechaSections):
                                                             "(0: none)"),
                                               by="Solutes", default=0., scale=SCALES.Compartment, location="node",
                                               kind="non_inertial_intensive")
-    reflection_coefficient: float = input_variable(**_doc("", "the membrane's reflection coefficient (0: none)"),
+    reflection_coefficient: float = input_variable(**_doc("", "the membrane's reflection coefficient, a Casparian "
+                                                              "band's on its wall edges (0: none)"),
                                                    by="Solutes", default=0., scale=SCALES.Connection,
                                                    location="edge", kind="non_inertial_intensive")
     soil_contact_cell: float = input_variable(**_doc("", "1 on a protoplast whose border walls touch the soil, whatever "
@@ -1244,15 +1264,17 @@ class MechaHydraulics(MechaSections):
         return out
 
     @rate(include_inactive=True)
-    def _osmotic_drive(self, reflection_coefficient, osmotic_potential, standard_osmotic) \
-            -> tuple[np.ndarray, str, np.ndarray]:
+    def _osmotic_drive(self, reflection_coefficient, osmotic_potential, standard_osmotic, compartment_type,
+                       network_path) -> tuple[np.ndarray, str, np.ndarray]:
         """
-        Each edge's osmotic drive σ (π_tail − π_head) (the membranes': the legacy's ``rhs_o``, as a flow K σ Δπ added
-        to K Δψ), and the standard problem's (its plants with standard_osmotic; the parameter comes on the edges, the
-        location of the step's first argument).
+        Each edge's osmotic drive σ (π_tail − π_head) (the membranes' and the Casparian bands' wall edges': the
+        legacy's ``rhs_o``, as a flow K σ Δπ added to K Δψ), a junction's π the mean of its walls'
+        (junction_wall_mean: for the drive only, osmotic_potential and the water potentials keep the junction's own);
+        and the standard problem's (its plants with standard_osmotic; the parameter comes on the edges, the location
+        of the step's first argument).
         """
         view = self.data_structure.to_graph_view()
-        pi = np.asarray(osmotic_potential, dtype=float)
+        pi = junction_wall_mean(view, compartment_type, network_path) @ np.asarray(osmotic_potential, dtype=float)
         drive = np.asarray(reflection_coefficient, dtype=float) * (pi[view.tail] - pi[view.head])
         standard = np.asarray(standard_osmotic) > 0
         return drive, "standard_osmotic_drive", np.where(standard, drive, 0.)
@@ -1395,9 +1417,13 @@ class MechaHydraulics(MechaSections):
             return _wall_air_jacobian(self.graph_view.incidence, air_tail_conductance, air_head_conductance).tocsr()
 
         @input_jacobian("osmotic_potential")
-        def _osmotic_jacobian(self, conductance, xylem_axial_conductance, reflection_coefficient):
-            """The balance's derivative with respect to the osmotic potentials: B (K σ) Bᵀ (the drive σ Bᵀπ)."""
-            return self.graph_view.laplacian((conductance + xylem_axial_conductance) * reflection_coefficient)
+        def _osmotic_jacobian(self, conductance, xylem_axial_conductance, reflection_coefficient, compartment_type,
+                              network_path):
+            """The balance's derivative with respect to the osmotic potentials: B (K σ) Bᵀ M (the drive σ Bᵀ M π, M
+            the junctions' means of their walls': junction_wall_mean)."""
+            view = self.graph_view
+            return (view.laplacian((conductance + xylem_axial_conductance) * reflection_coefficient)
+                    @ junction_wall_mean(view, compartment_type, network_path)).tocsr()
 
         soil = boundary_set(where={"plant_soil_conductance": ">0"}, condition="robin", value="soil_psi",
                             weight="plant_soil_conductance", field="psi")
