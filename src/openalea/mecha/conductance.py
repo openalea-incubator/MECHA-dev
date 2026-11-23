@@ -219,8 +219,8 @@ def set_wall_thickness(net: Network, wall_thickness) -> None:
 
 def _thickness(net: Network, P: dict, nodes) -> np.ndarray:
     """The thickness (µm) at the wall (or junction) *nodes*, per entity of P: thickness_source 1 MECHA's one value,
-    2 the node's own."""
-    own = np.asarray(P["thickness_source"]) == 2
+    2 the node's own (MECHA's one value where it has none: NaN)."""
+    own = (np.asarray(P["thickness_source"]) == 2) & np.isfinite(net.wall_thickness[nodes])
     return np.where(own, net.wall_thickness[nodes], np.asarray(P["thickness"], dtype=float))
 
 

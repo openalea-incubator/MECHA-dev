@@ -67,8 +67,8 @@ endodermis–stele), each of which the barrier code sets to ``kw`` or to a barri
 φ-thickened cells of the same rank, ``kw_lignin`` for every wall of a sclerenchyma cell at :math:`b = 11`,
 ``kw_passage`` next to a passage cell, ``kw_septa`` for a wall with two
 intercellular cells at :math:`b > 0` and, with ``xylem_pieces``, :math:`K_w = 10^{-16}` for a wall between two xylem
-cells (a vessel's septa). The thickness :math:`t` is each wall's own (``thickness_source`` 2, GRANAP's) or one value
-for every wall (``thickness_source`` 1, ``thickness``).
+cells (a vessel's septa). The thickness :math:`t` is each wall's own (``thickness_source`` 2, GRANAP's; ``thickness``
+where a wall has none) or one value for every wall (``thickness_source`` 1, ``thickness``).
 
 **Membranes** (wall–cell edges), the wall's half thickness in series with the membrane:
 

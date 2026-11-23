@@ -876,7 +876,8 @@ The ``reactions`` branch
 The ``develop`` branch
 ----------------------
 
-What ``develop`` (945b2be) adds to the refactored legacy, and the behaviours found merging it.
+What ``develop`` (945b2be) adds to the refactored legacy, and the behaviours found merging it; from d12, what PR #67
+(``fix/GranapAPI``, 7c4ed4f) adds.
 
 .. list-table::
    :header-rows: 1
@@ -956,6 +957,14 @@ What ``develop`` (945b2be) adds to the refactored legacy, and the behaviours fou
        the reactions' needle sinks at ``c_sink``, by default; 0 none), ``solute_solve`` 3 (the steady state on the
        flows given: the transport, the loss and the liquid boundary; no starch). Its tutorial 04's steady states (no
        loss; ``k_deg`` 48 d⁻¹) to 10⁻¹¹ (``test_standard_solutes.py``)
+   * - d12
+     - each wall's own thickness (``use_wall_thickness``, off by default): GRANAP's double wall thickness on the walls'
+       edges, their membranes and soil terms, a junction the mean of its walls'; a wall without one takes the
+       geometry's
+     - the port's default already (``thickness_source`` 2); a wall without a thickness (NaN) now takes ``thickness``
+       in the conductances too, as in the volumes (the legacy: its junction's mean on its wall edges; GRANAP gives
+       every wall one). Every edge conductance and soil term bit for bit at barriers 0, 1, 3, both roots
+       (``test_wall_thickness.py``)
 
 
 Constants
