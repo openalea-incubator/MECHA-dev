@@ -117,6 +117,7 @@ class HydraulicWall:
         "cells", "membranes", "wall_air", "protect_topology",
         # Hydraulic properties
         "kw", "Q", "Q_in", "Q_out", "A", "velocity", "psi_os", "psi_total", "psi_p",
+        "sigma",      # Wall reflection coefficient (0 = wall passes solutes)
     )
 
     def __init__(
@@ -149,6 +150,7 @@ class HydraulicWall:
 
         # Hydraulic Cell-wall (apoplastic) conductivity [cm hPa⁻¹ d⁻¹]
         self.kw: Optional[float] = None
+        self.sigma: float = 0.0
         self.Q: Optional[float] = None
         self.Q_in: Optional[float] = None
         self.Q_out: Optional[float] = None
@@ -637,6 +639,8 @@ class HydraulicCell:
 
         self.Q_in: Optional[float] = None
         self.Q_out: Optional[float] = None
+        # Relative humidity of the cell air space (0-1)
+        self.RH: Optional[float] = None
 
     # ------------------------------------------------------------------
     # Convenience

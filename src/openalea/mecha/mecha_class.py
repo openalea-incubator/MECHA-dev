@@ -1072,7 +1072,24 @@ class Mecha:
                             rhs_o[j] += K * mb.sigma * (cell_obj.psi_os - wall_obj.psi_os)
                         
                         jmb += 1
-        
+
+        # Optional wall reflection coefficient: osmotic driving term K_w*sigma_w*d_pi
+        # on wall-junction edges carrying 'sigma_wall' (set by HydraulicSolver.
+        # _fill_wall; absent by default, so this block is skipped and rhs_o is
+        # unchanged). Same sign convention as the membrane term above (the unknown is
+        # the pressure): rhs_wall += K*sigma*(pi_wall - pi_junction), opposite sign
+        # on the junction. See _wall_edge_pi for the junction osmotic potential.
+        for n_u, n_v, ea in self.network.graph.edges(data=True):
+            sw = ea.get('sigma_wall', 0.0)
+            if sw == 0.0 or ea.get('path') != 'wall':
+                continue
+            pis = self._wall_edge_pi(n_u, n_v)
+            if pis is None:
+                continue
+            t = ea['K'] * sw * (pis[0] - pis[1])      # pis = (pi at n_u, pi at n_v)
+            rhs_o[self.indice[n_u]] += t
+            rhs_o[self.indice[n_v]] -= t
+
          # print unique values
         if verbose:
             print(f"--- Debug Scenario: {i_scenario}, Maturity: {i_maturity} ---")
@@ -1119,6 +1136,30 @@ class Mecha:
                 print(f"CRITICAL: NaNs detected in {name} vector!")
                 
         return rhs, rhs_x, rhs_p, rhs_o
+
+    def _wall_edge_pi(self, u, v):
+        """Osmotic potentials ``(pi_u, pi_v)`` of the two ends of a wall-junction edge,
+        or ``None`` when either is unknown. Wall nodes carry ``psi_os`` (set in
+        ``initialize_scenarios``); junction nodes do not, so a junction's pi is the mean
+        ``psi_os`` of its adjacent wall nodes (graph 'wall' edges) that have one."""
+        cm = self.network.cell_manager
+        graph = self.network.graph
+
+        def _wall_pi(nid):
+            w = cm.get_wall_by_node_id(nid)
+            if w is None or w.psi_os is None or np.isnan(w.psi_os):
+                return None
+            return float(w.psi_os)
+
+        def _pi(nid):
+            if cm.get_wall_by_node_id(nid) is not None:
+                return _wall_pi(nid)
+            vals = [p for p in (_wall_pi(m) for m, ea in graph.adj[nid].items()
+                                if ea.get('path') == 'wall') if p is not None]
+            return sum(vals) / len(vals) if vals else None
+
+        pu, pv = _pi(u), _pi(v)
+        return None if pu is None or pv is None else (pu, pv)
 
     def water_flux(self, h: int=0, verbose:bool=True, use_stored_psi_os: bool = False) -> tuple:
         """
@@ -1452,6 +1493,12 @@ class Mecha:
                     sigma = pd.sigma
             else:
                 sigma = 0.0 # for walls/junctions, no reflection
+                sw = eattr.get('sigma_wall', 0.0)
+                if sw != 0.0:   # optional wall reflection (junction pi = mean of its walls)
+                    pis = self._wall_edge_pi(u, v)
+                    if pis is not None:
+                        sigma = sw
+                        os_u, os_v = pis
 
             if path == 'wall_air':
                 # Linearized Kelvin coupling is asymmetric with a constant

@@ -29,6 +29,7 @@ import networkx as nx
 
 from openalea.mecha import Mecha, InData, NetworkBuilder
 from openalea.granap.root_class import RootAnatomy
+from openalea.granap.input_data import OrganInputData
 
 # ---------------------------------------------------------------------------
 # Helper: build a small standard root anatomy and a Mecha instance
@@ -36,10 +37,13 @@ from openalea.granap.root_class import RootAnatomy
 
 def _build_mecha():
     """Return a solved Mecha instance (GRANAP path, barrier=1, h=0)."""
-    root = RootAnatomy()
-    root.update_params("aerenchyma", "aerenchyma_proportion", 0.5)
-    root.update_params("aerenchyma", "n_files", 10)
-    root.update_params("inter_cellular_spaces", "tissue", "cortex")
+    data = OrganInputData.for_root()
+    data.set_value("aerenchyma", "aerenchyma_proportion", 0.5)
+    data.set_value("aerenchyma", "n_files", 10)
+    data.set_value("inter_cellular_spaces", "smoothness", 0.05)
+    data.set_value("inter_cellular_spaces", "tissue", ["cortex"])
+    root = RootAnatomy(data, seed=0)
+    root.generate_cells()
     _ = root.export_to_adjencymatrix()
 
     default_input = InData()

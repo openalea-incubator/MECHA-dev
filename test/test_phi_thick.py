@@ -1,15 +1,16 @@
 from openalea.mecha import Mecha, InData, NetworkBuilder, visualize
 from openalea.granap.root_class import RootAnatomy
+from openalea.granap.input_data import OrganInputData
 import matplotlib.pyplot as plt
 
 
 
 def test_phi_thick():
-    root = RootAnatomy()
-    root.update_params("aerenchyma", "aerenchyma_proportion", 0.0)    
-    
-    # Generated a root anatomy without aerenchyma
-    # prepare granap data structure for mecha
+    # Root anatomy without aerenchyma, prepared for mecha
+    data = OrganInputData.for_root()
+    data.set_value("aerenchyma", "aerenchyma_proportion", 0.0)
+    root = RootAnatomy(data, seed=0)
+    root.generate_cells()
     root.export_to_adjencymatrix()
 
     # prepare default inputs for mecha

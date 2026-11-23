@@ -11,3 +11,5 @@
 src_old/*
 src_old
 simulations/outputs/*
+tutorials/outputs/*
+graphify-out/cache/*
