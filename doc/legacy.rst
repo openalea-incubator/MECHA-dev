@@ -1030,7 +1030,7 @@ What ``develop`` (945b2be) adds to the refactored legacy, and the behaviours fou
      - node inputs (not dicts of ids or callables): ``aquaporin_factor`` (a protoplast's, 1) and
        ``wall_conductivity_factor`` (a wall's, 1), set by a user or another model (e.g. by tissue); the floor tested
        on the tissue's aquaporins, so a cell without aquaporins keeps ``kmb`` (U5 not reproduced). Bit for bit with
-       factors by tissue and on every third wall, barriers 1 and 3, both roots (``test_cell_wall_factors.py``); U5 in
+       factors by tissue and on every third wall, barriers 1 and 3, both roots (``test_cell_and_wall_factors.py``); U5 in
        ``test_pr67.py``. The wall factor acts along the wall only (its wall edges), as the legacy's: not on the wall
        half in series with its membranes nor on its soil term
 
