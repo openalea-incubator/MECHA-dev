@@ -843,7 +843,8 @@ The ``reactions`` branch
      - the 10⁻¹⁶ membrane floor only when ``kmb`` is 0 too: air-filled intercellular spaces conduct through ``kmb``
        (5 × 10⁶ times more on the root's, 26 membranes of the needle's air spaces); ``develop`` has it too
      - not adopted: the original's floor (an air-filled space has no water-conducting membrane), ``membrane_floor`` 1;
-       ``membrane_floor`` 2 reproduces it (the comparisons: 1196 membranes of the monocot root)
+       ``membrane_floor`` 2 reproduces it (the comparisons: 1196 membranes of the monocot root), and since PR #67 the
+       cut of a root air space's membranes at barrier > 0 whatever ``kmb`` (d15)
    * - ME-34
      - tissue names (``hypodermis`` → cgroup 2, ``vascular parenchyma``)
      - inert: GRANAP's cells carry their cgroup; the type fallback only applies without one
@@ -985,6 +986,18 @@ What ``develop`` (945b2be) adds to the refactored legacy, and the behaviours fou
        one with the cortex's). Bit for bit: every barrier value distinct at barriers 4, 6–11
        (``test_develop_barriers.py``), the factors (``test_plasmodesmata_factors.py``); both rules'
        ratios in ``test_develop_additions.py``
+   * - d15
+     - a wall lining one root air space (one intercellular cell among its two, not a needle's protected one) at
+       barrier > 0: a hydrated half (its kw) in parallel with a desiccated half (``kw_septa``), :math:`\tfrac12(k_w +
+       k_\text{septa})`, last in the walls' precedence; ``kw_septa`` ≥ ``kw`` raises, wall by wall, during the assembly
+       (U3); a xylem-pieces septum touching one air space halved too (U2); an air space's membranes cut (10⁻¹⁶) at
+       barrier > 0 whatever ``kmb`` and its interface
+     - adopted (E1), without a switch: ``conductance.air_space_lining_walls`` (the protected air spaces are those joined
+       to their walls by wall_air edges, GRANAP's ``protect_topology``); the septa keep theirs (U2 not reproduced);
+       ``kw_septa`` < ``kw`` checked before the conductances, naming the sections (``kw_septa`` now described as a
+       desiccated wall's conductivity). The membranes: ``membrane_floor`` 1 already cuts them outside the barrier
+       interfaces; ``membrane_floor`` 2 (ME-33) cuts them as PR #67 does. Bit for bit at barrier 1, both roots
+       (``test_conductance.py``); the halves, the check and the needle in ``test_pr67.py``
 
 
 Constants

@@ -308,6 +308,35 @@ def _select(code, table: dict, values: dict, default) -> np.ndarray:
     return out
 
 
+def root_air_spaces(net: Network) -> np.ndarray:
+    """Per node, a root air space: an intercellular cell (by tissue) not joined to its walls by wall_air edges (a
+    needle's protected air space is: GRANAP's protect_topology, the legacy's is_wall_air_cell)."""
+    vapour = net.in_section & (net.path == WALL_AIR)
+    protected = np.zeros(net.cgroup.size, dtype=bool)
+    protected[net.a[vapour]] = True
+    protected[net.b[vapour]] = True
+    return net.intercellular & ~protected
+
+
+def air_space_lining_walls(net: Network, P: dict, barrier) -> np.ndarray:
+    """
+    Per edge, a wall edge whose wall lines one root air space (exactly one of its cells, root_air_spaces) at a barrier
+    code > 0, and is not a septum (two intercellular cells, or two xylem cells with xylem_pieces): a hydrated half
+    (its own kw) in parallel with a desiccated half (kw_septa), PR #67's. P, barrier per edge.
+    """
+    wall_edge = net.in_section & net.junction_edge
+    wall_end = np.where(net.compartment_type[net.a] == WALL, net.a, net.b)
+    cells = net.wall_cells[wall_end]
+    has = cells >= 0
+    own = np.maximum(cells, 0)
+    n_air = (has & root_air_spaces(net)[own]).sum(axis=1)
+    n_interc = (has & net.intercellular[own]).sum(axis=1)
+    n_xyl = (has & np.isin(net.cgroup[own], XYLEM_CGROUPS)).sum(axis=1)
+    barrier = np.asarray(barrier)
+    septum = ((n_interc >= 2) & (barrier > 0)) | ((n_xyl >= 2) & (np.asarray(P["xylem_pieces"], dtype=float) > 0))
+    return wall_edge & (n_air == 1) & (barrier > 0) & ~septum
+
+
 def edge_conductances(net: Network, P: dict, barrier, height, factors: dict = None):
     """
     (K, in_matrix): the conductance of every edge (cm³ hPa⁻¹ d⁻¹), and whether the legacy's matrix has it (its wall,
@@ -367,6 +396,9 @@ def edge_conductances(net: Network, P: dict, barrier, height, factors: dict = No
     kw_val = np.where(sclerenchyma, sub["kw_scler"], kw_val)
     kw_val = np.where(has_passage, sub["kw_passage"], kw_val)
     kw_val = np.where(ghost, sub["kw_septa"], kw_val)
+    # a wall lining a root air space: its hydrated half (kw_val) and its desiccated half (kw_septa) in parallel
+    lining = air_space_lining_walls(net, P, barrier)[e]
+    kw_val = np.where(lining, 0.5 * (kw_val + sub["kw_septa"]), kw_val)
     K_wall = kw_val * temp
     K_wall = np.where(ghost & (n_interc < 2), 1.0E-16, K_wall)        # xylem pieces' septa
     K[e] = K_wall
@@ -409,7 +441,10 @@ def edge_conductances(net: Network, P: dict, barrier, height, factors: dict = No
     # no aquaporin activity outside the barriers: 1e-16 (an air-filled intercellular space, the original's);
     # membrane_floor 2: only where kmb is 0 too (the reactions branch's and develop's)
     floor = ~barrier_interface & (kaqp_curr == 0.0)
-    floor &= (np.asarray(P["membrane_floor"], dtype=float)[e] != 2) | (kmb == 0.0)
+    legacy_floor = np.asarray(P["membrane_floor"], dtype=float)[e] == 2
+    floor &= ~legacy_floor | (kmb == 0.0)
+    # and with membrane_floor 2, a root air space's (b > 0) whatever its interface (PR #67's)
+    floor |= legacy_floor & root_air_spaces(net)[cell] & (b > 0) & (kaqp_curr == 0.0)
     K_mb = np.where(floor, 1.00E-16, K_mb)
     K[e] = K_mb
     if factors is not None:

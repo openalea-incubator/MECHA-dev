@@ -22,9 +22,9 @@ from openalea.metafspm.solve.decorator import (boundary_set, declared_system, ex
                                                graph_output, graph_system, input_jacobian, archetype_derived,
                                                node_balance, rate, totalstate)
 
-from openalea.mecha.conductance import (Network, assemble, boundary_terms, cortex_parameters, edge_conductances,
-                                       elongation_sink, kelvin_alpha, set_edge_ends, set_wall_thickness,
-                                       sieve_tube_terms, vapour_conductances)
+from openalea.mecha.conductance import (Network, air_space_lining_walls, assemble, boundary_terms, cortex_parameters,
+                                       edge_conductances, elongation_sink, kelvin_alpha, set_edge_ends,
+                                       set_wall_thickness, sieve_tube_terms, vapour_conductances)
 from openalea.mecha.geometry import (AXIAL_JUNCTION, LEAF_SURFACE, MEMBRANE, SOIL, SOIL_NODE, STOMATAL, XYLEM_CGROUPS,
                                      AIR_LINK, WALL, WALL_AIR, local_index,
                                      phi_thick_cells,
@@ -268,7 +268,9 @@ class MechaHydraulics(MechaSections):
     # ── Parameters (per plant; MECHA's units: cm hPa-1 d-1 for kw, kmb, kaqp; cm3 hPa-1 d-1 for kpl, k_xyl) ──
     kw: float = _bounded("cm2 hPa-1 d-1", "cell wall hydraulic conductivity", 0.00024, 2.4e-6, 2.4e-2,
                          "bounds: two orders of magnitude around MECHA's default, for calibrations")
-    kw_septa: float = _p("cm2 hPa-1 d-1", "conductivity of the septa between aerenchyma (intercellular) cells", 0.00012)
+    kw_septa: float = _p("cm2 hPa-1 d-1", "a desiccated wall's conductivity: the septa between two air spaces "
+                                          "(intercellular cells), the air-side half of a wall lining one (with "
+                                          "barriers); below kw", 0.00012)
     kw_casparian: float = _p("cm2 hPa-1 d-1", "wall conductivity across a Casparian strip", 1.00E-16)
     kw_suberin_in: float = _p("cm2 hPa-1 d-1", "conductivity of suberized walls, inner face", 1.00E-16)
     kw_suberin_out: float = _p("cm2 hPa-1 d-1", "conductivity of suberized walls, outer face", 1.00E-16)
@@ -802,6 +804,7 @@ class MechaHydraulics(MechaSections):
         tail = np.maximum(net.a, 0)
         P_edge["a_cortex"], P_edge["b_cortex"] = a_cortex[tail], b_cortex[tail]
         barrier_node = np.asarray(barrier)
+        self._check_desiccated_walls(net, P_edge, barrier_node[tail], list(geometries))
         factors = {}
         K, in_matrix = edge_conductances(net, P_edge, barrier_node[tail], height_node[tail], factors=factors)
         soil, axial, _ = boundary_terms(net, P_node, barrier_node, height_node)
@@ -891,6 +894,20 @@ class MechaHydraulics(MechaSections):
             raise ValueError(f"MechaHydraulics: the sections (SubOrgans) {ids.tolist()[:10]} have an anatomy and no "
                              "length (0 or none given): MECHA's section height. Give their length, or no anatomy "
                              "until they have one (GRANAP's, a pass-through)")
+
+    def _check_desiccated_walls(self, net, P_edge, barrier_edge, segments) -> None:
+        """A wall lining a root air space has a desiccated half at kw_septa (air_space_lining_walls): kw_septa must be
+        below kw, a drier wall than the hydrated one, in the plants whose sections have such walls. *segments*: the
+        sections' SubOrgan ids, in the network's order."""
+        lining = air_space_lining_walls(net, P_edge, barrier_edge)
+        wrong = lining & ~(np.asarray(P_edge["kw_septa"], dtype=float) < np.asarray(P_edge["kw"], dtype=float))
+        if wrong.any():
+            ids = [segments[i] for i in np.unique(net.section_of_edge[wrong])]
+            e = np.flatnonzero(wrong)[0]
+            raise ValueError(f"MechaHydraulics: kw_septa ({float(P_edge['kw_septa'][e]):g}) is not below kw "
+                             f"({float(P_edge['kw'][e]):g}) in the sections (SubOrgans) {ids[:10]}, whose "
+                             "walls line air spaces (barrier > 0): kw_septa is a desiccated wall's conductivity, the "
+                             "air side of those walls. Lower kw_septa or raise kw")
 
     def _check_soil_boundary(self) -> None:
         """The per_node soil boundary acts on each root section's contact nodes, which a reduced section eliminates

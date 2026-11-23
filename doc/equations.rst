@@ -69,7 +69,9 @@ rank, ``kw_sclerenchyma`` (NaN: ``kw_sclerenchyma_fraction`` × ``kw``, 0.1) for
 :math:`b = 11`,
 ``kw_passage`` next to a passage cell, ``kw_septa`` for a wall with two
 intercellular cells at :math:`b > 0` and, with ``xylem_pieces``, :math:`K_w = 10^{-16}` for a wall between two xylem
-cells (a vessel's septa). The thickness :math:`t` is each wall's own (``thickness_source`` 2, GRANAP's; ``thickness``
+cells (a vessel's septa); last, a wall lining one root air space at :math:`b > 0` (``air_space_lining_walls``: one of
+its cells intercellular, not a needle's protected air space, and not a septum) is a hydrated half and a desiccated half
+in parallel, :math:`k_w \leftarrow \tfrac12 (k_w + k_\text{septa})`, ``kw_septa`` < ``kw``. The thickness :math:`t` is each wall's own (``thickness_source`` 2, GRANAP's; ``thickness``
 where a wall has none) or one value for every wall (``thickness_source`` 1, ``thickness``).
 
 **Membranes** (wall–cell edges), the wall's half thickness in series with the membrane:
@@ -84,7 +86,8 @@ cell: ``kaqp`` × its tissue factor (exodermis, epidermis, endodermis, stele), �
 (:math:`b > 0`), ``k_interc`` in an intercellular space at :math:`b > 0`, the cortex gradient below in the cortex.
 :math:`K_m = 0` where :math:`k_w = 0`, and :math:`K_m = 10^{-16}` where :math:`k_{aqp} = 0` and the wall is not a
 barrier interface (two endodermis cells, two exodermis cells, or a stele and an endodermis cell): an air-filled
-intercellular space has no water-conducting membrane.
+intercellular space has no water-conducting membrane (``membrane_floor`` 2, the legacy's: only where :math:`k_{mb} = 0`
+too, and a root air space's at :math:`b > 0`).
 
 **The cortex gradient** (``conductance.cortex_parameters``): with ``ratio_cortex`` :math:`r \ne 1`,
 
