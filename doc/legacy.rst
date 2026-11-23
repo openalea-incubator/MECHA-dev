@@ -1021,6 +1021,17 @@ What ``develop`` (945b2be) adds to the refactored legacy, and the behaviours fou
        (1 living, 0 dead; NaN drawn). The legacy given the port's draw: every conductance bit for bit, the monocot
        root's cortex retagged sclerenchyma (``test_sclerenchyma.py``); the draw, the rule and the input in
        ``test_pr67.py``. The membranes of dead cells are kept, as the legacy's
+   * - d18
+     - per-cell aquaporin factors (``aqp_factor`` by cell id, ``aqp_factor_by_type`` by cell type) on the aquaporin
+       part of the cell's membranes (not ``kmb``), applied before the membrane floor's test, so that a cell whose
+       aquaporins are off is cut to 10⁻¹⁶ (U5); per-wall factors (``kw_wall_factor`` by wall id, or a callable) on the
+       wall's edges and their solute term; all off by default
+     - node inputs (not dicts of ids or callables): ``aquaporin_factor`` (a protoplast's, 1) and
+       ``wall_conductivity_factor`` (a wall's, 1), set by a user or another model (e.g. by tissue); the floor tested
+       on the tissue's aquaporins, so a cell without aquaporins keeps ``kmb`` (U5 not reproduced). Bit for bit with
+       factors by tissue and on every third wall, barriers 1 and 3, both roots (``test_cell_wall_factors.py``); U5 in
+       ``test_pr67.py``. The wall factor acts along the wall only (its wall edges), as the legacy's: not on the wall
+       half in series with its membranes nor on its soil term
 
 
 Constants

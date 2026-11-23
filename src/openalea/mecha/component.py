@@ -265,6 +265,16 @@ class MechaHydraulics(MechaSections):
                                                  "each section's)"),
                                         by="Anatomy", default=float("nan"), scale=SCALES.Compartment, location="node",
                                         kind="descriptor")
+    aquaporin_factor: float = input_variable(**_doc("adim", "a protoplast's aquaporin activity relative to its "
+                                                           "tissue's (its membranes' kaqp; not kmb), set by a user or "
+                                                           "another model, e.g. by tissue"),
+                                             by="Regulation", default=1., scale=SCALES.Compartment, location="node",
+                                             kind="non_inertial_intensive")
+    wall_conductivity_factor: float = input_variable(**_doc("adim", "a wall's conductivity relative to its rules' (its "
+                                                                   "wall edges, along it), set by a user or another "
+                                                                   "model"),
+                                                     by="Anatomy", default=1., scale=SCALES.Compartment,
+                                                     location="node", kind="non_inertial_intensive")
     measured_axial_conductivity: float = input_variable(**_doc("cm4 hPa-1 d-1", "a xylem vessel's or phloem conduit's "
                                                                "measured specific axial conductance, its conductance "
                                                                "× its length (MECHA's Kax_source 2, its K_xyl and "
@@ -780,6 +790,8 @@ class MechaHydraulics(MechaSections):
         net.measured_axial_conductivity = np.where(net.compartment_type == 0, np.asarray(data_structure.get("measured_axial_conductivity"),
                                                                              dtype=float), np.nan)
         net.living_cell = self._living_cells(net, layers)
+        net.aquaporin_factor = np.array(data_structure.get("aquaporin_factor"), dtype=float)
+        net.wall_conductivity_factor = np.array(data_structure.get("wall_conductivity_factor"), dtype=float)
         return net
 
     def _living_cells(self, net, P_node) -> np.ndarray:
@@ -828,7 +840,7 @@ class MechaHydraulics(MechaSections):
     @rate(include_inactive=True, memo=True)
     def _conductance(self, network_path, barrier, length, anatomy_template, leaf_transpiration, stomatal_aperture,
                      pore_width, pore_depth, compartment_type, cell_area, wall_thickness, soil_contact_cell,
-                     measured_axial_conductivity, living_cell) \
+                     measured_axial_conductivity, living_cell, aquaporin_factor, wall_conductivity_factor) \
             -> tuple[np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,
                      str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str,
                      np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,

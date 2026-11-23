@@ -74,7 +74,7 @@ vessel's septa); last, a wall lining one root air space at :math:`b > 0` (``air_
 intercellular, not a needle's protected air space, and not a septum) is a hydrated half and a desiccated half in
 parallel, :math:`k_w \leftarrow \tfrac12 (k_w + k_\text{septa})`, ``kw_septa`` < ``kw``. The thickness :math:`t` is
 each wall's own (``thickness_source`` 2, GRANAP's; ``thickness`` where a wall has none) or one value for every wall
-(``thickness_source`` 1, ``thickness``).
+(``thickness_source`` 1, ``thickness``). Last, :math:`K_w` × the wall's ``wall_conductivity_factor`` (a node input, 1).
 
 **Membranes** (wall–cell edges), the wall's half thickness in series with the membrane:
 
@@ -89,8 +89,10 @@ wall has a passage cell); an exodermal cell's ``kw_exo_epi`` toward the epidermi
 ``kw_exo_epi`` toward another exodermal cell, ``kw_exo_cortex`` otherwise; any other cell's, its wall's own,
 :math:`k_{mb}` the membrane's conductivity without aquaporins (cm hPa⁻¹ d⁻¹), :math:`k_{aqp}` the aquaporins' by the
 cell: ``kaqp`` × its tissue factor (exodermis, epidermis, endodermis, stele), × 10⁴ in a mature xylem vessel
-(:math:`b > 0`), ``k_interc`` in an intercellular space at :math:`b > 0`, the cortex gradient below in the cortex.
-:math:`K_m = 0` where :math:`k_w = 0`, and :math:`K_m = 10^{-16}` where :math:`k_{aqp} = 0` and the wall is not a
+(:math:`b > 0`), ``k_interc`` in an intercellular space at :math:`b > 0`, the cortex gradient below in the cortex;
+then × the cell's ``aquaporin_factor`` (a node input, 1).
+:math:`K_m = 0` where :math:`k_w = 0`, and :math:`K_m = 10^{-16}` where :math:`k_{aqp} = 0` (the tissue's, before the
+cell's factor: a cell whose aquaporins are off keeps :math:`k_{mb}`) and the wall is not a
 barrier interface (two endodermis cells, two exodermis cells, or a stele and an endodermis cell): an air-filled
 intercellular space has no water-conducting membrane (``membrane_floor`` 2, the legacy's: only where :math:`k_{mb} = 0`
 too, and a root air space's at :math:`b > 0`).

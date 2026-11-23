@@ -129,6 +129,8 @@ class Network:
     passage: np.ndarray
     sclerenchyma: np.ndarray      # bool per node (by tissue)
     living_cell: np.ndarray       # bool per node: False a dead sclerenchyma cell (set by the component; True elsewhere)
+    aquaporin_factor: np.ndarray          # per node: a protoplast's aquaporins' factor (1)
+    wall_conductivity_factor: np.ndarray  # per node: a wall's conductivity factor (1)
     phi_thick: np.ndarray
     wall_cells: np.ndarray        # (n, 2) global nodes, -1
     distance_center_grav: np.ndarray
@@ -167,7 +169,8 @@ def assemble(n_nodes: int, n_edges: int, geometries: list, phi_thick=None) -> Ne
         edge_lateral_distance=edges_full(np.nan), edge_dist=edges_full(np.nan), cgroup=nodes_full(-1, np.int64),
         compartment_type=nodes_full(-1, np.int64),
         rank=nodes_full(-1, np.int64), intercellular=nodes_full(False, bool), passage=nodes_full(False, bool),
-        sclerenchyma=nodes_full(False, bool), living_cell=nodes_full(True, bool),
+        sclerenchyma=nodes_full(False, bool), living_cell=nodes_full(True, bool), aquaporin_factor=nodes_full(1.),
+        wall_conductivity_factor=nodes_full(1.),
         phi_thick=nodes_full(False, bool), wall_cells=nodes_full(-1, np.int64, (2,)),
         distance_center_grav=nodes_full(np.nan), x=nodes_full(np.nan), y=nodes_full(np.nan), cell_area=nodes_full(0.), wall_thickness=nodes_full(np.nan), wall_length=nodes_full(0.),
         border_wall=nodes_full(False, bool), border_junction=nodes_full(False, bool),
@@ -417,11 +420,12 @@ def edge_conductances(net: Network, P: dict, barrier, height, factors: dict = No
     kw_val = np.where(lining, 0.5 * (kw_val + sub["kw_septa"]), kw_val)
     K_wall = kw_val * temp
     K_wall = np.where(ghost & (n_interc < 2), 1.0E-16, K_wall)        # xylem pieces' septa
-    K[e] = K_wall
+    wall_factor = net.wall_conductivity_factor[wall_end[e]]           # a wall's own factor, along it (PR #67's)
+    K[e] = K_wall * wall_factor
     if factors is not None:
         for name in ("apoplastic", "symplastic", "membrane"):
             factors[name] = np.zeros(n)
-        temp_factor = np.where(ghost & (n_interc < 2), 1.0E-16, kw_val / kw[e])
+        temp_factor = np.where(ghost & (n_interc < 2), 1.0E-16, kw_val / kw[e]) * wall_factor
         factors["apoplastic"][e] = temp * temp_factor
 
     # ── membranes (HydraulicMatrixBuilder._fill_membrane) ──
@@ -449,11 +453,13 @@ def edge_conductances(net: Network, P: dict, barrier, height, factors: dict = No
     barrier_interface = (n_endo >= 2) | (n_exo >= 2) | ((n_stele > 0) & (n_endo > 0))
     t = thickness[e]
     kmb = np.asarray(P["kmb"], dtype=float)[e]
+    aquaporins = kaqp_curr * net.aquaporin_factor[cell]                # the cell's own factor (PR #67's)
     with np.errstate(divide="ignore"):
-        K_mb = 1 / (1 / (kw_val / (t / 2 * 1.0E-04)) + 1 / (kmb + kaqp_curr)) * 1.0E-08 * (height[e]
+        K_mb = 1 / (1 / (kw_val / (t / 2 * 1.0E-04)) + 1 / (kmb + aquaporins)) * 1.0E-08 * (height[e]
                                                                                           + net.edge_dist[e]) * net.edge_length[e]
     K_mb = np.where(kw_val == 0.0, 0.0, K_mb)
-    # no aquaporin activity outside the barriers: 1e-16 (an air-filled intercellular space, the original's);
+    # no aquaporin activity outside the barriers (the tissue's, before the cell's factor: a cell whose aquaporins are
+    # off keeps kmb): 1e-16 (an air-filled intercellular space, the original's);
     # membrane_floor 2: only where kmb is 0 too (the reactions branch's and develop's)
     floor = ~barrier_interface & (kaqp_curr == 0.0)
     legacy_floor = np.asarray(P["membrane_floor"], dtype=float)[e] == 2

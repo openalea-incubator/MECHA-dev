@@ -2,7 +2,7 @@
 What PR #67 (fix/GranapAPI, 7c4ed4f) adds to MECHA, in the port (doc/legacy.rst, d12 on; devplan §31), where the
 comparisons with the legacy do not reach: the walls lining air spaces and their check, a needle's protected air
 spaces left out; the suberin of passage cells on their membranes (GRANAP's sections have none); the dead
-sclerenchyma's draw and the smaller of two cells' plasmodesmata factors (E4).
+sclerenchyma's draw and the smaller of two cells' plasmodesmata factors (E4); a cell without aquaporins keeping kmb (U5).
 """
 import numpy as np
 import pytest
@@ -15,10 +15,11 @@ from plants import anatomy_data_structure, needle, needle_anatomy_component, roo
 
 
 def section(barrier=1., architecture=None, anatomy=None, passage=False, sclerenchyma=False, living_cell=None,
-            **parameters):
+            inputs=None, **parameters):
     """A one-segment root's (or *architecture*'s, its *anatomy*'s) conductances and network, the component's
     *parameters* set; with *passage*, every other endodermal cell a passage cell (its tissue); with *sclerenchyma*, the
-    cortex sclerenchyma; *living_cell*: the input's value on every node."""
+    cortex sclerenchyma; *living_cell*: the input's value on every node; *inputs*: {node input: a function of the
+    tissues giving its values}."""
     arguments = (architecture or root(1),) + ((anatomy,) if anatomy is not None else ())
     g, data_structure, _ = anatomy_data_structure(*arguments)
     tissue = np.asarray(data_structure.get("tissue"), dtype=object).copy()
@@ -27,6 +28,8 @@ def section(barrier=1., architecture=None, anatomy=None, passage=False, sclerenc
     if sclerenchyma:
         tissue[tissue == "cortex"] = "sclerenchyma"
     data_structure.set("tissue", tissue)
+    for name, values in (inputs or {}).items():
+        data_structure.register(name, np.asarray(values(tissue), dtype=float), location="node")
     if living_cell is not None:
         data_structure.register("living_cell", np.full(data_structure.n_nodes(), float(living_cell)), location="node")
     data_structure.register("barrier", np.full(data_structure.n_nodes(), float(barrier)), location="node")
@@ -141,3 +144,24 @@ def test_dead_sclerenchyma():
     assert net_living.living_cell.all()
     conducting = closed[K8[closed] > 0]
     np.testing.assert_allclose(K_living[conducting] / K8[conducting], 0.05, rtol=1e-14)
+
+
+def test_cell_and_wall_factors():
+    """The cortex's aquaporins off (aquaporin_factor 0): its membranes keep kmb (the floor reads the tissue's kaqp,
+    not the cell's: U5), less than with them; every third wall at 0.3 of its conductance (wall_conductivity_factor)."""
+    K, net, _ = section()
+    off, _, _ = section(inputs={"aquaporin_factor": lambda tissue: np.where(tissue == "cortex", 0., 1.)})
+    membranes = np.flatnonzero(net.in_section & (net.path == MEMBRANE))
+    owner = np.where(net.compartment_type[net.a[membranes]] == WALL, net.b[membranes], net.a[membranes])
+    cortex = membranes[(net.cgroup[owner] == 4) & ~net.intercellular[owner]]
+    assert cortex.size
+    assert (off[cortex] > 1e-12).all() and (off[cortex] < K[cortex]).all()
+    others = np.setdiff1d(np.flatnonzero(net.in_section), cortex)
+    np.testing.assert_array_equal(off[others], K[others])
+    walls = np.flatnonzero(net.compartment_type == WALL)[::3]
+    factor = np.ones(net.compartment_type.size)
+    factor[walls] = 0.3
+    scaled, _, _ = section(inputs={"wall_conductivity_factor": lambda tissue: factor})
+    wall_edges = np.flatnonzero(net.in_section & net.junction_edge)
+    wall_end = np.where(net.compartment_type[net.a[wall_edges]] == WALL, net.a[wall_edges], net.b[wall_edges])
+    np.testing.assert_allclose(scaled[wall_edges] / K[wall_edges], factor[wall_end], rtol=1e-15)
