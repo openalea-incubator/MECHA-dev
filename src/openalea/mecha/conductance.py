@@ -45,12 +45,12 @@ _EXODERMIS_SOURCES = {"exodermis_casparian": ("kw_casparian_exodermis", "kw_casp
                       "exodermis_suberin_in": ("kw_suberin_exodermis", "kw_suberin_in")}
 # the barrier codes lignifying every wall of a sclerenchyma cell (develop's kw_scler)
 SCLERENCHYMA_LIGNIFIED = (11,)
-# a wall's interface (its two cells' cgroups, sorted) -> its kw key (HydraulicData.interface_kw_key_map)
-_KW_INTERFACES = {(3, 3): "kw_endo_endo", (3, 4): "kw_endo_cortex", (3, 5): "kw_endo_peri", (3, 11): "kw_endo_peri",
-                  (3, 12): "kw_endo_peri", (3, 13): "kw_endo_peri", (3, 16): "kw_endo_peri", (3, 22): "kw_endo_peri",
-                  (1, 1): "kw_exo_exo",
-                  (1, 2): "kw_exo_epi", (1, 4): "kw_exo_cortex", (4, 4): "kw_cortex_cortex",
-                  (2, 4): "kw_meso_hypo"}       # the reactions' needle (kw unless kw_meso_hypo is given; legacy r9)
+# a wall's interface (its two cells' cgroups, sorted) -> the kw key acting on the wall itself
+# (HydraulicMatrixBuilder._WALL_KW_KEYS): the bands, the cortex's, the needle's; suberin (kw_endo_cortex,
+# kw_endo_peri, kw_exo_epi, kw_exo_cortex, kw_passage) acts on the membrane of the cell owning it (_membrane_wall_kw:
+# PR #67's, the original MECHA's)
+_WALL_KW_INTERFACES = {(3, 3): "kw_endo_endo", (1, 1): "kw_exo_exo", (4, 4): "kw_cortex_cortex",
+                       (2, 4): "kw_meso_hypo"}  # the reactions' needle (kw unless kw_meso_hypo is given; legacy r9)
 # ── Plasmodesmata ──
 # The original MECHA's rules (src_old/6_MECHAv4_SRS2025.py, its radial plasmodesmata; doc/legacy.rst,
 # plasmodesmata_rules 1): per interface, a frequency (per unit wall length and height) and an aperture factor, then
@@ -308,6 +308,23 @@ def _select(code, table: dict, values: dict, default) -> np.ndarray:
     return out
 
 
+def _membrane_wall_kw(owner, n_endo, n_exo, n_stele, n_epi, passage, wall_kw, sub) -> np.ndarray:
+    """
+    The conductivity of the wall half in series with a membrane, the suberin of the cell owning it (*owner*: its
+    cgroup; the counts: its wall's cells; *wall_kw*: the wall's own; *sub*: the wall configuration). An endodermal
+    cell: toward the stele kw_endo_peri, toward another endodermal cell the smaller of kw_endo_endo and kw_endo_peri,
+    toward the cortex kw_endo_cortex (kw_passage, except between two endodermal cells, where a passage cell is). An
+    exodermal cell: toward the epidermis kw_exo_epi, toward another exodermal cell the smaller of kw_exo_exo and
+    kw_exo_epi, otherwise kw_exo_cortex. Any other cell: the wall's own (HydraulicMatrixBuilder._membrane_series_kw).
+    """
+    endodermis = np.where(n_stele > 0, np.where(passage, sub["kw_passage"], sub["kw_endo_peri"]),
+                          np.where(n_endo >= 2, np.minimum(sub["kw_endo_endo"], sub["kw_endo_peri"]),
+                                   np.where(passage, sub["kw_passage"], sub["kw_endo_cortex"])))
+    exodermis = np.where(n_epi > 0, sub["kw_exo_epi"],
+                         np.where(n_exo >= 2, np.minimum(sub["kw_exo_exo"], sub["kw_exo_epi"]), sub["kw_exo_cortex"]))
+    return np.select([owner == 3, owner == 1], [endodermis, exodermis], wall_kw)
+
+
 def root_air_spaces(net: Network) -> np.ndarray:
     """Per node, a root air space: an intercellular cell (by tissue) not joined to its walls by wall_air edges (a
     needle's protected air space is: GRANAP's protect_topology, the legacy's is_wall_air_cell)."""
@@ -384,17 +401,15 @@ def edge_conductances(net: Network, P: dict, barrier, height, factors: dict = No
     temp = 1.0E-04 * ((net.edge_lateral_distance[e] + h) * t - _pow2(t)) / net.edge_length[e]
     n_interc = count(net.intercellular)[e]
     n_xyl = count(np.isin(net.cgroup, XYLEM_CGROUPS))[e]
-    has_passage = count(net.passage)[e] > 0
     xylem_pieces = np.asarray(P["xylem_pieces"], dtype=float)[e] > 0
     ghost = ((n_interc >= 2) & (barrier[e] > 0)) | ((n_xyl >= 2) & xylem_pieces)
     phi = (n_cells[e] == 2) & net.phi_thick[c0s[e]] & net.phi_thick[c1s[e]] & (net.rank[c0s[e]] == net.rank[c1s[e]])
     sub = {key: values[e] for key, values in kw_config.items()}
-    kw_val = _select(interface[e], _KW_INTERFACES, sub, kw[e])
+    kw_val = _select(interface[e], _WALL_KW_INTERFACES, sub, kw[e])
     kw_val = np.where(phi, sub["kw_phi_thick"], kw_val)
     # a wall of a sclerenchyma cell, lignified at the barrier codes SCLERENCHYMA_LIGNIFIED (develop's barrier 11)
     sclerenchyma = (count(net.sclerenchyma)[e] > 0) & np.isfinite(sub["kw_scler"])
     kw_val = np.where(sclerenchyma, sub["kw_scler"], kw_val)
-    kw_val = np.where(has_passage, sub["kw_passage"], kw_val)
     kw_val = np.where(ghost, sub["kw_septa"], kw_val)
     # a wall lining a root air space: its hydrated half (kw_val) and its desiccated half (kw_septa) in parallel
     lining = air_space_lining_walls(net, P, barrier)[e]
@@ -427,10 +442,9 @@ def edge_conductances(net: Network, P: dict, barrier, height, factors: dict = No
     n_endo = count(net.cgroup == 3)[e]
     n_exo = count(net.cgroup == 1)[e]
     n_stele = count(net.cgroup > 4)[e]
-    n_passage = count(net.passage)[e]
     sub = {key: values[e] for key, values in kw_config.items()}
-    kw_val = _select(interface[e], _KW_INTERFACES, sub, kw[e])
-    kw_val = np.where((n_endo > 0) & (n_passage > 0), sub["kw_passage"], kw_val)
+    kw_val = _membrane_wall_kw(cg, n_endo, n_exo, n_stele, count(net.cgroup == 2)[e], count(net.passage)[e] > 0,
+                               _select(interface[e], _WALL_KW_INTERFACES, sub, kw[e]), sub)
     barrier_interface = (n_endo >= 2) | (n_exo >= 2) | ((n_stele > 0) & (n_endo > 0))
     t = thickness[e]
     kmb = np.asarray(P["kmb"], dtype=float)[e]

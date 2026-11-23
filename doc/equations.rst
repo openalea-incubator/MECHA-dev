@@ -60,19 +60,21 @@ Conductances (``conductance.edge_conductances``)
 
    K_w = k_w \, 10^{-4}\, \frac{(L_w + h)\,t - t^2}{\ell_e},
 
-with :math:`k_w` (cm² hPa⁻¹ d⁻¹) chosen by rules (``wall_configuration``, ``_select``): the interface of the wall's
-two cells (exodermis, epidermis–exodermis, exodermis–cortex, cortex–cortex, endodermis, endodermis–cortex,
-endodermis–stele), each of which the barrier code sets to ``kw`` or to a barrier value (``kw_casparian``,
-``kw_casparian_exodermis`` and ``kw_suberin_exodermis`` on the exodermis' interfaces, NaN: the endodermis', ``kw_suberin_in``, ``kw_suberin_out``, ``kw_lignin`` the exodermis' lignin cap; the table is in :doc:`legacy`); then
-``kw_phi_thickening`` (NaN: ``kw_phi_thickening_fraction`` × ``kw``, 0.01) between two φ-thickened cells of the same
-rank, ``kw_sclerenchyma`` (NaN: ``kw_sclerenchyma_fraction`` × ``kw``, 0.1) for every wall of a sclerenchyma cell at
-:math:`b = 11`,
-``kw_passage`` next to a passage cell, ``kw_septa`` for a wall with two
-intercellular cells at :math:`b > 0` and, with ``xylem_pieces``, :math:`K_w = 10^{-16}` for a wall between two xylem
-cells (a vessel's septa); last, a wall lining one root air space at :math:`b > 0` (``air_space_lining_walls``: one of
-its cells intercellular, not a needle's protected air space, and not a septum) is a hydrated half and a desiccated half
-in parallel, :math:`k_w \leftarrow \tfrac12 (k_w + k_\text{septa})`, ``kw_septa`` < ``kw``. The thickness :math:`t` is each wall's own (``thickness_source`` 2, GRANAP's; ``thickness``
-where a wall has none) or one value for every wall (``thickness_source`` 1, ``thickness``).
+with :math:`k_w` (cm² hPa⁻¹ d⁻¹) chosen by rules (``wall_configuration``, ``_select``). The barrier code sets
+each interface's value (the table is in :doc:`legacy`) to ``kw`` or to a barrier value: ``kw_casparian``,
+``kw_suberin_in``, ``kw_suberin_out``, ``kw_lignin`` (the exodermis' lignin cap), and on the exodermis' interfaces
+``kw_casparian_exodermis`` and ``kw_suberin_exodermis`` (NaN: the endodermis'). A wall takes the value of its
+interface only where the barrier acts on the wall itself, a Casparian band (endodermis–endodermis,
+exodermis–exodermis), the cortex–cortex walls or the needle's (2, 4) walls; suberin acts on the membrane of the cell
+that owns it (below), and the other walls keep ``kw``. Then ``kw_phi_thickening`` (NaN: ``kw_phi_thickening_fraction``
+× ``kw``, 0.01) between two φ-thickened cells of the same rank, ``kw_sclerenchyma`` (NaN: ``kw_sclerenchyma_fraction``
+× ``kw``, 0.1) for every wall of a sclerenchyma cell at :math:`b = 11`, ``kw_septa`` for a wall with two intercellular
+cells at :math:`b > 0` and, with ``xylem_pieces``, :math:`K_w = 10^{-16}` for a wall between two xylem cells (a
+vessel's septa); last, a wall lining one root air space at :math:`b > 0` (``air_space_lining_walls``: one of its cells
+intercellular, not a needle's protected air space, and not a septum) is a hydrated half and a desiccated half in
+parallel, :math:`k_w \leftarrow \tfrac12 (k_w + k_\text{septa})`, ``kw_septa`` < ``kw``. The thickness :math:`t` is
+each wall's own (``thickness_source`` 2, GRANAP's; ``thickness`` where a wall has none) or one value for every wall
+(``thickness_source`` 1, ``thickness``).
 
 **Membranes** (wall–cell edges), the wall's half thickness in series with the membrane:
 
@@ -80,7 +82,11 @@ where a wall has none) or one value for every wall (``thickness_source`` 1, ``th
 
    K_m = \left( \frac{t/2 \cdot 10^{-4}}{k_w} + \frac{1}{k_{mb} + k_{aqp}} \right)^{-1} 10^{-8}\,(h + d_e)\,\ell_e,
 
-:math:`k_w` the wall's interface value (``kw_passage`` at an endodermis wall next to a passage cell),
+:math:`k_w` the suberin of the cell owning the membrane (``_membrane_wall_kw``, the original MECHA's and PR #67's): an
+endodermal cell's ``kw_endo_peri`` toward the stele, the smaller of ``kw_endo_endo`` and ``kw_endo_peri`` toward
+another endodermal cell, ``kw_endo_cortex`` toward the cortex (``kw_passage`` toward the stele or the cortex where its
+wall has a passage cell); an exodermal cell's ``kw_exo_epi`` toward the epidermis, the smaller of ``kw_exo_exo`` and
+``kw_exo_epi`` toward another exodermal cell, ``kw_exo_cortex`` otherwise; any other cell's, its wall's own,
 :math:`k_{mb}` the membrane's conductivity without aquaporins (cm hPa⁻¹ d⁻¹), :math:`k_{aqp}` the aquaporins' by the
 cell: ``kaqp`` × its tissue factor (exodermis, epidermis, endodermis, stele), × 10⁴ in a mature xylem vessel
 (:math:`b > 0`), ``k_interc`` in an intercellular space at :math:`b > 0`, the cortex gradient below in the cortex.

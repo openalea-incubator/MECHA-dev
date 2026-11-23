@@ -998,6 +998,15 @@ What ``develop`` (945b2be) adds to the refactored legacy, and the behaviours fou
        desiccated wall's conductivity). The membranes: ``membrane_floor`` 1 already cuts them outside the barrier
        interfaces; ``membrane_floor`` 2 (ME-33) cuts them as PR #67 does. Bit for bit at barrier 1, both roots
        (``test_conductance.py``); the halves, the check and the needle in ``test_pr67.py``
+   * - d16
+     - suberin moved from the wall to the membrane of the cell owning it (the original MECHA v4's rule, the
+       exodermis' new): the walls take only the bands' keys (``kw_endo_endo``, ``kw_exo_exo``), the cortex's and the
+       needle's, the passage cells' wall guard removed; an endodermal or exodermal cell's membrane its face's value
+       (toward the stele, the cortex, the epidermis, or its own layer: the smaller of the band's and the suberin's);
+       945b2be put suberin on the wall and on both its membranes
+     - adopted (E2), without a second rule (``_membrane_wall_kw``, vectorised). Every conductance, the matrix and the
+       solution the legacy's at barrier 3, both roots (``test_conductance.py``), at every barrier code
+       (``test_develop_barriers.py``), with every barrier value distinct; passage cells in ``test_pr67.py``
 
 
 Constants

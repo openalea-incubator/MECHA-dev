@@ -1,22 +1,27 @@
 """
 What PR #67 (fix/GranapAPI, 7c4ed4f) adds to MECHA, in the port (doc/legacy.rst, d12 on; devplan §31), where the
 comparisons with the legacy do not reach: the walls lining air spaces and their check, a needle's protected air
-spaces left out.
+spaces left out; the suberin of passage cells on their membranes (GRANAP's sections have none).
 """
 import numpy as np
 import pytest
 
 from openalea.mecha.component import MechaHydraulics
 from openalea.mecha.conductance import air_space_lining_walls, root_air_spaces
+from openalea.mecha.geometry import MEMBRANE, WALL
 
 from plants import anatomy_data_structure, needle, needle_anatomy_component, root
 
 
-def section(barrier=1., architecture=None, anatomy=None, **parameters):
+def section(barrier=1., architecture=None, anatomy=None, passage=False, **parameters):
     """A one-segment root's (or *architecture*'s, its *anatomy*'s) conductances and network, the component's
-    *parameters* set."""
+    *parameters* set; with *passage*, every other endodermal cell a passage cell (its tissue)."""
     arguments = (architecture or root(1),) + ((anatomy,) if anatomy is not None else ())
     g, data_structure, _ = anatomy_data_structure(*arguments)
+    if passage:
+        tissue = np.asarray(data_structure.get("tissue"), dtype=object).copy()
+        tissue[np.flatnonzero(tissue == "endodermis")[::2]] = "passage"
+        data_structure.set("tissue", tissue)
     data_structure.register("barrier", np.full(data_structure.n_nodes(), float(barrier)), location="node")
     mecha = MechaHydraulics(data_structure=data_structure)
     for name, value in parameters.items():
@@ -60,3 +65,32 @@ def test_a_needles_protected_air_spaces_are_not_halved():
     assert not root_air_spaces(net)[net.intercellular].any()
     P = mecha.parameter_table(mecha.PARAMETERS, "edge")
     assert not air_space_lining_walls(net, P, np.ones(net.path.size)).any()
+
+
+def test_suberin_on_the_endodermis_membranes_and_passage_cells():
+    """Barrier 2 (suberin with passage cells) against barrier 1, every other endodermal cell a passage cell: the walls
+    are the same (suberin is on the membranes); an endodermal cell's membrane toward the cortex is cut by
+    kw_suberin_out, except on a wall with a passage cell (kw_passage: kw at barrier 2); the cortex cells' membranes
+    keep kw."""
+    K1, net, _ = section(barrier=1., passage=True)
+    K2, _, _ = section(barrier=2., passage=True)
+    assert net.passage.any()
+    walls = net.in_section & net.junction_edge
+    np.testing.assert_array_equal(K2[walls], K1[walls])
+    membranes = np.flatnonzero(net.in_section & (net.path == MEMBRANE))
+    wall_is_a = net.compartment_type[net.a[membranes]] == WALL
+    wall = np.where(wall_is_a, net.a[membranes], net.b[membranes])
+    owner = np.where(wall_is_a, net.b[membranes], net.a[membranes])
+    cells = net.wall_cells[wall]
+    has = cells >= 0
+    toward_cortex = (has & (net.cgroup[np.maximum(cells, 0)] == 4)).any(axis=1) & \
+        (has & (net.cgroup[np.maximum(cells, 0)] == 3)).any(axis=1)
+    with_passage = (has & net.passage[np.maximum(cells, 0)]).any(axis=1)
+    endodermal = net.cgroup[owner] == 3
+    open_ = membranes[toward_cortex & endodermal & with_passage]
+    cut = membranes[toward_cortex & endodermal & ~with_passage]
+    cortical = membranes[toward_cortex & (net.cgroup[owner] == 4)]
+    assert open_.size and cut.size and cortical.size
+    np.testing.assert_array_equal(K2[open_], K1[open_])
+    assert (K2[cut] < 1e-6 * K1[cut]).all()
+    np.testing.assert_array_equal(K2[cortical], K1[cortical])
