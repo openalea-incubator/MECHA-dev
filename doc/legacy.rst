@@ -1021,7 +1021,11 @@ What ``develop`` (945b2be) adds to the refactored legacy, and the behaviours fou
        streams (by the cell's id: the same whatever the order or the processes), or given by the input ``living_cell``
        (1 living, 0 dead; NaN drawn). The legacy given the port's draw: every conductance bit for bit, the monocot
        root's cortex retagged sclerenchyma (``test_sclerenchyma.py``); the draw, the rule and the input in
-       ``test_pr67.py``. The membranes of dead cells are kept, as the legacy's
+       ``test_pr67.py``. The membranes of dead cells are kept, as the legacy's. Each section its own draw (keyed by
+       its id and the cell's place in it), also in a plant reduction: a reduced section whose draw acts (barrier 11,
+       sclerenchyma in its anatomy) is a kind of its own (``dead_sclerenchyma_draw``, one of ``plant_reduction``'s
+       archetype variables), its kind evaluated with its draw; a reduced root at barrier 11 with a sclerenchyma layer
+       takes up the unreduced one's water (``test_dead_sclerenchyma_reduction.py``)
    * - d18
      - per-cell aquaporin factors (``aqp_factor`` by cell id, ``aqp_factor_by_type`` by cell type) on the aquaporin
        part of the cell's membranes (not ``kmb``), applied before the membrane floor's test, so that a cell whose

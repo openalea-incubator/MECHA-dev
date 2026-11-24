@@ -90,6 +90,10 @@ Options affecting speed
 - ``standard_solve`` (per plant, 1 by default): 0 leaves the plant's sections out of the standard problem
   (``in_standard_problem``), and its kr is not computed. The standard problem only runs on root sections.
 - **Anatomy templates**: a plant whose sections share GRANAP templates derives MECHA's geometry once per template.
+- **Dead sclerenchyma in a plant reduction**: each section draws its own dead fibres (``sclerenchyma_dead_fraction``),
+  so a reduced section whose draw acts (barrier 11, sclerenchyma in its anatomy: ``dead_sclerenchyma_draw``, one of
+  ``plant_reduction``'s archetype variables) is a kind of its own, evaluated with its draw: exact, without the
+  reduction's sharing for those sections. The other sections share their kinds as before.
 - **Anatomy size**: the Compartments per section follow GRANAP's presets; a 2.5 mm stem section gives 45 000
   Compartments against the seedling's 1 mm stems, which is why the seedling's stems are 1 mm.
 - ``MechaOsmoticPresets`` recomputes the presets of every root section at each call; leaving it out of a model removes

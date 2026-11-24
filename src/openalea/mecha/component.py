@@ -22,11 +22,13 @@ from openalea.metafspm.solve.decorator import (boundary_set, declared_system, ex
                                                graph_output, graph_system, input_jacobian, archetype_derived,
                                                node_balance, rate, totalstate)
 
-from openalea.mecha.conductance import (Network, air_space_lining_walls, assemble, boundary_terms, cortex_parameters,
-                                       edge_conductances, elongation_sink, kelvin_alpha, set_edge_ends,
+from openalea.mecha.conductance import (SCLERENCHYMA_LIGNIFIED, Network, air_space_lining_walls, assemble,
+                                       boundary_terms, cortex_parameters, edge_conductances, elongation_sink,
+                                       kelvin_alpha, set_edge_ends,
                                        set_wall_thickness, sieve_tube_terms, vapour_conductances)
-from openalea.mecha.geometry import (AXIAL_JUNCTION, JUNCTION, LEAF_SURFACE, MEMBRANE, SOIL, SOIL_NODE, STOMATAL,
-                                     XYLEM_CGROUPS, AIR_LINK, WALL, WALL_AIR, WALL_PATH, local_index,
+from openalea.mecha.geometry import (AXIAL_JUNCTION, JUNCTION, LEAF_SURFACE, MEMBRANE, SCLERENCHYMA_TYPES, SOIL,
+                                     SOIL_NODE, STOMATAL, XYLEM_CGROUPS, AIR_LINK, WALL, WALL_AIR, WALL_PATH,
+                                     local_index,
                                      phi_thick_cells,
                                      section_geometry, section_of, section_parts, template_section, template_values)
 from openalea.mecha.postprocess import (VISCOSITY_PHLOEM, VISCOSITY_XYLEM, axial_conductances, conduit_axial_conductances,
@@ -408,7 +410,8 @@ class MechaHydraulics(MechaSections):
                                                  "legacy's rules only)", 1.0)
     sclerenchyma_dead_fraction: float = _p("adim", "the fraction of each section's sclerenchyma cells that are dead at "
                                                    "barrier 11 (their plasmodesmata closed; exactly, rounded), drawn "
-                                                   "where living_cell is NaN (PR #67's)", 0.8)
+                                                   "where living_cell is NaN, each section its own draw (a kind of its "
+                                                   "own in a plant reduction: dead_sclerenchyma_draw; PR #67's)", 0.8)
     sclerenchyma_plasmodesmata_factor: float = _p("adim", "the plasmodesmata factor of a living sclerenchyma cell at "
                                                           "barrier 11 (apoptotic fibres; PR #67's)", 0.05)
     sclerenchyma_seed: float = _p("", "the seed of the dead sclerenchyma cells' draw (metafspm's random streams: the "
@@ -550,6 +553,11 @@ class MechaHydraulics(MechaSections):
     perimeter: float = state_variable(**_doc("cm", "the section's perimeter: 2π × the epidermis walls' mean distance "
                                                    "to the endodermis' centre"),
                                       default=np.nan, scale=SCALES.SubOrgan, kind="descriptor")
+    dead_sclerenchyma_draw: float = state_variable(**_doc("", "the section whose dead-sclerenchyma draw the section "
+                                                              "has: its own id where the draw acts (barrier 11, "
+                                                              "sclerenchyma cells in its anatomy), 0 elsewhere; part "
+                                                              "of its kind in a plant reduction (plant_reduction)"),
+                                                   default=0., scale=SCALES.SubOrgan, kind="descriptor")
 
     # ── State variables: the conductances ──
     conductance: float = state_variable(**_doc("cm3 hPa-1 d-1", "the edge's hydraulic conductance (walls, membranes, "
@@ -851,6 +859,45 @@ class MechaHydraulics(MechaSections):
                                       kind="non_inertial_intensive", weight="section_length")
 
     @rate(include_inactive=True)
+    def _dead_sclerenchyma_draw(self, barrier, anatomy_template) -> np.ndarray:
+        """
+        Each section's dead-sclerenchyma draw: its own id where the draw acts (a barrier code lignifying the
+        sclerenchyma, SCLERENCHYMA_LIGNIFIED, and sclerenchyma cells in its anatomy: a reduced section's from its full
+        template), 0 elsewhere. A plant reduction's kinds depend on it (plant_reduction's archetype_variables): sections
+        with different dead cells are different kinds, each evaluated with its section's draw (_living_cells). On a
+        reduction's library, the value its kind gives, kept.
+        """
+        data_structure = self.data_structure
+        reduction = data_structure.reduction
+        if reduction is not None and reduction.library:
+            return np.asarray(data_structure.get("dead_sclerenchyma_draw"), dtype=float)
+        barrier = np.asarray(barrier)
+        segments = data_structure.entity_ids("SubOrgan")
+        position = {int(v): i for i, v in enumerate(segments)}
+        out = np.zeros(segments.size)
+        for segment, (nodes, _, geometry) in self.section_geometries().items():
+            if geometry.typed["sclerenchyma"].size and int(barrier[nodes[0]]) in SCLERENCHYMA_LIGNIFIED:
+                out[position[segment]] = segment
+        reduction = self._reduction()
+        table = reduction.group_table(data_structure) if reduction is not None else None
+        if table is not None:
+            for index, vertex, key, first_node in zip(table.index.tolist(), table.owner.tolist(), table.template,
+                                                      table.first_node.tolist()):
+                if first_node >= 0 and int(barrier[first_node]) in SCLERENCHYMA_LIGNIFIED \
+                        and self._has_sclerenchyma(reduction, key):
+                    out[index] = vertex
+        return out
+
+    def _has_sclerenchyma(self, reduction, key) -> bool:
+        """Whether the full template of the reduced template *key* has sclerenchyma cells (kept per key)."""
+        kept = self.caches().setdefault("template_sclerenchyma", {})
+        if key not in kept:
+            full = reduction.full_template(key)
+            tissue = template_values(full, "tissue", np.arange(full.size), fill=None, dtype=object)
+            kept[key] = bool(np.isin(tissue, SCLERENCHYMA_TYPES).any())
+        return kept[key]
+
+    @rate(include_inactive=True)
     def _cell_rank(self, compartment_type, anatomy_template) -> tuple[np.ndarray, str, np.ndarray]:
         """
         MECHA's cell ranks on the Compartments, and each section's perimeter. They depend on the sections' networks
@@ -889,17 +936,18 @@ class MechaHydraulics(MechaSections):
         net.soil_contact_cell = (np.asarray(data_structure.get("soil_contact_cell"), dtype=float) > 0) & (net.compartment_type == 0)
         net.measured_axial_conductivity = np.where(net.compartment_type == 0, np.asarray(data_structure.get("measured_axial_conductivity"),
                                                                              dtype=float), np.nan)
-        net.living_cell = self._living_cells(net, layers)
+        net.living_cell = self._living_cells(net, layers, geometries)
         net.aquaporin_factor = np.array(data_structure.get("aquaporin_factor"), dtype=float)
         net.wall_conductivity_factor = np.array(data_structure.get("wall_conductivity_factor"), dtype=float)
         return net
 
-    def _living_cells(self, net, P_node) -> np.ndarray:
+    def _living_cells(self, net, P_node, geometries) -> np.ndarray:
         """
         Per node, False for a dead sclerenchyma cell: the living_cell input where given, else drawn: in each section,
         round(sclerenchyma_dead_fraction × its drawn cells) of them dead, those with the smallest uniform draws
-        (metafspm's random streams, keyed by sclerenchyma_seed and the cell's id: the same cells whatever the order or
-        the processes).
+        (metafspm's random streams, keyed by sclerenchyma_seed, the section's id and the cell's place in its section:
+        the same cells whatever the order or the processes, and on a reduction's library for the section a kind
+        stands for, dead_sclerenchyma_draw).
         """
         data_structure = self.data_structure
         given = np.asarray(data_structure.get("living_cell"), dtype=float)
@@ -907,14 +955,25 @@ class MechaHydraulics(MechaSections):
         drawn = np.flatnonzero(net.sclerenchyma & np.isnan(given))
         if drawn.size == 0:
             return living
-        ids = np.asarray(data_structure.entity_ids("node"))[drawn]
+        section = net.section_of_node[drawn]
+        items = list(geometries.items())
+        segment = np.array([vertex for vertex, _ in items], dtype=float)[section]
+        reduction = data_structure.reduction
+        if reduction is not None and reduction.library:               # the section its kind stands for
+            position = {int(v): i for i, v in enumerate(data_structure.entity_ids("SubOrgan"))}
+            draws = np.asarray(data_structure.get("dead_sclerenchyma_draw"), dtype=float)
+            draws = draws[[position[int(v)] for v in segment]]
+            segment = np.where(draws > 0, draws, segment)
+        place = np.empty(drawn.size, dtype=np.int64)                   # each cell's place in its section
+        for row in np.unique(section).tolist():
+            mine = section == row
+            place[mine] = local_index(items[row][1][0], drawn[mine])
         seeds = np.asarray(P_node["sclerenchyma_seed"], dtype=float)[drawn]
         draw = np.empty(drawn.size)
-        for seed in np.unique(seeds):
-            mine = seeds == seed
-            draw[mine] = data_structure.random("uniform", stream="MechaHydraulics.dead_sclerenchyma", ids=ids[mine],
-                                               seed=int(seed))
-        section = net.section_of_node[drawn]
+        for seed, key in set(zip(seeds.tolist(), segment.tolist())):
+            mine = (seeds == seed) & (segment == key)
+            draw[mine] = data_structure.random("uniform", stream=f"MechaHydraulics.dead_sclerenchyma.{int(key)}",
+                                               ids=place[mine], seed=int(seed))
         order = np.lexsort((draw, section))                         # by section, then by draw
         first = np.searchsorted(section[order], section[order])
         rank = np.arange(drawn.size) - first                        # each cell's rank in its section's draws
@@ -1709,7 +1768,8 @@ def plant_reduction(where=None, length_classes=0.1, osmotic: bool = False, leaf_
     the sheaths'; the root segments by default; GRANAP warns of a label it gives no anatomy) reduced onto their
     conduits (GRANAP's entity set conduits), their soil node (soil_nodes) and, in a leaf, its vapour path
     (vapour_path, its Connections kept explicit: vapour_edges); a kind per (anatomy, barrier, length class,
-    parameters): the classes of relative width *length_classes* (0.1 by default: about 60 from 1 mm to 30 cm, each
+    dead-sclerenchyma draw, parameters; a section whose draw acts, at barrier 11 with sclerenchyma, a kind of its own:
+    dead_sclerenchyma_draw): the classes of relative width *length_classes* (0.1 by default: about 60 from 1 mm to 30 cm, each
     evaluated once), a section between two classes their kinds' blend (metafspm's Relative, interpolated), or
     "exact" (a kind per length: the exactness's reference); with *osmotic*, the conduits' and the hidden tissues'
     osmotic potentials as per-section inputs (conduit_osmotic_potential, tissue_osmotic_potential); the sections' kr,
@@ -1730,7 +1790,8 @@ def plant_reduction(where=None, length_classes=0.1, osmotic: bool = False, leaf_
         raise ValueError(f"plant_reduction: leaf_ports is one of {sorted(LEAF_PORTS)}, got {leaf_ports!r}")
     if vapour_path not in VAPOUR_PATHS:
         raise ValueError(f"plant_reduction: vapour_path is one of {sorted(VAPOUR_PATHS)}, got {vapour_path!r}")
-    archetype_variables = {"barrier": None, "length": None if length_classes == "exact" else Relative(float(length_classes))}
+    archetype_variables = {"barrier": None, "length": None if length_classes == "exact" else Relative(float(length_classes)),
+                           "dead_sclerenchyma_draw": None}
     inputs = {"osmotic_potential": dict(by="tissue", group="tissue_osmotic_potential",
                                         kept="conduit_osmotic_potential")} if osmotic else {}
     merge = tuple(spec for spec in (LEAF_PORTS[leaf_ports], VAPOUR_PATHS[vapour_path]) if spec is not None)
