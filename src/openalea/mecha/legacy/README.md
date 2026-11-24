@@ -6,5 +6,5 @@ x_contact):`. The calibration package is not copied (it is in `openalea.mecha.le
 
 It is the reference the metafspm port is compared with (`test/comparison/`, `example/comparison/`). It reads GRANAP's
 organs through their legacy exports (networkx graph, cell GeoDataFrame, XML). It is not developed further: new work goes
-into the main package (`openalea.mecha`), which is the port. Its own tests and tutorials are in `test/legacy/` and
-`example/legacy/`.
+into the main package (`openalea.mecha`), which is the port. Its own tests are in `test/legacy/`; its tutorials
+are in the `develop` branch's `tutorials/`.

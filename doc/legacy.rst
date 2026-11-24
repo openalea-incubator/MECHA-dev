@@ -8,8 +8,8 @@ Two versions of MECHA are kept, frozen, beside the port, as its references:
   (``fix/GranapAPI``, head 7c4ed4f, 2026-11-09: walls lining air spaces, suberin on the owner cell's membrane and the
   suberin lamella, the exodermis' own barrier values, dead sclerenchyma, the Casparian bands' reflection coefficient,
   per-cell and per-wall factors; the port started from the ``to_metafspm`` branch at 2b995b2), with its tests in
-  ``test/legacy/`` and its tutorials in ``example/legacy/`` (inputs, boundary conditions, diffusion, capacitance and
-  reaction, a tomato root). Two of its tests read a reference file upstream never committed: skipped;
+  ``test/legacy/`` (its tutorials are in the ``develop`` branch's ``tutorials/``; developer tutorial 12 replaces them as
+  the entry point to the port). Two of its tests read a reference file upstream never committed: skipped;
 - ``openalea.mecha.legacy_reactions``: the ``reactions`` branch at 4c9c8c2 (solute transport, needle transpiration,
   calibration), with its seven simulation scripts in ``example/legacy_reactions/simulations/``.
 
@@ -91,9 +91,10 @@ The legacy's chain and the port's modules
        the port's components), the legacy's ``SoluteTransport`` itself
      - —
 
-The legacy's tutorials are in ``example/legacy/`` (with its inputs); ``example/comparison/tutorial_01_input.py``
-and ``tutorial_02_bc.py`` run their sections through the legacy and the port, ``compare_solutes.py`` and
-``compare_solutes_day.py`` the solute transport. The port's tutorials are in ``example/tutorials/``: the user series,
+The legacy's tutorials are in the ``develop`` branch's ``tutorials/``; developer tutorial 12 runs one section through
+the legacy and the port, ``example/comparison/`` compares the hydraulics (``compare_hydraulics.py``) and the solute
+transport (``compare_solutes.py``, ``compare_solutes_day.py``); ``example/hydraulics/section_from_xml.py`` reads a
+section from an XML file (the legacy tutorial 01's, ported). The port's tutorials are in ``example/tutorials/``: the user series,
 and the developer series, whose tutorials 07–09 go through every option of the coverage table below.
 
 

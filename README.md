@@ -122,8 +122,8 @@ for the anatomies):
 Run them locally with `jupyter lab example/tutorials/` (the `mecha` environment above). Examples:
 [`example/hydraulics/`](example/hydraulics/) (sections, a root axis, the osmotic presets),
 [`example/soil_plant_atmosphere/`](example/soil_plant_atmosphere/) (the full plant),
-[`example/comparison/`](example/comparison/) (the port against the original MECHA), and the original's tutorials
-ported, `example/tutorials/tutorial_01_input.py` and `tutorial_02_bc.py`.
+[`example/comparison/`](example/comparison/) (the port against the original MECHA); a section read from an XML file
+(CellSet or GRANAR, the original's tutorial 01 ported): `example/hydraulics/section_from_xml.py`.
 
 ### Documentation
 
