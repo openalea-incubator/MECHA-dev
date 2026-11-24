@@ -223,11 +223,11 @@ def test_lamella_faces_of_the_endodermis():
         np.testing.assert_allclose(lamella[other], SECONDARY * 1.0E-4 / conductivity, rtol=1e-14)
         np.testing.assert_allclose(tertiary[other], TERTIARY * 1.0E-4 / kw if has_tertiary else 0., rtol=1e-14)
     assert (lamella[own != 3] == 0).all() and (tertiary[own != 3] == 0).all()
-    # the suberin is the lamella's: the wall half its wall's own, the band's between two endodermal cells
+    # the suberin is the lamella's: the wall half at kw, between two endodermal cells too (not the band's value)
     half = layers["membrane_wall_half_resistance"][membranes]
     thickness = float(mecha.thickness)
     np.testing.assert_allclose(half[(own == 3) & (toward == 4)], thickness / 2 * 1.0E-4 / kw, rtol=1e-14)
-    np.testing.assert_allclose(half[(own == 3) & (toward == 3)], thickness / 2 * 1.0E-4 / 1.0E-9, rtol=1e-14)
+    np.testing.assert_allclose(half[(own == 3) & (toward == 3)], thickness / 2 * 1.0E-4 / kw, rtol=1e-14)
     surface = 1.0E-8 * (float(np.asarray(mecha.data_structure.get("length"))[0]) * 1.0E6 + net.edge_dist[membranes]) \
         * net.edge_length[membranes]
     series = half + lamella + tertiary + layers["membrane_resistance"][membranes]
@@ -292,7 +292,7 @@ def test_lamella_of_the_exodermis():
 def test_lamella_wall_half_and_passage_cells():
     """Barrier 3, every other endodermal cell a passage cell: a passage cell has no lamella and its membranes are as
     without the model (kw_passage in their wall half); the legacy's rule (lamella_wall_half 2: kw on every membrane,
-    U9) opens them, and takes the band out of the suberized radial faces' wall half."""
+    U9) opens them; the suberized radial faces' wall half is at kw under both rules."""
     K, net, mecha = section(barrier=3., passage=True, **LAMELLA)
     assert net.passage.any()
     layers = _layers(mecha)
@@ -310,7 +310,8 @@ def test_lamella_wall_half_and_passage_cells():
     np.testing.assert_allclose(half[toward_cortex], float(mecha.thickness) / 2 * 1.0E-4 / 3.0E-9, rtol=1e-14)  # kw_passage
     assert (K_legacy[membranes][toward_cortex] > 10 * K[membranes][toward_cortex]).all()
     radial = (own == 3) & ~passage & (toward == 3)
-    assert radial.sum() > 0 and (half[radial] > legacy_half[radial]).all()
+    assert radial.sum() > 0
+    np.testing.assert_array_equal(half[radial], legacy_half[radial])
 
 
 def test_lamella_of_the_sclerenchyma():

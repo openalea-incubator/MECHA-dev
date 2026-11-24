@@ -107,8 +107,8 @@ its lamella and its tertiary layer:
 
 the four resistances the states ``membrane_wall_half_resistance``, ``membrane_lamella_resistance``,
 ``membrane_tertiary_resistance`` and ``membrane_resistance`` (hPa d cm⁻¹; the tertiary layer at ``kw``; a fibre's
-membranes have no lamella). The suberin being the lamella's, :math:`k_\text{half}` is the wall's own value (the band's
-between two cells of the layer, else ``kw``); a face without a lamella (a passage cell's, any other cell's) keeps the
+membranes have no lamella). The suberin being the lamella's, :math:`k_\text{half}` is ``kw``, between two cells of
+the layer too (not the band's value, as the legacy's); a face without a lamella (a passage cell's, any other cell's) keeps the
 membrane formula and the :math:`k_w` below (``lamella_wall_half`` 1; 2, the legacy's: ``kw`` in the wall half of every
 membrane, :doc:`legacy` d19). The plasmodesmata are unchanged: their length does not follow the layers (they sit in
 pits, Clarkson et al. 1971).

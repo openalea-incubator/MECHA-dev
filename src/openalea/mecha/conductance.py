@@ -555,15 +555,16 @@ def edge_conductances(net: Network, P: dict, barrier, height, factors: dict = No
     aquaporins = kaqp_curr * net.aquaporin_factor[cell]                # the cell's own factor (PR #67's)
     # the suberin lamella model (suberin_model 1): a suberized face's membrane is in series with its half of the
     # primary wall, its lamella and, on an endodermal cell's faces toward the stele and the endodermis, its tertiary
-    # layer (at kw). The suberin is then the lamella's, not the wall half's: that half takes the wall's own value
-    # (lamella_wall_half 1; 2: kw on every membrane of the section, suberized or not, the legacy's)
+    # layer (at kw). The suberin is then the lamella's, not the wall half's: that half takes kw, a radial face's
+    # (endodermis-endodermis, exodermis-exodermis) too, not its band's value, as the legacy's; a face without a
+    # lamella keeps its own value (lamella_wall_half 1; 2: kw on every membrane of the section, the legacy's)
     lamella_model = np.asarray(P["suberin_model"], dtype=float)[e] == 1
     other_cell = np.where(n_cells[e] == 2, np.where(c0[e] == cell, c1[e], c0[e]), -1)
     lamella_kw, has_tertiary = suberin_lamella(net, cell, other_cell, sub)
     suberized = lamella_model & np.isfinite(lamella_kw) & ~net.sclerenchyma[cell]
     primary, secondary, tertiary = _layer_thicknesses(P, e, t)
     legacy_wall_half = lamella_model & (np.asarray(P["lamella_wall_half"], dtype=float)[e] == 2)
-    kw_val = np.where(legacy_wall_half, kw[e], np.where(suberized, wall_kw, kw_val))
+    kw_val = np.where(legacy_wall_half | suberized, kw[e], kw_val)
     half_thickness = np.where(suberized, primary / 2, t / 2)
     lamella_kw = np.where(suberized, lamella_kw, 1.)
     lamella_thickness = np.where(suberized, secondary, 0.)

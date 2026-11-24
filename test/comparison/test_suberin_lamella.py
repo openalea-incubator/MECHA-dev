@@ -3,8 +3,9 @@ The suberin lamella model (PR #67's suberin_model 'lamella'; the port's suberin_
 suberized face's secondary layer and the endodermis' tertiary layer, in parallel along the walls and in series with
 the membranes. With the inner, outer and radial lamellae, the bands and the exodermis' values all distinct, at the
 barrier codes 3, 8 and 11 and with two sets of thicknesses, every edge conductance is the legacy's bit for bit, the
-matrix to 4 ulp and the solution to 1e-12 (as test_conductance.py); with the legacy's wall half (lamella_wall_half 2:
-kw on every membrane, U9).
+matrix to 4 ulp and the solution to 1e-12 (as test_conductance.py); with the port's wall half (lamella_wall_half 1:
+kw on the suberized faces, the radial ones too, as the legacy's; the sections have no passage cell, and their
+unsuberized faces' own values are kw there).
 """
 import numpy as np
 import pytest
@@ -69,7 +70,7 @@ def compared(case, request):
         data_structure.register("barrier", np.ones(data_structure.n_nodes()), location="node")
     mecha = legacy_options(MechaHydraulics(data_structure=data_structure))
     nodes, edges, legacy = _legacy_nodes(data_structure, g, mecha, case["segment"], run.network)
-    values = dict(BARRIER_VALUES, suberin_model=1., primary_wall_thickness=_nan(primary),
+    values = dict(BARRIER_VALUES, suberin_model=1., lamella_wall_half=1., primary_wall_thickness=_nan(primary),
                   secondary_wall_thickness=_nan(secondary), tertiary_wall_thickness=tertiary)
     defaults = {name: np.array(getattr(mecha, name), copy=True) for name in values}
     stages = {}

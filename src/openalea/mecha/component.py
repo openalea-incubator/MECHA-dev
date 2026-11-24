@@ -339,11 +339,11 @@ class MechaHydraulics(MechaSections):
                                               "of its faces toward the stele and the endodermis (U-shaped; "
                                               "suberin_model 1): in series with the membrane at kw, not conducting "
                                               "along the wall", 0.)
-    lamella_wall_half: float = _p("", "with suberin_model 1, the wall half in series with a membrane: 1 its own "
-                                      "conductivity (a suberized face's: its wall's, the suberin being the lamella's; "
-                                      "any other face's as with suberin_model 0: a passage cell's kw_passage, a band's "
-                                      "value), 2 kw on every membrane (PR #67's, for the comparisons: doc/legacy.rst, "
-                                      "d19)", 1.)
+    lamella_wall_half: float = _p("", "with suberin_model 1, the wall half in series with a membrane: 1 a suberized "
+                                      "face's kw (the suberin being the lamella's; a radial face's too, as PR #67's), "
+                                      "any other face's its own value as with suberin_model 0 (a passage cell's "
+                                      "kw_passage, an unsuberized layer's band), 2 kw on every membrane (PR #67's, for "
+                                      "the comparisons: doc/legacy.rst, d19)", 1.)
     kw_lignin: float = _p("cm2 hPa-1 d-1", "conductivity of the exodermis' lignin cap (barrier 9, its walls with the "
                                            "epidermis)", 1.00E-16)
     kw_phi_thickening: float = _p("cm2 hPa-1 d-1", "conductivity of the walls between two φ-thickened cells of a cortex "

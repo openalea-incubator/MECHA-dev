@@ -1055,10 +1055,12 @@ What ``develop`` (945b2be) adds to the refactored legacy, and the behaviours fou
        legacy's ``Sub``); ``conductance.suberin_lamella`` (a face's lamella), the layers in ``edge_conductances``,
        their intermediate states on the edges: ``wall_layer_conductivity``, ``wall_thickness_total``,
        ``membrane_wall_half_resistance``, ``membrane_lamella_resistance``, ``membrane_tertiary_resistance``,
-       ``membrane_resistance``. The wall half of a membrane keeps its own value (``lamella_wall_half`` 1): a
-       suberized face's the wall's (its band's between two cells of the layer, the suberin being the lamella's), any
-       other face's as without the model (a passage cell's ``kw_passage``); 2 reproduces the legacy's ``kw``
-       (``LEGACY_OPTIONS``). One secondary thickness per plant (per tissue once GRANAP gives it, E6). With the inner,
+       ``membrane_resistance``. A suberized face's wall half takes ``kw``, the radial faces' (endodermis–endodermis,
+       exodermis–exodermis) too, as the legacy's (the suberin being the lamella's); only the faces without a lamella
+       keep their own value, as without the model (a passage cell's ``kw_passage``, an unsuberized layer's band, the
+       cortex's and the needle's keys: ``lamella_wall_half`` 1); 2 reproduces the legacy's ``kw`` on those too
+       (``LEGACY_OPTIONS``). Where a section has none of those faces (GRANAP's sections at barriers 3, 8, 11) the two
+       rules agree, and the lamella comparisons run with the port's. One secondary thickness per plant (per tissue once GRANAP gives it, E6). With the inner,
        outer and radial lamellae, the bands and the exodermis' values distinct, at barriers 3, 8, 11, both roots, two
        sets of thicknesses: every edge conductance and ``t_wall`` bit for bit, the matrix to 4 ulp, the solution to
        10⁻¹²; the monocot root's cortex retagged sclerenchyma at barrier 11, its walls and membranes bit for bit

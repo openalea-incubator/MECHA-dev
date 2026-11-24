@@ -5,7 +5,8 @@ cell's aquaporin factor, in series with the suberin lamella of a suberized face,
 of the diffusivity d_membrane. One Scharfetter–Gummel step on a root section's standard flows at barrier 3, the
 aquaporin factors by tissue, without and with the lamella model: every node's sucrose the legacy's to 1e-11 of the
 range; with the legacy's surface (membrane_surface_rule 2: length × (height + distance), none on an intercellular
-cell, U6) and its wall half (lamella_wall_half 2, U9).
+cell, U6), and the port's wall half (lamella_wall_half 1: kw on the suberized faces, the radial ones too, as the
+legacy's; the section has no passage cell).
 """
 import numpy as np
 import pytest
@@ -53,7 +54,7 @@ def test_one_step_with_the_membranes_permeabilities(case, lamella):
     start = np.zeros(data_structure.n_nodes())
     start[nodes] = c0
     tissue = np.asarray(data_structure.get("tissue"), dtype=object)
-    hydraulics = dict(LAMELLA, suberin_model=1. if lamella else 0.)
+    hydraulics = dict(LAMELLA, suberin_model=1. if lamella else 0., lamella_wall_half=1.)     # the port's: R4
     defaults = {name: np.array(getattr(mecha, name), copy=True) for name in hydraulics}
 
     def step(**permeabilities):
