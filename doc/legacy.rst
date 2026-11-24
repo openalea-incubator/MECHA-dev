@@ -1160,7 +1160,10 @@ Constants
    * - plasmodesmata
      - ``kpl`` 5.3 × 10⁻¹² cm³ hPa⁻¹ d⁻¹; default frequency 8.0 × 10⁵ cm⁻¹
    * - graph systems
-     - Newton, at most 3 iterations, tolerance 10⁻⁸ cm³ d⁻¹ (water), 10⁻¹⁴ (solutes)
+     - Newton, at most 3 iterations; the water's standard problem converged when its residual is below 10⁻¹⁵ +
+       10⁻¹² × its first one (cm³ d⁻¹: relative to the flows its start leaves unbalanced, so that a tight Casparian
+       band's osmotic flows are solved from any start), or when a step is below the unknowns' round-off; the plant
+       problem 10⁻⁸ cm³ d⁻¹; the solutes 10⁻¹⁴
    * - Bernoulli function
      - Taylor series below :math:`|x| = 10^{-10}`, its limits beyond :math:`|x| = 700`
    * - van 't Hoff

@@ -1348,9 +1348,14 @@ class MechaHydraulics(MechaSections):
         return kinds, "collar_potential", potential, "collar_inflow", inflow
 
     # ── The standard problem: each section alone, MECHA's definition of kr (Q-M5) ──
-    # tol (cm3 d-1): the pinned walls' penalty puts their residuals' round-off at ~1e-9; the systems are linear,
-    # solved by the first Newton step
-    @graph_system(node_unknowns=["standard_psi"], solver="newton", max_iterations=3, absolute_tolerance=1e-8, schedule_as="state",
+    # The stopping test is relative to the flows the start leaves unbalanced (its first residual, R_0): converged when
+    # ||R||inf < 1e-15 + 1e-12 ||R_0||inf (cm3 d-1), the floor for a start without flows. The system is linear: from a
+    # start far from the solution, its first Newton step meets the test (the pinned walls' penalty puts the
+    # residuals' round-off near 1e-10); from a start near it (the previous step's solution), the flows of a tight
+    # Casparian band (K from 1e-16, its osmotic drive's below that round-off) are still solved, by one step, then
+    # stopped by metafspm's step test (a step below the unknowns' round-off)
+    @graph_system(node_unknowns=["standard_psi"], solver="newton", max_iterations=3, absolute_tolerance=1e-15,
+                  relative_tolerance=1e-12, schedule_as="state",
                   where={"in_standard_problem": ">0"}, symmetric=True,
                   condense=lambda self: "SubOrgan" if self.plant_solver == "condensed" else None)
     class _standard_problem:

@@ -90,10 +90,7 @@ def both(case, request):
         for name in ("sucrose", "sucrose_osmotic_potential"):        # the previous step's −R T c: the presets add it
             data_structure.set(name, np.zeros(data_structure.n_nodes()))
         presets()
-        # Newton from 0: the bands' osmotic flows (their walls' K) are below the standard problem's absolute tolerance
-        # (1e-8 cm3 d-1), which would keep a start at the solution without σ
-        data_structure.set("standard_psi", np.zeros(data_structure.n_nodes()))
-        mecha()
+        mecha()                                                      # from the solution without σ: the tight band too
         data_structure.set("sucrose", start.copy())
         solutes()
         return dict({name: np.asarray(data_structure.get(name)).copy() for name in names},
