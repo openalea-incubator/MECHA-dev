@@ -29,7 +29,7 @@ dependencies:
   - roifile               # GRANAP
   - ipykernel             # notebooks
   # the platform; brings numpy, pandas, numba, pyyaml, openalea.mtg and openalea.encoding3d
-  - openalea.metafspm ==0.0.1   # pinned: the channel's stale 0.1.x predate the release numbering
+  - openalea.metafspm >=0.0.1,<0.1   # pinned: the channel's stale 0.1.x predate the release numbering
   - pytest
   # MECHA's documentation tools
   - pandoc                # the docs' notebooks (nbsphinx)
