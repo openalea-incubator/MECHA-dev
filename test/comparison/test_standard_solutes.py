@@ -35,7 +35,7 @@ def root_case(case):
     data_structure.set("barrier", np.ones(data_structure.n_nodes()))
     mecha = legacy_options(MechaHydraulics(data_structure=data_structure))
     mecha()
-    solutes = MechaSolutes(data_structure=data_structure, time_step=DT * 86400.)
+    solutes = legacy_options(MechaSolutes(data_structure=data_structure, time_step=DT * 86400.))
     for name, value in SOLUTES.items():
         setattr(solutes, name, value)
     nodes, _ = section_parts(data_structure)[case["segment"]]

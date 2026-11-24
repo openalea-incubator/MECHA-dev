@@ -77,7 +77,7 @@ def both(case, request):
     mecha = legacy_options(MechaHydraulics(data_structure=data_structure))
     mecha.standard_osmotic = 1.
     default_bands = {name: np.array(getattr(mecha, name), copy=True) for name in LEAKY_BANDS}
-    solutes = MechaSolutes(data_structure=data_structure, time_step=DT * 86400.)
+    solutes = legacy_options(MechaSolutes(data_structure=data_structure, time_step=DT * 86400.))
     for name, value in SOLUTES.items():
         setattr(solutes, name, value)
     nodes, edges = section_parts(data_structure)[case["segment"]]
@@ -202,7 +202,7 @@ def coupled(case):
     mecha = legacy_options(MechaHydraulics(data_structure=data_structure))
     mecha.standard_osmotic = 1.
     default_bands = {name: np.array(getattr(mecha, name), copy=True) for name in LEAKY_BANDS}
-    solutes = MechaSolutes(data_structure=data_structure)
+    solutes = legacy_options(MechaSolutes(data_structure=data_structure))
     for name, value in dict(solute_solve=2., d_apoplast=D_APO, d_plasmodesmata=D_PD, d_membrane=D_MEM,
                             solute_boundary_advection=0.).items():
         setattr(solutes, name, value)

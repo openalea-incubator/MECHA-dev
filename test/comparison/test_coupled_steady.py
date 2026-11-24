@@ -38,7 +38,7 @@ def both(case):
         setattr(presets, name, value)
     mecha = legacy_options(MechaHydraulics(data_structure=data_structure))
     mecha.standard_osmotic = 1.
-    solutes = MechaSolutes(data_structure=data_structure)
+    solutes = legacy_options(MechaSolutes(data_structure=data_structure))
     for name, value in SOLUTES.items():
         setattr(solutes, name, value)
     nodes, _ = section_parts(data_structure)[case["segment"]]

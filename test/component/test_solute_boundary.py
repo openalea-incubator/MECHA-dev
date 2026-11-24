@@ -11,7 +11,7 @@ import pytest
 from openalea.metafspm.scene.population import Planting, planting
 
 from openalea.mecha.component import MechaHydraulics
-from openalea.mecha.geometry import WALL_AIR
+from openalea.mecha.geometry import INTERCELLULAR_TYPES, WALL_AIR
 from openalea.mecha.solutes import MechaSolutes
 from openalea.mecha.stand_ins import Transpiration
 
@@ -36,7 +36,10 @@ def stepped():
     mecha()
     solutes = MechaSolutes(data_structure=data_structure, time_step=DT)
     solutes.c_boundary, solutes.c_sink = C_SOIL, C0
-    liquid = np.asarray(data_structure.get("vapour_node")) == 0         # the liquid nodes (MechaSolutes' liquid_node)
+    # the liquid nodes (MechaSolutes' liquid_node): not the air nodes, nor the air spaces off the vapour path
+    air_space = (np.asarray(data_structure.get("compartment_type")) == 0) \
+        & np.isin(np.asarray(data_structure.get("tissue"), dtype=object), INTERCELLULAR_TYPES)
+    liquid = (np.asarray(data_structure.get("vapour_node")) == 0) & ~air_space
     data_structure.set("sucrose", np.where(liquid, C0, 0.))
     solutes()
     np.testing.assert_array_equal(np.asarray(data_structure.get("liquid_node")) > 0, liquid)

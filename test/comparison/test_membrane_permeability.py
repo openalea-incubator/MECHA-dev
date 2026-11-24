@@ -39,7 +39,7 @@ def test_one_step_with_the_membranes_permeabilities(case, lamella):
     if not data_structure.has("barrier"):
         data_structure.register("barrier", np.ones(data_structure.n_nodes()), location="node")
     mecha = legacy_options(MechaHydraulics(data_structure=data_structure))
-    solutes = MechaSolutes(data_structure=data_structure, time_step=DT * 86400.)
+    solutes = legacy_options(MechaSolutes(data_structure=data_structure, time_step=DT * 86400.))
     nodes, _ = section_parts(data_structure)[case["segment"]]
     geo = mecha.section_geometries()[case["segment"]][2]
     run = legacy_section(template_organ(case["anatomy"], g, case["segment"]), barriers=(BARRIER,),

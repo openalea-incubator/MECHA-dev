@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from openalea.mecha.component import MechaHydraulics
-from openalea.mecha.geometry import MEMBRANE
+from openalea.mecha.geometry import INTERCELLULAR_TYPES, MEMBRANE
 from openalea.mecha.osmotic import MechaOsmoticPresets
 from openalea.mecha.solutes import GAS_CONSTANT, MechaSolutes, edge_weights
 
@@ -31,7 +31,9 @@ def stepped():
     mecha()
     solutes = MechaSolutes(data_structure=data_structure, time_step=DT)
     solutes.k_starch_synthesis, solutes.k_starch_degradation = STARCH
-    cortex = (np.asarray(data_structure.get("compartment_type")) == 0) & (np.asarray(data_structure.get("cgroup")) == 4)
+    air_space = np.isin(np.asarray(data_structure.get("tissue"), dtype=object), INTERCELLULAR_TYPES)   # no solute
+    cortex = (np.asarray(data_structure.get("compartment_type")) == 0) & (np.asarray(data_structure.get("cgroup")) == 4) \
+        & ~air_space
     data_structure.set("sucrose_source", np.where(cortex, SOURCE, 0.))
     previous = np.asarray(data_structure.get("sucrose")).copy(), np.asarray(data_structure.get("starch")).copy()
     solutes()
@@ -109,3 +111,48 @@ def test_osmotic_potential_on_the_presets_baseline(stepped):
     stepped["presets"]()
     np.testing.assert_allclose(data_structure.get("osmotic_potential"), stepped["baseline"] + expected, rtol=1e-12, atol=0)
     assert (np.asarray(data_structure.get("osmotic_potential"))[cells] < stepped["baseline"][cells]).any()
+
+
+@pytest.mark.parametrize("rule", [1., 2.])
+def test_no_sucrose_in_the_roots_air_spaces(rule):
+    """The roots' air spaces (intercellular cells off the vapour path) hold no solute (root_air_space_solutes 1): not
+    the solutes' nodes, no weight on their edges, no sucrose ever, over three steps on a root at barriers 0 (their
+    membranes conducting) and 1; the mass gained is the sources' less what the sinks took, the water entering them
+    leaving its solutes behind. 2 (the legacy's): liquid nodes as the cells, sucrose reaching them."""
+    g, data_structure, anatomy = anatomy_data_structure(root(2, length=5e-3))
+    owner = data_structure.owner("SubOrgan")
+    data_structure.register("barrier", np.array([0., 1.])[owner], location="node")
+    data_structure.register("soil_psi", np.full(data_structure.n_nodes(), SOIL), location="node")
+    MechaOsmoticPresets(data_structure=data_structure)()
+    MechaHydraulics(data_structure=data_structure)()
+    solutes = MechaSolutes(data_structure=data_structure, time_step=DT)
+    solutes.root_air_space_solutes = rule
+    compartment_type = np.asarray(data_structure.get("compartment_type"))
+    tissue = np.asarray(data_structure.get("tissue"), dtype=object)
+    air = (compartment_type == 0) & np.isin(tissue, INTERCELLULAR_TYPES)
+    cortex = (compartment_type == 0) & (np.asarray(data_structure.get("cgroup")) == 4) & ~air
+    assert air.sum() > 0 and (air & (owner == 0)).sum() > 0
+    data_structure.set("sucrose_source", np.where(cortex, SOURCE, 0.))
+    view = data_structure.to_graph_view()
+    B = view.incidence
+    V = np.asarray(data_structure.get("node_volume"))
+    dt = DT / 86400.
+    for _ in range(3):
+        c0, s0 = np.asarray(data_structure.get("sucrose")).copy(), np.asarray(data_structure.get("starch")).copy()
+        solutes()
+        c, s = np.asarray(data_structure.get("sucrose")), np.asarray(data_structure.get("starch"))
+        liquid = np.asarray(data_structure.get("liquid_node")) > 0
+        if rule == 2.:
+            continue
+        assert not liquid[air].any() and (c[air] == 0).all() and (s[air] == 0).all()
+        a, b = np.asarray(data_structure.get("tail_weight")), np.asarray(data_structure.get("head_weight"))
+        on_air = air[view.tail] | air[view.head]
+        assert ((a[on_air] == 0) & (b[on_air] == 0)).all()
+        q = a * np.asarray(B.maximum(0).T @ c).ravel() - b * np.asarray((-B).maximum(0).T @ c).ravel()
+        out = np.asarray(B @ q).ravel()
+        free = liquid & (np.asarray(data_structure.get("sucrose_sink")) == 0)
+        gained = V * ((c - c0) + (s - s0)) / dt
+        sunk = -out[liquid & ~free].sum()
+        assert gained[free].sum() == pytest.approx(SOURCE * cortex.sum() - sunk, rel=1e-8)
+    if rule == 2.:
+        assert liquid[air].all() and (c[air] > 0).any()

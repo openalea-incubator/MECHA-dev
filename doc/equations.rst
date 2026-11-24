@@ -522,7 +522,10 @@ cells' :math:`\pi` (input ``sucrose_osmotic_potential``).
 Solutes (``solutes.MechaSolutes``)
 ==================================
 
-Sucrose :math:`c` (mobile) and starch :math:`s` (immobile), mol cm⁻³, on the liquid nodes (not the air nodes).
+Sucrose :math:`c` (mobile) and starch :math:`s` (immobile), mol cm⁻³, on the liquid nodes (not the air nodes). The
+roots' air spaces (an intercellular cell off the vapour path, ``conductance.root_air_spaces``) hold no solute either:
+they and their edges are not the solutes' (``root_air_space_solutes`` 1; 2, the legacy's: liquid nodes), while the
+water problem keeps them; the water entering one leaves its solutes behind, as the vapour does.
 
 **Diffusion conductance** of an edge (cm³ d⁻¹), from factors computed with the conductances (``edge_conductances``
 with ``factors``):

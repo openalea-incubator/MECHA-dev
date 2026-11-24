@@ -1133,6 +1133,16 @@ What ``develop`` (945b2be) adds to the refactored legacy, and the behaviours fou
        soil solution's and the xylem sap's at the band; 2 reproduces the legacy's (``LEGACY_OPTIONS``, every osmotic
        comparison). The exodermis' band walls are unchanged (the soil solution on both sides). Both rules in
        ``test_pr67.py``
+   * - d24
+     - the solutes in the roots' air spaces (intercellular cells not on a vapour path): liquid nodes as the cells,
+       with storage, their membranes exchanging the solute by ``D_mem`` (``membrane_pd``'s path has none on them, d20)
+       and the water entering them carrying its solute in (a legacy problem: an air space holds gas, no solution)
+     - corrected: ``root_air_space_solutes`` 1 (MechaSolutes): the roots' air spaces are not the solutes' nodes and
+       their edges not the solutes' edges, in every path (``d_membrane`` and the structural permeability), as a
+       needle's air spaces (vapour nodes) are; the water problem keeps them, and the water entering one leaves its
+       solutes behind. 2 reproduces the legacy's (``LEGACY_OPTIONS``, every solute comparison). No sucrose ever in a
+       root air space, over three steps at barriers 0 and 1, the mass conserved; with 2, sucrose reaching them
+       (``test_solutes_component.py``)
 
 
 Constants

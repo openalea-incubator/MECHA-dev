@@ -1,7 +1,8 @@
 """
 MECHA's solutes (doc/equations.rst): sucrose, mobile, and starch, immobile, on the liquid network of every
-section (protoplasts, walls, junctions; not the air nodes), from the reactions branch's transport
-(``SoluteTransport``, ``MultiSoluteTransport``, its needle simulations), in implicit Euler.
+section (protoplasts, walls, junctions; not the air nodes, nor the roots' air spaces: root_air_space_solutes), from
+the reactions branch's transport (``SoluteTransport``, ``MultiSoluteTransport``, its needle simulations), in implicit
+Euler.
 
     presets = MechaOsmoticPresets(data_structure=data_structure)   # the osmotic baseline, + the solutes' −R T c on the cells
     mecha = MechaHydraulics(data_structure=data_structure)         # the water flows, the diffusion factors, the volumes
@@ -36,7 +37,8 @@ from openalea.metafspm.solve.decorator import (boundary_set, graph_jacobian, gra
 
 from openalea.mecha.component import (SCALES, MechaSections, _doc, _p, _wall_air_flow, _wall_air_jacobian,
                                       junction_wall_mean)
-from openalea.mecha.geometry import AIR_LINK, MEMBRANE, PLASMODESMATA, STOMATAL, WALL_AIR, WALL_PATH, XYLEM_CGROUPS
+from openalea.mecha.geometry import (AIR_LINK, INTERCELLULAR_TYPES, MEMBRANE, PLASMODESMATA, STOMATAL, WALL_AIR,
+                                     WALL_PATH, XYLEM_CGROUPS)
 
 GAS_CONSTANT = 8.314E4          # hPa cm³ mol⁻¹ K⁻¹ (van't Hoff with c in mol cm⁻³: π in hPa)
 SECONDS_PER_DAY = 86400.
@@ -279,6 +281,11 @@ class MechaSolutes(MechaSections):
     solute_pathway: float = _p("", "the network the solutes move in: 1 the whole liquid network, 2 the apoplast only "
                                    "(walls and junctions, along the walls), 3 the symplast only (protoplasts, through "
                                    "the plasmodesmata): the reactions' modes 'full', 'apo', 'sym'", 1.)
+    root_air_space_solutes: float = _p("", "the roots' air spaces (intercellular cells off the vapour path, "
+                                           "conductance.root_air_spaces): 1 they hold no solute, out of the solutes' "
+                                           "nodes and edges as a needle's air spaces (the water entering them leaves "
+                                           "its solutes behind); 2 liquid nodes as the cells (the legacy's, for the "
+                                           "comparisons: doc/legacy.rst, d24)", 1.)
     solute_scheme: float = _p("", "the transport's discretisation: 1 Scharfetter–Gummel, 2 upwind (diffusion and "
                                   "donor-cell advection, the reactions' default)", 1.)
     solute_theta: float = _p("adim", "the time step's implicitness θ: 1 implicit Euler, 0.5 Crank–Nicolson, 0 explicit "
@@ -309,7 +316,8 @@ class MechaSolutes(MechaSections):
                                                default=0., scale=SCALES.Compartment, location="node",
                                                kind="non_inertial_intensive")
     liquid_node: float = state_variable(**_doc("", "1 on the nodes the solutes are solved on (the liquid nodes of "
-                                                   "their pathway)"), default=0.,
+                                                   "their pathway; not the roots' air spaces: "
+                                                   "root_air_space_solutes)"), default=0.,
                                         scale=SCALES.Compartment, location="node", kind="descriptor")
     steady_node: float = state_variable(**_doc("", "1 on the nodes of the steady state on given flows (solute_solve "
                                                    "3)"), default=0., scale=SCALES.Compartment, location="node",
@@ -409,7 +417,7 @@ class MechaSolutes(MechaSections):
                      coupled_psi, fixed_sucrose, d_apoplast, d_plasmodesmata, d_membrane, k_starch_synthesis,
                      k_starch_degradation, c_sink, solute_boundary_advection, c_boundary, storage_fraction_wall,
                      storage_fraction_cell, k_decay, solute_pathway, solute_theta, solute_solve, solute_temperature,
-                     solute_sinks, solute_scheme, solute_flows) \
+                     solute_sinks, solute_scheme, solute_flows, root_air_space_solutes) \
             -> tuple[np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,
                      str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str,
                      np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray, str, np.ndarray,
@@ -436,8 +444,12 @@ class MechaSolutes(MechaSections):
         upwind = np.asarray(solute_scheme)[tail] == 2
         compartment_type = np.asarray(compartment_type)
         water = np.asarray(vapour_node) == 0                               # the water's liquid nodes
+        # the roots' air spaces hold no solute (root_air_space_solutes 1): not the solutes' nodes, their edges not
+        # the solutes' (the water's still: the water entering them leaves its solutes behind)
+        air_space = water & (compartment_type == 0) & np.isin(np.asarray(tissue, dtype=object), INTERCELLULAR_TYPES)
+        solution = water & ~(air_space & (np.asarray(root_air_space_solutes) == 1))
         pathway = P_node["solute_pathway"]
-        liquid = water & ((pathway == 1) | ((pathway == 2) & (compartment_type != 0)) | ((pathway == 3) & (compartment_type == 0)))
+        liquid = solution & ((pathway == 1) | ((pathway == 2) & (compartment_type != 0)) | ((pathway == 3) & (compartment_type == 0)))
         path = np.asarray(network_path)
         standard = np.asarray(solute_flows)[tail] == 2
         flow = np.where(standard, np.asarray(standard_flow, dtype=float), np.asarray(flow, dtype=float))

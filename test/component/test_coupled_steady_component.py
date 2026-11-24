@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from openalea.mecha.component import MechaHydraulics
+from openalea.mecha.geometry import INTERCELLULAR_TYPES
 from openalea.mecha.osmotic import MechaOsmoticPresets
 from openalea.mecha.solutes import MechaSolutes, edge_weights, liquid_boundary_exchange
 
@@ -33,7 +34,9 @@ def section(request):
     if request.param:
         mecha.kw_casparian = 2.4E-5
     solutes = MechaSolutes(data_structure=data_structure)
-    data_structure.set("sucrose_source", np.where(np.asarray(data_structure.get("cgroup")) == 4, PRODUCTION, 0.))
+    cortex = (np.asarray(data_structure.get("cgroup")) == 4) \
+        & ~np.isin(np.asarray(data_structure.get("tissue"), dtype=object), INTERCELLULAR_TYPES)    # no solute in the air
+    data_structure.set("sucrose_source", np.where(cortex, PRODUCTION, 0.))
     presets()
     mecha()
     return data_structure, solutes
