@@ -33,7 +33,7 @@ def both(case):
     if not data_structure.has("barrier"):
         data_structure.register("barrier", np.ones(data_structure.n_nodes()), location="node")
     data_structure.set("barrier", np.ones(data_structure.n_nodes()))
-    presets = MechaOsmoticPresets(data_structure=data_structure)
+    presets = legacy_options(MechaOsmoticPresets(data_structure=data_structure))
     for name, value in PRESETS.items():
         setattr(presets, name, value)
     mecha = legacy_options(MechaHydraulics(data_structure=data_structure))

@@ -22,11 +22,12 @@ from openalea.mecha.legacy import InData, Mecha, NetworkBuilder
 # its plasmodesmata rules and its aperture factors' defaults, its prescribed xylem boundary, its one wall thickness,
 # its membrane floor (ME-33), its axial penalty conductances (ME-32: develop's 1.0), its product of two sclerenchyma
 # cells' plasmodesmata factors (d17), its lamella model's wall half at kw on every membrane (d19),
-# its membrane_pd's surface (d20)
+# its membrane_pd's surface (d20); the osmotic presets: a Casparian band wall at its stele side's potential (d23)
 LEGACY_OPTIONS = dict(plasmodesmata_rules=2., kpl_PCC_factor=0., kpl_PST_factor=0., standard_axial_source=2.,
                       thickness_source=1., membrane_floor=2., k_xyl=1.0, k_sieve=1.0, sclerenchyma_plasmodesmata_rule=2.,
                       lamella_wall_half=2., membrane_surface_rule=2.,
-                      standard_psi_sieve=float("nan"))    # the legacy's default without BCs.xml: no phloem boundary
+                      standard_psi_sieve=float("nan"),    # the legacy's default without BCs.xml: no phloem boundary
+                      casparian_wall_osmotic_rule=2.)
 
 
 def legacy_input(kpl=None):
@@ -42,11 +43,14 @@ def legacy_input(kpl=None):
     return data
 
 
-def legacy_options(mecha):
-    """*mecha* (a MechaHydraulics) set to the legacy's choices, for the comparison; returns it."""
+def legacy_options(component):
+    """*component* (a MechaHydraulics, MechaOsmoticPresets or MechaSolutes) set to the legacy's choices among the
+    parameters it declares, for the comparison; returns it."""
+    declared = type(component).__dataclass_fields__
     for name, value in LEGACY_OPTIONS.items():
-        setattr(mecha, name, value)
-    return mecha
+        if name in declared:
+            setattr(component, name, value)
+    return component
 
 
 @dataclass

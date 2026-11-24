@@ -1117,6 +1117,16 @@ What ``develop`` (945b2be) adds to the refactored legacy, and the behaviours fou
        sinks at 0) and at the steady state with the epidermis held at 1 (upwind, without and with ``k_decay``), both
        roots, to 10⁻¹¹ of its range (``test_standard_solutes.py``); at the coupled steady state, the sinks' inflow
        node by node (``test_coupled_steady_component.py``)
+   * - d23
+     - an endodermal Casparian band's wall (between two endodermal cells, :math:`b > 0`) takes the osmotic potential
+       of the stele's apoplast (the xylem sap's at its position), the rule its membranes' loop applies to a wall of the
+       endodermis that touches no cortical cell (a legacy problem: the band separates the cortex's apoplast from
+       the stele's, so it belongs to neither); with a band's σ (d21) its osmotic drive then sits on its cortical half
+       only
+     - corrected: ``casparian_wall_osmotic_rule`` 1 (MechaOsmoticPresets), the mean of its two sides' apoplast, the
+       soil solution's and the xylem sap's at the band; 2 reproduces the legacy's (``LEGACY_OPTIONS``, every osmotic
+       comparison). The exodermis' band walls are unchanged (the soil solution on both sides). Both rules in
+       ``test_pr67.py``
 
 
 Constants

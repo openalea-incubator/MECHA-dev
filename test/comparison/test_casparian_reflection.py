@@ -72,7 +72,7 @@ def both(case, request):
     if not data_structure.has("barrier"):
         data_structure.register("barrier", np.ones(data_structure.n_nodes()), location="node")
     data_structure.set("barrier", np.full(data_structure.n_nodes(), float(barrier)))
-    presets = MechaOsmoticPresets(data_structure=data_structure)
+    presets = legacy_options(MechaOsmoticPresets(data_structure=data_structure))
     bands = dict(sigma_casparian_endodermis=sigma_endodermis, sigma_casparian_exodermis=sigma_exodermis)
     mecha = legacy_options(MechaHydraulics(data_structure=data_structure))
     mecha.standard_osmotic = 1.
@@ -199,7 +199,7 @@ def coupled(case):
     if not data_structure.has("barrier"):
         data_structure.register("barrier", np.ones(data_structure.n_nodes()), location="node")
     data_structure.set("barrier", np.ones(data_structure.n_nodes()))
-    presets = MechaOsmoticPresets(data_structure=data_structure)
+    presets = legacy_options(MechaOsmoticPresets(data_structure=data_structure))
     parameters = dict(os_hetero=0., s_hetero=0., s_factor=COUPLED_SIGMA, presets_rules=2.,
                       sigma_casparian_endodermis=0.5)
     mecha = legacy_options(MechaHydraulics(data_structure=data_structure))

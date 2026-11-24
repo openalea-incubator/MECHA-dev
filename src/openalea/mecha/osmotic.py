@@ -282,6 +282,9 @@ def section_presets(geo, P, barrier, membranes, per_membrane=False):
     The legacy's osmotic potentials (per local node, hPa) and reflection coefficients (per membrane, in the order of
     *membranes*, rows (wall, cell) of local nodes) of one root section, with its plant's parameters *P* (scalars).
     A cell's potential is the one its last membrane sets, in the legacy's order (walls by id); junctions have none.
+    An endodermal Casparian band's wall (casparian_bands) stands between the cortex's apoplast and the stele's: its
+    potential is the mean of the two (the soil solution's and the xylem sap's at its position;
+    casparian_wall_osmotic_rule 1), or the stele side's (2, the legacy's: its last membrane's rule).
     With *per_membrane*, also each membrane's wall potential: the legacy sets it per membrane, so that a wall between
     a cortical-rule cell and a stelar-rule cell enters its equations with two (problem r10; the port keeps one, the
     last).
@@ -289,6 +292,7 @@ def section_presets(geo, P, barrier, membranes, per_membrane=False):
     rank_to_row, distance, row_outer_cortex = legacy_rows(geo.n_layer, geo.layer_dist)
     r_rel, x_rel = relative_positions(geo, rank_to_row, distance)
     counts = wall_counts(geo)
+    band_wall_mean = (casparian_bands(geo, barrier) == ENDODERMIS_BAND) & (P["casparian_wall_osmotic_rule"] == 1)
     vals, s_vals = tissue_values(P)
     interc = np.zeros(geo.compartment_type.size, dtype=bool)
     interc[geo.typed["intercellular"]] = True
@@ -339,6 +343,8 @@ def section_presets(geo, P, barrier, membranes, per_membrane=False):
                 sig, wall_os = s_vals["endo_peri"], (os_xyl if mature else os_soil)
             elif counts["stele"][i] == 0 and counts["cortex"][i] > 0:
                 wall_os = os_soil
+            elif band_wall_mean[i]:              # a band wall: the mean of its two sides' apoplast (R1)
+                wall_os, sig = (os_soil + os_xyl) / 2, s_vals["endo_peri"]
             else:
                 wall_os, sig = (os_xyl if mature else os_soil), s_vals["endo_peri"]
         elif 40 <= rank < 50:
@@ -417,6 +423,10 @@ class MechaOsmoticPresets(MechaSections):
                                                         "band, on the wall edges of the walls between two exodermal "
                                                         "cells (barriers 4-11); 0: none", 0.,
                                                 0., 1., "a reflection coefficient")
+    casparian_wall_osmotic_rule: float = _p("", "the osmotic potential of an endodermal Casparian band's wall (between "
+                                                "two endodermal cells, barriers 1-6, 8, 9, 11): 1 the mean of its two "
+                                                "sides' apoplast (the soil solution's and the xylem sap's at the "
+                                                "band), 2 the legacy's: the stele side's (the xylem sap's)", 1.)
     osmotic_left_soil: float = _p("hPa", "the soil solution's osmotic potential, left (or outer, symmetry 2) side",
                                   -0.5E3)
     osmotic_right_soil: float = _p("hPa", "the soil solution's osmotic potential, right (or inner) side", -0.5E3)

@@ -5,7 +5,8 @@ spaces left out; the suberin of passage cells on their membranes (GRANAP's secti
 sclerenchyma's draw and the smaller of two cells' plasmodesmata factors (E4); a cell without aquaporins keeping kmb (U5);
 the suberin lamella model's faces, layers and wall halves (suberin_model 1; U9), as the legacy's
 test_suberin_semantics.py; the Casparian bands' reflection coefficient (U4: a band found by its cells and the barrier
-code, whatever its conductivity), its drive with the junctions' means and its derivative in the osmotic potentials.
+code, whatever its conductivity), its drive with the junctions' means and its derivative in the osmotic potentials;
+an endodermal band wall's osmotic potential, the mean of its two sides' apoplast (doc/legacy.rst, d23).
 """
 import numpy as np
 import pytest
@@ -474,3 +475,37 @@ def test_casparian_band_osmotic_jacobian():
     difference = osmotic_term(pi + change) - osmotic_term(pi)
     assert abs(difference).max() > 0
     np.testing.assert_allclose(jacobian @ change, difference, rtol=0, atol=1e-10 * abs(difference).max())
+
+
+@pytest.mark.parametrize("barrier", [3, 8])
+def test_casparian_band_wall_osmotic_potential(barrier):
+    """An endodermal band's wall (between two endodermal cells) takes the mean of its two sides' apoplast: the soil
+    solution's (−500 hPa) and the xylem sap's (uniform, −3300 hPa), −1900 hPa; casparian_wall_osmotic_rule 2 (the
+    legacy's) the stele side's. Every other node, the exodermis' band walls (barrier 8: soil solution on both sides)
+    among them, is the same under both rules."""
+    g, data_structure, _ = anatomy_data_structure(root(1))
+    data_structure.register("barrier", np.full(data_structure.n_nodes(), float(barrier)), location="node")
+    presets = MechaOsmoticPresets(data_structure=data_structure)
+    presets.osmotic_symmetry_xyl = 1.
+    potentials = {}
+    for rule in (1., 2.):
+        presets.casparian_wall_osmotic_rule = rule
+        presets()
+        potentials[rule] = np.asarray(data_structure.get("osmotic_potential")).copy()
+    nodes = np.arange(data_structure.n_nodes())
+    kind = np.asarray(data_structure.get("compartment_type"))
+    cgroup = np.asarray(data_structure.get("cgroup"))
+    view = data_structure.to_graph_view()
+    path = np.asarray(data_structure.get("network_path"))
+    membranes = np.flatnonzero(path == MEMBRANE)
+    wall = np.where(kind[view.tail[membranes]] == WALL, view.tail[membranes], view.head[membranes])
+    cell = np.where(kind[view.tail[membranes]] == WALL, view.head[membranes], view.tail[membranes])
+    groups_of = {}
+    for w, c in zip(wall, cell):
+        groups_of.setdefault(int(w), []).append(int(cgroup[c]))
+    endodermis_band = np.zeros(nodes.size, dtype=bool)
+    endodermis_band[[w for w, groups in groups_of.items() if groups == [3, 3]]] = True
+    assert endodermis_band.sum() > 0
+    np.testing.assert_array_equal(potentials[2.][endodermis_band], -3300.)
+    np.testing.assert_array_equal(potentials[1.][endodermis_band], -1900.)
+    np.testing.assert_array_equal(potentials[1.][~endodermis_band], potentials[2.][~endodermis_band])

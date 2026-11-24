@@ -512,7 +512,9 @@ stele's otherwise), the wall the soil solution's
 
 and, with a non-zero diffusivity, the flat value (:math:`\pi_L`, :math:`\pi_\text{xyl}`): the legacy's exponential
 profile in a convection velocity that is always 0. Intercellular spaces take the soil solution's :math:`\pi` with
-:math:`\sigma = 0`, mature vessels the xylem sap's with :math:`\sigma = 0`. :math:`\sigma` is ``s_factor`` × 1, or ×
+:math:`\sigma = 0`, mature vessels the xylem sap's with :math:`\sigma = 0`. An endodermal Casparian band's wall
+stands between the two: :math:`\pi = (\pi_\text{soil} + \pi_\text{xylem})/2` at its position
+(``casparian_wall_osmotic_rule`` 1; 2, the legacy's: :math:`\pi_\text{xylem}`). :math:`\sigma` is ``s_factor`` × 1, or ×
 0.5 on the stelar (``s_hetero`` 1) or cortical (``s_hetero`` 2) membranes. The solutes' :math:`-RTc` is added to the
 cells' :math:`\pi` (input ``sucrose_osmotic_potential``).
 

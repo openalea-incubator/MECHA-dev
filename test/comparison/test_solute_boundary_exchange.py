@@ -19,7 +19,7 @@ def test_boundary_exchange_is_the_legacys(case):
     if not data_structure.has("barrier"):
         data_structure.register("barrier", np.ones(data_structure.n_nodes()), location="node")
     data_structure.set("barrier", np.ones(data_structure.n_nodes()))
-    presets = MechaOsmoticPresets(data_structure=data_structure)
+    presets = legacy_options(MechaOsmoticPresets(data_structure=data_structure))
     for name, value in dict(os_hetero=0., s_hetero=0., s_factor=1., presets_rules=2.).items():
         setattr(presets, name, value)
     mecha = legacy_options(MechaHydraulics(data_structure=data_structure))
