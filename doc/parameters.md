@@ -10,6 +10,7 @@ MECHA's main parameters, with their default values. MECHA works in centimetres, 
 | `kmb` | how easily water crosses a membrane without aquaporins | 3 × 10⁻⁵ cm hPa⁻¹ d⁻¹ |
 | `kaqp` | what the aquaporins (water channels) add to a membrane's conductivity | 4.3 × 10⁻⁴ cm hPa⁻¹ d⁻¹ |
 | `kpl` | the conductance of one plasmodesma (the channels joining neighbouring cells) | 5.3 × 10⁻¹² cm³ hPa⁻¹ d⁻¹ |
+| `kw_septa` | the dried half of a wall lining an air space (the other half conducts `kw`): it must stay below `kw`, so lower both together | 1.2 × 10⁻⁴ cm² hPa⁻¹ d⁻¹ |
 | `kw_casparian` | the walls' conductivity across a Casparian strip (nearly 0: a barrier) | 10⁻¹⁶ cm² hPa⁻¹ d⁻¹ |
 | `kw_suberin_in`, `kw_suberin_out` | the same across suberized walls | 10⁻¹⁶ cm² hPa⁻¹ d⁻¹ |
 | `sigma_casparian_endodermis`, `sigma_casparian_exodermis` (osmotic presets) | how much a Casparian strip holds the solutes back while water crosses it (its reflection coefficient, 0 to 1): the osmotic difference across the strip then also drives water through it, and the water crossing it carries that much less solute | 0 (none) |
@@ -19,6 +20,7 @@ MECHA's main parameters, with their default values. MECHA works in centimetres, 
 | `sclerenchyma_dead_fraction`, `sclerenchyma_plasmodesmata_factor` | at barrier 11, the fraction of the sclerenchyma's fibres that are dead (their plasmodesmata closed; drawn, `sclerenchyma_seed`, unless the input `living_cell` gives them) and the plasmodesmata left to the living ones | 0.8, 0.05 |
 | `membrane_lipid_permeability`, `membrane_aquaporin_permeability` | the membranes' permeability to sucrose through their lipids and through their aquaporins (× the cell's `aquaporin_factor`), in series with the suberin lamella where there is one: given, they replace the diffusivity `d_membrane` | none (`d_membrane`, 10⁻⁶ cm² d⁻¹) |
 | `thickness` | the cell walls' thickness when one value is used for all (`thickness_source` 1; by default each GRANAP wall has its own) | 1.5 µm |
+| `aquaporin_factor`, `wall_conductivity_factor` (inputs, per cell, per wall) | one cell's aquaporins, one wall's conductivity, relative to their tissue's and their rules' (given by another model or by you: user tutorial 10) | 1 |
 | `kaqp_endo_factor`, `kaqp_exo_factor`, `kaqp_cortex_factor`, `kaqp_stele_factor` | a tissue's aquaporin activity relative to `kaqp` | 1 |
 | `ratio_cortex` | the cortex's aquaporin activity at its innermost walls over its outermost | 1 (uniform) |
 

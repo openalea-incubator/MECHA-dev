@@ -12,7 +12,8 @@ User guide
 ==========
 
 For newcomers to the model, to plant hydraulics or to Python modelling: solve a root section, change its parameters,
-explore them, use experimental data, follow the water along a root. Each tutorial is a notebook in
+explore them, use experimental data, follow the water along a root, upscale a root system, look at its barriers and
+scale one tissue. Each tutorial is a notebook in
 ``example/tutorials/user/``, shown here with its results.
 
 .. toctree::
@@ -25,6 +26,9 @@ explore them, use experimental data, follow the water along a root. Each tutoria
     notebooks/user/05_experimental_data
     notebooks/user/06_along_a_root
     notebooks/user/07_tomato_day_and_night
+    notebooks/user/08_root_system_conductance
+    notebooks/user/09_suberin_lamellae_and_bands
+    notebooks/user/10_scaling_one_tissue
     parameters
 
 Developer guide
@@ -32,7 +36,7 @@ Developer guide
 
 For those who read, check, change or couple the model: how it is written as metafspm components on GRANAP's
 anatomies, how it was ported and validated against the original MECHA, its equations and its performance. Best read
-after the first user tutorial.
+after the first user tutorial; developers of the original MECHA start with ``12_from_the_legacy``.
 
 .. toctree::
     :maxdepth: 1
@@ -47,6 +51,9 @@ after the first user tutorial.
     notebooks/developer/07_section_options
     notebooks/developer/08_standard_problem
     notebooks/developer/09_solute_options
+    notebooks/developer/10_root_system_conductance
+    notebooks/developer/11_barriers_formalism
+    notebooks/developer/12_from_the_legacy
     components
     equations
     legacy

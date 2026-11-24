@@ -82,7 +82,11 @@ Step by step, for newcomers to the model, to plant hydraulics or to Python model
    day and night, a stressful soil;
 8. [The conductance of a root system](example/tutorials/user/08_root_system_conductance.ipynb): a seedling's root
    system as one network, its conductance (Krs) and where the water enters (SUF), two membrane conductivities found
-   from Krs measured with and without the aquaporins inhibited.
+   from Krs measured with and without the aquaporins inhibited;
+9. [Suberin, lamellae and Casparian bands](example/tutorials/user/09_suberin_lamellae_and_bands.ipynb): the barrier
+   codes impermeable and leaky, suberin as a lamella of its own thickness, a Casparian band that holds solutes back;
+10. [Scaling one tissue](example/tutorials/user/10_scaling_one_tissue.ipynb): the aquaporins of one tissue, closed
+   walls, dead fibres, given cell by cell or wall by wall.
 
 ## For developers
 
@@ -108,10 +112,12 @@ for the anatomies):
 | [04 — a whole plant in its soil](example/tutorials/developer/04_full_plant.ipynb) | the soil–plant–atmosphere seedling: the plant model, the soil model and their links, run to the fixed point |
 | [05 — extend the component](example/tutorials/developer/05_extend_the_component.ipynb) | a new variable and process in MECHA's component, run and tested |
 | [06 — solute storage and decay](example/tutorials/developer/06_solute_storage_and_decay.ipynb) | the solutes' storage fractions, first-order loss and liquid boundary |
-| [07 — the section's options](example/tutorials/developer/07_section_options.ipynb) | the barrier codes 0–11, φ-thickenings, aquaporins, plasmodesmata rules and factors, walls and air spaces, xylem pieces, tracheids, measured axial conductances, monocots and dicots |
-| [08 — the standard problem](example/tutorials/developer/08_standard_problem.ipynb) | its boundaries (the soil's two sides, the xylem's and the phloem's pressures or flows, the elongation zone), the osmotic scenarios, the flows by layer |
-| [09 — the solutes' options](example/tutorials/developer/09_solute_options.ipynb) | the pathways (apoplast, symplast), the schemes and time steps, held concentrations and steady states, the water and the sugar coupled |
+| [07 — the section's options](example/tutorials/developer/07_section_options.ipynb) | the barrier codes 0–11, the exodermis' own values, the sclerenchyma and its dead fibres, φ-thickenings, aquaporins, plasmodesmata rules and factors, walls and air spaces (each wall's thickness, the walls lining air spaces), xylem pieces, tracheids, measured axial conductances, monocots and dicots |
+| [08 — the standard problem](example/tutorials/developer/08_standard_problem.ipynb) | its boundaries (the soil's two sides, the xylem's and the phloem's pressures or flows, the elongation zone), the osmotic scenarios and the Casparian bands' σ, the flows by layer |
+| [09 — the solutes' options](example/tutorials/developer/09_solute_options.ipynb) | the pathways (apoplast, symplast), the schemes and time steps, held concentrations, the flux through them (`held_solute_flux`) and steady states, the bands' σ on the solutes, the water and the sugar coupled |
 | [10 — a root system's conductance](example/tutorials/developer/10_root_system_conductance.ipynb) | MARSHAL's Krs and SUF upscaled from the anatomical network: the upscaling's declaration (`upscaling(of=, law=, protocol=)`), metafspm's network operator, the check on the plant problem; elasticities, observations and residuals, the identifiability map, a two-parameter calibration |
+| [11 — barriers: the formalism](example/tutorials/developer/11_barriers_formalism.ipynb) | the barriers from the declarations: the walls' layers in parallel, the membranes' resistances in series (their intermediate states), the walls lining air spaces, the Casparian bands' σ in the flow law and its Jacobian, the membranes' permeability from their structure |
+| [12 — from the legacy MECHA to the component](example/tutorials/developer/12_from_the_legacy.ipynb) | **the entry point for the developers of the original MECHA**: one section run with the legacy `Mecha` and with the components, kr, the uptake and every potential compared (`LEGACY_OPTIONS`), each XML input mapped to its parameter, where `doc/legacy.rst` registers the differences |
 
 Run them locally with `jupyter lab example/tutorials/` (the `mecha` environment above). Examples:
 [`example/hydraulics/`](example/hydraulics/) (sections, a root axis, the osmotic presets),
