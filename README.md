@@ -187,7 +187,8 @@ default_input = InData()
 # 7: Casparian strip on the exodermis
 # 8: suberized endodermis & exodermis
 # 9: lignin cap on the exodermis + Casparian strip on the endodermis
-default_input.geometry.set_maturity_stages(range(3,10)) # [3,4,5,6,7,8,9]
+# 10: suberized exodermis with Casparian strip
+default_input.geometry.set_maturity_stages(range(3,11)) # [3,4,5,6,7,8,9]
 granap_mecha = Mecha(default_input, network=ganache_network)
 
 granap_mecha.compute_conductivities()

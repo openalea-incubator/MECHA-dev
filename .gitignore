@@ -16,3 +16,5 @@ example/**/outputs/
 # documentation builds, and the tutorials they copy
 doc/_build/
 doc/notebooks/
+*graphify-out/*
+graphify-out/cache/*
