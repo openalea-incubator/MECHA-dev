@@ -59,6 +59,10 @@ _R_HPA = 8.314e4
 # Network link types recorded per edge; extras['edge_path'] indexes this tuple.
 EDGE_PATHS = ('wall', 'membrane', 'plasmodesmata')
 
+# Steady-state transport quantifiers stored in SimResult.extras (see _steady_metrics).
+STEADY_METRICS = ('loading_resistance', 'max_assimilation', 'turnover',
+                  'load_fraction', 'mean_peclet')
+
 _SEC_PER_DAY = 86400.0
 _V_WATER = 18.015          # cm³/mol  molar volume of liquid water (M_w / ρ_w)
 _C_PER_SUCROSE = 12        # C atoms per sucrose (C12H22O11)
@@ -170,6 +174,7 @@ class Solute:
     sigma: float = 0.97            # -      membrane reflection coefficient
     # Effective xylem reflection (solute only; 1 → xylem impermeable).
     sigma_xylem: Optional[float] = None
+    c_max: float = 3.0e-4          # mol/cm³  mesophyll ceiling (0.3 M) for max_assimilation
     ops: str = 'T'                 # 'D' | 'T'  (T = advection + diffusion)
     scheme: str = 'sg'             # 'upwind' | 'sg' (Scharfetter–Gummel)
 
@@ -501,6 +506,24 @@ class Experiment:
     def describe(self) -> dict:
         return _describe(self)
 
+    @classmethod
+    def from_params(cls, params: dict) -> "Experiment":
+        """Rebuild an Experiment from ``describe()`` output (e.g. ``SimResult.params``)."""
+        types = {t.__name__: t for t in (
+            Anatomy, Solute, Diurnal, DirichletBC, NeumannBC, SteadyState, TimeStepping,
+            NoCoupling, Picard, JFNK, Starch, DielStarch, Experiment)}
+
+        def build(v):
+            if isinstance(v, dict) and v.get('type') in types:
+                t = types[v['type']]
+                names = {f.name for f in fields(t)}
+                return t(**{k: build(x) for k, x in v.items() if k in names})
+            if isinstance(v, list):
+                return tuple(build(x) for x in v)
+            return v
+
+        return build(dict(params, type='Experiment'))
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 7) Result container (raw data only; plotting lives in post_sim.py)
@@ -672,6 +695,8 @@ class SimResult:
         else:
             out.update(q_load=self.q_load, n_iterations=self.n_iterations,
                        converged=self.converged)
+            out.update({k: float(self.extras[k]) for k in STEADY_METRICS
+                        if k in self.extras})
         return out
 
 
@@ -729,6 +754,7 @@ class NeedleSimulation:
     def _classify_tissue(self) -> None:
         nwj = self.nwj
         meso, strasburger, phloem, xylem, airspace = [], [], [], [], []
+        tf_parenchyma, tf_tracheid = [], []
         for nd, d in self.mecha.network.graph.nodes(data=True):
             idx = self.mecha.indice[nd]
             if idx < nwj:
@@ -740,6 +766,11 @@ class NeedleSimulation:
                 airspace.append(cid)
             elif cg == 4 and ct == 'mesophyll':
                 meso.append(cid)
+            # Undifferentiated GRANAP transfusion cells ('transfusion') count as parenchyma.
+            elif cg == 17 or ct in ('transfusion parenchyma', 'transfusion'):
+                tf_parenchyma.append(cid)
+            elif cg == 18 or ct == 'transfusion tracheid':
+                tf_tracheid.append(cid)
             elif cg == 12 and ct == 'Strasburger cell':
                 strasburger.append(cid)
             elif cg == 11:
@@ -757,10 +788,13 @@ class NeedleSimulation:
         self.phloem_cell_ids      = phloem
         self.xylem_cell_ids       = xylem
         self.airspace_cell_ids    = airspace
+        self.transfusion_parenchyma_cell_ids = tf_parenchyma
+        self.transfusion_tracheid_cell_ids   = tf_tracheid
         self.phloem_loading_ids   = strasburger if strasburger else phloem
         self.meso_nodes = nwj + np.asarray(meso, dtype=int)
         self._log(f"  mesophyll={len(meso)}  phloem-loading={len(self.phloem_loading_ids)}"
-                  f"  xylem={len(xylem)}  air={len(airspace)}")
+                  f"  xylem={len(xylem)}  air={len(airspace)}"
+                  f"  transfusion parenchyma={len(tf_parenchyma)}  tracheids={len(tf_tracheid)}")
 
     def tissue_ids(self, group: str) -> list:
         """Cell ids of a sink group (see SINK_GROUPS)."""
@@ -821,7 +855,8 @@ class NeedleSimulation:
             if non_iso:
                 extra.append(non_iso[0])
 
-        bc = {nid: bcfg.c_sink for nid in isolated + extra}
+        # Anchors only make the solve non-singular; keep them sucrose-free whatever c_sink is.
+        bc = {nid: 0.0 for nid in isolated + extra}
         bc.update({nwj + cid: bcfg.c_sink for cid in sink_ids})
         bc.update(bcfg.fixed_concentrations(self))
         self.bc = bc
@@ -891,8 +926,10 @@ class NeedleSimulation:
         self._init_edge_record()
         extras.update(self._edge_extras(0, 0.0, c))
         extras.update(self._tissue_extras())
+        extras.update(self._steady_metrics(c, q_load, extras))
         polys, cell_ids, node_of_cell = self._cell_geometry()
         self._log(f"  converged={ok}  iters={n_iter}  Q_load={q_load*1e12:.2f} pmol/d")
+        self._log("  " + "  ".join(f"{k}={float(extras[k]):.4g}" for k in STEADY_METRICS))
         return SimResult(
             mode='steady', params=self.exp.describe(),
             concentration=c.astype(np.float32),
@@ -900,6 +937,50 @@ class NeedleSimulation:
             q_load=q_load, n_iterations=int(n_iter), converged=bool(ok),
             water_flux_total=self._total_transpiration_flux(), extras=extras,
         )
+
+    def _steady_metrics(self, c: np.ndarray, q: float, extras: dict) -> dict:
+        """Steady transport quantifiers (q = sink uptake [mol/d] = production)."""
+        bcfg, sol = self.exp.bc, self.exp.solute
+        vol = self.node_vols
+        v_meso = vol[self.meso_nodes]
+        c_meso = float(np.sum(v_meso * c[self.meso_nodes]) / np.sum(v_meso))
+        dc = c_meso - bcfg.c_sink
+        mass = float(np.sum(vol[self.interior_mask] * c[self.interior_mask]))
+        nan = float('nan')
+
+        # [d/cm³]: mesophyll–sink concentration drop per unit export.
+        resistance = dc / q if q > 0 else nan
+        turnover = mass / q if q > 0 else nan
+        # Linear in A at fixed E (exact without osmotic coupling).
+        a_max = (bcfg.assimilation_A * (sol.c_max - bcfg.c_sink) / dc
+                 if isinstance(bcfg, NeumannBC) and dc > 0 else nan)
+
+        ij, path = self._edge_ij, extras['edge_path']
+        J = np.asarray(extras['edge_solute'][-1], dtype=float)
+        pe = np.asarray(extras['edge_peclet'][-1], dtype=float)
+        sink = np.zeros(self.n_total, dtype=bool)
+        sink[self.sink_nodes] = True
+        into_v = ~sink[ij[:, 0]] & sink[ij[:, 1]]
+        into_u = sink[ij[:, 0]] & ~sink[ij[:, 1]]
+        uptake = np.where(into_v, J, 0.0) - np.where(into_u, J, 0.0)
+        total_up = float(np.sum(uptake))
+        pd_up = float(np.sum(uptake[path == EDGE_PATHS.index('plasmodesmata')]))
+        load_fraction = pd_up / total_up if total_up > 0 else nan
+
+        # Flux-weighted signed Péclet: < 0 → solute moves against the water carry.
+        ok = np.isfinite(pe) & (J != 0.0)
+        w = np.abs(J[ok])
+        mean_pe = (float(np.sum(w * np.abs(pe[ok]) * np.sign(J[ok] * pe[ok])) / np.sum(w))
+                   if w.size and np.sum(w) > 0 else nan)
+
+        return {
+            'loading_resistance': np.asarray(resistance),   # d/cm³
+            'max_assimilation':   np.asarray(a_max),        # µmol m⁻² s⁻¹
+            'turnover':           np.asarray(turnover),     # d
+            'load_fraction':      np.asarray(load_fraction),  # - symplastic share of uptake
+            'mean_peclet':        np.asarray(mean_pe),      # -
+            'c_meso_mean':        np.asarray(c_meso),       # mol/cm³
+        }
 
     def _run_transient(self) -> SimResult:
         exp, ts = self.exp, self.exp.dynamics
@@ -1077,14 +1158,12 @@ class NeedleSimulation:
                              else max(1, int(round(snap / dt))))
         self._edge_rec = {'t': [], 'step': [], 'solute': [], 'water': [], 'peclet': []}
 
-    def _record_edges(self, step: int, t: float, c: np.ndarray) -> None:
+    def _edge_water_peclet(self):
+        """Current per-link water flux u→v [cm³/d] and Péclet (1−σ)F/D_e (float64)."""
         a = self.exp.anatomy
         i, j = self._edge_ij[:, 0], self._edge_ij[:, 1]
-        T = self._spatial_operator()
         A = self.st.build_advection_matrix(a.i_mat, a.i_sce).tocsr()
         D = self.D_mat.tocsr()
-        # T is antisymmetric per edge, so net u→v flux = T[v,u]c_u − T[u,v]c_v.
-        solute = np.asarray(T[j, i]).ravel() * c[i] - np.asarray(T[i, j]).ravel() * c[j]
         carry = np.asarray(A[j, i]).ravel() - np.asarray(A[i, j]).ravel()   # (1−σ)·F, u→v
         d_e = np.asarray(D[i, j]).ravel()
         with np.errstate(divide='ignore', invalid='ignore'):
@@ -1095,6 +1174,14 @@ class NeedleSimulation:
             flux[key] = flux.get(key, 0.0) + e['flux']
         water = np.array([flux.get((u, v), 0.0) - flux.get((v, u), 0.0)
                           for u, v in self._edge_ij])
+        return water, peclet
+
+    def _record_edges(self, step: int, t: float, c: np.ndarray) -> None:
+        i, j = self._edge_ij[:, 0], self._edge_ij[:, 1]
+        T = self._spatial_operator()
+        # T is antisymmetric per edge, so net u→v flux = T[v,u]c_u − T[u,v]c_v.
+        solute = np.asarray(T[j, i]).ravel() * c[i] - np.asarray(T[i, j]).ravel() * c[j]
+        water, peclet = self._edge_water_peclet()
         rec = self._edge_rec
         rec['t'].append(float(t)); rec['step'].append(int(step))
         rec['solute'].append(solute.astype(np.float32))
@@ -1127,6 +1214,10 @@ class NeedleSimulation:
             'tissue_phloem':      np.asarray(self.phloem_cell_ids, dtype=int),
             'tissue_xylem':       np.asarray(self.xylem_cell_ids, dtype=int),
             'tissue_airspace':    np.asarray(self.airspace_cell_ids, dtype=int),
+            'tissue_transfusion_parenchyma':
+                np.asarray(self.transfusion_parenchyma_cell_ids, dtype=int),
+            'tissue_transfusion_tracheid':
+                np.asarray(self.transfusion_tracheid_cell_ids, dtype=int),
         }
 
     def _total_transpiration_flux(self) -> float:

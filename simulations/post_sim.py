@@ -14,6 +14,8 @@ Entry points
 ``concentration_gif(res, path)``   transient cell concentration field (GIF)
 ``flow_network_plot(res, path, quantity)``  per-link arrows: 'solute' | 'water' | 'peclet'
 ``flow_network_gif(res, path, quantity)``   same, animated over the stored snapshots
+``flow_decomposition(res)``        steady: water flux / Péclet split into transpiration and osmotic parts
+``flow_decomposition_plot(res, path)``  histograms of the Péclet parts
 ``mass_balance_plot(res, path)``   interior mass / mass-to-sink vs. time
 ``diurnal_flux_plot(res, path)``   j_w, j_s, j_s/j_w (+ starch) time series
 ``starch_comparison_plot(results, path)``  k_f × k_r sweep overlay
@@ -83,7 +85,8 @@ def anatomy_plot(res: SimResult, path: str) -> str:
 
     Reads the tissue cell-id arrays stored in ``res.extras`` (``tissue_meso``,
     ``tissue_strasburger``, ``tissue_phloem``, ``tissue_xylem``,
-    ``tissue_airspace``) and paints each cell polygon by its class.
+    ``tissue_airspace``, ``tissue_transfusion_parenchyma``,
+    ``tissue_transfusion_tracheid``) and paints each cell polygon by its class.
     """
     plt = _import_mpl()
     from matplotlib.patches import Patch
@@ -97,6 +100,8 @@ def anatomy_plot(res: SimResult, path: str) -> str:
         ('phloem',          'tissue_phloem',      '#377eb8'),
         ('xylem',           'tissue_xylem',       '#e41a1c'),
         ('airspace',        'tissue_airspace',    '#bdbdbd'),
+        ('transfusion parenchyma', 'tissue_transfusion_parenchyma', '#ff7f00'),
+        ('transfusion tracheid',   'tissue_transfusion_tracheid',   '#a65628'),
     ]
     other_color = '#f5f5dc'   # epidermis / cortex / unclassified
 
@@ -216,6 +221,12 @@ _FLOW_QUANTITIES = {
     'solute': ('edge_solute', 'Sucrose flux', 'mol d⁻¹'),
     'water':  ('edge_water',  'Water flux',   'cm³ d⁻¹'),
     'peclet': ('edge_peclet', 'Local Péclet (1−σ)F/D_e', '–'),
+    'water_evapo':  ('edge_evapo',       'Transpiration-driven water flux', 'cm³ d⁻¹'),
+    'water_osmo':   ('edge_osmo',        'Sucrose-osmotic water flux',      'cm³ d⁻¹'),
+    'water_base':   ('edge_water_base',  'Background-osmotic water flux',   'cm³ d⁻¹'),
+    'peclet_evapo': ('edge_peclet_evapo', 'Péclet, transpiration part', '–'),
+    'peclet_osmo':  ('edge_peclet_osmo',  'Péclet, sucrose-osmotic part', '–'),
+    'peclet_base':  ('edge_peclet_base',  'Péclet, background-osmotic part', '–'),
 }
 _BG = '#0d0d1a'
 
@@ -285,7 +296,7 @@ def _flow_title(quantity, t, vals, code, ref_max, tol, log_decades):
     filt = f", |·| > 1e-{tol:g}·max" if tol is not None else ""
     head = (f"{label} [{unit}] – links, t = {t:.2f} d   (ref max = {ref_max:.2e}, {scale})\n"
             f"shown {shown} of {a.size} links{filt}")
-    if quantity == 'peclet':
+    if quantity.startswith('peclet'):
         fin = np.isfinite(vals)
         stats = "   ".join(
             f"{pt}: |Pe|>1 in {100*np.mean(a[(code == i) & fin] > 1):.0f}%"
@@ -361,6 +372,131 @@ def flow_network_gif(res: SimResult, path: str, quantity: str = 'solute',
 
     anim = FuncAnimation(fig, _draw, frames=len(idx), blit=False)
     anim.save(path, writer=PillowWriter(fps=fps), savefig_kwargs={'facecolor': _BG})
+    plt.close(fig)
+    return path
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Steady state: superposition split of the water flow (transpiration / osmotic)
+# ══════════════════════════════════════════════════════════════════════════════
+def flow_decomposition(res: SimResult, sim=None) -> dict:
+    """Split the steady per-link water flux and Péclet number by driver.
+
+    At the converged sucrose field c* the water problem is linear, so
+    F = F_base + F_evapo + F_osmo with
+      F_base  : E = 0, background Ψ_os only (untracked solutes),
+      F_evapo : (E, background) − F_base   → transpiration-driven,
+      F_osmo  : (E = 0, background − RT·c*) − F_base → sucrose-osmotic.
+    The Péclet number (1−σ)F/D_e splits the same way.  Results are added to
+    ``res.extras`` (``edge_evapo``, ``edge_osmo``, ``edge_water_base`` and the
+    ``edge_peclet_*`` counterparts, shape (1, E)) plus scalar ``closure_residual``
+    (max|F − Σ parts| / max|F|) and flux-weighted ``peclet_evapo`` / ``peclet_osmo``
+    / ``peclet_base``.  ``sim`` is rebuilt from ``res.params`` when omitted.
+    """
+    from needle import Experiment, NeedleSimulation, NeumannBC, get_geometry_base
+
+    if res.mode != 'steady':
+        raise ValueError("flow_decomposition needs a steady-state result.")
+    if sim is None:
+        exp = Experiment.from_params(res.params)
+        sim = NeedleSimulation(exp, get_geometry_base(exp.anatomy.seed), verbose=False)
+    exp, mecha = sim.exp, sim.mecha
+    if not isinstance(exp.bc, NeumannBC):
+        raise ValueError("flow_decomposition supports NeumannBC (prescribed E) only.")
+    h, nwj, n_cells = exp.anatomy.h_idx, sim.nwj, sim.n_cells
+    manager = mecha.network.cell_manager
+    c_star = np.asarray(res.concentration, dtype=float).ravel()
+
+    sim._init_edge_record()
+    mecha._distribute_transpiration_flow(0.0)
+    mecha.water_flux(h=h, verbose=False)
+    baseline = np.array([c.psi_os if c.psi_os is not None else 0.0 for c in manager])
+
+    def solve(flow, c_cells):
+        mecha._distribute_transpiration_flow(flow)
+        manager.set_osmotic_from_concentration(c_cells, nwj, exp.t_kelvin, baseline)
+        mecha.water_flux(h=h, use_stored_psi_os=True, verbose=False)
+        return sim._edge_water_peclet()
+
+    zero = np.zeros(n_cells)
+    c_cells = c_star[nwj: nwj + n_cells]
+    w0, p0 = solve(0.0, zero)
+    w1, p1 = solve(sim.flow_trans, zero)
+    w2, p2 = solve(0.0, c_cells)
+    w_tot, p_tot = solve(sim.flow_trans, c_cells)
+
+    parts_w = {'base': w0, 'evapo': w1 - w0, 'osmo': w2 - w0}
+    parts_p = {'base': p0, 'evapo': p1 - p0, 'osmo': p2 - p0}
+    ref = float(np.max(np.abs(w_tot))) or 1.0
+    closure = float(np.max(np.abs(w_tot - sum(parts_w.values())))) / ref
+
+    stored = res.get_extra('edge_water')
+    if stored is not None:
+        mismatch = float(np.max(np.abs(np.asarray(stored[-1], float) - w_tot))) / ref
+        if mismatch > 1e-3:
+            import warnings
+            warnings.warn(f"Rebuilt total water flux differs from stored edge_water by "
+                          f"{mismatch:.1e} (relative); check that params match the run.")
+
+    J = np.asarray(res.extras['edge_solute'][-1], dtype=float)
+
+    def mean_pe(pe):
+        ok = np.isfinite(pe) & (J != 0.0)
+        w = np.abs(J[ok])
+        return float(np.sum(w * np.abs(pe[ok]) * np.sign(J[ok] * pe[ok])) / w.sum()) \
+            if w.size and w.sum() > 0 else float('nan')
+
+    out = {}
+    for k in parts_w:
+        wkey = 'edge_water_base' if k == 'base' else f'edge_{k}'
+        out[wkey] = parts_w[k][None, :].astype(np.float32)
+        out[f'edge_peclet_{k}'] = parts_p[k][None, :].astype(np.float32)
+        out[f'peclet_{k}'] = np.asarray(mean_pe(parts_p[k]))
+    out['closure_residual'] = np.asarray(closure)
+    res.extras.update(out)
+    return out
+
+
+def flow_decomposition_plot(res: SimResult, path: str, bins: int = 60) -> str:
+    """Per-path histograms of the Péclet parts, weighted by |sucrose flux|.
+
+    Sign: > 0 water carries sucrose along its own direction, < 0 against it.
+    Requires ``flow_decomposition(res)`` first.
+    """
+    from needle import EDGE_PATHS
+    plt = _import_mpl()
+    e = res.extras
+    if 'edge_peclet_evapo' not in e:
+        raise ValueError("Run flow_decomposition(res) first.")
+    J = np.asarray(e['edge_solute'][-1], dtype=float)
+    code = np.asarray(e['edge_path'])
+    parts = [('evapo', 'transpiration', '#e41a1c'), ('osmo', 'sucrose-osmotic', '#377eb8'),
+             ('base', 'background-osmotic', '#999999')]
+    paths = [p for p in ('plasmodesmata', 'membrane', 'wall')
+             if np.any((code == EDGE_PATHS.index(p)) & (J != 0))]
+    fig, axes = plt.subplots(1, len(paths), figsize=(5 * len(paths), 4), squeeze=False)
+    for ax, p in zip(axes[0], paths):
+        m = (code == EDGE_PATHS.index(p)) & (J != 0)
+        for key, label, color in parts:
+            pe = np.asarray(e[f'edge_peclet_{key}'][-1], dtype=float)
+            ok = m & np.isfinite(pe)
+            if not ok.any():
+                continue
+            signed = np.abs(pe[ok]) * np.sign(J[ok] * pe[ok])
+            ax.hist(signed, bins=bins, weights=np.abs(J[ok]) / np.abs(J[ok]).sum(),
+                    histtype='step', lw=1.5, color=color,
+                    label=f"{label} (mean {float(e[f'peclet_{key}']):+.3g})"
+                    if p == 'plasmodesmata' else label)
+        ax.axvline(0.0, color='k', lw=0.5)
+        ax.set_title(p)
+        ax.set_xlabel('signed Péclet (+ along sucrose flux)')
+    axes[0][0].set_ylabel('|sucrose flux| fraction')
+    axes[0][0].legend(fontsize=8)
+    fig.suptitle(f"E={res.param('transpiration_E')} mmol/m²/s, "
+                 f"A={res.param('assimilation_A')} µmol/m²/s – "
+                 f"closure residual {float(e['closure_residual']):.1e}")
+    fig.tight_layout()
+    fig.savefig(path, dpi=150, bbox_inches='tight')
     plt.close(fig)
     return path
 

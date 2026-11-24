@@ -17,20 +17,23 @@ import os
 
 import numpy as np
 
-from needle import (_OUT_DIR, D_PD_SUCROSE, D_APO_SUCROSE, Anatomy, Experiment, JFNK, NeumannBC,
+from needle import (_OUT_DIR, DIFF_SUCROSE, Anatomy, Experiment, JFNK, NeumannBC,
                     NoCoupling, Picard, SimResult, Solute, TimeStepping, run_experiments)
 from post_sim import concentration_gif, flow_network_gif, anatomy_plot, budget_plot
 
 #COUPLINGS = {'none': NoCoupling(), 'picard': Picard(), 'jfnk': JFNK()}
+D_PD_SUCROSE = 0.6 * DIFF_SUCROSE
+
+
 
 EXPERIMENT = Experiment(
     label='flux_budget_xyopen',
     anatomy=Anatomy(seed=42),
-    solute=Solute(d_pd=D_PD_SUCROSE, d_apo=D_APO_SUCROSE, sigma_xylem=0.0),
+    solute=Solute(d_pd=D_PD_SUCROSE, d_apo=1e-20, d_mem=1e-20, sigma=1.0, sigma_xylem=0.0),
     bc=NeumannBC(
         psi_xyl=-200.0,
-        transpiration_E=1.7,       # mmol m⁻² s⁻¹
-        assimilation_A=3.6,        # µmol m⁻² s⁻¹
+        transpiration_E=0.5,       # mmol m⁻² s⁻¹
+        assimilation_A=5.3,        # µmol m⁻² s⁻¹
         ref_area=None,             # m²; None → outer perimeter × slice height
         sinks=('strasburger', 'phloem'),
     ),
@@ -42,7 +45,7 @@ EXPERIMENT = Experiment(
 )
 
 if __name__ == '__main__':
-    RUN_SIMULATION = False    # False: skip the march, re-plot from the stored .npz
+    RUN_SIMULATION = True    # False: skip the march, re-plot from the stored .npz
     stem = os.path.join(_OUT_DIR, f"needle_{EXPERIMENT.label}")
     if RUN_SIMULATION:
         (res,) = run_experiments([EXPERIMENT], max_workers=1)
@@ -68,8 +71,8 @@ if __name__ == '__main__':
     TOL_DECADES = 2.0        # hide links below max·10^-TOL_DECADES
 
     print(f"Saved: {budget_plot(res, f'{stem}_budget.{FIG_FMT}')}")
-    #print(f"Saved: {concentration_gif(res, stem + '_sucrose.gif', max_frames=120, fps=10)}")
-    #print(f"Saved: {anatomy_plot(res, f'{stem}_anatomy.{FIG_FMT}')}")
-    #for quantity, tag in (('solute', 'sucrose_flow'), ('water', 'water_flow'), ('peclet', 'peclet')):
-    #    print(f"Saved: {res.plot_flow_network(f'{stem}_{tag}.{FIG_FMT}', quantity=quantity, tol_decades=TOL_DECADES)}")
-    #    print(f"Saved: {flow_network_gif(res, f'{stem}_{tag}.gif', quantity=quantity, tol_decades=TOL_DECADES)}")
+    print(f"Saved: {concentration_gif(res, stem + '_sucrose.gif', max_frames=120, fps=10)}")
+    print(f"Saved: {anatomy_plot(res, f'{stem}_anatomy.{FIG_FMT}')}")
+    for quantity, tag in (('solute', 'sucrose_flow'), ('water', 'water_flow'), ('peclet', 'peclet')):
+        print(f"Saved: {res.plot_flow_network(f'{stem}_{tag}.{FIG_FMT}', quantity=quantity, tol_decades=TOL_DECADES)}")
+        print(f"Saved: {flow_network_gif(res, f'{stem}_{tag}.gif', quantity=quantity, tol_decades=TOL_DECADES)}")

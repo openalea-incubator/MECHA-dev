@@ -994,6 +994,9 @@ class SoluteTransport:
         else:
             lhs = T
 
+        bc_idx = []
+        lhs_free = lhs.tocsr()
+
         # Dirichlet BCs: row-override so c[idx] = c_val exactly
         if boundary_conditions:
             nwj = self.n_wall_junction
@@ -1004,9 +1007,67 @@ class SoluteTransport:
                     lhs[idx, :] = 0.0
                     lhs[idx, idx] = 1.0
                     rhs_eff[idx] = float(c_val)
+                    bc_idx.append(idx)
             lhs = lhs.tocsr()
 
+        if not is_dynamic:
+            lhs, rhs_eff = self._pin_unreached(lhs_free, lhs.tocsr(), rhs_eff, bc_idx)
+
         return spla.spsolve(lhs, rhs_eff)
+
+    @staticmethod
+    def _pin_unreached(T, lhs, rhs, bc_idx, rel_tol=1e-12):
+        """Steady solve: fix nodes no solute can reach at c = 0.
+
+        Couplings below ``rel_tol`` × the largest one are round-off for the
+        solver, so nodes attached only through them (e.g. walls at d_apo≈0)
+        would make T numerically singular.  Raises if solute reaches nodes it
+        cannot leave (no steady state exists).
+        """
+        from scipy.sparse import csgraph
+        n = lhs.shape[0]
+        off = (T - sp.diags(T.diagonal())).tocsr()
+        off.eliminate_zeros()
+        if off.nnz == 0:
+            return lhs, rhs
+        tol = rel_tol * float(np.abs(off.data).max())
+        colsum = np.asarray(T.sum(axis=0)).ravel()
+        feed = (off > tol).astype(np.int8)            # feed[i, j]: c_j feeds node i
+        src = np.flatnonzero(rhs != 0.0)
+
+        def _reach(adj, seeds):
+            # BFS from a virtual super-node linked to every seed.
+            if len(seeds) == 0:
+                return np.zeros(n, dtype=bool)
+            row = sp.csr_matrix((np.ones(len(seeds)), (np.zeros(len(seeds)), seeds)),
+                                shape=(1, n))
+            ext = sp.bmat([[adj, sp.csr_matrix((n, 1))],
+                           [row, sp.csr_matrix((1, 1))]], format='csr')
+            hit = np.zeros(n + 1, dtype=bool)
+            hit[csgraph.breadth_first_order(ext, n, directed=True,
+                                            return_predecessors=False)] = True
+            return hit[:n]
+
+        reached = _reach(feed.T.tocsr(), src)
+        sinks = np.union1d(np.asarray(bc_idx, dtype=int), np.flatnonzero(colsum < -tol))
+        drains = _reach(feed.tocsr(), sinks)
+        traps = np.flatnonzero(reached & ~drains)
+        if traps.size:
+            raise RuntimeError(
+                f"No steady state: solute reaches {traps.size} node(s) it cannot "
+                f"leave (e.g. {traps[:5].tolist()}); it would accumulate without bound.")
+
+        free = np.ones(n, dtype=bool)
+        free[np.asarray(bc_idx, dtype=int)] = False
+        pin = np.flatnonzero(free & ~reached)
+        if pin.size:
+            keep = np.ones(n)
+            keep[pin] = 0.0
+            K = sp.diags(keep)
+            lhs = (K @ lhs + sp.diags(1.0 - keep)).tocsr()
+            rhs = rhs.copy()
+            rhs[pin] = 0.0
+        return lhs, rhs
 
     # ------------------------------------------------------------------
     # Spatial transport operator (public, mode-sliced) for external assembly

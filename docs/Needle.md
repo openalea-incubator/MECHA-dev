@@ -139,7 +139,36 @@ Main `extras` keys (dynamic runs):
 - Tissue maps: `tissue_meso`, `tissue_strasburger`, `tissue_phloem`,
   `tissue_xylem`, `tissue_airspace`.
 
-Steady runs store `j_<group>`, the edge snapshots and the tissue maps only.
+Steady runs store `j_<group>`, the edge snapshots, the tissue maps and the
+steady-state diagnostics below.
+
+#### Steady-state diagnostics
+
+After a `SteadyState` solve, `_steady_metrics` computes the transport quantifiers
+listed in `STEADY_METRICS` and stores them as scalar arrays in `extras`. They are
+also printed in verbose mode and included in `res.summary()`. At steady state the
+sink uptake $q$ (= `q_load`) equals the production.
+
+Notation: $\bar c_{meso}$ is the volume-weighted mean mesophyll concentration,
+$M$ is the stored sucrose mass on interior nodes, and $J_e$, $Pe_e$ are the
+per-link solute flux and Péclet number of the steady snapshot.
+
+| Key | Unit | Definition | Meaning |
+|---|---|---|---|
+| `loading_resistance` | d/cm³ | $(\bar c_{meso} - c_{sink}) / q$ | concentration drop from mesophyll to sinks per unit export; lower means easier loading |
+| `max_assimilation` | µmol m⁻² s⁻¹ | $A \,(c_{max} - c_{sink}) / (\bar c_{meso} - c_{sink})$ | assimilation at which $\bar c_{meso}$ would reach `Solute.c_max`. `NeumannBC` only (NaN otherwise). Linear in $A$ at fixed $E$, exact without osmotic coupling |
+| `turnover` | d | $M / q$ | mean residence time of sucrose in the needle |
+| `load_fraction` | – | PD uptake / total uptake | symplastic share of the net flux entering sink nodes (links crossing from non-sink to sink nodes) |
+| `mean_peclet` | – | $\sum \lvert J_e\rvert\,\lvert Pe_e\rvert\,\operatorname{sgn}(J_e Pe_e) / \sum \lvert J_e\rvert$ | flux-weighted signed Péclet number. $> 0$: solute moves with the water; $< 0$: against it |
+| `c_meso_mean` | mol/cm³ | $\bar c_{meso}$ | mean mesophyll concentration (stored, not in `STEADY_METRICS`) |
+
+All ratios return NaN when the denominator is zero (no export, no uptake or
+$\bar c_{meso} \le c_{sink}$).
+
+```python
+res = NeedleSimulation(exp.replace(dynamics=SteadyState())).run()
+res.summary()['loading_resistance'], float(res.extras['turnover'])
+```
 
 Persistence and inspection:
 
@@ -178,6 +207,7 @@ Units: lengths in µm/cm, volumes in cm³, concentrations in mol/cm³ (1 mol/cm�
 | `sigma_xylem` | `None` | effective xylem reflection for the solute (1 → impermeable) |
 | `ops` | `'T'` | `'D'` diffusion only, `'T'` advection + diffusion |
 | `scheme` | `'sg'` | `'upwind'` or `'sg'` (Scharfetter–Gummel) |
+| `c_max` | `3.0e-4` (0.3 M) | mesophyll concentration ceiling used by the `max_assimilation` diagnostic [mol/cm³] |
 
 `DIFF_SUCROSE` = 5.2e-6 cm²/s × 86400 ≈ 0.449 cm²/d is the free-solution value.
 
@@ -423,8 +453,8 @@ stored `.npz` without running the march again.
 
 [flux_budget_steady.py](../simulations/flux_budget_steady.py) uses the same
 set-up but with `dynamics=SteadyState()`, `sigma_xylem=1.0` and `JFNK()`. The
-result is then a single field, with `q_load` and `j_<group>` in place of time
-series.
+result is then a single field, with `q_load`, `j_<group>` and the
+[steady-state diagnostics](#steady-state-diagnostics) in place of time series.
 
 ### 4.5 Parameter sweeps ([flux_cdiff.py](../simulations/flux_cdiff.py), [flux_pdens.py](../simulations/flux_pdens.py))
 
