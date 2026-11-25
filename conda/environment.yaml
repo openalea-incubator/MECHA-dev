@@ -1,35 +1,27 @@
 name: mecha
 channels:
+  - openalea3/label/dev  # openalea.granap (0.0.1.dev, its only build yet)
   - openalea3            # openalea.metafspm, openalea.mtg / plantgl
   - conda-forge
   - nodefaults           # ignore the defaults channels added by ~/miniconda3/.condarc
 # flexible: strict priority doubled GRANAP's solve time with no different outcome
 channel_priority: flexible
 
-# GRANAP is not packaged yet in the version this port needs: install it from source in this environment once it
-# is created, from the folder holding the repositories:
-#
-#     conda activate mecha
-#     pip install -e GRANAP            # branch to_metafspm
-#
-# The dependencies below are GRANAP's and MECHA's; openalea.metafspm brings its own. The geometry stack is pinned
-# as in GRANAP (its golden regression suite pins an exact cell census, and a different GEOS build shifts it).
+# The dependencies below are MECHA's; openalea.granap and openalea.metafspm bring their own (GRANAP pins the
+# geometry stack, geos, shapely and opencv, for its golden regression suite's exact cell census).
 dependencies:
-  - python                # openalea.plantgl (via openalea.mtg) has no 3.14 build
+  - python
   - pip
-  - geos =3.14.1          # geometry engine — decides GRANAP's golden census
-  - shapely =2.1.2        # GEOS bindings
-  - scipy >=1.13,<1.18    # sparse solvers; GRANAP's Voronoi / cKDTree (metafspm's scipy, bounded)
+  - scipy                 # sparse solvers
   - geopandas
   - matplotlib            # bundles pylab
   - networkx
   - lxml
-  - munkres               # GRANAP
   - pydantic >=2.7
-  - roifile               # GRANAP
   - ipykernel             # notebooks
   # the platform; brings numpy, pandas, numba, pyyaml, openalea.mtg and openalea.encoding3d
   - openalea.metafspm >=0.0.1,<0.1   # pinned: the channel's stale 0.1.x predate the release numbering
+  - openalea.granap >=0.0.1.dev,<0.1 # the cross-sections; from .dev: conda ranks 0.0.1.dev below 0.0.1
   - pytest
   # MECHA's documentation tools
   - pandoc                # the docs' notebooks (nbsphinx)
@@ -37,7 +29,4 @@ dependencies:
   - graphviz
   - python-graphviz
   - pip:
-    # cv2 (GRANAP's geometry_collection). From pip rather than conda: every conda opencv 4.13 build needs icu 78,
-    # while openalea.plantgl (required by openalea.mtg) is built on Qt 5 / icu 75, so the solve never ends.
-    - "opencv-python-headless==4.13.0.*"
     - "-e ..[doc]"

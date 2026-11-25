@@ -66,8 +66,8 @@ dependencies = [
     "openalea.metafspm >=0.0.1,<0.1",  # the MPG and the component framework; brings numpy, scipy, pandas, numba, pyyaml,
                                   # openalea.mtg and openalea.encoding3d. Pinned: the channel's stale 0.1.0 (rc) and
                                   # 0.1.1.dev (dev) predate the release numbering; strict priority reads the dev label only, so a range
-    # "openalea.granap",     # required (the cross-sections, generated into metafspm's MPG): not packaged yet in
-    #                        # the version the port needs, install it from source (see conda/environment.yaml)
+    "openalea.granap >=0.0.1.dev,<0.1",  # the cross-sections, generated into metafspm's MPG. From .dev: conda ranks
+                                         # 0.0.1.dev below 0.0.1, the only build published yet
 ]
 
 [project.optional-dependencies]
