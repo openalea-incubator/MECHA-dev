@@ -15,29 +15,26 @@ into the composite nature of water transport in roots. *Plant Physiology* 178, 1
 
 ## Installation
 
-MECHA's environment brings [metafspm](https://github.com/openalea/metafspm) (`openalea.metafspm`, from `openalea3`)
-and, through it, encoding3d. GRANAP (not published yet in the version used here) and MECHA are installed from their
-clones (`pip install -e`), next to each other.
-Until metafspm's `release2026` and encoding3d are published on `openalea3`, the environment's `openalea.metafspm`
-is an older version: install the two from their clones over it, as below (`--no-deps`: the environment already has
-their dependencies). Once they are published, the clones and those two lines are no longer needed.
+Prerequisites: [miniforge](https://conda-forge.org/download/) and [git](https://git-scm.com/downloads).
+
+MECHA is not published on `openalea3` yet: it is installed from its clone. Its environment brings
+[GRANAP](https://github.com/openalea-incubator/GRANAP-dev) (`openalea.granap`),
+[metafspm](https://github.com/openalea/metafspm) (`openalea.metafspm`) and, through it,
+[encoding3d](https://github.com/openalea/encoding3d), all from `openalea3`, and installs MECHA from the clone in
+editable mode (`pip install -e`).
 
 ```bash
-mkdir fspm && cd fspm                       # any folder: the three repositories side by side
-git clone -b release2026 https://github.com/openalea/metafspm.git metafspm
-git clone -b other_platforms_bindings https://github.com/openalea/encoding3d.git encoding3d
-git clone -b to_metafspm https://github.com/openalea-incubator/GRANAP-dev.git GRANAP
 git clone -b to_metafspm https://github.com/openalea-incubator/MECHA-dev.git MECHA-dev
-
-mamba env create -f MECHA-dev/conda/environment.yaml     # GRANAP's and MECHA's dependencies, openalea.metafspm
+cd MECHA-dev
+mamba env create -f conda/environment.yaml        # MECHA's dependencies, GRANAP and metafspm; MECHA itself (editable)
 mamba activate mecha
-pip install -e encoding3d --no-deps                      # until encoding3d is published
-pip install -e metafspm --no-deps                        # until metafspm's release2026 is published
-pip install -e GRANAP
-pip install -e MECHA-dev
+python -m openalea.metafspm warm_up               # compiles the numba kernels once
 ```
 
-To update, `git pull` in each repository; the editable installs follow.
+To work on GRANAP or metafspm as well, clone them alongside and `pip install -e` them over the packages, in this
+environment.
+
+To update, `git pull` (the editable install follows) and `mamba update -n mecha openalea.granap openalea.metafspm`.
 
 ## Getting started
 
