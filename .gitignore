@@ -2,14 +2,19 @@
 *.egg-info
 *.vscode
 .pytest_cache
-*test/outputs/*.png
-*test/outputs/*.txt
-*test/outputs/*.vtk
-*test/outputs/*.xml
-*test/outputs/*.graphml
-*graphify-out/*
+*test/**/outputs/*.png
+*test/**/outputs/*.txt
+*test/**/outputs/*.vtk
+*test/**/outputs/*.xml
+*test/**/outputs/*.graphml
 src_old/*
 src_old
-simulations/outputs/*
-tutorials/outputs/*
+example/**/outputs/
+/dev*.md
+/.devplan/
+
+# documentation builds, and the tutorials they copy
+doc/_build/
+doc/notebooks/
+*graphify-out/*
 graphify-out/cache/*

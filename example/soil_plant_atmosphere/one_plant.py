@@ -1,0 +1,56 @@
+"""
+One seedling in a soil column under a dry air, as metafspm's soil–plant–atmosphere example, but with GRANAP's
+anatomies and MECHA's hydraulics in the plant: water from the water table, through the soil, the roots' cells and
+walls, the stem and the leaves, out of the stomata. The plant and the soil exchange at each scene step until the
+water potentials stop changing (a lagged fixed point).
+
+    python one_plant.py [output folder]      (from MECHA-dev/example/soil_plant_atmosphere; default outputs/one_plant)
+"""
+import os
+import sys
+import time
+
+import numpy as np
+
+from openalea.metafspm import Planting, planting, Scene, SceneRecorder
+
+from seedling_spac import (CM3_PER_DAY_TO_MM3_PER_S, SCENE_TRANSLATOR, SEEDLING_SCENARIO, SOIL_SCENARIO,
+                           SeedlingHydraulics, Soil, largest_change)
+import plots
+
+
+def scene(folder=None, tolerance=1e-4):
+    table = planting([Planting(x=0.1, y=0.1)], SeedlingHydraulics, SEEDLING_SCENARIO, x_range=0.2,
+                     y_range=0.2)                                     # a 0.2 m x 0.2 m column of soil
+    stop = largest_change(tolerance)
+    built = Scene(table, environment=[Soil], environment_scenarios=[SOIL_SCENARIO], translator=SCENE_TRANSLATOR,
+                  time_step="1 h", stop_when=stop,
+                  recorder=SceneRecorder(folder) if folder else None)
+    return built, stop
+
+
+def summary(built, stop):
+    plant = built.populations[0].data_structure
+    soil = built.model(Soil).grid
+    transpiration = plant.get("evaporation").sum() * CM3_PER_DAY_TO_MM3_PER_S
+    uptake = plant.get("root_uptake").sum() * CM3_PER_DAY_TO_MM3_PER_S
+    print(f"converged in {built.step_count} steps; largest change of Ψ per step (MPa): "
+          + ", ".join(f"{change:.1e}" for change in stop.history))
+    print(f"{plant.n_nodes()} Compartments, {plant.n_edges()} Connections")
+    print(f"transpiration {transpiration:.4f} mm3 s-1, root uptake {uptake:.4f} mm3 s-1, soil uptake "
+          f"{soil.get('plant_uptake').sum():.4f} mm3 s-1, soil evaporation {soil.get('evaporation').sum():.4f} "
+          f"mm3 s-1; liquid ψ down to {plant.get('water_potential')[plant.get('vapour_node') == 0].min() / 1e4:.2f} "
+          f"MPa; leaf surfaces' relative humidity {', '.join(f'{x:.2f}' for x in plant.get('psi')[plant.get('compartment_type') == 3])}")
+
+
+if __name__ == "__main__":
+    folder = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                                "outputs", "one_plant")
+    start = time.perf_counter()
+    built, stop = scene(folder=folder)
+    print(f"built in {time.perf_counter() - start:.0f} s")
+    start = time.perf_counter()
+    built.simulate(30)
+    print(f"simulated in {time.perf_counter() - start:.0f} s")
+    summary(built, stop)
+    plots.all_figures(built, folder)

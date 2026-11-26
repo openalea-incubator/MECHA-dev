@@ -1,0 +1,107 @@
+"""
+The coupled steady state of the water and the sucrose (MechaSolutes' solute_solve 2): its analytic Jacobian against
+finite differences of its balances, with the liquid boundary (solute_boundary_advection 1), in both schemes, without
+and with a Casparian band's reflection coefficient on its wall edges; and the
+solve's conservation: at steady state the sucrose produced leaves through the sinks (held_solute_flux) and the liquid
+boundary.
+"""
+import inspect
+
+import numpy as np
+import pytest
+
+from openalea.mecha.component import MechaHydraulics
+from openalea.mecha.geometry import INTERCELLULAR_TYPES
+from openalea.mecha.osmotic import MechaOsmoticPresets
+from openalea.mecha.solutes import MechaSolutes, edge_weights, liquid_boundary_exchange
+
+from plants import anatomy_data_structure, root
+
+PRODUCTION = 2e-13                                   # mol d-1 per cortex cell
+
+
+@pytest.fixture(scope="module", params=(0., 0.5), ids=lambda sigma: f"band{sigma}")
+def section(request):
+    """A root section at barrier 1; with the endodermis' Casparian band reflecting (σ 0.5 on its wall edges, the band
+    leaky so that its flows count), or not."""
+    g, data_structure, anatomy = anatomy_data_structure(root(1))
+    data_structure.register("barrier", np.ones(data_structure.n_nodes()), location="node")
+    presets = MechaOsmoticPresets(data_structure=data_structure)
+    presets.s_factor = 0.5
+    presets.sigma_casparian_endodermis = request.param
+    mecha = MechaHydraulics(data_structure=data_structure)
+    mecha.standard_osmotic = 1.
+    if request.param:
+        mecha.kw_casparian = 2.4E-5
+    solutes = MechaSolutes(data_structure=data_structure)
+    cortex = (np.asarray(data_structure.get("cgroup")) == 4) \
+        & ~np.isin(np.asarray(data_structure.get("tissue"), dtype=object), INTERCELLULAR_TYPES)    # no solute in the air
+    data_structure.set("sucrose_source", np.where(cortex, PRODUCTION, 0.))
+    presets()
+    mecha()
+    return data_structure, solutes
+
+
+def _call(function, data_structure, values):
+    """*function* (a balance or the Jacobian of the coupled system) on the DataStructure's arrays, with *values*."""
+    class View:
+        graph_view = data_structure.to_graph_view()
+    names = list(inspect.signature(function).parameters)[1:]
+    return function(View(), *[values[name] if name in values else np.asarray(data_structure.get(name), dtype=float)
+                              for name in names])
+
+
+@pytest.mark.parametrize("scheme", (1., 2.))
+def test_jacobian(section, scheme):
+    data_structure, solutes = section
+    solutes.solute_scheme = scheme
+    solutes.solute_solve = 1.
+    solutes()                                         # the masks and weights, without the coupled solve
+    inner = MechaSolutes._steady_coupled._inner_cls
+    n = data_structure.n_nodes()
+    rng = np.random.default_rng(1)
+    values = dict(coupled_psi=np.asarray(data_structure.get("standard_psi")) + rng.normal(0, 10, n),
+                  sucrose=np.where(np.asarray(data_structure.get("solute_node")) > 0, rng.uniform(0, 1e-5, n), 0.))
+
+    def residual(psi, sucrose):
+        state = dict(values, coupled_psi=psi, sucrose=sucrose)
+        return np.r_[_call(inner._water, data_structure, state), _call(inner._sucrose, data_structure, state)]
+    J = _call(inner._jacobian, data_structure, values)
+    for direction in (np.r_[rng.normal(0, 1, n), np.zeros(n)], np.r_[np.zeros(n), rng.normal(0, 1e-7, n)]):
+        eps = 1e-6                                    # small: the upwind weights and the boundary are piecewise
+        step = dict(psi=eps * direction[:n], sucrose=eps * direction[n:])
+        fd = (residual(values["coupled_psi"] + step["psi"], values["sucrose"] + step["sucrose"])
+              - residual(values["coupled_psi"] - step["psi"], values["sucrose"] - step["sucrose"])) / (2 * eps)
+        analytic = J @ direction
+        for part in (slice(0, n), slice(n, 2 * n)):
+            assert abs(fd[part] - analytic[part]).max() <= 1e-5 * abs(fd[part]).max()
+    solutes.solute_scheme = 1.
+
+
+def test_steady_state_conserves_the_sucrose(section):
+    """Solved: the production equals what leaves through the sinks (their nodes' net outflow along the solute's edges)
+    and with the water leaving to the boundary, to 1e-9."""
+    data_structure, solutes = section
+    solutes.solute_solve = 2.
+    solutes()
+    view = data_structure.to_graph_view()
+    B = view.incidence
+    c = np.asarray(data_structure.get("sucrose"))
+    F = np.asarray(data_structure.get("coupled_flow"))
+    a, b = edge_weights(np.asarray(data_structure.get("diffusion_conductance")), np.asarray(data_structure.get("carried_fraction")) * F,
+                        np.asarray(data_structure.get("upwind_edge")) > 0)
+    q = a * c[view.tail] - b * c[view.head]
+    sink = np.asarray(data_structure.get("sucrose_sink")) > 0
+    into_sinks = -np.asarray(B @ q).reshape(-1)[sink].sum()
+    advected = np.isfinite(np.asarray(data_structure.get("boundary_concentration")))
+    outflow, _ = liquid_boundary_exchange(B, F, np.asarray(data_structure.get("water_edge")) > 0, advected)
+    leaving = into_sinks + (outflow * c)[~sink].sum()
+    produced = np.asarray(data_structure.get("sucrose_source")).sum()
+    assert c.max() > 0 and leaving == pytest.approx(produced, rel=1e-9)
+    # held_solute_flux: the same sucrose, node by node, on the coupled state's flows
+    held = np.asarray(data_structure.get("held_solute_flux"))
+    np.testing.assert_allclose(held[sink], -np.asarray(B @ q).reshape(-1)[sink], rtol=1e-12,
+                               atol=1e-12 * abs(held).max())
+    assert not held[~sink].any() and held[sink].sum() > 0
+    assert abs(np.asarray(data_structure.get("coupled_psi")) - np.asarray(data_structure.get("standard_psi"))).max() > 1e-3
+    solutes.solute_solve = 1.

@@ -1,27 +1,32 @@
 name: mecha
 channels:
+  - openalea3/label/dev  # openalea.granap (0.0.1.dev, its only build yet)
+  - openalea3            # openalea.metafspm, openalea.mtg / plantgl
   - conda-forge
-  - https://conda.anaconda.org/openalea3
-  - https://conda.anaconda.org/openalea3/label/dev
-channel_priority: strict
+  - nodefaults           # ignore the defaults channels added by ~/miniconda3/.condarc
+# flexible: strict priority doubled GRANAP's solve time with no different outcome
+channel_priority: flexible
+
+# The dependencies below are MECHA's; openalea.granap and openalea.metafspm bring their own (GRANAP pins the
+# geometry stack, geos, shapely and opencv, for its golden regression suite's exact cell census).
 dependencies:
   - python
   - pip
-  - pytest
-  - numpy
-  - scipy
-  - ipykernel
+  - scipy                 # sparse solvers
+  - geopandas
+  - matplotlib            # bundles pylab
   - networkx
   - lxml
-  - geopandas
-  - matplotlib # bundles pylab
-  - shapely
-  - pydantic
-  - opencv
-  - openalea.mtg
-  - openalea.granap
-  - pyan3 
-  - graphviz 
+  - pydantic >=2.7
+  - ipykernel             # notebooks
+  # the platform; brings numpy, pandas, numba, pyyaml, openalea.mtg and openalea.encoding3d
+  - openalea.metafspm >=0.0.1,<0.1   # pinned: the channel's stale 0.1.x predate the release numbering
+  - openalea.granap >=0.0.1.dev,<0.1 # the cross-sections; from .dev: conda ranks 0.0.1.dev below 0.0.1
+  - pytest
+  # MECHA's documentation tools
+  - pandoc                # the docs' notebooks (nbsphinx)
+  - pyan3
+  - graphviz
   - python-graphviz
   - pip:
     - "-e ..[doc]"

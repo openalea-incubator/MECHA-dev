@@ -56,8 +56,6 @@ channels = [
 ]
 dependencies = [
     "python",
-    "numpy",
-    "scipy",
     "networkx",
     "lxml",
     "geopandas",
@@ -65,8 +63,11 @@ dependencies = [
     "shapely",
     "opencv",
     "pydantic",
-    "openalea.mtg",
-    "openalea.granap"
+    "openalea.metafspm >=0.0.1,<0.1",  # the MPG and the component framework; brings numpy, scipy, pandas, numba, pyyaml,
+                                  # openalea.mtg and openalea.encoding3d. Pinned: the channel's stale 0.1.0 (rc) and
+                                  # 0.1.1.dev (dev) predate the release numbering; strict priority reads the dev label only, so a range
+    "openalea.granap >=0.0.1.dev,<0.1",  # the cross-sections, generated into metafspm's MPG. From .dev: conda ranks
+                                         # 0.0.1.dev below 0.0.1, the only build published yet
 ]
 
 [project.optional-dependencies]
@@ -96,3 +97,8 @@ Repository = "https://github.com/MECHARoot/MECHA-dev"
 
 [project.entry-points."wralea"]
 "mecha" = "openalea.mecha_wralea"
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: minutes long (the plant and shoot problems, the reduction's accuracy, the legacy comparisons); left out by pytest -m 'not slow', run before a release or a merge to main",
+]

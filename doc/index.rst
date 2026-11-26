@@ -1,0 +1,60 @@
+=====
+MECHA
+=====
+
+MECHA computes how water crosses a plant organ, cell by cell: from the soil (or the air) to the vessels, along the
+cell walls, across the membranes and through the plasmodesmata, with the barriers of the endodermis and the
+exodermis. This version is its port to metafspm components, on GRANAP's anatomies: ``MechaHydraulics`` (the hydraulics
+of the sections and of the whole plant), ``MechaSolutes`` (solutes, diffusion and reactions), ``MechaOsmoticPresets``
+(the osmotic presets). The README gives the installation.
+
+User guide
+==========
+
+For newcomers to the model, to plant hydraulics or to Python modelling: solve a root section, change its parameters,
+explore them, use experimental data, follow the water along a root, upscale a root system, look at its barriers and
+scale one tissue. Each tutorial is a notebook in
+``example/tutorials/user/``, shown here with its results.
+
+.. toctree::
+    :maxdepth: 1
+
+    notebooks/user/01_first_run
+    notebooks/user/02_change_a_parameter
+    notebooks/user/03_combine_parameters
+    notebooks/user/04_sensitivity_analysis
+    notebooks/user/05_experimental_data
+    notebooks/user/06_along_a_root
+    notebooks/user/07_tomato_day_and_night
+    notebooks/user/08_root_system_conductance
+    notebooks/user/09_suberin_lamellae_and_bands
+    notebooks/user/10_scaling_one_tissue
+    parameters
+
+Developer guide
+===============
+
+For those who read, check, change or couple the model: how it is written as metafspm components on GRANAP's
+anatomies, how it was ported and validated against the original MECHA, its equations and its performance. Best read
+after the first user tutorial; developers of the original MECHA start with ``12_from_the_legacy``.
+
+.. toctree::
+    :maxdepth: 1
+
+    notebooks/developer/00_overview
+    notebooks/developer/01_granap_mecha
+    notebooks/developer/02_soil_gradient
+    notebooks/developer/03_needle_solutes
+    notebooks/developer/04_full_plant
+    notebooks/developer/05_extend_the_component
+    notebooks/developer/06_solute_storage_and_decay
+    notebooks/developer/07_section_options
+    notebooks/developer/08_standard_problem
+    notebooks/developer/09_solute_options
+    notebooks/developer/10_root_system_conductance
+    notebooks/developer/11_barriers_formalism
+    notebooks/developer/12_from_the_legacy
+    components
+    equations
+    legacy
+    performance
