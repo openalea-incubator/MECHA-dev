@@ -3,6 +3,8 @@ A root system's conductance (Krs) and standard uptake fractions (SUF), upscaled 
 (RootSystemConductance), and their calibration (simulation.fit_root_system): MARSHAL's definitions checked on the
 plant problem itself.
 """
+import sys
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -249,10 +251,14 @@ def test_the_per_node_soil_boundary_with_reduced_roots_is_refused():
 
 def test_the_kinds_in_threads_give_the_same_root_system():
     """The reduced sections' kinds worked out in threads (metafspm's Compute(threads=4): each kind's Kron reduction
-    in its own): the same Krs and potentials, bit for bit, as in one thread."""
+    in its own): the same Krs and potentials, bit for bit, as in one thread; on Windows within round-off (rtol 1e-10):
+    its MKL's results depend on the arrays' memory alignment, on the runners' AMD processors even in the strict
+    reproducibility mode the conftest sets."""
     from openalea.metafspm.compute import Compute
     kwargs = dict(main=(3, 1, 1, 0), laterals=((1, (1, 0)),), soil_psi=SOIL, collar_psi=COLLAR, condensed=True)
     alone = root_system(compute=Compute(threads=1), **kwargs)
     threaded = root_system(compute=Compute(threads=4), **kwargs)
-    assert threaded.conductance == alone.conductance
-    np.testing.assert_array_equal(threaded.data_structure.get("psi"), alone.data_structure.get("psi"))
+    relative_tolerance = 1e-10 if sys.platform == "win32" else 0.
+    np.testing.assert_allclose(threaded.conductance, alone.conductance, rtol=relative_tolerance, atol=0.)
+    np.testing.assert_allclose(threaded.data_structure.get("psi"), alone.data_structure.get("psi"),
+                               rtol=relative_tolerance, atol=0.)
