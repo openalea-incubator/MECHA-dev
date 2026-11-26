@@ -9,6 +9,9 @@ the reduction's library kept from one batch to the next, are those of one evalua
 (plant_reduction's leaf_ports="bundles" and vapour_path="air_spaces", metafspm's devplan O-7): the uptake and the
 blade's water potential within 0.5 % of each conduit and each evaporating wall its own node, on far fewer nodes.
 """
+import platform
+import sys
+
 import numpy as np
 import pytest
 
@@ -250,6 +253,10 @@ def _grown(population) -> list:
     return series
 
 
+@pytest.mark.skipif(sys.platform == "darwin" and platform.machine() == "x86_64",
+                    reason="Intel macOS's OpenBLAS kernel gives results that depend on the arrays' memory alignment, "
+                           "so a kind evaluated in a batch and alone differ in the last bits, and metafspm's archetype "
+                           "check compares them bit for bit")
 def test_growth_and_kinds_pass_the_topology_and_kinds_checks(monkeypatch):
     """The growing seedling (its sections lengthening: new kinds every day, the reduction's library patched with
     their sections in place of the former) under metafspm's checks: every patched structure-derived value equal to
