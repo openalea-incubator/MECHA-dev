@@ -253,10 +253,11 @@ def _grown(population) -> list:
     return series
 
 
-@pytest.mark.skipif(sys.platform == "darwin" and platform.machine() == "x86_64",
-                    reason="Intel macOS's OpenBLAS kernel gives results that depend on the arrays' memory alignment, "
-                           "so a kind evaluated in a batch and alone differ in the last bits, and metafspm's archetype "
-                           "check compares them bit for bit")
+@pytest.mark.skipif(sys.platform == "win32" or (sys.platform == "darwin" and platform.machine() == "x86_64"),
+                    reason="Windows' MKL (even in its strict reproducibility mode, on the AVX-512 runners) and Intel "
+                           "macOS's OpenBLAS kernel give results that depend on the arrays' memory alignment, so a kind "
+                           "evaluated in a batch and alone differ in the last bits, and metafspm's archetype check "
+                           "compares them bit for bit")
 def test_growth_and_kinds_pass_the_topology_and_kinds_checks(monkeypatch):
     """The growing seedling (its sections lengthening: new kinds every day, the reduction's library patched with
     their sections in place of the former) under metafspm's checks: every patched structure-derived value equal to
