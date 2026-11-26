@@ -20,12 +20,13 @@ from itertools import product
 
 from needle import (_OUT_DIR, DIFF_SUCROSE, Anatomy, Experiment, JFNK, NeumannBC,
                     NoCoupling, Picard, SimResult, Solute, TimeStepping, SteadyState, run_experiments)
-from post_sim import anatomy_plot, flow_decomposition, flow_decomposition_plot
+from post_sim import (_STEADY_METRIC_LABELS, anatomy_plot, flow_decomposition, flow_decomposition_plot,
+                      steady_metric_vs_ae_plot)
 
 #COUPLINGS = {'none': NoCoupling(), 'picard': Picard(), 'jfnk': JFNK()}
 
 D_PD_SUCROSE = 0.6 * DIFF_SUCROSE
-_OUT_DIR = os.path.join(_OUT_DIR, 'steady_state', 'n6')
+_OUT_DIR = os.path.join(_OUT_DIR, 'steady_state', 'nig')
 
 
 EXPERIMENT = Experiment(
@@ -40,20 +41,27 @@ EXPERIMENT = Experiment(
         sinks=('strasburger', 'phloem'),
     ),
     dynamics=SteadyState(),
-    coupling=JFNK(max_iter=20),
+    coupling=JFNK(max_iter=25),
 )
 
 # (E, A) in (mmol m⁻² s⁻¹, µmol m⁻² s⁻¹)
-VALUES = ((0.21, 1.26), (0.20, 2.72), (0.18, 3.15), (0.17, 4.14), (0.16, 4.86))
+VALUES_n17 = ((0.3475854, 2.195323), (0.4061078, 5.528739), (0.4000667, 6.861486), (0.4019172, 9.696612), (0.3962713, 11.92927))
+VALUES_s49 = ((1.71, 6.24), (1.66, 12.90), (1.62, 15.37), (1.57, 19.14), (1.51, 20.64))
+VALUES_s38 = ((0.8965178, 4.055882), (0.8325153, 8.113755), (0.7711562,	9.495983), (0.7405828, 12.24407), (0.700708, 13.64662))
+VALUES_n6 = ((0.21, 1.26), (0.20, 2.72), (0.18, 3.15), (0.17, 4.14), (0.16, 4.86))
+
+VALUES_NIG = (*VALUES_n6, *VALUES_n17)
+VALUES_SYL = (*VALUES_s38, *VALUES_s49)
+
+VALUES_ALL = (*VALUES_NIG, *VALUES_SYL)
 
 EXPS = [
     EXPERIMENT.replace(
         label=f'flux_budget_steady_E{E:.1f}_A{A:.1f}',
         bc=replace(EXPERIMENT.bc, transpiration_E=E, assimilation_A=A),
     )
-    for E, A in VALUES
+    for E, A in VALUES_NIG
 ]
-
 
 if __name__ == '__main__':
     RUN_SIMULATION = True    # False: skip the run, re-plot from the stored .npz
@@ -104,3 +112,7 @@ if __name__ == '__main__':
                             ('peclet_evapo', 'peclet_evapo'), ('peclet_osmo', 'peclet_osmo')]
             for quantity, tag in quantities:
                 print(f"Saved: {res.plot_flow_network(f'{stem}_{tag}.{FIG_FMT}', quantity=quantity, tol_decades=2.0)}")
+
+    for key in _STEADY_METRIC_LABELS:
+
+        print(f"Saved: {steady_metric_vs_ae_plot(results, os.path.join(_OUT_DIR, f'{key}_vs_AE.{FIG_FMT}'), metric=key)}")

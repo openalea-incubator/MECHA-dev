@@ -45,7 +45,7 @@ for _p in (_MECHA_SRC, _GRANAP_SRC):
 
 from openalea.granap.needle_class import NeedleAnatomy
 from openalea.mecha.mecha_class import Mecha
-from openalea.mecha.utils.data_loader import InData, BoundaryData
+from openalea.mecha.utils.data_loader import InData, BoundaryData, parse_cellset
 from openalea.mecha.utils.network_builder import NetworkBuilder
 from openalea.mecha.utils.solute_transport import (
     SoluteTransport, SoluteGeometry, MultiSoluteTransport)
@@ -134,6 +134,40 @@ class Anatomy:
     h_idx: int = 0
     i_mat: int = 0
     i_sce: int = 1
+    # XML cellset path (CellSet format); when set it replaces the GRANAP draw (seed unused).
+    cellset: Optional[str] = None
+    im_scale: float = 1.0          # cellset coordinate → µm
+    cgroup_remap: tuple = ()       # ((from, to), ...) applied to cellset groups
+
+
+class CellsetNetworkBuilder(NetworkBuilder):
+    """XML-cellset network that tags cells by name so 'air space' cells get wall_air links."""
+
+    def __init__(self, cgroup_remap: tuple = ()):
+        super().__init__()
+        self._cgroup_remap = dict(cgroup_remap)
+
+    def create_cell_nodes(self, geometry, hormones, contagion=0, centroid_method="shapely"):
+        super().create_cell_nodes(geometry, hormones, contagion, centroid_method)
+        offset = self.n_walls + self.n_junctions
+        for cell in self.cellset['cells']:
+            nid = offset + int(cell.get('id'))
+            if nid in self.graph:
+                node = self.graph.nodes[nid]
+                name = cell.get('name', '')
+                node['cell_type'] = name
+                node['protect_topology'] = (name == 'air space')
+                node['cgroup'] = self._cgroup_remap.get(node['cgroup'], node['cgroup'])
+
+
+def load_cellset(path: str) -> dict:
+    """Parse a CellSet XML and renumber cell ids to start at 0 (MECHA convention)."""
+    data = parse_cellset(path)
+    first = min(int(c.get('id')) for c in data['cells'])
+    if first:
+        for c in data['cells']:
+            c.set('id', str(int(c.get('id')) - first))
+    return data
 
 
 @dataclass
@@ -145,10 +179,13 @@ class GeometryBase:
     """
 
     seed: Optional[int]
-    anatomy: NeedleAnatomy
+    anatomy: Optional[NeedleAnatomy]   # None for XML-cellset anatomies
 
     @classmethod
-    def build(cls, seed: Optional[int] = None) -> "GeometryBase":
+    def build(cls, seed: Optional[int] = None,
+              cellset: Optional[str] = None) -> "GeometryBase":
+        if cellset is not None:
+            return cls(seed=seed, anatomy=None)
         anatomy = NeedleAnatomy(seed=seed) if seed is not None else NeedleAnatomy()
         anatomy.export_to_adjencymatrix()
         return cls(seed=seed, anatomy=anatomy)
@@ -157,11 +194,12 @@ class GeometryBase:
 _BASE_CACHE: dict = {}
 
 
-def get_geometry_base(seed: Optional[int]) -> GeometryBase:
-    """Per-process cached ``GeometryBase`` for ``seed`` (built on first use)."""
-    if seed not in _BASE_CACHE:
-        _BASE_CACHE[seed] = GeometryBase.build(seed)
-    return _BASE_CACHE[seed]
+def get_geometry_base(seed: Optional[int], cellset: Optional[str] = None) -> GeometryBase:
+    """Per-process cached ``GeometryBase`` for ``(seed, cellset)`` (built on first use)."""
+    key = (seed, cellset)
+    if key not in _BASE_CACHE:
+        _BASE_CACHE[key] = GeometryBase.build(seed, cellset)
+    return _BASE_CACHE[key]
 
 
 @dataclass(frozen=True)
@@ -711,7 +749,7 @@ class NeedleSimulation:
                  verbose: bool = True):
         self.exp = exp
         self.verbose = verbose
-        self.geometry = geometry or get_geometry_base(exp.anatomy.seed)
+        self.geometry = geometry or get_geometry_base(exp.anatomy.seed, exp.anatomy.cellset)
         self.psi_air = self.flow_trans = self.ref_area = None
 
         self._build_network()
@@ -728,10 +766,19 @@ class NeedleSimulation:
     def _build_network(self) -> None:
         a = self.exp.anatomy
         self._log(f"=== Building MECHA network (label={self.exp.label!r}) ===")
-        network = NetworkBuilder(self.geometry.anatomy)
-        network.populate_from_network()
-
         data = InData.needle_defaults()
+        if a.cellset is not None:
+            # The XML build mutates the parsed tree (scaling), so parse per simulation.
+            data.cellset_data = load_cellset(a.cellset)
+            data.geometry.im_scale = a.im_scale
+            network = CellsetNetworkBuilder(a.cgroup_remap)
+            network.build_network(data.general, data.geometry, data.hormones,
+                                  data.cellset_data)
+            network._is_populated = True
+        else:
+            network = NetworkBuilder(self.geometry.anatomy)
+            network.populate_from_network()
+
         # Full default scenario (valid osmotic-profile fields) with σ on; the only
         # osmotic magnitude is the dynamic van't Hoff sucrose term.
         s1 = copy.deepcopy(BoundaryData().scenarios[0])
@@ -1249,7 +1296,8 @@ class NeedleSimulation:
 # ══════════════════════════════════════════════════════════════════════════════
 def _run_one(exp: Experiment) -> SimResult:
     """Picklable worker: build the simulation from the cached anatomy and run it."""
-    return NeedleSimulation(exp, get_geometry_base(exp.anatomy.seed), verbose=False).run()
+    return NeedleSimulation(exp, get_geometry_base(exp.anatomy.seed, exp.anatomy.cellset),
+                            verbose=False).run()
 
 
 def _pin_blas_single_thread():

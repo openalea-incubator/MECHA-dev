@@ -19,6 +19,7 @@ Entry points
 ``mass_balance_plot(res, path)``   interior mass / mass-to-sink vs. time
 ``diurnal_flux_plot(res, path)``   j_w, j_s, j_s/j_w (+ starch) time series
 ``starch_comparison_plot(results, path)``  k_f × k_r sweep overlay
+``steady_metric_vs_ae_plot(results, path, metric)``  steady scalar (e.g. turnover) vs. A/E
 ``load_result(path)`` / ``load_results(dir_or_glob)``  load saved runs
 """
 
@@ -750,5 +751,67 @@ def budget_plot(res, path: str) -> str:
                  f"coupling={res.params.get('coupling', {}).get('type', '?')}")
     fig.tight_layout()
     fig.savefig(path, dpi=150)
+    plt.close(fig)
+    return path
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Steady-state metric vs. A/E across experiments
+# ══════════════════════════════════════════════════════════════════════════════
+# metric → (axis label, scale applied to the stored value)
+_STEADY_METRIC_LABELS = {
+    'turnover':           ('turnover time [d]', 1.0),
+    'loading_resistance': ('loading resistance [d cm⁻³]', 1.0),
+    'max_assimilation':   ('max. assimilation [µmol m⁻² s⁻¹]', 1.0),
+    'load_fraction':      ('symplastic loading fraction [-]', 1.0),
+    'mean_peclet':        ('flux-weighted Péclet [-]', 1.0),
+    'c_meso_mean':        ('mean mesophyll sucrose [mM]', 1e6),
+    'q_load':             ('sink uptake [nmol d⁻¹]', 1e9),
+}
+
+
+def _steady_value(res: SimResult, metric: str) -> float:
+    if metric in res.extras:
+        return float(np.asarray(res.extras[metric]))
+    val = getattr(res, metric, None)
+    if val is None:
+        raise KeyError(f"{metric!r} not found in extras or attributes of {res.params.get('label')!r}.")
+    return float(val)
+
+
+def steady_metric_vs_ae_plot(results, path: str, metric: str = 'turnover',
+                             logy: bool = False) -> str:
+    """Plot a steady-state scalar ``metric`` against A/E for each experiment.
+
+    ``results``: list of steady ``SimResult`` or dict {series label: list}, each
+    series drawn as its own line. A/E uses A [µmol m⁻² s⁻¹] / E [mmol m⁻² s⁻¹]
+    → mmol mol⁻¹. ``metric`` is any key of ``res.extras`` (e.g. STEADY_METRICS)
+    or a scalar ``SimResult`` attribute such as 'q_load'.
+    """
+    plt = _import_mpl()
+    groups = results if isinstance(results, dict) else {None: results}
+    label, scale = _STEADY_METRIC_LABELS.get(metric, (metric, 1.0))
+
+    fig, ax = plt.subplots(figsize=(7, 5))
+    for name, group in groups.items():
+        ae, val = [], []
+        for res in group:
+            if res.mode != 'steady':
+                raise ValueError(f"{res.params.get('label')!r} is not a steady-state result.")
+            ae.append(float(res.param('assimilation_A')) / float(res.param('transpiration_E')))
+            val.append(_steady_value(res, metric) * scale)
+        order = np.argsort(ae)
+        ax.plot(np.asarray(ae)[order], np.asarray(val)[order], 'o-', label=name)
+
+    ax.set_xlabel('A / E  [mmol mol⁻¹]')
+    ax.set_ylabel(label)
+    if logy:
+        ax.set_yscale('log')
+    if not (len(groups) == 1 and None in groups):
+        ax.legend()
+    ax.grid(alpha=0.3)
+    ax.set_title(f'Steady state: {metric} vs. A/E')
+    fig.tight_layout()
+    fig.savefig(path, dpi=150, bbox_inches='tight')
     plt.close(fig)
     return path
